@@ -79,7 +79,7 @@ console.log('\nMinute 60   Zusammenfassung:', JSON.stringify(snap[60].sum));
 console.log('Minute 480  Zusammenfassung:', JSON.stringify(snap[480].sum));
 console.log('Minute 480  Raeume:', snap[480].rooms.map(x => [x.name, x.ist, x.band, x.dLow, x.dHigh, x.trend, x.valid, x.role].join(' ; ')).join('\n            '));
 check('Minute 60: alle Raeume im eigenen Band (Schlafzimmer 20 °C liegt im Band 19-21)',
-      snap[60].sum.heat === 'keiner' && snap[60].sum.over === 'keine' && snap[60].opt[1][1].includes('im eigenen Komfortband'), snap[60].opt[1][1]);
+      snap[60].sum.heat === 'keiner' && snap[60].sum.over === 'keiner' && snap[60].opt[1][1].includes('im eigenen Komfortband'), snap[60].opt[1][1]);
 check('Minute 240: Heizbedarf = Kinderzimmer unten', snap[240].sum.heat.startsWith('Kinderzimmer unten') && snap[240].sum.heat.includes('unter Minimum'), snap[240].sum.heat);
 check('Minute 240: Schlafzimmer (offline seit 60 min, Limit 90) noch gueltig', snap[240].sum.valid.startsWith('3 von 3') && byName(snap[240], 'Schlafzimmer').valid.startsWith('ja'), snap[240].sum.valid);
 check('Minute 290: Schlafzimmer offline seit >90 min zaehlt nicht mehr', snap[290].sum.valid.startsWith('2 von 3') && byName(snap[290], 'Schlafzimmer').valid.startsWith('nein (veraltet'), snap[290].sum.valid);
@@ -209,7 +209,7 @@ const ALL_OK = {ki_oben: [23.1], ki_unten: [23.0], schlaf: [21.0]};
 
 let s = scene(ALL_OK);
 check('Schlafzimmer 21,0 (Band 19-21) und Kinderzimmer 23,1 (Band 22,5-23,5): kein Heizbedarf, keine Ueberschreitung',
-      s.sum.heat === 'keiner' && s.sum.over === 'keine' && s.grund.includes('im eigenen Komfortband'), s.grund);
+      s.sum.heat === 'keiner' && s.sum.over === 'keiner' && s.grund.includes('im eigenen Komfortband'), s.grund);
 check('kein "kaeltester/waermster Raum" mehr nach absoluter Temperatur', !/Kältester|Wärmster/.test(JSON.stringify(s.o[1].payload)), '');
 check('Abstand unten/oben: Kinderzimmer oben 23,1 -> +0,6 / +0,4 K', rowOf(s, 'ki_oben').dLow === '+0,6 K' && rowOf(s, 'ki_oben').dHigh === '+0,4 K', rowOf(s, 'ki_oben').dLow + ' / ' + rowOf(s, 'ki_oben').dHigh);
 check('Abstand: Schlafzimmer 21,0 -> +2,0 K unten, 0,0 K oben; Band wird je Raum angezeigt', rowOf(s, 'schlaf').dLow === '+2,0 K' && rowOf(s, 'schlaf').dHigh === '0,0 K' && rowOf(s, 'schlaf').band === '19,0 – 21,0 °C', rowOf(s, 'schlaf').band);
@@ -481,7 +481,7 @@ resetWorld(); setRooms(ROOMSET(23.0, 21.9, 20.0));
 let oo = tick(40);
 check('Regel 1: Raum 0,6 K unter Minimum, nach 40 min noch keine Aenderung (langsam, beobachtet)', cur() === 0 && ctlOf(oo).why.includes('beobachte') && ctlOf(oo).lead === 'Kinderzimmer unten', ctlOf(oo).why);
 oo = tick(25);
-check('Regel 1: nach 65 min Wartezeit Vorschlag +1 K, Fuehrungsraum Kinderzimmer unten', cur() === 1 && ctlOf(oo).why.startsWith('Heizbedarf: Kinderzimmer unten') && ctlOf(oo).lead === 'Kinderzimmer unten', ctlOf(oo).why);
+check('Regel 1: nach 65 min Wartezeit Vorschlag +1 K, Fuehrungsraum Kinderzimmer unten', cur() === 1 && ctlOf(oo).why.startsWith('Raum unter Minimum: Kinderzimmer unten') && ctlOf(oo).lead === 'Kinderzimmer unten', ctlOf(oo).why);
 check('Shadow: angewendet bleibt 0, Zeitstempel ist frisch', gstore.OPT_shift_applied === 0 && gstore.OPT_shift_ts === NOW, gstore.OPT_shift_applied);
 // Fuehrungsraum = groesstes Defizit (gewichtet)
 resetWorld(); setRooms(ROOMSET(23.0, 22.0, 18.0)); oo = tick(5);

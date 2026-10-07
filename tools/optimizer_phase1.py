@@ -1462,7 +1462,7 @@ var none = !valids.length;
 var sum = {
     heat: none ? '–' : (heat ? heat.name + ' · ' + f(-heat.dev, 1, 'K') + ' unter Minimum · ' + trTxt(heat) : 'keiner'),
     heatCls: (none || heat) ? 'warn' : 'ok',
-    over: none ? '–' : (over ? over.name + ' · ' + f(over.dev, 1, 'K') + ' über Maximum · ' + trTxt(over) : 'keine'),
+    over: none ? '–' : (over ? over.name + ' · ' + f(over.dev, 1, 'K') + ' über Maximum · ' + trTxt(over) : 'keiner'),
     overCls: (none || over) ? 'warn' : 'ok',
     tight: tight ? sg(tight.m, 1, 'K') + ' (' + tight.room.name + ')' : '–',
     tightCls: (tight && tight.m < 0.3) ? 'warn' : '',
@@ -1644,12 +1644,12 @@ try {
     else if (ctBelow.length) {                                                                      // Regel 1: Raum unter Minimum -> nie absenken
         if (ctSt.cur < 0) { ctWant = 0; ctBypass = true; ctBack = true; ctCode = 'Raum unter Minimum: Absenkung zurücknehmen'; }
         else if (ctDistrib) { ctWant = 0; ctCode = 'Wärmeverteilungsproblem: ' + ctLead.x.name + ' zu kalt, ' + ctPick(ctWarmClear, 'mHigh').x.name + ' zu warm'; }   // Regel 4
-        else if (ctSt.cur > 0) { ctCode = 'Heizbedarf: ' + ctLead.x.name; }
-        else if (ctColdGo && now - ctSt.coldSince >= ctRise) { ctWant = 1; ctCode = 'Heizbedarf: ' + ctLead.x.name; }
-        else if (ctColdGo) { ctCode = 'Heizbedarf: ' + ctLead.x.name + ' (beobachte seit ' + ctMin(now - ctSt.coldSince) + ' min)'; }
+        else if (ctSt.cur > 0) { ctCode = 'Raum unter Minimum: ' + ctLead.x.name; }
+        else if (ctColdGo && now - ctSt.coldSince >= ctRise) { ctWant = 1; ctCode = 'Raum unter Minimum: ' + ctLead.x.name; }
+        else if (ctColdGo) { ctCode = 'Raum unter Minimum: ' + ctLead.x.name + ' (beobachte seit ' + ctMin(now - ctSt.coldSince) + ' min)'; }
         else { ctCode = ctLead.x.name + ' unter Minimum, aber unter der Schwelle oder erholt sich'; }
     } else if (ctAbove.length) {                                                                    // Regel 2: kein Raum unter Minimum, Raum ueber Maximum
-        if (ctSt.cur > 0) { ctWant = ctNearLow ? 1 : 0; ctCode = ctNearLow ? 'Heizbedarf besteht noch' : 'Heizbedarf behoben'; }
+        if (ctSt.cur > 0) { ctWant = ctNearLow ? 1 : 0; ctCode = ctNearLow ? 'Raum noch nahe am Minimum' : 'Raum wieder im Band'; }
         else if (ctSt.cur < 0) {
             if (ctGuardLow) { ctWant = 0; ctBack = true; ctCode = 'Absenkung beendet: Raum nahe Minimum'; }
             else { ctCode = 'Überschreitung: ' + ctLead.x.name + ' (-1 K hält)'; }
@@ -1660,7 +1660,7 @@ try {
         else if (ctWarmGo) { ctCode = 'Überschreitung: ' + ctLead.x.name + ' (beobachte seit ' + ctMin(now - ctSt.warmSince) + ' min)'; }
         else { ctCode = ctLead.x.name + ' über Maximum, aber unter der Schwelle oder kühlt ab'; }
     } else {                                                                                        // Regel 3: alle im Band -> niedrigste Heizkurve suchen
-        if (ctSt.cur > 0) { ctWant = ctNearLow ? 1 : 0; ctCode = ctNearLow ? 'Heizbedarf besteht noch' : 'Heizbedarf behoben'; }
+        if (ctSt.cur > 0) { ctWant = ctNearLow ? 1 : 0; ctCode = ctNearLow ? 'Raum noch nahe am Minimum' : 'Raum wieder im Band'; }
         else if (ctSt.cur < 0) {
             if (ctGuardLow) { ctWant = 0; ctBack = true; ctCode = 'Absenkung beendet: Raum nahe Minimum'; }
             else { ctCode = 'niedrigste Heizkurve gefunden (-1 K hält)'; }
@@ -1927,15 +1927,15 @@ ROOMS_TPL = """<style>
 </style>
 <div class="optr optfit" ng-if="d">
 <div class="sum">
-<span class="k">Heizbedarf</span><span ng-class="d.sum.heatCls">{{d.sum.heat}}</span>
-<span class="k">Überschreitung</span><span ng-class="d.sum.overCls">{{d.sum.over}}</span>
+<span class="k">Raum unter Minimum</span><span ng-class="d.sum.heatCls">{{d.sum.heat}}</span>
+<span class="k">Raum über Maximum</span><span ng-class="d.sum.overCls">{{d.sum.over}}</span>
 <span class="k">Geringster Abstand</span><span ng-class="d.sum.tightCls">{{d.sum.tight}}</span>
 <span class="k">Gültige Räume</span><span ng-class="d.sum.validCls">{{d.sum.valid}}</span>
 </div>
 <div style="overflow-x:auto"><table>
 <tr><th>Raum</th><th class="n">Ist</th><th class="n">Komfortband</th><th class="n">Abstand unten</th><th class="n">Abstand oben</th><th>Trend</th><th>Gültig</th></tr>
 <tr ng-repeat="r in d.rooms track by r.id">
-<td>{{r.name}}<span class="role" ng-if="r.role==='heat'">bestimmt den Heizbedarf</span><span class="role" ng-if="r.role==='over'">bestimmt die Überschreitung</span></td>
+<td>{{r.name}}<span class="role" ng-if="r.role==='heat'">größte Unterschreitung</span><span class="role" ng-if="r.role==='over'">größte Überschreitung</span></td>
 <td class="n" ng-class="r.cls">{{r.ist}}</td><td class="n">{{r.band}}</td>
 <td class="n" ng-class="r.cLow">{{r.dLow}}</td><td class="n" ng-class="r.cHigh">{{r.dHigh}}</td>
 <td>{{r.trend}}</td><td ng-class="r.cls==='mute' ? 'mute' : ''">{{r.valid}}</td></tr>
