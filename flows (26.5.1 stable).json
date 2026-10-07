@@ -91109,7 +91109,7 @@
         "type": "ui_group",
         "name": "Wärmepumpe",
         "tab": "opt_ui_tab",
-        "order": 3,
+        "order": 4,
         "disp": true,
         "width": 6,
         "collapse": false,
@@ -91118,9 +91118,9 @@
     {
         "id": "opt_g_opt",
         "type": "ui_group",
-        "name": "Optimierung & Einstellungen",
+        "name": "Optimierung",
         "tab": "opt_ui_tab",
-        "order": 4,
+        "order": 5,
         "disp": true,
         "width": 6,
         "collapse": false,
@@ -91155,7 +91155,7 @@
         "name": "",
         "order": 1,
         "width": 6,
-        "height": 9,
+        "height": 7,
         "format": "<style>.opt td{padding:3px 4px;vertical-align:top} .opt .l{color:#666} .opt .v{text-align:right;font-weight:bold} .opt .warn{color:#c62828} .opt .ok{color:#2e7d32}</style><table class=\"opt\" style=\"width:100%\"><tr ng-repeat=\"r in msg.payload.rows track by $index\"><td class=\"l\">{{r[0]}}</td><td class=\"v\" ng-class=\"r[2]\">{{r[1]}}</td></tr></table>",
         "storeOutMessages": true,
         "fwdInMessages": false,
@@ -91211,90 +91211,6 @@
         ]
     },
     {
-        "id": "opt_n_low",
-        "type": "ui_numeric",
-        "z": "opt_tab",
-        "name": "Komfortband unten (°C)",
-        "label": "Komfortband unten (°C)",
-        "tooltip": "",
-        "group": "opt_g_opt",
-        "order": 2,
-        "width": 6,
-        "height": 1,
-        "wrap": false,
-        "passthru": false,
-        "topic": "comfort.low",
-        "topicType": "str",
-        "format": "{{value}}",
-        "min": 15,
-        "max": 26,
-        "step": 0.1,
-        "className": "",
-        "x": 560,
-        "y": 400,
-        "wires": [
-            [
-                "opt_set"
-            ]
-        ]
-    },
-    {
-        "id": "opt_n_high",
-        "type": "ui_numeric",
-        "z": "opt_tab",
-        "name": "Komfortband oben (°C)",
-        "label": "Komfortband oben (°C)",
-        "tooltip": "",
-        "group": "opt_g_opt",
-        "order": 3,
-        "width": 6,
-        "height": 1,
-        "wrap": false,
-        "passthru": false,
-        "topic": "comfort.high",
-        "topicType": "str",
-        "format": "{{value}}",
-        "min": 16,
-        "max": 28,
-        "step": 0.1,
-        "className": "",
-        "x": 560,
-        "y": 440,
-        "wires": [
-            [
-                "opt_set"
-            ]
-        ]
-    },
-    {
-        "id": "opt_n_age",
-        "type": "ui_numeric",
-        "z": "opt_tab",
-        "name": "Sensor gilt als veraltet nach (min)",
-        "label": "Sensor gilt als veraltet nach (min)",
-        "tooltip": "",
-        "group": "opt_g_opt",
-        "order": 4,
-        "width": 6,
-        "height": 1,
-        "wrap": false,
-        "passthru": false,
-        "topic": "sensor.maxAgeMin",
-        "topicType": "str",
-        "format": "{{value}}",
-        "min": 5,
-        "max": 360,
-        "step": 5,
-        "className": "",
-        "x": 560,
-        "y": 480,
-        "wires": [
-            [
-                "opt_set"
-            ]
-        ]
-    },
-    {
         "id": "opt_c1",
         "type": "comment",
         "z": "opt_tab",
@@ -91344,8 +91260,8 @@
         "type": "function",
         "z": "opt_tab",
         "name": "Standardwerte setzen",
-        "func": "\n// Standardwerte der Optimierungsebene. Bereits gesetzte Werte (z. B. aus dem Dashboard) bleiben erhalten.\nvar d = {\n    rooms: [\n        {id: 'ki_oben',  name: 'Kinderzimmer oben',  topic: 'shellyhtg3-lucas/status/temperature:0'},\n        {id: 'ki_unten', name: 'Kinderzimmer unten', topic: 'shellyhtg3-lina/status/temperature:0'},\n        {id: 'schlaf',   name: 'Schlafzimmer',       topic: 'shellies/shellyht-Schlaf/sensor/temperature'}\n    ],\n    comfort: {low: 22.5, high: 23.5},\n    sensor:  {maxAgeMin: 90, min: 10, max: 35, maxJumpK: 2, emaTauMin: 30, trendWindowMin: 120, trendMinSpanMin: 30, trendMinSamples: 3},\n    weather: {intervalMin: 10, maxAgeMin: 60},\n    log:     {intervalMin: 5}\n};\nfunction merge(base, over) {\n    if (!over || typeof over !== 'object') { return base; }\n    Object.keys(over).forEach(function (k) {\n        if (base[k] && typeof base[k] === 'object' && !Array.isArray(base[k]) && typeof over[k] === 'object' && !Array.isArray(over[k])) {\n            base[k] = merge(base[k], over[k]);\n        } else if (over[k] !== undefined && over[k] !== null) { base[k] = over[k]; }\n    });\n    return base;\n}\n// gespeicherte Einstellungen (ueberleben einen Neustart) -> dann ggf. neuere Werte aus dem Speicher\nvar saved = {};\ntry { saved = JSON.parse(fs.readFileSync('/data/optimizer/config.json', 'utf8')); } catch (e) { /* noch keine Datei */ }\nvar cfg = merge(merge(d, saved), global.get('OPT_cfg'));\nglobal.set('OPT_cfg', cfg);\n// aktuelle Werte an die Dashboard-Eingabefelder geben\nreturn [{payload: cfg.comfort.low}, {payload: cfg.comfort.high}, {payload: cfg.sensor.maxAgeMin}];\n",
-        "outputs": 3,
+        "func": "\n// Standardwerte der Optimierungsebene. Gespeicherte Einstellungen (config.json) und bereits gesetzte Werte bleiben erhalten.\n// Jeder Raum hat ein eigenes Komfortband (min/max), eine Gewichtung und ein Datenalter-Limit.\nvar ROOM_FIELDS = ['active', 'min', 'max', 'weight', 'maxAgeMin'];\nvar WIDGETS = [[\"opt_w_ki_oben_active\", \"ki_oben\", \"active\"], [\"opt_w_ki_oben_min\", \"ki_oben\", \"min\"], [\"opt_w_ki_oben_max\", \"ki_oben\", \"max\"], [\"opt_w_ki_oben_weight\", \"ki_oben\", \"weight\"], [\"opt_w_ki_oben_maxAgeMin\", \"ki_oben\", \"maxAgeMin\"], [\"opt_w_ki_unten_active\", \"ki_unten\", \"active\"], [\"opt_w_ki_unten_min\", \"ki_unten\", \"min\"], [\"opt_w_ki_unten_max\", \"ki_unten\", \"max\"], [\"opt_w_ki_unten_weight\", \"ki_unten\", \"weight\"], [\"opt_w_ki_unten_maxAgeMin\", \"ki_unten\", \"maxAgeMin\"], [\"opt_w_schlaf_active\", \"schlaf\", \"active\"], [\"opt_w_schlaf_min\", \"schlaf\", \"min\"], [\"opt_w_schlaf_max\", \"schlaf\", \"max\"], [\"opt_w_schlaf_weight\", \"schlaf\", \"weight\"], [\"opt_w_schlaf_maxAgeMin\", \"schlaf\", \"maxAgeMin\"]];                  // [Widget-Id, Raum-Id, Feld]: je Dashboard-Eingabefeld ein Ausgang\nvar d = {\n    rooms: [{\"id\": \"ki_oben\", \"name\": \"Kinderzimmer oben\", \"topic\": \"shellyhtg3-lucas/status/temperature:0\", \"active\": true, \"min\": 22.5, \"max\": 23.5, \"weight\": 1, \"maxAgeMin\": 90}, {\"id\": \"ki_unten\", \"name\": \"Kinderzimmer unten\", \"topic\": \"shellyhtg3-lina/status/temperature:0\", \"active\": true, \"min\": 22.5, \"max\": 23.5, \"weight\": 1, \"maxAgeMin\": 90}, {\"id\": \"schlaf\", \"name\": \"Schlafzimmer\", \"topic\": \"shellies/shellyht-Schlaf/sensor/temperature\", \"active\": true, \"min\": 19, \"max\": 21, \"weight\": 1, \"maxAgeMin\": 90}],\n    sensor:  {maxAgeMin: 90, min: 10, max: 35, maxJumpK: 2, emaTauMin: 30, trendWindowMin: 120, trendMinSpanMin: 30, trendMinSamples: 3},\n    weather: {intervalMin: 10, maxAgeMin: 60},\n    log:     {intervalMin: 5}\n};\nfunction merge(base, over) {\n    if (!over || typeof over !== 'object') { return base; }\n    Object.keys(over).forEach(function (k) {\n        if (k === 'rooms') { return; }       // Raeume nur je Raum-ID und nur mit den Einstellungsfeldern (siehe mergeRooms)\n        if (base[k] && typeof base[k] === 'object' && !Array.isArray(base[k]) && typeof over[k] === 'object' && !Array.isArray(over[k])) {\n            base[k] = merge(base[k], over[k]);\n        } else if (over[k] !== undefined && over[k] !== null) { base[k] = over[k]; }\n    });\n    return base;\n}\nfunction mergeRooms(base, over) {\n    if (!Array.isArray(over)) { return; }\n    over.forEach(function (o) {\n        var b = base.find(function (x) { return x.id === o.id; });\n        if (!b) { return; }\n        ROOM_FIELDS.forEach(function (k) { if (o[k] !== undefined && o[k] !== null) { b[k] = o[k]; } });\n    });\n}\n// gespeicherte Einstellungen (ueberleben einen Neustart) -> dann ggf. neuere Werte aus dem Speicher\nvar saved = {};\ntry { saved = JSON.parse(fs.readFileSync('/data/optimizer/config.json', 'utf8')); } catch (e) { /* noch keine Datei */ }\nif (!saved || typeof saved !== 'object') { saved = {}; }\nvar cur = global.get('OPT_cfg') || {};\nvar cfg = merge(merge(d, saved), cur);\nmergeRooms(cfg.rooms, saved.rooms);\nmergeRooms(cfg.rooms, cur.rooms);\ndelete cfg.comfort;                          // fruehere globale Komfortband-Einstellung: ersetzt durch je Raum eigene Baender\nglobal.set('OPT_cfg', cfg);\n// aktuelle Werte an die Dashboard-Eingabefelder geben (ein Ausgang je Feld)\nreturn WIDGETS.map(function (w) {\n    var r = cfg.rooms.find(function (x) { return x.id === w[1]; });\n    if (!r || r[w[2]] === undefined) { return null; }\n    return {payload: w[2] === 'active' ? r.active !== false : r[w[2]]};\n});\n",
+        "outputs": 15,
         "timeout": 0,
         "noerr": 0,
         "initialize": "",
@@ -91360,13 +91276,49 @@
         "y": 140,
         "wires": [
             [
-                "opt_n_low"
+                "opt_w_ki_oben_active"
             ],
             [
-                "opt_n_high"
+                "opt_w_ki_oben_min"
             ],
             [
-                "opt_n_age"
+                "opt_w_ki_oben_max"
+            ],
+            [
+                "opt_w_ki_oben_weight"
+            ],
+            [
+                "opt_w_ki_oben_maxAgeMin"
+            ],
+            [
+                "opt_w_ki_unten_active"
+            ],
+            [
+                "opt_w_ki_unten_min"
+            ],
+            [
+                "opt_w_ki_unten_max"
+            ],
+            [
+                "opt_w_ki_unten_weight"
+            ],
+            [
+                "opt_w_ki_unten_maxAgeMin"
+            ],
+            [
+                "opt_w_schlaf_active"
+            ],
+            [
+                "opt_w_schlaf_min"
+            ],
+            [
+                "opt_w_schlaf_max"
+            ],
+            [
+                "opt_w_schlaf_weight"
+            ],
+            [
+                "opt_w_schlaf_maxAgeMin"
             ]
         ]
     },
@@ -91375,8 +91327,8 @@
         "type": "function",
         "z": "opt_tab",
         "name": "Einstellung übernehmen und speichern",
-        "func": "\n// Eingabefelder im Dashboard -> Konfiguration (msg.topic = Pfad, z. B. comfort.low)\nvar cfg = global.get('OPT_cfg');\nvar v = Number(msg.payload);\nif (!cfg || !isFinite(v)) { return null; }\nvar p = String(msg.topic).split('.');\nif (p.length === 2 && cfg[p[0]] && typeof cfg[p[0]] === 'object') {\n    cfg[p[0]][p[1]] = v;\n    global.set('OPT_cfg', cfg);\n    // dauerhaft speichern, damit die Einstellung einen Neustart ueberlebt\n    try {\n        fs.mkdirSync('/data/optimizer', {recursive: true});\n        fs.writeFileSync('/data/optimizer/config.json', JSON.stringify(cfg, null, 1));\n    } catch (e) { node.warn('Einstellungen konnten nicht gespeichert werden: ' + e.message); }\n}\nreturn null;\n",
-        "outputs": 1,
+        "func": "\n// Dashboard-Eingaben -> Konfiguration. msg.topic = \"room:<id>:<feld>\" (active, min, max, weight, maxAgeMin) oder \"gruppe.feld\".\n// Ausgang 1: rote Rueckmeldung bei abgelehnter Eingabe. Ausgang 2: Eingabefelder auf die gueltigen Werte setzen\n// (nach abgelehnter Eingabe und nach dem Umschalten von \"Aktiv\": der Schalter aendert sich nur ueber diese Nachricht).\n// Ausgang 3: nach jeder uebernommenen Aenderung sofort neu auswerten, damit die Anzeige gleich nachzieht.\nvar cfg = global.get('OPT_cfg');\nif (!cfg) { return null; }\nvar LIMITS = {\"min\": [10, 30], \"max\": [12, 35], \"weight\": [0.1, 5], \"maxAgeMin\": [5, 720]}, MIN_BAND = 0.5;\nvar t = String(msg.topic || ''), v = msg.payload, refresh = false;\nfunction de(x) { return String(x).replace('.', ','); }\nfunction reject(text) { return [{topic: 'Optimierung', payload: text, highlight: 'red'}, {payload: 'zuruecksetzen'}]; }\nif (t.indexOf('room:') === 0) {\n    var p = t.split(':');\n    var room = (cfg.rooms || []).find(function (r) { return r.id === p[1]; });\n    if (!room) { return null; }\n    if (p[2] === 'active') {\n        room.active = (v === true || v === 'true' || v === 1);\n        refresh = true;\n    } else {\n        var lim = LIMITS[p[2]];\n        if (!lim) { return null; }\n        var n = (v === null || v === '' || typeof v === 'boolean') ? NaN : Number(v);\n        if (!isFinite(n) || n < lim[0] || n > lim[1]) {\n            return reject(room.name + ': Der Wert muss zwischen ' + de(lim[0]) + ' und ' + de(lim[1]) + ' liegen. Nichts geändert.');\n        }\n        var lo = (p[2] === 'min') ? n : room.min, hi = (p[2] === 'max') ? n : room.max;\n        if (hi - lo < MIN_BAND - 1e-9) {\n            return reject(room.name + ': Das Komfortband muss mindestens ' + de(MIN_BAND) + ' K breit sein (Minimum unter Maximum). Nichts geändert.');\n        }\n        room[p[2]] = n;\n    }\n} else {\n    var q = t.split('.'), g = Number(v);\n    if (!isFinite(g) || q.length !== 2 || !cfg[q[0]] || typeof cfg[q[0]] !== 'object') { return null; }\n    cfg[q[0]][q[1]] = g;\n}\nglobal.set('OPT_cfg', cfg);\ntry {                                        // dauerhaft speichern, damit die Einstellung einen Neustart ueberlebt\n    fs.mkdirSync('/data/optimizer', {recursive: true});\n    fs.writeFileSync('/data/optimizer/config.json', JSON.stringify(cfg, null, 1));\n} catch (e) { node.warn('Einstellungen konnten nicht gespeichert werden: ' + e.message); }\nreturn [null, refresh ? {payload: 'aktualisieren'} : null, {payload: 'auswerten'}];\n",
+        "outputs": 3,
         "timeout": 0,
         "noerr": 0,
         "initialize": "",
@@ -91387,10 +91339,18 @@
                 "module": "fs"
             }
         ],
-        "x": 780,
+        "x": 1760,
         "y": 440,
         "wires": [
-            []
+            [
+                "opt_ui_toast"
+            ],
+            [
+                "opt_defaults"
+            ],
+            [
+                "opt_eval"
+            ]
         ]
     },
     {
@@ -91612,13 +91572,18 @@
         "type": "function",
         "z": "opt_tab",
         "name": "Auswerten · Anzeigen · Protokollieren",
-        "func": "\n// Einmal pro Minute: Werte zusammenfuehren, bewerten, anzeigen und protokollieren. KEIN Eingriff in die Regelung.\nvar cfg = global.get('OPT_cfg');\nif (!cfg) { return null; }\nvar now = Date.now();\nvar R = global.get('OPT_rooms') || {};\nvar W = global.get('OPT_weather') || {};\nvar G = function (k) { return global.get(k); };\n\nfunction num(v) { v = Number(v); return isFinite(v) ? v : null; }\nfunction f(v, d, unit) { if (v === null || v === undefined || !isFinite(v)) { return '–'; } return Number(v).toFixed(d).replace('.', ',') + (unit ? ' ' + unit : ''); }\nfunction ageMin(ts) { return ts ? Math.round((now - ts) / 60000) : null; }\nfunction arrow(t) { if (t === null || t === undefined) { return '·'; } return t >= 0.05 ? '↑' : (t <= -0.05 ? '↓' : '→'); }\nfunction age(a) { return a === null ? 'keine Daten' : (a < 60 ? a + ' min' : (a / 60).toFixed(1).replace('.', ',') + ' h'); }\n\n// ---------- Raeume\nvar sMax = cfg.sensor.maxAgeMin, ids = Object.keys(R);\nvar fresh = [];\nids.forEach(function (id) {\n    var r = R[id], a = ageMin(r.ts);\n    r.age = a; r.valid = (a !== null && a <= sMax && r.ema !== undefined);\n    if (r.valid) { fresh.push(r); }\n});\nvar cold = null, warm = null;\nfresh.forEach(function (r) { if (cold === null || r.ema < cold.ema) { cold = r; } if (warm === null || r.ema > warm.ema) { warm = r; } });\nvar total = (cfg.rooms || []).length;\nvar low = cfg.comfort.low, high = cfg.comfort.high;\nvar band = 'keine Raumdaten', bandCls = 'warn', room = null;\nif (cold && warm) {\n    room = Math.min(cold.ema - low, high - warm.ema);\n    if (cold.ema < low) { band = 'Kältester Raum unter dem Komfortband'; bandCls = 'warn'; }\n    else if (warm.ema > high) { band = 'Wärmster Raum über dem Komfortband'; bandCls = 'warn'; }\n    else { band = 'innerhalb · Spielraum ' + f(room, 1, 'K'); bandCls = 'ok'; }\n}\nvar oldest = fresh.length ? Math.max.apply(null, fresh.map(function (r) { return r.age; })) : null;\nvar rowsRoom = [\n    ['Kältester Raum', cold ? f(cold.ema, 1, '°C') + ' ' + arrow(cold.trend) + ' ' + (cold.trend === null ? 'Trend n. v.' : f(cold.trend, 2, 'K/h')) : '–', cold && cold.ema < low ? 'warn' : ''],\n    ['   ' + (cold ? cold.name : ''), cold ? 'Wert ' + f(cold.last, 1, '°C') + ' · vor ' + age(cold.age) : '', ''],\n    ['Wärmster Raum', warm ? f(warm.ema, 1, '°C') + ' ' + arrow(warm.trend) + ' ' + (warm.trend === null ? 'Trend n. v.' : f(warm.trend, 2, 'K/h')) : '–', warm && warm.ema > high ? 'warn' : ''],\n    ['   ' + (warm ? warm.name : ''), warm ? 'Wert ' + f(warm.last, 1, '°C') + ' · vor ' + age(warm.age) : '', ''],\n    ['Komfortband', f(low, 1) + ' – ' + f(high, 1, '°C'), ''],\n    ['Bewertung', band, bandCls],\n    ['Sensoren aktuell', fresh.length + ' von ' + total + (oldest !== null ? ' · ältester ' + age(oldest) : '') + ' · Limit ' + age(sMax), fresh.length < 2 ? 'warn' : '']\n];\nids.forEach(function (id) {\n    var r = R[id];\n    rowsRoom.push([r.name, r.valid ? f(r.ema, 1, '°C') + ' (' + age(r.age) + ')' : 'veraltet (' + age(r.age) + ')', r.valid ? '' : 'warn']);\n});\n\n// ---------- Aussen / Wetter\nvar tp = num(G('TOP14_Outside_Temp')), tw = (W.ts && ageMin(W.ts) <= cfg.weather.maxAgeMin) ? W.temp : null;\nvar wAge = ageMin(W.ts), wOk = (W.status === 'OK' && wAge !== null && wAge <= cfg.weather.maxAgeMin);\nvar rowsWx = [\n    ['Außen Panasonic', f(tp, 1, '°C'), ''],\n    ['Außen Wetterdienst', tw !== null ? f(tw, 1, '°C') : '–', ''],\n    ['Differenz Wetter − Panasonic', (tw !== null && tp !== null) ? f(tw - tp, 1, 'K') : '–', ''],\n    ['Prognose +1 h', wOk ? f(W.f1, 1, '°C') : '–', ''],\n    ['Prognose +3 h', wOk ? f(W.f3, 1, '°C') : '–', ''],\n    ['Prognose +6 h', wOk ? f(W.f6, 1, '°C') : '–', ''],\n    ['Luftfeuchtigkeit', wOk ? f(W.rh, 0, '%') : '–', ''],\n    ['Taupunkt', wOk ? f(W.dew, 1, '°C') : '–', ''],\n    ['Bewölkung', (wOk && W.clouds !== null && W.clouds !== undefined) ? f(W.clouds, 0, '%') : '–', ''],\n    ['Wetterdaten', (W.status || 'noch nicht abgerufen') + (wAge !== null ? ' · Alter ' + age(wAge) : ''), wOk ? 'ok' : ''],\n    ['Regelwert Außentemperatur', f(tp, 1, '°C') + ' (Panasonic, unverändert)', '']\n];\n\n// ---------- Waermepumpe\nvar freq = num(G('compressor_frequency')) || 0, valve = num(G('TOP20_ThreeWay_Valve_State')), defrost = num(G('TOP26_Defrosting_State')) === 1;\nvar ss = G('F_SS'), ssOn = ss && ss.state === 1;\nvar pOn = num(G('TOP0_Heatpump_State')) === 1;\nvar mode = !pOn ? 'Aus' : (defrost ? 'Abtauen' : (valve === 1 ? 'Warmwasser' : (freq > 0 ? 'Heizen' : 'Bereit (Verdichter steht)')));\nvar shiftBase = null, ccc = G('F_CCC'); if (ccc && ccc.z1) { shiftBase = num(ccc.z1.SP_DIRECT_virt); }\nvar rtc = G('F_RTC'), rtcCorr = (rtc && rtc.z1) ? num(rtc.z1.correction_value) : null;\nvar shiftFinal = num(G('SHIFT_Final')), target = num(G('TOP42_Z1_Water_Target_Temp'));\nvar inl = num(G('TOP5_Main_Inlet_Temp')), outl = num(G('TOP6_Main_Outlet_Temp')), pw = num(G('TOP16_Heat_Energy_Consumption')), cop = num(G('COP_HEAT'));\nvar rowsWp = [\n    ['Betriebszustand', mode + (ssOn ? ' · Sanftanlauf aktiv' : ''), ''],\n    ['Soll-Vorlauf (Panasonic-Heizkurve)', f(target, 0, '°C'), ''],\n    ['Basis-Verschiebung (manuell)', f(shiftBase, 0, 'K'), ''],\n    ['Raumregelung-Korrektur (bestehend)', f(rtcCorr, 0, 'K'), ''],\n    ['Finale Verschiebung', f(shiftFinal, 0, 'K'), ''],\n    ['Vorlauf / Rücklauf', f(outl, 1) + ' / ' + f(inl, 1, '°C'), ''],\n    ['Verdichter', f(freq, 0, 'Hz'), ''],\n    ['Leistung · COP', f(pw, 0, 'W') + ' · ' + (freq > 0 ? f(cop, 1) : '–'), ''],\n    ['Starts heute', f(num(G('Starts_Today')), 0), '']\n];\n\n// ---------- Optimierung (Phase 1)\nvar lastLog = flow.get('lastLog');\nvar reason;\nif (!cold || !warm) { reason = 'Beobachtung · zu wenig aktuelle Raumdaten'; }\nelse if (cold.ema < low) { reason = 'Beobachtung · kältester Raum (' + cold.name + ') liegt unter dem Komfortband'; }\nelse if (warm.ema > high) { reason = 'Beobachtung · wärmster Raum (' + warm.name + ') liegt über dem Komfortband'; }\nelse { reason = 'Beobachtung · beide Räume im Komfortband'; }\nvar out = [{payload: {rows: rowsWx}}, {payload: {rows: rowsRoom}}, {payload: {rows: rowsWp}}, null, null, null, null];\n\n// ---------- Protokoll (alle log.intervalMin Minuten) und Ereignisse\nvar d = new Date(now), pad = function (n) { return (n < 10 ? '0' : '') + n; };\nvar month = d.getFullYear() + '-' + pad(d.getMonth() + 1);\nvar iso = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());\nfunction c(v) { return (v === null || v === undefined || !isFinite(v)) ? '' : String(Math.round(v * 100) / 100); }\nif (!lastLog || (now - lastLog) >= cfg.log.intervalMin * 60000) {\n    var head = 'zeit,aussen_panasonic,aussen_wetter,wetter_feuchte,wetter_taupunkt,prog_1h,prog_3h,prog_6h,wetter_alter_min,' +\n        'raum_kalt,raum_kalt_trend,raum_kalt_name,raum_warm,raum_warm_trend,raum_warm_name,sensoren_aktuell,' +\n        'soll_vorlauf,shift_basis,shift_rtc,shift_final,vorlauf,ruecklauf,verdichter_hz,leistung_w,cop,defrost,warmwasser,sanftanlauf,starts_heute\\n';\n    var line = [iso, c(tp), c(tw), c(wOk ? W.rh : null), c(wOk ? W.dew : null), c(wOk ? W.f1 : null), c(wOk ? W.f3 : null), c(wOk ? W.f6 : null), c(wAge),\n        c(cold ? cold.ema : null), c(cold ? cold.trend : null), cold ? cold.name : '', c(warm ? warm.ema : null), c(warm ? warm.trend : null), warm ? warm.name : '', fresh.length,\n        c(target), c(shiftBase), c(rtcCorr), c(shiftFinal), c(outl), c(inl), c(freq), c(pw), c(freq > 0 ? cop : null), defrost ? 1 : 0, valve === 1 ? 1 : 0, ssOn ? 1 : 0, c(num(G('Starts_Today')))].join(',') + '\\n';\n    var hdr = flow.get('logHeader');\n    out[4] = {filename: '/data/optimizer/optimizer-' + month + '.csv', payload: (hdr === month ? '' : head) + line};\n    flow.set('logHeader', month);\n    flow.set('lastLog', now);\n    lastLog = now;\n}\nvar rowsOpt = [\n    ['Modus', 'Phase 1 · nur Beobachtung, kein Eingriff', 'ok'],\n    ['Grund', reason, ''],\n    ['Raumkorrektur durch Optimierung', '0 K (nicht aktiv)', ''],\n    ['Protokoll', lastLog ? 'letzter Eintrag ' + new Date(lastLog).toLocaleTimeString('de-DE', {hour: '2-digit', minute: '2-digit'}) : 'noch kein Eintrag', '']\n];\n\nout[3] = {payload: {rows: rowsOpt}};\n// Zustandswechsel als Ereignisse (fuer die spaetere Auswertung)\nvar prev = flow.get('prevState') || {};\nvar cur = {verdichter: freq > 0 ? 1 : 0, defrost: defrost ? 1 : 0, warmwasser: valve === 1 ? 1 : 0, sanftanlauf: ssOn ? 1 : 0,\n           komfort: (cold && warm) ? ((cold.ema < low) ? 'kalt' : (warm.ema > high ? 'warm' : 'ok')) : 'unbekannt'};\nvar ev = [];\nObject.keys(cur).forEach(function (k) { if (prev[k] !== undefined && prev[k] !== cur[k]) { ev.push(iso + ',' + k + ',' + prev[k] + '->' + cur[k]); } });\nflow.set('prevState', cur);\nif (ev.length) {\n    var eh = flow.get('evHeader');\n    out[5] = {filename: '/data/optimizer/optimizer-events-' + month + '.csv', payload: (eh === month ? '' : 'zeit,ereignis,wechsel\\n') + ev.join('\\n') + '\\n'};\n    flow.set('evHeader', month);\n}\n// Statuszeile fuer SYSTEM > EINSTELLUNGEN (OpenWeatherMap)\nvar info = flow.get('owmInfo');\nvar owmTxt;\nif (!info || !info.hasKey) { owmTxt = 'Noch kein API-Schlüssel gespeichert. Schlüssel und Standort oben eintragen und auf SPEICHERN klicken.'; }\nelse {\n    owmTxt = 'Schlüssel gespeichert (' + info.keyLen + ' Zeichen, Quelle: ' + info.source + ')'\n        + (info.lat !== undefined && info.lat !== '' ? ' · Standort ' + f(Number(info.lat), 3) + ' / ' + f(Number(info.lon), 3) : ' · Standort fehlt')\n        + ' · Wetterdaten: ' + (W.status || 'noch nicht abgerufen') + (wAge !== null ? ' (Alter ' + age(wAge) + ')' : '');\n}\nout[6] = {payload: owmTxt};\nreturn out;\n",
-        "outputs": 7,
+        "func": "\n// Einmal pro Minute: Werte zusammenfuehren, bewerten, anzeigen und protokollieren. KEIN Eingriff in die Regelung.\n// Raeume werden nach der Abweichung vom EIGENEN Komfortband bewertet, nicht nach der absoluten Temperatur:\n// unter dem Minimum negativ (Heizbedarf), im Band 0, ueber dem Maximum positiv (Ueberschreitung).\nvar cfg = global.get('OPT_cfg');\nif (!cfg) { return null; }\nvar now = Date.now();\nvar R = global.get('OPT_rooms') || {};\nvar W = global.get('OPT_weather') || {};\nvar G = function (k) { return global.get(k); };\n\nfunction num(v) { v = Number(v); return isFinite(v) ? v : null; }\nfunction ok(v) { return v !== null && v !== undefined && isFinite(v); }\nfunction f(v, d, unit) { if (!ok(v)) { return '–'; } return Number(v).toFixed(d).replace('.', ',') + (unit ? ' ' + unit : ''); }\nfunction sg(v, d, unit) { if (!ok(v)) { return '–'; } var r = Number(Number(v).toFixed(d)); return (r > 0 ? '+' : '') + r.toFixed(d).replace('.', ',') + (unit ? ' ' + unit : ''); }\nfunction ageMin(ts) { return ts ? Math.round((now - ts) / 60000) : null; }\nfunction arrow(t) { if (t === null || t === undefined) { return '·'; } return t >= 0.05 ? '↑' : (t <= -0.05 ? '↓' : '→'); }\nfunction age(a) { return a === null ? 'keine Daten' : (a < 60 ? a + ' min' : (a / 60).toFixed(1).replace('.', ',') + ' h'); }\nfunction trTxt(x) { return x.trend === null ? 'Trend n. v.' : arrow(x.trend) + ' ' + f(x.trend, 2, 'K/h'); }\n\n// ---------- Raeume: Abweichung und Abstand zum eigenen Komfortband\nvar rooms = [];\n(cfg.rooms || []).forEach(function (rc) {\n    var r = R[rc.id] || {};\n    var a = ageMin(r.ts), lim = rc.maxAgeMin || cfg.sensor.maxAgeMin;\n    var band = isFinite(rc.min) && isFinite(rc.max) && rc.min < rc.max;\n    var x = {id: rc.id, name: rc.name, active: rc.active !== false && band, hasData: (r.ema !== undefined && a !== null), age: a, lim: lim,\n             ema: r.ema, last: r.last, trend: (r.trend === undefined ? null : r.trend), min: rc.min, max: rc.max, weight: rc.weight || 1,\n             dev: 0, score: 0, dLow: null, dHigh: null};\n    x.valid = x.active && x.hasData && a <= lim;\n    if (x.hasData && band) {\n        x.dLow = x.ema - x.min; x.dHigh = x.max - x.ema;\n        x.dev = x.ema < x.min ? x.ema - x.min : (x.ema > x.max ? x.ema - x.max : 0);   // <0 Heizbedarf, 0 im Band, >0 Ueberschreitung\n        x.score = x.dev * x.weight;\n    }\n    rooms.push(x);\n});\nvar valids = rooms.filter(function (x) { return x.valid; });\nvar heat = null, over = null, tight = null;\nvalids.forEach(function (x) {\n    if (x.dev < 0 && (heat === null || x.score < heat.score)) { heat = x; }     // groesste (gewichtete) Unterschreitung des eigenen Minimums\n    if (x.dev > 0 && (over === null || x.score > over.score)) { over = x; }     // groesste (gewichtete) Ueberschreitung des eigenen Maximums\n    var m = Math.min(x.dLow, x.dHigh);\n    if (tight === null || m < tight.m) { tight = {m: m, room: x}; }\n});\nvar nActive = rooms.filter(function (x) { return x.active; }).length;\nvar none = !valids.length;\nvar rowsRoom = [\n    ['Heizbedarf (maßgeblicher Raum)', none ? '–' : (heat ? heat.name + ' · ' + f(-heat.dev, 1, 'K') + ' unter Minimum · ' + trTxt(heat) : 'keiner'), none || heat ? 'warn' : 'ok'],\n    ['Überschreitung (maßgeblicher Raum)', none ? '–' : (over ? over.name + ' · ' + f(over.dev, 1, 'K') + ' über Maximum · ' + trTxt(over) : 'keine'), none || over ? 'warn' : 'ok'],\n    ['Geringster Abstand zur Grenze', tight ? sg(tight.m, 1, 'K') + ' (' + tight.room.name + ')' : '–', tight && tight.m < 0.3 ? 'warn' : ''],\n    ['Gültig für die Optimierung', valids.length + ' von ' + nActive + ' aktiven Räumen' + (nActive < rooms.length ? ' · ' + (rooms.length - nActive) + ' inaktiv' : ''), valids.length < nActive ? 'warn' : '']\n];\nvar detail = rooms.map(function (x) {\n    var why = !x.active ? 'nein (inaktiv)' : (!x.hasData ? 'nein (keine Daten)' : (!x.valid ? 'nein (veraltet, Limit ' + age(x.lim) + ')' : 'ja'));\n    var role = (x === heat) ? 'Heizbedarf' : ((x === over) ? 'Überschreitung' : '');\n    return [x.name, x.hasData ? f(x.ema, 1, '°C') : '–', f(x.min, 1) + ' – ' + f(x.max, 1, '°C'),\n            x.hasData ? sg(x.dLow, 1, 'K') : '–', x.hasData ? sg(x.dHigh, 1, 'K') : '–', x.hasData ? (x.trend === null ? 'n. v.' : trTxt(x)) : '–',\n            why + (x.hasData ? ' · ' + age(x.age) : ''), role, !x.valid ? 'mute' : (x.dev !== 0 ? 'warn' : 'ok')];\n});\n\n// ---------- Aussen / Wetter\nvar tp = num(G('TOP14_Outside_Temp')), tw = (W.ts && ageMin(W.ts) <= cfg.weather.maxAgeMin) ? W.temp : null;\nvar wAge = ageMin(W.ts), wOk = (W.status === 'OK' && wAge !== null && wAge <= cfg.weather.maxAgeMin);\nvar rowsWx = [\n    ['Außen Panasonic', f(tp, 1, '°C'), ''],\n    ['Außen Wetterdienst', tw !== null ? f(tw, 1, '°C') : '–', ''],\n    ['Differenz Wetter − Panasonic', (tw !== null && tp !== null) ? sg(tw - tp, 1, 'K') : '–', ''],\n    ['Prognose +1 h', wOk ? f(W.f1, 1, '°C') : '–', ''],\n    ['Prognose +3 h', wOk ? f(W.f3, 1, '°C') : '–', ''],\n    ['Prognose +6 h', wOk ? f(W.f6, 1, '°C') : '–', ''],\n    ['Luftfeuchtigkeit', wOk ? f(W.rh, 0, '%') : '–', ''],\n    ['Taupunkt', wOk ? f(W.dew, 1, '°C') : '–', ''],\n    ['Bewölkung', (wOk && W.clouds !== null && W.clouds !== undefined) ? f(W.clouds, 0, '%') : '–', ''],\n    ['Wetterdaten', (W.status || 'noch nicht abgerufen') + (wAge !== null ? ' · Alter ' + age(wAge) : ''), wOk ? 'ok' : ''],\n    ['Regelwert Außentemperatur', f(tp, 1, '°C') + ' (Panasonic, unverändert)', '']\n];\n\n// ---------- Waermepumpe\nvar freq = num(G('compressor_frequency')) || 0, valve = num(G('TOP20_ThreeWay_Valve_State')), defrost = num(G('TOP26_Defrosting_State')) === 1;\nvar ss = G('F_SS'), ssOn = ss && ss.state === 1;\nvar pOn = num(G('TOP0_Heatpump_State')) === 1;\nvar mode = !pOn ? 'Aus' : (defrost ? 'Abtauen' : (valve === 1 ? 'Warmwasser' : (freq > 0 ? 'Heizen' : 'Bereit')));\nvar shiftBase = null, ccc = G('F_CCC'); if (ccc && ccc.z1) { shiftBase = num(ccc.z1.SP_DIRECT_virt); }\nvar rtc = G('F_RTC'), rtcCorr = (rtc && rtc.z1) ? num(rtc.z1.correction_value) : null;\nvar shiftFinal = num(G('SHIFT_Final')), target = num(G('TOP42_Z1_Water_Target_Temp'));\nvar inl = num(G('TOP5_Main_Inlet_Temp')), outl = num(G('TOP6_Main_Outlet_Temp')), pw = num(G('TOP16_Heat_Energy_Consumption')), cop = num(G('COP_HEAT'));\nvar rowsWp = [\n    ['Betriebszustand', mode + (mode === 'Bereit' ? ' (Verdichter steht)' : '') + (ssOn ? ' · Sanftanlauf aktiv' : ''), ''],\n    ['Soll-Vorlauf (Panasonic-Heizkurve)', f(target, 0, '°C'), ''],\n    ['Basis-Verschiebung (manuell)', f(shiftBase, 0, 'K'), ''],\n    ['Raumregelung-Korrektur (bestehend)', f(rtcCorr, 0, 'K'), ''],\n    ['Finale Verschiebung', f(shiftFinal, 0, 'K'), ''],\n    ['Vorlauf / Rücklauf', f(outl, 1) + ' / ' + f(inl, 1, '°C'), ''],\n    ['Verdichter', f(freq, 0, 'Hz'), ''],\n    ['Leistung · COP', f(pw, 0, 'W') + ' · ' + (freq > 0 ? f(cop, 1) : '–'), ''],\n    ['Starts heute', f(num(G('Starts_Today')), 0), '']\n];\n\n// ---------- Optimierung (Phase 1: nur Beobachtung)\nvar reason;\nif (none) { reason = 'Beobachtung · keine gültigen Raumdaten'; }\nelse if (heat && over) { reason = 'Beobachtung · Zielkonflikt: ' + heat.name + ' unter Minimum, ' + over.name + ' über Maximum'; }\nelse if (heat) { reason = 'Beobachtung · ' + heat.name + ' ' + f(-heat.dev, 1, 'K') + ' unter dem eigenen Minimum (' + trTxt(heat) + ')'; }\nelse if (over) { reason = 'Beobachtung · ' + over.name + ' ' + f(over.dev, 1, 'K') + ' über dem eigenen Maximum (' + trTxt(over) + ')'; }\nelse { reason = 'Beobachtung · alle gültigen Räume im eigenen Komfortband'; }\n\nvar out = [{payload: {rows: rowsWx}}, {payload: {rows: rowsRoom}}, {payload: {rows: rowsWp}}, null, null, null, null, {payload: {table: detail}}];\n\n// ---------- Protokoll (alle log.intervalMin Minuten, CSV) und Ereignisse\nvar d = new Date(now), pad = function (n) { return (n < 10 ? '0' : '') + n; };\nvar month = d.getFullYear() + '-' + pad(d.getMonth() + 1);\nvar iso = month + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());\nfunction c(v) { return (v === null || v === undefined || !isFinite(v)) ? '' : String(Math.round(v * 100) / 100); }\n// Kopfzeile nur schreiben, wenn sie in der Datei fehlt oder sich die Spalten geaendert haben (auch nach einem Neustart)\nfunction headerNeeded(key, file, headLine) {\n    if (flow.get(key) === month + '|' + headLine) { return false; }\n    flow.set(key, month + '|' + headLine);\n    try {\n        var last = null;\n        String(fs.readFileSync(file, 'utf8')).split('\\n').forEach(function (l) { if (l.indexOf(headLine.split(',')[0] + ',') === 0) { last = l; } });\n        return last !== headLine;\n    } catch (e) { return true; }                // Datei gibt es noch nicht\n}\nvar lastLog = flow.get('lastLog');\nif (!lastLog || (now - lastLog) >= cfg.log.intervalMin * 60000) {\n    var cols = ['zeit', 'aussen_panasonic', 'aussen_wetter', 'diff_wetter_minus_panasonic', 'wetter_feuchte', 'wetter_taupunkt', 'wetter_bewoelkung',\n                'prog_1h', 'prog_3h', 'prog_6h', 'wetter_alter_min'];\n    var vals = [iso, c(tp), c(tw), c((tw !== null && tp !== null) ? tw - tp : null), c(wOk ? W.rh : null), c(wOk ? W.dew : null), c(wOk ? W.clouds : null),\n                c(wOk ? W.f1 : null), c(wOk ? W.f3 : null), c(wOk ? W.f6 : null), c(wAge)];\n    rooms.forEach(function (x) {\n        ['wert', 'ema', 'alter_min', 'trend', 'abw', 'gueltig', 'min', 'max'].forEach(function (s) { cols.push(x.id + '_' + s); });\n        vals = vals.concat([c(x.last), c(x.ema), c(x.age), c(x.trend), (x.hasData && x.active) ? c(x.dev) : '', x.valid ? 1 : 0, c(x.min), c(x.max)]);\n    });\n    cols = cols.concat(['raeume_gueltig', 'heizbedarf_raum', 'heizbedarf_abw', 'ueberschreitung_raum', 'ueberschreitung_abw', 'spielraum_k', 'spielraum_raum',\n                        'soll_vorlauf', 'shift_basis', 'shift_rtc', 'shift_final', 'vorlauf', 'ruecklauf', 'verdichter_hz', 'verdichter_an',\n                        'leistung_w', 'cop', 'defrost', 'warmwasser', 'sanftanlauf', 'zustand', 'starts_heute']);\n    vals = vals.concat([valids.length, heat ? heat.name : '', heat ? c(heat.dev) : '', over ? over.name : '', over ? c(over.dev) : '', tight ? c(tight.m) : '', tight ? tight.room.name : '',\n                        c(target), c(shiftBase), c(rtcCorr), c(shiftFinal), c(outl), c(inl), c(freq), freq > 0 ? 1 : 0,\n                        c(pw), c(freq > 0 ? cop : null), defrost ? 1 : 0, valve === 1 ? 1 : 0, ssOn ? 1 : 0, mode, c(num(G('Starts_Today')))]);\n    var logFile = '/data/optimizer/optimizer-v2-' + month + '.csv', headLine = cols.join(',');\n    out[4] = {filename: logFile, payload: (headerNeeded('logHead', logFile, headLine) ? headLine + '\\n' : '') + vals.join(',') + '\\n'};\n    flow.set('lastLog', now);\n    lastLog = now;\n}\nvar rowsOpt = [\n    ['Modus', 'Phase 1 · nur Beobachtung, kein Eingriff', 'ok'],\n    ['Grund', reason, ''],\n    ['Raumkorrektur durch Optimierung', '0 K (nicht aktiv)', ''],\n    ['Protokoll', lastLog ? 'letzter Eintrag ' + new Date(lastLog).toLocaleTimeString('de-DE', {hour: '2-digit', minute: '2-digit'}) : 'noch kein Eintrag', '']\n];\nout[3] = {payload: {rows: rowsOpt}};\n\n// Zustandswechsel als Ereignisse (fuer die spaetere Auswertung)\nvar prev = flow.get('prevState') || {};\nvar cur = {verdichter: freq > 0 ? 1 : 0, defrost: defrost ? 1 : 0, warmwasser: valve === 1 ? 1 : 0, sanftanlauf: ssOn ? 1 : 0,\n           komfort: none ? 'unbekannt' : ((heat || over) ? [heat ? 'heizbedarf:' + heat.name : '', over ? 'ueberschreitung:' + over.name : ''].filter(Boolean).join('+') : 'ok')};\nvar ev = [];\nObject.keys(cur).forEach(function (k) { if (prev[k] !== undefined && prev[k] !== cur[k]) { ev.push(iso + ',' + k + ',' + prev[k] + '->' + cur[k]); } });\nflow.set('prevState', cur);\nif (ev.length) {\n    var evFile = '/data/optimizer/optimizer-events-' + month + '.csv', evHead = 'zeit,ereignis,wechsel';\n    out[5] = {filename: evFile, payload: (headerNeeded('evHead', evFile, evHead) ? evHead + '\\n' : '') + ev.join('\\n') + '\\n'};\n}\n// Statuszeile fuer SYSTEM > EINSTELLUNGEN (OpenWeatherMap)\nvar info = flow.get('owmInfo');\nvar owmTxt;\nif (!info || !info.hasKey) { owmTxt = 'Noch kein API-Schlüssel gespeichert. Schlüssel und Standort oben eintragen und auf SPEICHERN klicken.'; }\nelse {\n    owmTxt = 'Schlüssel gespeichert (' + info.keyLen + ' Zeichen, Quelle: ' + info.source + ')'\n        + (info.lat !== undefined && info.lat !== '' ? ' · Standort ' + f(Number(info.lat), 3) + ' / ' + f(Number(info.lon), 3) : ' · Standort fehlt')\n        + ' · Wetterdaten: ' + (W.status || 'noch nicht abgerufen') + (wAge !== null ? ' (Alter ' + age(wAge) + ')' : '');\n}\nout[6] = {payload: owmTxt};\nreturn out;\n",
+        "outputs": 8,
         "timeout": 0,
         "noerr": 0,
         "initialize": "",
         "finalize": "",
-        "libs": [],
+        "libs": [
+            {
+                "var": "fs",
+                "module": "fs"
+            }
+        ],
         "x": 420,
         "y": 760,
         "wires": [
@@ -91642,6 +91607,9 @@
             ],
             [
                 "opt_ui_wxstatus"
+            ],
+            [
+                "opt_t_roomdetail"
             ]
         ]
     },
@@ -91893,5 +91861,508 @@
                 "opt_ui_wxstatus"
             ]
         ]
+    },
+    {
+        "id": "opt_g_roomdetail",
+        "type": "ui_group",
+        "name": "Räume im Detail",
+        "tab": "opt_ui_tab",
+        "order": 3,
+        "disp": true,
+        "width": 12,
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "opt_g_cfg_ki_oben",
+        "type": "ui_group",
+        "name": "Einstellungen: Kinderzimmer oben",
+        "tab": "opt_ui_tab",
+        "order": 6,
+        "disp": true,
+        "width": 6,
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "opt_g_cfg_ki_unten",
+        "type": "ui_group",
+        "name": "Einstellungen: Kinderzimmer unten",
+        "tab": "opt_ui_tab",
+        "order": 7,
+        "disp": true,
+        "width": 6,
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "opt_g_cfg_schlaf",
+        "type": "ui_group",
+        "name": "Einstellungen: Schlafzimmer",
+        "tab": "opt_ui_tab",
+        "order": 8,
+        "disp": true,
+        "width": 6,
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "opt_t_roomdetail",
+        "type": "ui_template",
+        "z": "opt_tab",
+        "group": "opt_g_roomdetail",
+        "name": "Räume im Detail",
+        "order": 1,
+        "width": 12,
+        "height": 5,
+        "format": "<style>.optd{width:100%;border-collapse:collapse;font-size:13px}\n.optd th{text-align:left;font-weight:normal;color:#666;padding:3px 6px;border-bottom:1px solid #ccc}\n.optd td{padding:4px 6px;vertical-align:top;border-bottom:1px solid #eee} .optd .n{text-align:right;white-space:nowrap}\n.optd .warn{color:#c62828;font-weight:bold} .optd .ok{color:#2e7d32;font-weight:bold} .optd .mute{color:#999}\n.optd-note{font-size:12px;color:#666;padding:4px 6px}</style>\n<div style=\"overflow-x:auto\"><table class=\"optd\"><tr><th>Raum</th><th class=\"n\">Ist</th><th>Komfortband</th><th class=\"n\">Abstand unten</th><th class=\"n\">Abstand oben</th>\n<th>Trend</th><th>Für Optimierung gültig</th><th>Bestimmt</th></tr>\n<tr ng-repeat=\"r in msg.payload.table track by $index\"><td>{{r[0]}}</td><td class=\"n\" ng-class=\"r[8]\">{{r[1]}}</td><td>{{r[2]}}</td>\n<td class=\"n\" ng-class=\"r[8]\">{{r[3]}}</td><td class=\"n\" ng-class=\"r[8]\">{{r[4]}}</td><td>{{r[5]}}</td>\n<td ng-class=\"{mute: r[8]==='mute'}\">{{r[6]}}</td><td>{{r[7]}}</td></tr></table></div>\n<div class=\"optd-note\">Abstand: positiv = noch Luft bis zur Grenze, negativ = Grenze verletzt. Jeder Raum wird nach seinem eigenen Band bewertet.</div>",
+        "storeOutMessages": true,
+        "fwdInMessages": false,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "className": "",
+        "x": 1260,
+        "y": 380,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "opt_w_ki_oben_active",
+        "z": "opt_tab",
+        "group": "opt_g_cfg_ki_oben",
+        "order": 1,
+        "width": 6,
+        "height": 1,
+        "passthru": false,
+        "topic": "room:ki_oben:active",
+        "topicType": "str",
+        "className": "",
+        "x": 1500,
+        "y": 140,
+        "wires": [
+            [
+                "opt_set"
+            ]
+        ],
+        "type": "ui_switch",
+        "name": "Aktiv · Kinderzimmer oben",
+        "label": "Aktiv (für die Optimierung)",
+        "tooltip": "Inaktive Räume werden nur angezeigt, aber nicht bewertet.",
+        "decouple": "true",
+        "style": "",
+        "onvalue": "true",
+        "onvalueType": "bool",
+        "onicon": "",
+        "oncolor": "",
+        "offvalue": "false",
+        "offvalueType": "bool",
+        "officon": "",
+        "offcolor": "",
+        "animate": false
+    },
+    {
+        "id": "opt_w_ki_oben_min",
+        "z": "opt_tab",
+        "group": "opt_g_cfg_ki_oben",
+        "order": 2,
+        "width": 6,
+        "height": 1,
+        "passthru": false,
+        "topic": "room:ki_oben:min",
+        "topicType": "str",
+        "className": "",
+        "x": 1500,
+        "y": 180,
+        "wires": [
+            [
+                "opt_set"
+            ]
+        ],
+        "type": "ui_numeric",
+        "name": "Komfort-Minimum (°C) · Kinderzimmer oben",
+        "label": "Komfort-Minimum (°C)",
+        "tooltip": "Darunter braucht der Raum Wärme.",
+        "wrap": false,
+        "format": "{{value}}",
+        "min": 10,
+        "max": 30,
+        "step": 0.5
+    },
+    {
+        "id": "opt_w_ki_oben_max",
+        "z": "opt_tab",
+        "group": "opt_g_cfg_ki_oben",
+        "order": 3,
+        "width": 6,
+        "height": 1,
+        "passthru": false,
+        "topic": "room:ki_oben:max",
+        "topicType": "str",
+        "className": "",
+        "x": 1500,
+        "y": 220,
+        "wires": [
+            [
+                "opt_set"
+            ]
+        ],
+        "type": "ui_numeric",
+        "name": "Komfort-Maximum (°C) · Kinderzimmer oben",
+        "label": "Komfort-Maximum (°C)",
+        "tooltip": "Darüber ist der Raum zu warm.",
+        "wrap": false,
+        "format": "{{value}}",
+        "min": 12,
+        "max": 35,
+        "step": 0.5
+    },
+    {
+        "id": "opt_w_ki_oben_weight",
+        "z": "opt_tab",
+        "group": "opt_g_cfg_ki_oben",
+        "order": 4,
+        "width": 6,
+        "height": 1,
+        "passthru": false,
+        "topic": "room:ki_oben:weight",
+        "topicType": "str",
+        "className": "",
+        "x": 1500,
+        "y": 260,
+        "wires": [
+            [
+                "opt_set"
+            ]
+        ],
+        "type": "ui_numeric",
+        "name": "Gewichtung · Kinderzimmer oben",
+        "label": "Gewichtung",
+        "tooltip": "Faktor für die Abweichung vom Band. Ein höherer Wert macht den Raum bei der Wahl des maßgeblichen Raums wichtiger.",
+        "wrap": false,
+        "format": "{{value}}",
+        "min": 0.1,
+        "max": 5,
+        "step": 0.1
+    },
+    {
+        "id": "opt_w_ki_oben_maxAgeMin",
+        "z": "opt_tab",
+        "group": "opt_g_cfg_ki_oben",
+        "order": 5,
+        "width": 6,
+        "height": 1,
+        "passthru": false,
+        "topic": "room:ki_oben:maxAgeMin",
+        "topicType": "str",
+        "className": "",
+        "x": 1500,
+        "y": 300,
+        "wires": [
+            [
+                "opt_set"
+            ]
+        ],
+        "type": "ui_numeric",
+        "name": "Datenalter-Limit (min) · Kinderzimmer oben",
+        "label": "Datenalter-Limit (min)",
+        "tooltip": "Ältere Sensorwerte zählen für die Optimierung nicht mehr.",
+        "wrap": false,
+        "format": "{{value}}",
+        "min": 5,
+        "max": 720,
+        "step": 5
+    },
+    {
+        "id": "opt_w_ki_unten_active",
+        "z": "opt_tab",
+        "group": "opt_g_cfg_ki_unten",
+        "order": 1,
+        "width": 6,
+        "height": 1,
+        "passthru": false,
+        "topic": "room:ki_unten:active",
+        "topicType": "str",
+        "className": "",
+        "x": 1500,
+        "y": 340,
+        "wires": [
+            [
+                "opt_set"
+            ]
+        ],
+        "type": "ui_switch",
+        "name": "Aktiv · Kinderzimmer unten",
+        "label": "Aktiv (für die Optimierung)",
+        "tooltip": "Inaktive Räume werden nur angezeigt, aber nicht bewertet.",
+        "decouple": "true",
+        "style": "",
+        "onvalue": "true",
+        "onvalueType": "bool",
+        "onicon": "",
+        "oncolor": "",
+        "offvalue": "false",
+        "offvalueType": "bool",
+        "officon": "",
+        "offcolor": "",
+        "animate": false
+    },
+    {
+        "id": "opt_w_ki_unten_min",
+        "z": "opt_tab",
+        "group": "opt_g_cfg_ki_unten",
+        "order": 2,
+        "width": 6,
+        "height": 1,
+        "passthru": false,
+        "topic": "room:ki_unten:min",
+        "topicType": "str",
+        "className": "",
+        "x": 1500,
+        "y": 380,
+        "wires": [
+            [
+                "opt_set"
+            ]
+        ],
+        "type": "ui_numeric",
+        "name": "Komfort-Minimum (°C) · Kinderzimmer unten",
+        "label": "Komfort-Minimum (°C)",
+        "tooltip": "Darunter braucht der Raum Wärme.",
+        "wrap": false,
+        "format": "{{value}}",
+        "min": 10,
+        "max": 30,
+        "step": 0.5
+    },
+    {
+        "id": "opt_w_ki_unten_max",
+        "z": "opt_tab",
+        "group": "opt_g_cfg_ki_unten",
+        "order": 3,
+        "width": 6,
+        "height": 1,
+        "passthru": false,
+        "topic": "room:ki_unten:max",
+        "topicType": "str",
+        "className": "",
+        "x": 1500,
+        "y": 420,
+        "wires": [
+            [
+                "opt_set"
+            ]
+        ],
+        "type": "ui_numeric",
+        "name": "Komfort-Maximum (°C) · Kinderzimmer unten",
+        "label": "Komfort-Maximum (°C)",
+        "tooltip": "Darüber ist der Raum zu warm.",
+        "wrap": false,
+        "format": "{{value}}",
+        "min": 12,
+        "max": 35,
+        "step": 0.5
+    },
+    {
+        "id": "opt_w_ki_unten_weight",
+        "z": "opt_tab",
+        "group": "opt_g_cfg_ki_unten",
+        "order": 4,
+        "width": 6,
+        "height": 1,
+        "passthru": false,
+        "topic": "room:ki_unten:weight",
+        "topicType": "str",
+        "className": "",
+        "x": 1500,
+        "y": 460,
+        "wires": [
+            [
+                "opt_set"
+            ]
+        ],
+        "type": "ui_numeric",
+        "name": "Gewichtung · Kinderzimmer unten",
+        "label": "Gewichtung",
+        "tooltip": "Faktor für die Abweichung vom Band. Ein höherer Wert macht den Raum bei der Wahl des maßgeblichen Raums wichtiger.",
+        "wrap": false,
+        "format": "{{value}}",
+        "min": 0.1,
+        "max": 5,
+        "step": 0.1
+    },
+    {
+        "id": "opt_w_ki_unten_maxAgeMin",
+        "z": "opt_tab",
+        "group": "opt_g_cfg_ki_unten",
+        "order": 5,
+        "width": 6,
+        "height": 1,
+        "passthru": false,
+        "topic": "room:ki_unten:maxAgeMin",
+        "topicType": "str",
+        "className": "",
+        "x": 1500,
+        "y": 500,
+        "wires": [
+            [
+                "opt_set"
+            ]
+        ],
+        "type": "ui_numeric",
+        "name": "Datenalter-Limit (min) · Kinderzimmer unten",
+        "label": "Datenalter-Limit (min)",
+        "tooltip": "Ältere Sensorwerte zählen für die Optimierung nicht mehr.",
+        "wrap": false,
+        "format": "{{value}}",
+        "min": 5,
+        "max": 720,
+        "step": 5
+    },
+    {
+        "id": "opt_w_schlaf_active",
+        "z": "opt_tab",
+        "group": "opt_g_cfg_schlaf",
+        "order": 1,
+        "width": 6,
+        "height": 1,
+        "passthru": false,
+        "topic": "room:schlaf:active",
+        "topicType": "str",
+        "className": "",
+        "x": 1500,
+        "y": 540,
+        "wires": [
+            [
+                "opt_set"
+            ]
+        ],
+        "type": "ui_switch",
+        "name": "Aktiv · Schlafzimmer",
+        "label": "Aktiv (für die Optimierung)",
+        "tooltip": "Inaktive Räume werden nur angezeigt, aber nicht bewertet.",
+        "decouple": "true",
+        "style": "",
+        "onvalue": "true",
+        "onvalueType": "bool",
+        "onicon": "",
+        "oncolor": "",
+        "offvalue": "false",
+        "offvalueType": "bool",
+        "officon": "",
+        "offcolor": "",
+        "animate": false
+    },
+    {
+        "id": "opt_w_schlaf_min",
+        "z": "opt_tab",
+        "group": "opt_g_cfg_schlaf",
+        "order": 2,
+        "width": 6,
+        "height": 1,
+        "passthru": false,
+        "topic": "room:schlaf:min",
+        "topicType": "str",
+        "className": "",
+        "x": 1500,
+        "y": 580,
+        "wires": [
+            [
+                "opt_set"
+            ]
+        ],
+        "type": "ui_numeric",
+        "name": "Komfort-Minimum (°C) · Schlafzimmer",
+        "label": "Komfort-Minimum (°C)",
+        "tooltip": "Darunter braucht der Raum Wärme.",
+        "wrap": false,
+        "format": "{{value}}",
+        "min": 10,
+        "max": 30,
+        "step": 0.5
+    },
+    {
+        "id": "opt_w_schlaf_max",
+        "z": "opt_tab",
+        "group": "opt_g_cfg_schlaf",
+        "order": 3,
+        "width": 6,
+        "height": 1,
+        "passthru": false,
+        "topic": "room:schlaf:max",
+        "topicType": "str",
+        "className": "",
+        "x": 1500,
+        "y": 620,
+        "wires": [
+            [
+                "opt_set"
+            ]
+        ],
+        "type": "ui_numeric",
+        "name": "Komfort-Maximum (°C) · Schlafzimmer",
+        "label": "Komfort-Maximum (°C)",
+        "tooltip": "Darüber ist der Raum zu warm.",
+        "wrap": false,
+        "format": "{{value}}",
+        "min": 12,
+        "max": 35,
+        "step": 0.5
+    },
+    {
+        "id": "opt_w_schlaf_weight",
+        "z": "opt_tab",
+        "group": "opt_g_cfg_schlaf",
+        "order": 4,
+        "width": 6,
+        "height": 1,
+        "passthru": false,
+        "topic": "room:schlaf:weight",
+        "topicType": "str",
+        "className": "",
+        "x": 1500,
+        "y": 660,
+        "wires": [
+            [
+                "opt_set"
+            ]
+        ],
+        "type": "ui_numeric",
+        "name": "Gewichtung · Schlafzimmer",
+        "label": "Gewichtung",
+        "tooltip": "Faktor für die Abweichung vom Band. Ein höherer Wert macht den Raum bei der Wahl des maßgeblichen Raums wichtiger.",
+        "wrap": false,
+        "format": "{{value}}",
+        "min": 0.1,
+        "max": 5,
+        "step": 0.1
+    },
+    {
+        "id": "opt_w_schlaf_maxAgeMin",
+        "z": "opt_tab",
+        "group": "opt_g_cfg_schlaf",
+        "order": 5,
+        "width": 6,
+        "height": 1,
+        "passthru": false,
+        "topic": "room:schlaf:maxAgeMin",
+        "topicType": "str",
+        "className": "",
+        "x": 1500,
+        "y": 700,
+        "wires": [
+            [
+                "opt_set"
+            ]
+        ],
+        "type": "ui_numeric",
+        "name": "Datenalter-Limit (min) · Schlafzimmer",
+        "label": "Datenalter-Limit (min)",
+        "tooltip": "Ältere Sensorwerte zählen für die Optimierung nicht mehr.",
+        "wrap": false,
+        "format": "{{value}}",
+        "min": 5,
+        "max": 720,
+        "step": 5
     }
 ]
