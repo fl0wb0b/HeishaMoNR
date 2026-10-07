@@ -516,7 +516,7 @@ function kwh24(arr) {                                                 // VRM-Stu
     return cn ? sm / 1000 : null;
 }
 var vrmFresh = vrmAge !== null && vrmAge <= (isFinite(E.vrmMaxAgeH) ? Number(E.vrmMaxAgeH) : 4) * H;
-var consK = vrmFresh ? kwh24(vrm.cons) : null, hpK = vrmFresh ? kwh24(vrm.hp) : null;
+var consK = vrmFresh ? kwh24(vrm.cons) : null;
 var pvCov = pvSeries.length ? Math.max(0, (pvSeries[pvSeries.length - 1].t + pvSeries[pvSeries.length - 1].dt - now) / H) : null;
 var pvKwh24 = null, pvPeak = null, pvPeakAt = null, kToday = null, kTomorrow = null;
 if (pvSeries.length) {
@@ -544,7 +544,7 @@ var rows = [
     ['Preis nächste 24 h', pMin !== null ? f(pMin * 100, 1) + ' – ' + f(pAvg * 100, 1) + ' – ' + f(pMax * 100, 1, 'ct/kWh') + ' (min – Ø – max)' : '–', ''],
     ['Günstigster Slot / 3 h', pMinAt ? hhmm(pMinAt) + ' (' + f(pMin * 100, 1, 'ct') + ') / ab ' + (p3At ? hhmm(p3At) + ' (Ø ' + f(p3 * 100, 1, 'ct') + ')' : '–') : '–', ''],
     ['PV-Prognose nächste 24 h', pvKwh24 !== null ? f(pvKwh24, 1, 'kWh') + ' · Spitze ' + f(pvPeak, 0, 'W') + ' um ' + hhmm(pvPeakAt) : '–', ''],
-    ['Verbrauch nächste 24 h (VRM-Prognose)', consK !== null ? f(consK, 1, 'kWh') + (hpK !== null ? ' · davon Wärmepumpe ' + f(hpK, 1, 'kWh') : '') : '–', ''],
+    ['Verbrauch nächste 24 h (VRM-Prognose)', consK !== null ? f(consK, 1, 'kWh') : '–', ''],
     ['PV-Prognose heute / morgen', kToday !== null ? f(kToday, 1) + ' / ' + f(kTomorrow, 1, 'kWh') : '–', ''],
     ['Daten Venus (live)', liveOk ? 'ok · Alter ' + ageTxt(liveAge) : 'veraltet · ' + ageTxt(liveAge), warnS(liveOk)],
     ['Daten Strompreise', pSlots ? pSrc + ' · ' + (priceOk ? 'ok' : 'zu kurz') + ' · reichen ' + f(priceCov, 0, 'h') + ' voraus' : 'keine Daten', warnS(priceOk)],
@@ -553,7 +553,7 @@ var rows = [
 ];
 var vi = flow.get('vrmInfo');
 var out = [{payload: {rows: rows}}, null, null, {payload: (!vi || !vi.hasToken) ? 'Noch kein VRM-Token gespeichert. Token und Installations-ID oben eintragen und auf SPEICHERN klicken.'
-    : 'Token gespeichert (' + vi.tokenLen + ' Zeichen) · Installation ' + vi.id + ' · Abruf: ' + (vrm.status || 'noch nicht abgerufen') + (vrmAge !== null ? ' (Alter ' + ageTxt(vrmAge) + ')' : '')}];
+    : 'Token gespeichert (' + vi.tokenLen + ' Zeichen) · Installation ' + vi.id + ' · Abruf: ' + (vrm.status || 'noch nicht abgerufen') + (vrmAge !== null ? ' (Alter ' + ageTxt(vrmAge) + ')' : '')}, null];
 // ---------- Protokoll alle 5 min; stuendlicher Schnappschuss der Prognosen (zum spaeteren Vergleich mit dem, was wirklich war)
 var d = new Date(now), pad = function (n) { return (n < 10 ? '0' : '') + n; };
 var month = d.getFullYear() + '-' + pad(d.getMonth() + 1);
@@ -561,9 +561,9 @@ var iso = month + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d
 var lastLog = flow.get('enLog');
 if (!lastLog || now - lastLog >= 5 * MS_MIN - 1000) {
     var cols = ['zeit', 'pv_w', 'haus_w', 'netz_w', 'batterie_w', 'batterie_soc', 'preis_netz', 'preis_einspeisung', 'preis_min_24h', 'preis_mittel_24h', 'preis_max_24h', 'preis_guenstigster_slot',
-                'pv_prog_24h_kwh', 'pv_prog_spitze_w', 'pv_prog_heute_kwh', 'pv_prog_morgen_kwh', 'pv_prog_quelle', 'venus_ok', 'venus_alter_min', 'soc_alter_min', 'preise_reichen_h', 'pv_prognose_reicht_h', 'vrm_status', 'soc_quelle', 'preis_quelle', 'preis_netz_evcc', 'preis_einspeisung_evcc', 'vrm_verbrauch_24h_kwh', 'vrm_wp_24h_kwh'];
+                'pv_prog_24h_kwh', 'pv_prog_spitze_w', 'pv_prog_heute_kwh', 'pv_prog_morgen_kwh', 'pv_prog_quelle', 'venus_ok', 'venus_alter_min', 'soc_alter_min', 'preise_reichen_h', 'pv_prognose_reicht_h', 'vrm_status', 'soc_quelle', 'preis_quelle', 'preis_netz_evcc', 'preis_einspeisung_evcc', 'vrm_verbrauch_24h_kwh'];
     var vals = [iso, c(pv), c(home), c(grid), c(batP), c(soc), c(pCur), c(pFeed), c(pMin), c(pAvg), c(pMax), pMinAt ? hhmm(pMinAt) : '',
-                c(pvKwh24), c(pvPeak), c(kToday), c(kTomorrow), pvSrc, liveOk ? 1 : 0, liveAge === null ? '' : c(liveAge / MS_MIN), socAge === null ? '' : c(socAge / MS_MIN), c(priceCov), c(pvCov), String(vrm.status || '').replace(/,/g, ';'), socSrc, pSrc, c(eCur), c(eFeed), c(consK), c(hpK)];
+                c(pvKwh24), c(pvPeak), c(kToday), c(kTomorrow), pvSrc, liveOk ? 1 : 0, liveAge === null ? '' : c(liveAge / MS_MIN), socAge === null ? '' : c(socAge / MS_MIN), c(priceCov), c(pvCov), String(vrm.status || '').replace(/,/g, ';'), socSrc, pSrc, c(eCur), c(eFeed), c(consK)];
     var file = '/data/optimizer/energy-' + month + '.csv', head = cols.join(','), needHead = true;
     if (flow.get('enHead') === month + '|' + head) { needHead = false; }
     else {
@@ -580,13 +580,73 @@ if (!lastSnap || now - lastSnap >= H - 1000) {
                 owm: (W.fpts && W.f_ts && now - W.f_ts < 2 * H) ? W.fpts : null,
                 price: pSlots ? pSlots.filter(function (s) { return s.e > now - 900000 && s.s < upto; }).map(function (s) { return [Math.round(s.s / 1000), s.p]; }) : null,
                 pv: pvSeries.length ? pvSeries.filter(function (s) { return s.t + s.dt > now && s.t < upto; }).map(function (s) { return [Math.round(s.t / 1000), Math.round(s.w), s.dt / 1000]; }) : null, pvSrc: pvSrc,
-                cons: vrmFresh && vrm.cons ? vrm.cons.filter(function (x) { return x[0] * 1000 + H > now && x[0] * 1000 < upto; }).map(function (x) { return [x[0], Math.round(x[1])]; }) : null,
-                hp: vrmFresh && vrm.hp ? vrm.hp.filter(function (x) { return x[0] * 1000 + H > now && x[0] * 1000 < upto; }).map(function (x) { return [x[0], Math.round(x[1])]; }) : null};
+                cons: vrmFresh && vrm.cons ? vrm.cons.filter(function (x) { return x[0] * 1000 + H > now && x[0] * 1000 < upto; }).map(function (x) { return [x[0], Math.round(x[1])]; }) : null};
     out[2] = {filename: '/data/optimizer/forecast-' + month + '.jsonl', payload: JSON.stringify(snap) + '\n'};
     flow.set('enSnap', now);
+    var sn0 = flow.get('enSnaps') || jload('/data/optimizer/forecast-recent.json', []);       // kompakte Kopie der letzten 30 Stunden fuer die Pruefung
+    sn0.push({t: snap.t, owm: snap.owm, pv: snap.pv});
+    while (sn0.length > 30) { sn0.shift(); }
+    flow.set('enSnaps', sn0); jsave('/data/optimizer/forecast-recent.json', sn0);
 }
+// ---------- Prognosegueete (nur Anzeige): Prognosen der Schnappschuesse mit dem vergleichen, was dann wirklich war (Stundenwerte)
+var FQ_H = [1, 3, 6, 12, 24];
+var fqAct = flow.get('enAct'), fqHist = flow.get('enHist') || jload('/data/optimizer/actuals-hourly.json', []);
+var fqSn = flow.get('enSnaps') || jload('/data/optimizer/forecast-recent.json', []);
+var fq = flow.get('enFq') || jload('/data/optimizer/forecast-quality.json', {at: {}, pv: {}});
+var h0 = Math.floor(now / H) * H, atNow = num0(G0('TOP14_Outside_Temp'));
+function owmAt(sn, tMs) {                                              // Prognose der Aussentemperatur zum Zeitpunkt (linear zwischen den 3-h-Punkten)
+    if (!sn || !Array.isArray(sn.owm)) { return null; }
+    var pts = sn.owm;
+    for (var i = 1; i < pts.length; i++) { if (pts[i][0] >= tMs && pts[i - 1][0] <= tMs) { return pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * (tMs - pts[i - 1][0]) / (pts[i][0] - pts[i - 1][0]); } }
+    return null;
+}
+function pvMean(sn, a, b) {                                            // mittlere PV-Leistung der Prognose in [a, b] (ms)
+    if (!sn || !Array.isArray(sn.pv) || !sn.pv.length) { return null; }
+    var sw = 0, dt = 0;
+    sn.pv.forEach(function (x) { var q0 = x[0] * 1000, q1 = q0 + (x[2] || 3600) * 1000, o = Math.min(q1, b) - Math.max(q0, a); if (o > 0) { sw += x[1] * o; dt += o; } });
+    return dt >= (b - a) * 0.9 ? sw / dt : null;
+}
+function fqEval(S, atA, pvA) {                                         // abgeschlossene Stunde [S, S+1h] auswerten
+    FQ_H.forEach(function (h) {
+        var want = S - h * H, best = null;
+        fqSn.forEach(function (sn) { var d = Math.abs(sn.t * 1000 - want); if (d <= 35 * MS_MIN && (best === null || d < Math.abs(best.t * 1000 - want))) { best = sn; } });
+        if (!best) { return; }
+        var fa = owmAt(best, S + H / 2);
+        if (fa !== null && atA !== null) { var e = fq.at[h] = fq.at[h] || {n: 0, bias: 0, abs: 0}; e.n++; e.bias += fa - atA; e.abs += Math.abs(fa - atA); }
+        var fp = pvMean(best, S, S + H);
+        if (fp !== null && pvA !== null && Math.max(fp, pvA) > 100) { var g = fq.pv[h] = fq.pv[h] || {n: 0, fc: 0, act: 0, abs: 0}; g.n++; g.fc += fp; g.act += pvA; g.abs += Math.abs(fp - pvA); }
+    });
+}
+if (!fqAct || fqAct.t0 !== h0) {
+    if (fqAct && fqAct.n >= 20) {                                     // vorherige Stunde abschliessen (mindestens 20 Minuten Daten)
+        var atA = fqAct.atN ? fqAct.atS / fqAct.atN : null, pvA = fqAct.pvN ? fqAct.pvS / fqAct.pvN : null;
+        fqHist.push([fqAct.t0, atA, pvA]);
+        while (fqHist.length > 240) { fqHist.shift(); }
+        fqEval(fqAct.t0, atA, pvA);
+        flow.set('enFq', fq); flow.set('enHist', fqHist);
+        jsave('/data/optimizer/forecast-quality.json', fq); jsave('/data/optimizer/actuals-hourly.json', fqHist);
+    }
+    fqAct = {t0: h0, atS: 0, atN: 0, pvS: 0, pvN: 0, n: 0};
+}
+fqAct.n++;
+if (atNow !== null) { fqAct.atS += atNow; fqAct.atN++; }
+if (pv !== null) { fqAct.pvS += pv; fqAct.pvN++; }
+flow.set('enAct', fqAct); flow.set('enHist', fqHist); flow.set('enSnaps', fqSn); flow.set('enFq', fq);
+var fqRows = [];
+FQ_H.forEach(function (h) {
+    var a = fq.at[h];
+    fqRows.push(['Außentemperatur +' + h + ' h (OWM)', a && a.n >= 3 ? 'Abw. ' + (a.bias / a.n >= 0 ? '+' : '') + f(a.bias / a.n, 1) + ' K · mittlerer Fehler ' + f(a.abs / a.n, 1, 'K') + ' (n ' + a.n + ')' : 'zu wenig Daten' + (a ? ' (n ' + a.n + ')' : ''), '']);
+});
+FQ_H.forEach(function (h) {
+    var g = fq.pv[h];
+    fqRows.push(['PV +' + h + ' h (' + (pvSrc === '–' ? 'Prognose' : pvSrc.split(' ')[0]) + ')', g && g.n >= 3 ? 'Prognose ' + f(100 * g.fc / g.act, 0, '%') + ' vom Ist · mittlerer Fehler ' + f(g.abs / g.n, 0, 'W') + ' (n ' + g.n + ')' : 'zu wenig Daten' + (g ? ' (n ' + g.n + ')' : ''), '']);
+});
+fqRows.push(['Gesammelt', fqHist.length + ' Stunden Ist-Werte · ' + fqSn.length + ' Prognose-Schnappschüsse', '']);
+out[4] = {payload: {rows: fqRows}};
 function G0(k) { return global.get(k); }
 function num0(v) { v = Number(v); return (v === null || v === undefined || !isFinite(v)) ? null : v; }
+function jload(file, dflt) { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { return dflt; } }
+function jsave(file, obj) { try { fs.mkdirSync('/data/optimizer', {recursive: true}); fs.writeFileSync(file, JSON.stringify(obj)); } catch (e) { /* kein Zugriff */ } }
 return out;
 """
 
@@ -632,7 +692,7 @@ if (!pv.length) {                                                  // sonst Wech
     pv = Object.keys(map).map(Number).sort(function (x, y) { return x - y; }).map(function (t) { return [t, map[t]]; });
 }
 if (!pv.length) { V.keys = Object.keys(rec).slice(0, 12); return fail('keine PV-Prognose in der Antwort (Felder: ' + V.keys.join(', ') + ')'); }
-V.pv = pv; V.cons = norm(rec.vrm_consumption_fc); V.hp = norm(rec.vrm_consum_hp_fc); V.keys = Object.keys(rec).slice(0, 12); V.ts = Date.now(); V.status = 'OK';
+V.pv = pv; V.cons = norm(rec.vrm_consumption_fc); V.keys = Object.keys(rec).slice(0, 12); V.ts = Date.now(); V.status = 'OK';
 global.set('OPT_en', en);
 return null;
 """
@@ -1322,7 +1382,7 @@ return out;
 upsert({"id": UI_TAB, "type": "ui_tab", "name": "Optimierung", "icon": "tune", "order": 12.5, "disabled": False, "hidden": False})
 # one wide card for the rooms (situation + settings), three slim status cards next to it; templates: width 0 = group width
 GROUPS = [("opt_g_rooms", "Räume und Komfortbänder", 12), ("opt_g_opt", "Optimierung", 6),
-          ("opt_g_wx", "Außen & Wetter", 6), ("opt_g_calc", "Berechnete Außentemperatur", 6), ("opt_g_quiet", "Leistung & Quiet (Shadow)", 6), ("opt_g_en", "Energie & Preise (nur Anzeige)", 6), ("opt_g_wp", "Wärmepumpe", 6),
+          ("opt_g_wx", "Außen & Wetter", 6), ("opt_g_calc", "Berechnete Außentemperatur", 6), ("opt_g_quiet", "Leistung & Quiet (Shadow)", 6), ("opt_g_en", "Energie & Preise (nur Anzeige)", 6), ("opt_g_fq", "Prognosegüte (nur Anzeige)", 6), ("opt_g_wp", "Wärmepumpe", 6),
           ("opt_g_qstats", "Quiet-Stufen: reale Messwerte", 12)]
 for _order, (gid, gname, gwidth) in enumerate(GROUPS, 1):
     upsert({"id": gid, "type": "ui_group", "name": gname, "tab": UI_TAB, "order": _order, "disp": True,
@@ -1374,6 +1434,7 @@ upsert(template("opt_t_wx", "opt_g_wx", 7, 200))
 upsert(template("opt_t_calc", "opt_g_calc", 8, 230))
 upsert(template("opt_t_quiet", "opt_g_quiet", 16, 290))
 upsert(template("opt_t_en", "opt_g_en", 14, 350))
+upsert(template("opt_t_fq", "opt_g_fq", 12, 400))
 QSTATS = """<style>.optq{width:100%;border-collapse:collapse;font-size:13px}
 .optq th{text-align:left;font-weight:normal;color:#666;padding:4px 6px;border-bottom:1px solid #ccc;font-size:12px}
 .optq td{padding:5px 6px;border-bottom:1px solid #eee;white-space:nowrap}
@@ -1583,7 +1644,7 @@ for _i, (_t, _b) in enumerate((("N/+/system/0/#", BROKER), ("evcc/site/+", "opt_
             "broker": _b, "nl": False, "rap": True, "rh": 0, "inputs": 0, "x": 160, "y": 1400 + 50 * _i, "wires": [["opt_en_in"]]})
 upsert(fn("opt_en_in", "Energiewerte lesen (nur lesen)", EN_IN_JS, 0, [], 440, 1425, FS))
 upsert(inject("opt_i_en", "jede Minute", 60, 30, ["opt_energy"], 140, 1540))
-upsert(fn("opt_energy", "Energie & Preise auswerten", ENERGY_JS, 4, [["opt_t_en"], ["opt_f_en"], ["opt_f_fc"], ["opt_ui_vrmstatus"]], 440, 1540, FS))
+upsert(fn("opt_energy", "Energie & Preise auswerten", ENERGY_JS, 5, [["opt_t_en"], ["opt_f_en"], ["opt_f_fc"], ["opt_ui_vrmstatus"], ["opt_t_fq"]], 440, 1540, FS))
 for _fid, _name, _y in (("opt_f_en", "Energie-Protokoll", 1500), ("opt_f_fc", "Prognose-Schnappschüsse", 1580)):
     upsert({"id": _fid, "type": "file", "z": TAB, "name": _name, "filename": "filename", "filenameType": "msg", "appendNewline": False,
             "createDir": True, "overwriteFile": "false", "encoding": "utf8", "x": 760, "y": _y, "wires": [[]]})

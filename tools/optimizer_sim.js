@@ -871,9 +871,9 @@ let expKwh = 0; ts.forEach(([t, w]) => { const o = Math.min(t * 1000 + 900000, N
 check('PV-Prognose (evcc, vorlaeufig): Energie der naechsten 24 h stimmt, Spitze ~8000 W', Math.abs(kwh - expKwh) < 0.15 && erow(e, 'PV-Prognose nächste 24 h').includes('Spitze 8000 W') && erow(e, 'Daten PV-Prognose').startsWith('evcc (vorläufig)'), erow(e, 'PV-Prognose nächste 24 h') + ' erwartet ' + expKwh.toFixed(1));
 // VRM
 const vrmRec = []; for (let t = NOWE / 1000 - 3600; t < NOWE / 1000 + 47 * 3600; t += 3600) { vrmRec.push([t * 1000, 1000]); }                  // konstant 1000 Wh je Stunde, Zeit in ms
-const consRec = vrmRec.map(x => [x[0], 500]), hpRec = vrmRec.map(x => [x[0], 200]);
-run('opt_vrm_parse', {statusCode: 200, payload: {success: true, records: {solar_yield_forecast: vrmRec, vrm_consumption_fc: consRec, vrm_consum_hp_fc: hpRec}, totals: {}}}); e = run('opt_energy', {});
-check('VRM-Verbrauchsprognose: 500 Wh/h -> 12,0 kWh in 24 h, davon Waermepumpe 4,8 kWh', erow(e, 'Verbrauch nächste 24 h') === '12,0 kWh · davon Wärmepumpe 4,8 kWh', erow(e, 'Verbrauch nächste 24 h'));
+const consRec = vrmRec.map(x => [x[0], 500]);
+run('opt_vrm_parse', {statusCode: 200, payload: {success: true, records: {solar_yield_forecast: vrmRec, vrm_consumption_fc: consRec}, totals: {}}}); e = run('opt_energy', {});
+check('VRM-Verbrauchsprognose: 500 Wh/h -> 12,0 kWh in 24 h', erow(e, 'Verbrauch nächste 24 h') === '12,0 kWh', erow(e, 'Verbrauch nächste 24 h'));
 check('PV-Prognose VRM bevorzugt: 1000 Wh/h -> 24,0 kWh, Zeit in ms korrekt umgerechnet, Quelle "VRM"', erow(e, 'PV-Prognose nächste 24 h').startsWith('24,0 kWh') && erow(e, 'Daten PV-Prognose').startsWith('VRM') && erow(e, 'VRM-Abruf').startsWith('OK'), erow(e, 'PV-Prognose nächste 24 h') + ' | ' + erow(e, 'Daten PV-Prognose'));
 NOW += 5 * 3600000; ven('Dc/Pv/Power', 1); e = run('opt_energy', {});
 check('VRM aelter als 4 h: Rueckfall auf die evcc-Prognose (vorlaeufig)', erow(e, 'Daten PV-Prognose').startsWith('evcc (vorläufig)') || erow(e, 'Daten PV-Prognose').startsWith('keine'), erow(e, 'Daten PV-Prognose'));
@@ -908,6 +908,46 @@ const snaps = eo.filter(x => x[2]); const sn = JSON.parse(snaps[0][2].payload);
 check('Prognose-Schnappschuss stuendlich: Preise und PV fuer 36 h, OWM-Punkte, Quelle', snaps.length === 1 && sn.price.length >= 140 && sn.price.length <= 148 && sn.pv.length >= 140 && sn.pv.length <= 148 && sn.owm.length === 2 && sn.pvSrc === 'evcc (vorläufig)' && snaps[0][2].filename.startsWith('/data/optimizer/forecast-'), sn.price.length + ' Preise, ' + sn.pv.length + ' PV');
 const nonOpt = Object.keys(gstore).filter(k => !k.startsWith('OPT_') && JSON.stringify(gstore[k]) !== JSON.stringify(BASEQ()[k]));
 check('Energie wirkt nirgends auf die Regelung: es werden nur OPT_*-Werte geschrieben', nonOpt.length === 0, nonOpt.join());
+// ---------- Prognosegueete: Prognose der Schnappschuesse gegen die spaeter gemessenen Stundenwerte
+console.log('\n--- Prognosegueete (nur Anzeige)');
+const fqrow = (o, label) => (o[4].payload.rows.find(r => r[0].startsWith(label)) || [])[1];
+function fqWorld(actPv, fcWh, fcAt, hours, extra) {
+  ewld(); gstore.TOP14_Outside_Temp = 5;
+  let last;
+  for (let m = 1; m <= hours * 60; m++) {
+    NOW += 60000;
+    if (m === 1 || m % 60 === 0) {                                                       // Wetter und VRM jede Stunde neu (frisch)
+      gstore.OPT_weather = {status: 'OK', ts: NOW, f_ts: NOW, fpts: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16].map(k => [NOW + k * 10800000, fcAt, 70, 10])};
+      const rec = []; for (let t = Math.floor(NOW / 3600000) * 3600 - 3600; t < NOW / 1000 + 47 * 3600; t += 3600) { rec.push([t * 1000, fcWh]); }
+      run('opt_vrm_parse', {statusCode: 200, payload: {success: true, records: {solar_yield_forecast: rec}, totals: {}}});
+    }
+    ven('Dc/Pv/Power', actPv); ven('Ac/PvOnOutput/L1/Power', 0); ven('Ac/PvOnGrid/L1/Power', 0); ven('Ac/Consumption/L1/Power', 500); ven('Ac/Grid/L1/Power', 100); ven('Dc/Battery/Power', 0); socV(60);
+    last = run('opt_energy', {});
+    if (extra) { extra(m); }
+  }
+  return last;
+}
+NOW = NOWE; let fo = fqWorld(1000, 1500, 7, 2);
+check('Prognosegueete: nach 2 h noch zu wenig Daten (keine Zahlen erfunden)', fqrow(fo, 'Außentemperatur +24 h').startsWith('zu wenig Daten') && fqrow(fo, 'PV +24 h').startsWith('zu wenig Daten'), fqrow(fo, 'Außentemperatur +24 h') + ' | ' + fqrow(fo, 'PV +24 h'));
+fo = fqWorld(1000, 1500, 7, 31);
+check('Prognosegueete: Aussentemperatur +1 h und +24 h -> Abweichung +2,0 K (Prognose 7, real 5), mittlerer Fehler 2,0 K', fqrow(fo, 'Außentemperatur +1 h').startsWith('Abw. +2,0 K · mittlerer Fehler 2,0 K') && fqrow(fo, 'Außentemperatur +24 h').startsWith('Abw. +2,0 K · mittlerer Fehler 2,0 K'), fqrow(fo, 'Außentemperatur +1 h') + ' | ' + fqrow(fo, 'Außentemperatur +24 h'));
+check('Prognosegueete: PV +3 h und +24 h -> Prognose 150 % vom Ist, mittlerer Fehler 500 W', fqrow(fo, 'PV +3 h').startsWith('Prognose 150 % vom Ist · mittlerer Fehler 500 W') && fqrow(fo, 'PV +24 h').startsWith('Prognose 150 % vom Ist · mittlerer Fehler 500 W'), fqrow(fo, 'PV +3 h') + ' | ' + fqrow(fo, 'PV +24 h'));
+const nAt24 = Number((/n (\d+)/.exec(fqrow(fo, 'Außentemperatur +24 h')) || [])[1]), nAt1 = Number((/n (\d+)/.exec(fqrow(fo, 'Außentemperatur +1 h')) || [])[1]);
+check('Prognosegueete: je laengerer Vorlauf desto weniger Auswertungen (+1 h ca. 29, +24 h ca. 5), nur abgeschlossene Stunden', nAt1 >= 26 && nAt1 <= 30 && nAt24 >= 3 && nAt24 <= 7, 'n +1 h ' + nAt1 + ', n +24 h ' + nAt24);
+check('Prognosegueete: Zusammenfassung zaehlt Stunden-Istwerte und Schnappschuesse', /^(30|31) Stunden Ist-Werte · 30 Prognose-Schnappschüsse$/.test(fqrow(fo, 'Gesammelt')), fqrow(fo, 'Gesammelt'));
+check('Prognosegueete: Dateien fuer den Neustart liegen vor (Kennzahlen, Ist-Stunden, letzte Schnappschuesse)', ['forecast-quality.json', 'actuals-hourly.json', 'forecast-recent.json'].every(n => files['/data/optimizer/' + n]) && JSON.parse(files['/data/optimizer/forecast-recent.json'].data).length <= 30 && JSON.parse(files['/data/optimizer/actuals-hourly.json'].data).length <= 240, Object.keys(files).join());
+// Neustart: Flow-Speicher leer, Dateien bleiben
+const keepFiles = Object.assign({}, files); Object.keys(fstore).forEach(k => delete fstore[k]); NOW += 60000;
+ven('Dc/Pv/Power', 1000); ven('Ac/Consumption/L1/Power', 500); fo = run('opt_energy', {});
+check('Prognosegueete: nach Neustart sind Kennzahlen und Schnappschuesse wieder da', fqrow(fo, 'Außentemperatur +6 h').startsWith('Abw. +2,0 K') && /Stunden Ist-Werte/.test(fqrow(fo, 'Gesammelt')), fqrow(fo, 'Außentemperatur +6 h') + ' | ' + fqrow(fo, 'Gesammelt'));
+// Nacht: PV 0 und Prognose 0 zaehlen nicht (sonst waere jede Nacht "perfekt"); Temperatur laeuft weiter
+fo = fqWorld(0, 0, 5, 8);
+check('Prognosegueete: PV bleibt bei Nacht (0 W real, 0 W Prognose) ausgenommen, Temperatur wird trotzdem bewertet', fqrow(fo, 'PV +1 h').startsWith('zu wenig Daten') && fqrow(fo, 'Außentemperatur +1 h').startsWith('Abw. +0,0 K'), fqrow(fo, 'PV +1 h') + ' | ' + fqrow(fo, 'Außentemperatur +1 h'));
+// Prognose zu kurz / ohne Wetterdaten: keine Auswertung, kein Fehler
+fo = fqWorld(1000, 1500, 7, 3, m => { if (m === 30) { gstore.OPT_weather = {status: 'Fehler', ts: NOW}; } });
+check('Prognosegueete: ohne frische OWM-Daten keine Temperaturprognose im Schnappschuss, kein Absturz', Array.isArray(fo[4].payload.rows) && fqrow(fo, 'Außentemperatur +1 h') !== undefined, fqrow(fo, 'Außentemperatur +1 h'));
+const nonOptFq = Object.keys(gstore).filter(k => !k.startsWith('OPT_') && JSON.stringify(gstore[k]) !== JSON.stringify(BASEQ()[k]) && k !== 'TOP14_Outside_Temp');
+check('Prognosegueete: nur Anzeige, es werden nur OPT_*-Werte geschrieben, kein MQTT', nonOptFq.length === 0 && sent.every(x => x.id !== 'opt_hp_in' || true) && !JSON.parse(fs.readFileSync(flowsFile, 'utf8')).some(n => n.z === 'opt_tab' && n.type === 'mqtt out'), nonOptFq.join());
 const fl = JSON.parse(fs.readFileSync(flowsFile, 'utf8'));
 check('Sicherheit: Venus nur abonniert (System und Batterie 278), evcc nur 3 Abonnements, weiterhin kein MQTT-Ausgang im Tab', fl.filter(n => n.z === 'opt_tab' && n.type === 'mqtt in' && /^opt_mqtt_en/.test(n.id)).map(n => n.broker + ':' + n.topic).join() === 'opt_broker_venus:N/+/system/0/#,opt_broker_nas:evcc/site/+,opt_broker_nas:evcc/site/forecast/+,opt_broker_nas:evcc/site/battery/soc,opt_broker_venus:N/+/battery/278/Soc' && fl.filter(n => n.z === 'opt_tab' && n.type === 'mqtt out').length === 0, '');
 check('Sicherheit: VRM-Zugangsdaten nur ueber das Formular, Datei 0600 (Code nutzt mode 0o600)', /mode: 0o600/.test(fl.find(n => n.id === 'opt_vrm_save').func) && /chmodSync\(file, 0o600\)/.test(fl.find(n => n.id === 'opt_vrm_save').func), '');
