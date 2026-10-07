@@ -691,6 +691,18 @@ if COP_REL not in B:
     _d = node("01809486b97e6f56")
     _d["wires"] = [[COP_REL if w == "1cbdb190d6f52cb6" else w for w in out] for out in _d["wires"]]
 
+# series names of the Heizkurve profile charts and of the outdoor temperature chart
+for _i in ("5b0c451c1ec63b84", "6500967add5c38cf"):
+    rep(_i, "func", """"series":   ["Water","Actual",'']""", """"series":   ["Wasser","Aktuell",'']""")
+OUT_TOP = "a1c0b0000c0f0051"
+if OUT_TOP not in B and "a1c0b0000c0f0042" in B:
+    flows.append({"id": OUT_TOP, "type": "function", "z": WP_DASH, "name": "Serie Außentemperatur",
+                  "func": "msg.topic = 'Außentemperatur';\nreturn msg;",
+                  "outputs": 1, "timeout": 0, "noerr": 0, "initialize": "", "finalize": "", "libs": [],
+                  "x": 600, "y": 2180, "wires": [["a1c0b0000c0f0043"]]})
+    B[OUT_TOP] = flows[-1]
+    node("a1c0b0000c0f0042")["wires"] = [[OUT_TOP]]
+
 if errors:
     print("\n".join("ERROR: " + e for e in errors))
     sys.exit(1)
