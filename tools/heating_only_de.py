@@ -492,8 +492,9 @@ if OUT_FN not in B:
 import glob
 import os
 
-SCOPE_TABS = ["Settings", "Pumpspeed", "CCC", "RTC", "SoftStart", "Scheduler", "SYSTEM"]
-SKIP_GROUPS = {"ABOUT"}                       # changelog / acknowledgements stay English
+SCOPE_TABS = ["Settings", "Pumpspeed", "CCC", "RTC", "SoftStart", "Scheduler", "SYSTEM",
+              "Cool", "Solar²DHW", "Power", "GUI", "GUIAutoStartDHW"]   # the last five are hidden tabs (names stay)
+SKIP_GROUPS = set()                             # (formerly the ABOUT group was skipped)
 HIDE_TABS = ["Cool", "Solar²DHW"]             # not used with a heating-only installation
 
 TR = {}
@@ -746,7 +747,7 @@ for _n in flows:
                 _protected.add(_s)
     elif _n["type"] in ("switch", "change", "trigger", "rbe"):
         for _r in _n.get("rules", []) if isinstance(_n.get("rules"), list) else []:
-            for _k in ("v", "v2", "from", "to"):
+            for _k in ("v", "v2", "from"):
                 if isinstance(_r.get(_k), str):
                     _protected.add(_r[_k])
 
@@ -812,6 +813,60 @@ for n in flows:
                 o["label"] = ss_text(o["label"])
     if t == "ui_template" and isinstance(n.get("format"), str):
         n["format"] = ss_html(n["format"])
+
+# change nodes that SET a topic/payload text (log sources); comparisons stay untouched (see _protected)
+for _n in flows:
+    if _n["type"] == "change":
+        for _r in _n.get("rules", []):
+            if _r.get("t") == "set" and _r.get("p") in ("topic", "payload") and _r.get("tot") == "str" \
+                    and _r.get("to") in FTR and _r["to"] not in _protected:
+                _r["to"] = FTR[_r["to"]]
+
+# single words: only in `msg.payload = "word";` / `msg.topic = "word";` assignments and never if the word is compared anywhere
+_compared = set(_protected)
+for _n in flows:
+    if _n["type"] == "function":
+        _code = _ef.strip_comments(_n.get("func", ""))
+        for _m in re.finditer(r"""(==|!=|===|!==)\\s*(["'])([^"'\\n]+)\\2|(["'])([^"'\\n]+)\\4\\s*(==|===|!=|!==)""", _code):
+            _compared.add(_m.group(3) or _m.group(5))
+        for _m in re.finditer(r"""\\bcase\\s+(["'])([^"'\\n]+)\\1""", _code):
+            _compared.add(_m.group(2))
+WORDS = (("topic", "Compressor", "Verdichter"), ("payload", "Connected", "Verbunden"),
+         ("payload", "Finished", "Beendet"), ("payload", "Started", "Gestartet"), ("payload", "Done", "Fertig"),
+         ("payload", "Idle", "Leerlauf"), ("payload", "BLOCKED", "GESPERRT"), ("payload", "CUSTOM", "BENUTZERDEFINIERT"),
+         ("payload", "UNRESTRICTED", "UNEINGESCHRÄNKT"), ("topic", "MQTT-Commands:", "MQTT-Befehle:"),
+         ("topic", "Scheduler", "Zeitplan"), ("payload", "OFF", "AUS"), ("topic", "Model", "Modell"),
+         ("topic", "Type", "Typ"))
+for _n in flows:
+    if _n["type"] != "function":
+        continue
+    code = _n.get("func", "")
+    for kind, old_, new_ in WORDS:
+        if old_ in _compared:
+            continue
+        code = re.sub(r"(\.%s\s*=\s*)([\"'])%s\2" % (kind, re.escape(old_)),
+                      lambda m, n_=new_: m.group(1) + m.group(2) + n_ + m.group(2), code)
+    _n["func"] = code
+
+# compressor state texts: shown in the log AND compared by "Starts counter" and "skip" - change all three together
+_ST = (('"running [defrosting]"', '"läuft [Abtauen]"'), ('"running skip"', '"läuft (übersprungen)"'),
+       ('"stopped skip"', '"gestoppt (übersprungen)"'), ('"running"', '"läuft"'), ('"stopped"', '"gestoppt"'))
+for _i in ("082586cfc8693748", "df9dc017de54372f", "98332e44d65ec671"):
+    code = node(_i)["func"]
+    for old_, new_ in _ST:
+        code = code.replace(old_, new_)
+    node(_i)["func"] = code
+
+# "No error" comes straight from the HeishaMon and is compared in other functions, so only the display text is mapped
+ERR_UI, ERR_IN, ERR_FN = "fce687f80b334b9e", "a6854436b6e1c7e8", "a1c0b0000c0f0070"
+if ERR_FN not in B and ERR_UI in B and ERR_IN in B:
+    flows.append({"id": ERR_FN, "type": "function", "z": node(ERR_IN)["z"], "name": "Fehlertext anzeigen",
+                  "func": "// nur die Anzeige uebersetzen; andere Funktionen vergleichen weiter mit 'No error'\n"
+                          "if (msg.payload === 'No error') { msg.payload = 'Kein Fehler'; }\nreturn msg;",
+                  "outputs": 1, "timeout": 0, "noerr": 0, "initialize": "", "finalize": "", "libs": [],
+                  "x": 900, "y": 100, "wires": [[ERR_UI]]})
+    B[ERR_FN] = flows[-1]
+    node(ERR_IN)["wires"] = [[ERR_FN if w == ERR_UI else w for w in out] for out in node(ERR_IN)["wires"]]
 
 if errors:
     print("\n".join("ERROR: " + e for e in errors))
