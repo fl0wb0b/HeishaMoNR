@@ -231,6 +231,236 @@ else:
             if x.get("group") == "bf4af523ba16d457" and x["id"] != "a1c0b0000c0f0011" and x.get("order", 0) >= 2:
                 x["order"] += 1
 
+# ================================================================ phase 2: Efficiency + Degree days
+import re
+
+
+def sub(i, field, pattern, repl, flags=0):
+    """Regex replace in node[field]; idempotent via the replacement already being present."""
+    n = node(i)
+    text = n.get(field)
+    new_text, k = re.subn(pattern, lambda m: repl, text, flags=flags)
+    if k == 1:
+        n[field] = new_text
+    elif k == 0 and repl in text:
+        return
+    else:
+        errors.append(f"{i}.{field}: pattern {pattern!r} matched {k}x")
+
+
+def topic_rule(i, old, new):
+    """Rename the value of a change node's 'set msg.topic' rule."""
+    n = node(i)
+    for r in n["rules"]:
+        if r.get("p") == "topic" and r.get("to") == old:
+            r["to"] = new
+            return
+        if r.get("p") == "topic" and r.get("to") == new:
+            return
+    errors.append(f"{i}: no topic rule {old!r}")
+
+
+def unwire(i, target):
+    for out in node(i)["wires"]:
+        if target in out:
+            out.remove(target)
+
+
+# the dashboard addresses groups as "<tab name>_<group name>" (spaces become underscores)
+setf("1a08b96c5aeb8d6e", "name", "Efficiency", "Effizienz")
+setf("a681244e6db9a6a7", "name", "Degree days", "Gradtage")
+rep("81b0cbf75fe9ed92", "payload", "Efficiency_Help", "Effizienz_Help")
+rep("897bc542a342138d", "payload", "Efficiency_Help", "Effizienz_Help")
+for b in ("03a0cd845d8efbe7", "e7626bf3192d47cb"):
+    rep(b, "payload", "Efficiency_HistoryChart", "Effizienz_HistoryChart")
+    rep(b, "payload", "Efficiency_HistoryTable", "Effizienz_HistoryTable")
+rep("64e1f8f65ebe4711", "payload", "Degree_days_Help", "Gradtage_Help")
+rep("a39a1002bb65b329", "payload", "Degree_days_Help", "Gradtage_Help")
+
+# ---- Efficiency: labels
+rep("b40c0f3e82728c9d", "format", "Current values", "Aktuelle Werte")
+rep("68cd36d3c50eaef1", "format", "Historical Data", "Historische Daten")
+rep("6cce5b6bd4157c5b", "format", "Trends (last 24 hours)", "Verlauf (letzte 24 Stunden)")
+rep("23aa1aeed6d15e49", "format", "Historical data", "Historische Daten")
+setf("d30f518b158d8bba", "label", "Energy [W]", "Leistung [W]")
+setf("bd75ee928fde85b5", "label", "Water", "Wasser")
+setf("fa2eba3089ca0ef4", "label", "Energy (W)", "Leistung (W)")
+setf("1cbdb190d6f52cb6", "label", "Efficiency", "Effizienz")
+setf("8084f5f9211ba26e", "label", "Monthly Production (kWh)", "Erzeugte Wärme pro Monat (kWh)")
+setf("eee624aa045ae22a", "label", "Monthly COP", "COP pro Monat")
+setf("03a0cd845d8efbe7", "label", "Charts", "Diagramme")
+setf("e7626bf3192d47cb", "label", "Table", "Tabelle")
+setf("f633c8957da26788", "label", "Refresh Data", "Daten aktualisieren")
+setf("81b0cbf75fe9ed92", "label", "Help", "Hilfe")
+setf("4d7236c464d1c14e", "label", "By default, this table is refreshed once per day (at midnight)",
+     "Die Tabelle wird standardmäßig einmal täglich (um Mitternacht) aktualisiert")
+
+# ---- Efficiency: series names of the charts (display only)
+topic_rule("fae151e3fc249477", "Current [A]", "Strom [A]")
+topic_rule("21857afb8366acf2", "Defrost State [-]", "Abtauzustand [-]")
+topic_rule("039ca8047ee5b833", "Evaporator outlet [°C]", "Verdampfer Austritt [°C]")
+topic_rule("38b10c117605255d", "Heat | Energy production", "Heizen | Erzeugte Energie")
+topic_rule("53393ad3ce2b9113", "Heat | Energy consumption", "Heizen | Aufgenommene Energie")
+topic_rule("6a440038dc115f96", "Heater (Internal)", "Heizstab (intern)")
+topic_rule("1aa75bcd6581ca94", "Heater (External)", "Heizstab (extern)")
+# heating only: take the DHW series off the power chart (the nodes stay, the wire goes)
+unwire("3a6bb7844523ece7", "fa2eba3089ca0ef4")
+unwire("ca8fd698c67b1cfa", "fa2eba3089ca0ef4")
+rep("c94a4674e4c896e0", "func", 'msg.topic = "Consumption"', 'msg.topic = "Aufnahme"')
+rep("7b9aabcb38a535d7", "func", 'msg.topic = "Production"', 'msg.topic = "Erzeugung"')
+rep("3d7b8b4f9e0ef79e", "func", 'msg.topic = "Flow";', 'msg.topic = "Durchfluss";')
+rep("3d7b8b4f9e0ef79e", "func", 'msg.topic = "T Inlet";', 'msg.topic = "T Rücklauf";')
+rep("3d7b8b4f9e0ef79e", "func", 'msg.topic = "T Outlet";', 'msg.topic = "T Vorlauf";')
+# monthly charts: heating only
+rep("d4198e0e57720e55", "func", 'series: ["DHW", "HEAT"],', 'series: ["Heizen"],')
+rep("d4198e0e57720e55", "func", "data: [varData1, varData2]\n};", "data: [varData2]\n};")
+rep("35c15a4c210a4b20", "func", "series: [varSeries1, varSeries2],", 'series: ["Heizen"],')
+rep("35c15a4c210a4b20", "func", "data: [varData1, varData2]\n};", "data: [varData2]\n};")
+# history table: German headers, no DHW columns
+TABLE_COLS = ("columns: [\n"
+              "                { title: 'Monat', field: 'date' },\n"
+              "                { title: 'COP (Heizen)', field: 'heat_cop', hozAlign: 'right', formatter: 'number', formatterParams: { precision: 2 } },\n"
+              "                { title: 'Erzeugte Wärme (kWh)', field: 'heat_energy_produced', hozAlign: 'right', formatter: 'number', formatterParams: { precision: 1 } }\n"
+              "            ]")
+sub("02867974a58ba58f", "func", r"columns: \[\n\s*\{ title: 'Date'.*?\n\s*\]", TABLE_COLS, flags=re.S)
+tbl = node("59bc0c78b8b9ea90")
+keep = [c for c in tbl["columns"] if c["field"] in ("date", "heat_cop", "heat_energy_produced")]
+titles = {"date": "Monat", "heat_cop": "COP (Heizen)", "heat_energy_produced": "Erzeugte Wärme (kWh)"}
+for c in keep:
+    c["title"] = titles[c["field"]]
+tbl["columns"] = keep
+
+HELP_EFF_DE = """<h3>Informationen zu den Diagrammen</h3>
+<br/>
+<h3>Leistung (W)</h3>
+Dieses Diagramm zeigt die Leistung im Heizbetrieb: die aufgenommene elektrische und die erzeugte Wärmeleistung.<br>
+<br>
+<h3>Effizienz</h3>
+- COP: Coefficient Of Performance, das Verhältnis von Wärmeleistung (Ausgang) zu elektrischer Leistung (Eingang)<br>
+- Verdampfer Austritt: Temperatur des Kältemittels am Verdampfer der Wärmepumpe<br>
+- Abtauzustand: zeigt an, ob gerade abgetaut wird (1 oder 0)<br>
+- Strom: tatsächliche Stromaufnahme der Wärmepumpe (Ampere)<br>
+<br>
+<h3>Erzeugte Wärme pro Monat (kWh)</h3>
+Dieses Diagramm zeigt die erzeugte Wärmemenge. Sie wird aus Durchfluss sowie Vor- und Rücklauftemperatur berechnet.<br>
+Sie ist NICHT dasselbe wie der Stromverbrauch der Wärmepumpe.<br>
+<br>
+<h3>COP pro Monat</h3>
+Dieses Diagramm gibt einen historischen Überblick über die berechneten COP-Werte im Heizbetrieb.<br>
+<br>
+<br>
+"""
+n = node("9a18b2fdbbfcef0e")
+if n["format"] != HELP_EFF_DE:
+    if "Information about the graphs" not in n["format"]:
+        errors.append("efficiency help template has unexpected content")
+    n["format"] = HELP_EFF_DE
+
+# ---- Degree days
+setf("64e1f8f65ebe4711", "label", "Help", "Hilfe")
+setf("4eaa2cfa2749c551", "label", "Last 31 days", "Letzte 31 Tage")
+setf("2ee679408e4ccc6f", "label", "Last 24 hours", "Letzte 24 Stunden")
+SERIES_DE = "m.series    = ['Gradtage (°C)', 'Energieverbrauch Heizen (kWh)'];"
+sub("2391637fadbbf190", "func", r"m\.series\s*=\s*\[[^\]]*\];", SERIES_DE)
+sub("b44fca625044b56c", "func", r"m\.series\s*=\s*\[[^\]]*\];", SERIES_DE)
+rep("2391637fadbbf190", "func", "m.data      = [vargraaddagen_data, varkwh_heat_data, varkwh_dhw_data];",
+    "m.data      = [vargraaddagen_data, varkwh_heat_data];")
+rep("b44fca625044b56c", "func", "m.data      = [vargraaddagen_data, varkwh_data_heat, varkwh_data_dhw];",
+    "m.data      = [vargraaddagen_data, varkwh_data_heat];")
+
+HELP_DD_DE = """<h3>Information</h3>
+<br/>
+<h3>Gradtage</h3>
+Ein Gradtag (dd) ist ein Maß für den Unterschied zwischen der Außentemperatur und einer Referenztemperatur (18 °C). <br>
+<br>
+Ein Gradtag wird so berechnet:<br>
+dd = 18 - Außentemperatur.<br>
+dd wird auf 0 °C begrenzt.<br>
+<br>
+<b>Beispiel 1:</b>
+Außentemperatur: 15 °C<br>
+dd = 18 - 15 = 3 °C<br>
+<br>
+<b>Beispiel 2:</b>
+Außentemperatur: -5 °C<br>
+dd = 18 - (-5) = 23 °C<br>
+<br>
+<b>Beispiel 3:</b>
+Außentemperatur: 30 °C<br>
+dd = 18 - 30 (= -12 °C) = 0 °C<br> <br>
+<br>
+<b>Verbrauch pro Gradtag:</b>
+Stromverbrauch der Heizung der letzten 7 Tage geteilt durch die Gradtage derselben Tage.
+Sinkt der Wert nach einer Änderung an der Heizkurve, heizt die Wärmepumpe effizienter.<br>
+<br>
+"""
+n = node("a19ced7de80acf30")
+if n["format"] != HELP_DD_DE:
+    if "A Degree Day (dd)" not in n["format"]:
+        errors.append("degree days help template has unexpected content")
+    n["format"] = HELP_DD_DE
+
+# new KPI: electricity per degree day over the last 7 days (refreshed together with the 31 day chart)
+KPI_FN, KPI_TXT, DD_GROUP, DD_TRIGGER = "a1c0b0000c0f0030", "a1c0b0000c0f0031", "87be08e6a82ef6a0", "757d35eee93ec9e7"
+if KPI_TXT not in B:
+    flows.append({"id": KPI_FN, "type": "function", "z": "ed155b604642d354", "name": "kWh pro Gradtag (7 Tage)",
+                  "func": "// Stromverbrauch Heizung / Gradtage der letzten 7 Tage (Tageswerte aus den 31-Tage-Daten)\n"
+                          "var heat = global.get('kwh_HEAT_31d', 'file');\n"
+                          "var dd = global.get('degreedays_31d', 'file');\n"
+                          "if (!heat || !dd) { return null; }\n"
+                          "try {\n"
+                          "    var h = heat.payload[0].data[0], g = dd.payload[0].data[0];\n"
+                          "    var sh = 0, sg = 0;\n"
+                          "    for (var i = 1; i <= 7 && i <= h.length && i <= g.length; i++) {\n"
+                          "        sh += Number(h[h.length - i]) || 0;\n"
+                          "        sg += Number(g[g.length - i]) || 0;\n"
+                          "    }\n"
+                          "    msg.payload = (sg >= 1) ? (sh / sg).toFixed(2).replace('.', ',') + ' kWh/Gradtag' : '–';\n"
+                          "    return msg;\n"
+                          "} catch (e) { return null; }",
+                  "outputs": 1, "timeout": 0, "noerr": 0, "initialize": "", "finalize": "", "libs": [],
+                  "x": 700, "y": 40, "wires": [[KPI_TXT]]})
+    flows.append({"id": KPI_TXT, "type": "ui_text", "z": "ed155b604642d354", "group": DD_GROUP, "order": 4,
+                  "width": 26, "height": 1, "name": "kWh pro Gradtag", "label": "Verbrauch pro Gradtag (letzte 7 Tage)",
+                  "format": "{{msg.payload}}", "layout": "row-spread", "className": "", "x": 940, "y": 40, "wires": []})
+    for x in flows:
+        if x.get("group") == DD_GROUP and x["id"] != KPI_TXT and x.get("order", 0) >= 4:
+            x["order"] += 1
+    B[KPI_FN], B[KPI_TXT] = flows[-2], flows[-1]
+    node(DD_TRIGGER)["wires"][0].append(KPI_FN)
+
+# ================================================================ phase 3: outdoor temperature
+# tap the final (selected) outdoor temperature at the "T_outside" link out of the WP Control tab
+OUT_LIN, OUT_TXT, OUT_RBE, OUT_CHART = ("a1c0b0000c0f0040", "a1c0b0000c0f0041", "a1c0b0000c0f0042", "a1c0b0000c0f0043")
+T_OUTSIDE_LINK_OUT = "d6a9c376dde9c43f"
+if OUT_TXT not in B:
+    out_row_is_new = True
+    flows.append({"id": OUT_LIN, "type": "link in", "z": WP_DASH, "name": "Außentemperatur",
+                  "links": [T_OUTSIDE_LINK_OUT], "x": 140, "y": 2160, "wires": [[OUT_TXT, OUT_RBE]], "l": True})
+    flows.append({"id": OUT_TXT, "type": "ui_text", "z": WP_DASH, "group": "bf4af523ba16d457", "order": 3,
+                  "width": 6, "height": 1, "name": "Außentemperatur", "label": "Außentemperatur",
+                  "format": "{{msg.payload}} °C", "layout": "row-spread", "className": "", "x": 380, "y": 2140, "wires": []})
+    # one point per 5 minutes for the chart (HeishaMon sends far more often than that)
+    flows.append({"id": OUT_RBE, "type": "delay", "z": WP_DASH, "name": "1 Punkt / 5 min", "pauseType": "rate",
+                  "timeout": "5", "timeoutUnits": "seconds", "rate": "1", "nbRateUnits": "5", "rateUnits": "minute",
+                  "randomFirst": "1", "randomLast": "5", "randomUnits": "seconds", "drop": True,
+                  "allowrate": False, "outputs": 1, "x": 370, "y": 2180, "wires": [[OUT_CHART]]})
+    flows.append({"id": OUT_CHART, "type": "ui_chart", "z": WP_DASH, "group": "e374621a9f5ac0d6",
+                  "name": "Außentemperatur", "label": "Außentemperatur (°C)", "order": 10, "width": 26, "height": 7,
+                  "chartType": "line", "legend": "false", "xformat": "HH:mm", "interpolate": "step",
+                  "nodata": "", "dot": False, "ymin": "", "ymax": "", "removeOlder": "48",
+                  "removeOlderPoints": "2000", "removeOlderUnit": "3600", "cutout": 0, "useOneColor": False,
+                  "useUTC": False,
+                  "colors": ["#1f77b4", "#aec7e8", "#ff7f0e", "#2ca02c", "#98df8a", "#d62728", "#ff9896",
+                             "#9467bd", "#c5b0d5"],
+                  "outputs": 1, "useDifferentColor": False, "className": "", "x": 590, "y": 2180, "wires": [[]]})
+    B.update({n["id"]: n for n in flows[-4:]})
+    node(T_OUTSIDE_LINK_OUT)["links"].append(OUT_LIN)
+    # make room on Home (order 3 is taken by the new row)
+    for x in flows:
+        if x.get("group") == "bf4af523ba16d457" and x["id"] != OUT_TXT and x.get("order", 0) >= 3:
+            x["order"] += 1
+
 if errors:
     print("\n".join("ERROR: " + e for e in errors))
     sys.exit(1)
