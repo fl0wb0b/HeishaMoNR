@@ -415,7 +415,10 @@
             "b43a80548539a4b4",
             "ab864b203271765a",
             "1aa75bcd6581ca94",
-            "f10c2c06bd9d5a5a"
+            "f10c2c06bd9d5a5a",
+            "763bca23fc70f387",
+            "a1c0b0000c0f0001",
+            "d180ce6b9c6ad85a"
         ],
         "x": 14,
         "y": 1499,
@@ -38249,7 +38252,8 @@
         "links": [
             "37a22e16bf2e3419",
             "ad2577846265e4ee",
-            "fe8e23b8971b868e"
+            "fe8e23b8971b868e",
+            "763bca23fc70f387"
         ],
         "x": 2170,
         "y": 2160,
@@ -46495,7 +46499,8 @@
         "name": "LineChart (0)",
         "mode": "link",
         "links": [
-            "fe8e23b8971b868e"
+            "fe8e23b8971b868e",
+            "763bca23fc70f387"
         ],
         "x": 2170,
         "y": 2240,
@@ -90595,5 +90600,69 @@
             "node-red-node-ui-table": "0.4.5",
             "node-red-node-smooth": "0.1.2"
         }
+    },
+    {
+        "id": "763bca23fc70f387",
+        "type": "link in",
+        "z": "8c9d42231fd19d3c",
+        "g": "f9448182b177e40e",
+        "name": "COP calculated (-> MQTT)",
+        "links": [
+            "306b69356454f3ff",
+            "0f227f10f68c8a90"
+        ],
+        "x": 140,
+        "y": 2000,
+        "wires": [
+            [
+                "a1c0b0000c0f0001"
+            ]
+        ],
+        "l": true
+    },
+    {
+        "id": "a1c0b0000c0f0001",
+        "type": "switch",
+        "z": "8c9d42231fd19d3c",
+        "g": "f9448182b177e40e",
+        "name": "nur COP_HEAT",
+        "property": "topic",
+        "propertyType": "msg",
+        "rules": [
+            {
+                "t": "eq",
+                "v": "COP_HEAT",
+                "vt": "str"
+            }
+        ],
+        "checkall": "true",
+        "repair": false,
+        "outputs": 1,
+        "x": 340,
+        "y": 2000,
+        "wires": [
+            [
+                "d180ce6b9c6ad85a"
+            ]
+        ]
+    },
+    {
+        "id": "d180ce6b9c6ad85a",
+        "type": "mqtt out",
+        "z": "8c9d42231fd19d3c",
+        "g": "f9448182b177e40e",
+        "name": "panasonic/cop",
+        "topic": "panasonic/cop",
+        "qos": "0",
+        "retain": "true",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "92e5b2c.00a8b5",
+        "x": 560,
+        "y": 2000,
+        "wires": []
     }
 ]
