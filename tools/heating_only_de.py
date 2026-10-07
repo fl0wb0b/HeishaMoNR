@@ -611,7 +611,7 @@ def remap_form(form_id, value_map, drop):
 
 
 remap_form(MENU_TABS_FORM,
-           {"SETTINGS": "Einstellungen", "CCC": "Heizkurve", "Pumpspeed": "Pumpendrehzahl", "SCHEDULER": "Zeitplan",
+           {"SETTINGS": "Einstellungen", "CCC": "Heizkurve", "RTC": "Raumregelung", "Pumpspeed": "Pumpendrehzahl", "SCHEDULER": "Zeitplan",
             "TEMPERATURES": "Temperaturen", "EFFICIENCY": "Effizienz", "Degree_days": "Gradtage"},
            drop={"COOL", "Solar²DHW"})
 remap_form(MENU_HOME_FORM,
@@ -666,6 +666,8 @@ series_names("cf7a6e8cc8d1ebce", {"Room2 SP": "Raum 2 Soll", "Room2 PV": "Raum 2
 series_names("3578d6b18ceb5727", {"Setpoint": "Sollwert", "Water inlet": "Wasser Rücklauf",
                                   "Water outlet": "Wasser Vorlauf", "Frequency": "Frequenz",
                                   "Correction": "Korrektur", "QuietMode level": "Leisemodus-Stufe"})
+
+setf("1f5d513050d612a1", "label", "RTC", "Raumregelung")        # Home: "RTC (24 °C)" = Raumregelung (Raumtemperatur)
 
 if errors:
     print("\n".join("ERROR: " + e for e in errors))
