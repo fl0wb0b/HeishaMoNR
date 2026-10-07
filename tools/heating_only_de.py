@@ -593,6 +593,38 @@ for tn in HIDE_TABS:
         if t["name"] == tn:
             t["hidden"] = True
 
+# ================================================================ phase 5: menu configuration (SYSTEM > MENU CONFIG)
+# The three forms address tabs by name ("tabs") and groups as "<tab>_<group>" ("group"/"group2"). The values are
+# matched by the dashboard, so they must follow the renames; options for hidden elements are dropped.
+MENU_TABS_FORM, MENU_HOME_FORM, MENU_SETTINGS_FORM = "e35b7df78bc6f722", "e4a4fc20462d5562", "7fa1754db79c4869"
+
+
+def remap_form(form_id, value_map, drop):
+    f = node(form_id)
+    f["options"] = [dict(o, value=value_map.get(o["value"], o["value"])) for o in f["options"] if o["value"] not in drop]
+    fv = {}
+    for k, v in f["formValue"].items():
+        if k in drop:
+            continue
+        fv[value_map.get(k, k)] = v
+    f["formValue"] = fv
+
+
+remap_form(MENU_TABS_FORM,
+           {"SETTINGS": "Einstellungen", "Pumpspeed": "Pumpendrehzahl", "SCHEDULER": "Zeitplan",
+            "TEMPERATURES": "Temperaturen", "EFFICIENCY": "Effizienz", "Degree_days": "Gradtage"},
+           drop={"COOL", "Solar²DHW"})
+remap_form(MENU_HOME_FORM,
+           {"Home_HEAT_(zone_1)": "Übersicht_HEIZEN_(Zone_1)"},
+           drop={"Home_HEAT_(zone_2)", "Home_DHW", "Home_COOL"})
+remap_form(MENU_SETTINGS_FORM,
+           {"Settings_HEAT_PUMP": "Einstellungen_WÄRMEPUMPE", "Settings_OPERATION": "Einstellungen_BETRIEB",
+            "Settings_HEAT": "Einstellungen_HEIZEN", "Settings_DHW": "Einstellungen_WARMWASSER"},
+           drop=set())
+
+# the flow re-sends "hide Power" every 5 minutes; add the tabs of a heating-only installation to it
+setf("63c695317a49ea6b", "payload", '{"tabs":{"hide":["Power"]}}', '{"tabs":{"hide":["Power","Cool","Solar²DHW"]}}')
+
 if errors:
     print("\n".join("ERROR: " + e for e in errors))
     sys.exit(1)

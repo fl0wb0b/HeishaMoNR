@@ -79937,7 +79937,7 @@
         "once": false,
         "onceDelay": 0.1,
         "topic": "",
-        "payload": "{\"tabs\":{\"hide\":[\"Power\"]}}",
+        "payload": "{\"tabs\":{\"hide\":[\"Power\",\"Cool\",\"Solar²DHW\"]}}",
         "payloadType": "str",
         "x": 2110,
         "y": 60,
@@ -81990,38 +81990,14 @@
         "options": [
             {
                 "label": "HEIZEN (Zone 1)",
-                "value": "Home_HEAT_(zone_1)",
-                "type": "checkbox",
-                "required": false,
-                "rows": null
-            },
-            {
-                "label": "HEIZEN (Zone 2)",
-                "value": "Home_HEAT_(zone_2)",
-                "type": "checkbox",
-                "required": false,
-                "rows": null
-            },
-            {
-                "label": "WARMWASSER",
-                "value": "Home_DHW",
-                "type": "checkbox",
-                "required": false,
-                "rows": null
-            },
-            {
-                "label": "KÜHLEN",
-                "value": "Home_COOL",
+                "value": "Übersicht_HEIZEN_(Zone_1)",
                 "type": "checkbox",
                 "required": false,
                 "rows": null
             }
         ],
         "formValue": {
-            "Home_HEAT_(zone_1)": false,
-            "Home_HEAT_(zone_2)": false,
-            "Home_DHW": false,
-            "Home_COOL": false
+            "Übersicht_HEIZEN_(Zone_1)": false
         },
         "payload": "",
         "submit": "Setzen",
@@ -82051,7 +82027,7 @@
         "options": [
             {
                 "label": "EINSTELLUNGEN",
-                "value": "SETTINGS",
+                "value": "Einstellungen",
                 "type": "checkbox",
                 "required": false,
                 "rows": null
@@ -82071,13 +82047,6 @@
                 "rows": null
             },
             {
-                "label": "KÜHLEN",
-                "value": "COOL",
-                "type": "checkbox",
-                "required": false,
-                "rows": null
-            },
-            {
                 "label": "SOFTSTART",
                 "value": "SOFTSTART",
                 "type": "checkbox",
@@ -82086,59 +82055,50 @@
             },
             {
                 "label": "PUMPENDREHZAHL",
-                "value": "Pumpspeed",
-                "type": "checkbox",
-                "required": false,
-                "rows": null
-            },
-            {
-                "label": "Solar²DHW",
-                "value": "Solar²DHW",
+                "value": "Pumpendrehzahl",
                 "type": "checkbox",
                 "required": false,
                 "rows": null
             },
             {
                 "label": "ZEITPLAN",
-                "value": "SCHEDULER",
+                "value": "Zeitplan",
                 "type": "checkbox",
                 "required": false,
                 "rows": null
             },
             {
                 "label": "TEMPERATUREN",
-                "value": "TEMPERATURES",
+                "value": "Temperaturen",
                 "type": "checkbox",
                 "required": false,
                 "rows": null
             },
             {
                 "label": "EFFIZIENZ",
-                "value": "EFFICIENCY",
+                "value": "Effizienz",
                 "type": "checkbox",
                 "required": false,
                 "rows": null
             },
             {
                 "label": "GRADTAGE",
-                "value": "Degree_days",
+                "value": "Gradtage",
                 "type": "checkbox",
                 "required": false,
                 "rows": null
             }
         ],
         "formValue": {
-            "SETTINGS": false,
+            "Einstellungen": false,
             "CCC": false,
             "RTC": false,
-            "COOL": false,
             "SOFTSTART": false,
-            "Pumpspeed": false,
-            "Solar²DHW": false,
-            "SCHEDULER": false,
-            "TEMPERATURES": false,
-            "EFFICIENCY": false,
-            "Degree_days": false
+            "Pumpendrehzahl": false,
+            "Zeitplan": false,
+            "Temperaturen": false,
+            "Effizienz": false,
+            "Gradtage": false
         },
         "payload": "",
         "submit": "Setzen",
@@ -82430,38 +82390,38 @@
         "options": [
             {
                 "label": "WÄRMEPUMPE",
-                "value": "Settings_HEAT_PUMP",
+                "value": "Einstellungen_WÄRMEPUMPE",
                 "type": "checkbox",
                 "required": false,
                 "rows": null
             },
             {
                 "label": "BETRIEB",
-                "value": "Settings_OPERATION",
+                "value": "Einstellungen_BETRIEB",
                 "type": "checkbox",
                 "required": false,
                 "rows": null
             },
             {
                 "label": "HEIZEN",
-                "value": "Settings_HEAT",
+                "value": "Einstellungen_HEIZEN",
                 "type": "checkbox",
                 "required": false,
                 "rows": null
             },
             {
                 "label": "WARMWASSER",
-                "value": "Settings_DHW",
+                "value": "Einstellungen_WARMWASSER",
                 "type": "checkbox",
                 "required": false,
                 "rows": null
             }
         ],
         "formValue": {
-            "Settings_HEAT_PUMP": false,
-            "Settings_OPERATION": false,
-            "Settings_HEAT": false,
-            "Settings_DHW": false
+            "Einstellungen_WÄRMEPUMPE": false,
+            "Einstellungen_BETRIEB": false,
+            "Einstellungen_HEIZEN": false,
+            "Einstellungen_WARMWASSER": false
         },
         "payload": "",
         "submit": "Setzen",
