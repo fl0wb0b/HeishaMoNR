@@ -129,6 +129,20 @@ const wx2 = ev2[0].payload.rows;
 check('Wetterdaten nach >60 min nicht mehr verwendet (Anzeige "–")', wx2[1][1] === '–' && wx2[3][1] === '–', wx2[1][1]);
 check('Regelwert bleibt Panasonic', wx2[10][1].includes('Panasonic'), wx2[10][1]);
 
+// ---------- Reihenfolge der Antworten: Prognose vor Aktuell
+console.log('\n--- Prognose vor Aktuell-Antwort (Wettlauf)');
+delete gstore.OPT_weather;
+NOW = Date.UTC(2026, 9, 7, 16, 0, 0); const t1 = NOW / 1000;
+run('opt_owm_parse', {topic: 'forecast', statusCode: 200, payload: {list: [
+  {dt: t1 + 2 * 3600, main: {temp: 10.0, humidity: 70}, clouds: {all: 10}}, {dt: t1 + 5 * 3600, main: {temp: 7.0, humidity: 75}, clouds: {all: 20}},
+  {dt: t1 + 8 * 3600, main: {temp: 4.0, humidity: 80}, clouds: {all: 30}}, {dt: t1 + 11 * 3600, main: {temp: 2.0, humidity: 85}, clouds: {all: 40}}]}});
+const Wr = gstore.OPT_weather;
+check('Prognose ohne Aktuellwert wird nicht verworfen', Wr && Wr.f1 !== undefined && Wr.f1 !== null, JSON.stringify({f1: Wr && Wr.f1, f3: Wr && Wr.f3, f6: Wr && Wr.f6}));
+check('+1 h: erster Prognosepunkt (flach, 10,0)', Wr.f1 === 10.0, Wr.f1);
+check('+3 h: zwischen 10,0 (+2 h) und 7,0 (+5 h) = 9,0', Math.abs(Wr.f3 - 9.0) < 0.11, Wr.f3);
+run('opt_owm_parse', {topic: 'current', statusCode: 200, payload: {main: {temp: 12.0, humidity: 60, pressure: 1010}, clouds: {all: 5}, wind: {speed: 2}, weather: [{description: 'klar'}]}});
+check('danach Aktuellwert gesetzt, Prognose bleibt erhalten', gstore.OPT_weather.temp === 12.0 && gstore.OPT_weather.f3 === Wr.f3 && gstore.OPT_weather.status === 'OK', gstore.OPT_weather.status);
+
 // ---------- Zugangsdaten im Dashboard (SYSTEM > EINSTELLUNGEN)
 console.log('\n--- OpenWeatherMap-Zugangsdaten (Formular, Datei, Schutz)');
 delete envv.OWM_API_KEY; delete envv.OWM_LAT; delete envv.OWM_LON;

@@ -235,17 +235,21 @@ if (msg.topic === 'current' && p.main) {
     W.desc = (p.weather && p.weather[0]) ? p.weather[0].description : '';
     W.ts = now; W.status = 'OK';
 }
-if (msg.topic === 'forecast' && Array.isArray(p.list) && W.temp !== undefined) {
-    // +1/+3/+6 h per linearer Interpolation zwischen "jetzt" und den 3-Stunden-Werten
-    var pts = [{t: now, v: W.temp, h: W.rh, c: W.clouds}].concat(p.list.map(function (e) {
+if (msg.topic === 'forecast' && Array.isArray(p.list) && p.list.length) {
+    // +1/+3/+6 h per linearer Interpolation. Der Startpunkt "jetzt" ist der letzte aktuelle Wert (falls frisch);
+    // kommt die Prognose vor der Aktuell-Antwort an, beginnt die Kurve am ersten Prognosepunkt.
+    var fresh = (W.temp !== undefined && W.ts && (now - W.ts) < 30 * 60000);
+    var pts = (fresh ? [{t: now, v: W.temp, h: W.rh, c: W.clouds}] : []).concat(p.list.map(function (e) {
         return {t: e.dt * 1000, v: e.main.temp, h: e.main.humidity, c: e.clouds ? e.clouds.all : null};
     }));
+    function r1(x) { return Math.round(x * 10) / 10; }
     function at(hours, key) {
         var target = now + hours * 3600000;
-        for (var i = 1; i < pts.length; i++) {
+        for (var i = 0; i < pts.length; i++) {
             if (pts[i].t >= target) {
+                if (i === 0) { return r1(pts[0][key]); }
                 var a = pts[i - 1], b = pts[i], f = (target - a.t) / (b.t - a.t);
-                return Math.round((a[key] + f * (b[key] - a[key])) * 10) / 10;
+                return r1(a[key] + f * (b[key] - a[key]));
             }
         }
         return null;
