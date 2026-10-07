@@ -840,18 +840,29 @@ ewld(); venusAll(); evc('battery/soc', 61); e = run('opt_energy', {});
 check('SoC: frischer Venus-Wert hat Vorrang (56 %), keine Kennzeichnung', erow(e, 'Batterie').startsWith('56 % ·'), erow(e, 'Batterie'));
 ewld(); ven('Dc/Battery/Power', 100); evc('battery/soc', 61); e = run('opt_energy', {});
 check('SoC: ohne Venus-Wert zeigt evcc den Ladestand', erow(e, 'Batterie').startsWith('61 % (evcc)'), erow(e, 'Batterie'));
-// Preise
-ewld(); const slot = (h) => { const a = []; for (let t = Math.floor(NOWE / 900000) * 900; t < NOWE / 1000 + h * 3600; t += 900) { const hh = new Date(t * 1000).getHours(); a.push([t, t + 900, hh >= 0 && hh < 5 ? 0.2 : 0.32]); } return a; };
+// Preise (evcc-Pfad: hinterlegten Tarif abschalten)
+ewld(); gstore.OPT_cfg.energy.tariff = null; const slot = (h) => { const a = []; for (let t = Math.floor(NOWE / 900000) * 900; t < NOWE / 1000 + h * 3600; t += 900) { const hh = new Date(t * 1000).getHours(); a.push([t, t + 900, hh >= 0 && hh < 5 ? 0.2 : 0.32]); } return a; };
 evc('forecast/grid', slot(30)); evc('tariffGrid', 0.32); evc('tariffFeedIn', 0.07); e = run('opt_energy', {});
 check('Preise: jetzt 32,0 ct, Einspeisung 7,0 ct; Spanne der naechsten 24 h 20,0 - Ø - 32,0 ct', erow(e, 'Strompreis jetzt') === '32,0 ct/kWh · Einspeisung 7,0 ct' && erow(e, 'Preis nächste 24 h').startsWith('20,0 – ') && erow(e, 'Preis nächste 24 h').includes(' – 32,0 ct/kWh'), erow(e, 'Strompreis jetzt') + ' | ' + erow(e, 'Preis nächste 24 h'));
 const avg = parseFloat(erow(e, 'Preis nächste 24 h').split(' – ')[1].replace(',', '.'));
 check('Preise: Mittel zeitgewichtet (5 h guenstig von 24 h: ~29,5 ct)', Math.abs(avg - 29.5) < 0.6, String(avg));
 check('Preise: guenstigster Slot und 3-h-Fenster beginnen in der Nacht (00:00)', erow(e, 'Günstigster Slot').startsWith('00:00 (20,0 ct) / ab 00:00 (Ø 20,0 ct)'), erow(e, 'Günstigster Slot'));
-check('Preise: Datenlage ok (reicht 30 h voraus)', erow(e, 'Daten Strompreise') === 'ok · reichen 30 h voraus', erow(e, 'Daten Strompreise'));
+check('Preise: Datenlage ok (reicht 30 h voraus)', erow(e, 'Daten Strompreise') === 'evcc · ok · reichen 30 h voraus', erow(e, 'Daten Strompreise'));
 evc('forecast/grid', slot(10)); e = run('opt_energy', {});
-check('Preise: nur 10 h Abdeckung -> "zu kurz" markiert', erow(e, 'Daten Strompreise').startsWith('zu kurz') && e[0].payload.rows.find(r => r[0] === 'Daten Strompreise')[2] === 'warn', erow(e, 'Daten Strompreise'));
+check('Preise: nur 10 h Abdeckung -> "zu kurz" markiert', erow(e, 'Daten Strompreise').startsWith('evcc · zu kurz') && e[0].payload.rows.find(r => r[0] === 'Daten Strompreise')[2] === 'warn', erow(e, 'Daten Strompreise'));
 evc('forecast/grid', [[1, 2, 'x'], [5, 4, 0.3], [10, 20, 9]]); e = run('opt_energy', {});
 check('Preise: unbrauchbare Slots (Text, Ende vor Beginn, Preis 9 EUR) werden ignoriert', erow(e, 'Daten Strompreise') === 'keine Daten', erow(e, 'Daten Strompreise'));
+// hinterlegter HT/NT-Tarif aus VRM Dynamic ESS (00-05 Uhr 0,21 / sonst 0,31 / Einspeisung 0,06) ist die Preisquelle
+ewld(); evc('tariffGrid', 0.318); evc('tariffFeedIn', 0.07); evc('forecast/grid', slot(30)); e = run('opt_energy', {});
+check('Tarif: um 12 Uhr 31,0 ct, Einspeisung 6,0 ct (aus dem hinterlegten Zeitplan, nicht aus evcc)', erow(e, 'Strompreis jetzt (VRM-Tarif)') === '31,0 ct/kWh · Einspeisung 6,0 ct', erow(e, 'Strompreis jetzt (VRM-Tarif)'));
+check('Tarif: Spanne 21,0 - Ø 28,9 - 31,0 ct, guenstigster Slot und 3-h-Fenster ab 00:00, Datenlage 48 h', erow(e, 'Preis nächste 24 h') === '21,0 – 28,9 – 31,0 ct/kWh (min – Ø – max)' && erow(e, 'Günstigster Slot').startsWith('00:00 (21,0 ct) / ab 00:00 (Ø 21,0 ct)') && erow(e, 'Daten Strompreise') === 'VRM-Tarif · ok · reichen 48 h voraus', erow(e, 'Preis nächste 24 h') + ' | ' + erow(e, 'Daten Strompreise'));
+check('Tarif: evcc-Tarif (31,8 / 7,0 ct) wird nur zum Vergleich gezeigt und als abweichend markiert', erow(e, 'evcc-Tarif') === '31,8 / 7,0 ct · weicht ab', erow(e, 'evcc-Tarif'));
+ewld(); evc('tariffGrid', 0.31); evc('tariffFeedIn', 0.06); e = run('opt_energy', {});
+check('Tarif: stimmt evcc ueberein, steht "gleich"', erow(e, 'evcc-Tarif').endsWith('· gleich'), erow(e, 'evcc-Tarif'));
+ewld(); gstore.OPT_cfg.energy.tariff = {buy: [['00:00', '05:00', 0.21]], sell: 0.06}; evc('tariffGrid', 0.318); evc('forecast/grid', slot(30)); e = run('opt_energy', {});
+check('Tarif mit Luecke im Zeitplan: wird verworfen, evcc ist die Quelle', erow(e, 'Strompreis jetzt (evcc)') !== undefined && erow(e, 'Daten Strompreise').startsWith('evcc'), erow(e, 'Daten Strompreise'));
+ewld(); evc('tariffGrid', 0.318); NOW += 5 * 60000; e = run('opt_energy', {}); const lt = e[1] ? e[1].payload.trim().split('\n') : null;
+check('Protokoll: Preisquelle und evcc-Preise stehen in eigenen Spalten, Systemgrenzen der Batterie als Konfiguration', e[1] && e[1].payload.split('\n')[0].includes('preis_quelle,preis_netz_evcc,preis_einspeisung_evcc') && gstore.OPT_cfg.energy.battery.capacityKwh === 43 && gstore.OPT_cfg.energy.grid.importKw === 32, '');
 // PV-Prognose evcc
 ewld(); const ts = []; for (let t = NOWE / 1000 - 3600; t < NOWE / 1000 + 47 * 3600; t += 900) { const h = new Date(t * 1000).getHours() + new Date(t * 1000).getMinutes() / 60; ts.push([t, Math.max(0, 8000 * Math.cos((h - 13) / 6.5 * Math.PI / 2))]); }
 evc('forecast/solar', {scale: 1, today: {energy: 100}, tomorrow: {energy: 100}, timeseries: ts}); e = run('opt_energy', {});
@@ -860,7 +871,9 @@ let expKwh = 0; ts.forEach(([t, w]) => { const o = Math.min(t * 1000 + 900000, N
 check('PV-Prognose (evcc, vorlaeufig): Energie der naechsten 24 h stimmt, Spitze ~8000 W', Math.abs(kwh - expKwh) < 0.15 && erow(e, 'PV-Prognose nächste 24 h').includes('Spitze 8000 W') && erow(e, 'Daten PV-Prognose').startsWith('evcc (vorläufig)'), erow(e, 'PV-Prognose nächste 24 h') + ' erwartet ' + expKwh.toFixed(1));
 // VRM
 const vrmRec = []; for (let t = NOWE / 1000 - 3600; t < NOWE / 1000 + 47 * 3600; t += 3600) { vrmRec.push([t * 1000, 1000]); }                  // konstant 1000 Wh je Stunde, Zeit in ms
-run('opt_vrm_parse', {statusCode: 200, payload: {success: true, records: {solar_yield_forecast: vrmRec, vrm_consumption_fc: vrmRec}, totals: {}}}); e = run('opt_energy', {});
+const consRec = vrmRec.map(x => [x[0], 500]), hpRec = vrmRec.map(x => [x[0], 200]);
+run('opt_vrm_parse', {statusCode: 200, payload: {success: true, records: {solar_yield_forecast: vrmRec, vrm_consumption_fc: consRec, vrm_consum_hp_fc: hpRec}, totals: {}}}); e = run('opt_energy', {});
+check('VRM-Verbrauchsprognose: 500 Wh/h -> 12,0 kWh in 24 h, davon Waermepumpe 4,8 kWh', erow(e, 'Verbrauch nächste 24 h') === '12,0 kWh · davon Wärmepumpe 4,8 kWh', erow(e, 'Verbrauch nächste 24 h'));
 check('PV-Prognose VRM bevorzugt: 1000 Wh/h -> 24,0 kWh, Zeit in ms korrekt umgerechnet, Quelle "VRM"', erow(e, 'PV-Prognose nächste 24 h').startsWith('24,0 kWh') && erow(e, 'Daten PV-Prognose').startsWith('VRM') && erow(e, 'VRM-Abruf').startsWith('OK'), erow(e, 'PV-Prognose nächste 24 h') + ' | ' + erow(e, 'Daten PV-Prognose'));
 NOW += 5 * 3600000; ven('Dc/Pv/Power', 1); e = run('opt_energy', {});
 check('VRM aelter als 4 h: Rueckfall auf die evcc-Prognose (vorlaeufig)', erow(e, 'Daten PV-Prognose').startsWith('evcc (vorläufig)') || erow(e, 'Daten PV-Prognose').startsWith('keine'), erow(e, 'Daten PV-Prognose'));
@@ -890,7 +903,7 @@ const ld = run('opt_vrm_load', {}); check('Start: Installations-ID im Formular, 
 ewld(); venusAll(); evc('forecast/grid', slot(40)); evc('tariffGrid', 0.32); evc('tariffFeedIn', 0.07); evc('forecast/solar', {timeseries: ts}); gstore.OPT_weather = {status: 'OK', ts: NOW, f_ts: NOW, fpts: [[NOW, 8, 70, 10], [NOW + 10800000, 7, 75, 20]]};
 let eo = []; for (let i = 0; i < 12; i++) { NOW += 60000; eo.push(run('opt_energy', {})); }
 const csvE = eo.filter(x => x[1]).map(x => x[1].payload), hE = csvE[0].split('\n')[0].split(','), lE = csvE[0].trim().split('\n').pop().split(',');
-check('Energie-Protokoll: alle 5 min, Kopfzeile einmal, Spaltenzahl stimmt, Werte (PV 15335, SoC 56, Preis 0,32, Quelle evcc)', csvE.length === 3 && csvE.filter(c => c.startsWith('zeit,')).length === 1 && lE.length === hE.length && lE[hE.indexOf('pv_w')] === '15334.75' && lE[hE.indexOf('batterie_soc')] === '56' && lE[hE.indexOf('preis_netz')] === '0.32' && lE[hE.indexOf('pv_prog_quelle')] === 'evcc (vorläufig)', csvE.length + ' Zeilen; ' + lE.slice(1, 7).join(','));
+check('Energie-Protokoll: alle 5 min, Kopfzeile einmal, Spaltenzahl stimmt, Werte (PV 15335, SoC 56, Preis 0,31 aus dem VRM-Tarif, evcc 0,32)', csvE.length === 3 && csvE.filter(c => c.startsWith('zeit,')).length === 1 && lE.length === hE.length && lE[hE.indexOf('pv_w')] === '15334.75' && lE[hE.indexOf('batterie_soc')] === '56' && lE[hE.indexOf('preis_netz')] === '0.31' && lE[hE.indexOf('preis_quelle')] === 'VRM-Tarif' && lE[hE.indexOf('preis_netz_evcc')] === '0.32' && lE[hE.indexOf('pv_prog_quelle')] === 'evcc (vorläufig)', csvE.length + ' Zeilen; ' + lE.slice(1, 7).join(','));
 const snaps = eo.filter(x => x[2]); const sn = JSON.parse(snaps[0][2].payload);
 check('Prognose-Schnappschuss stuendlich: Preise und PV fuer 36 h, OWM-Punkte, Quelle', snaps.length === 1 && sn.price.length >= 140 && sn.price.length <= 148 && sn.pv.length >= 140 && sn.pv.length <= 148 && sn.owm.length === 2 && sn.pvSrc === 'evcc (vorläufig)' && snaps[0][2].filename.startsWith('/data/optimizer/forecast-'), sn.price.length + ' Preise, ' + sn.pv.length + ' PV');
 const nonOpt = Object.keys(gstore).filter(k => !k.startsWith('OPT_') && JSON.stringify(gstore[k]) !== JSON.stringify(BASEQ()[k]));
