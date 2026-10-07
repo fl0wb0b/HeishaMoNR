@@ -95,12 +95,22 @@ setf("2ae1f0e14435e803", "label", "Internal heater", "Heizstab intern")
 setf("cce68d6f8e62d22a", "label", "External heater", "Heizstab extern")
 rep("f37c739180bdbc6e", "format", "Custom functions (Multi-Zone)", "Zusatzfunktionen (alle Zonen)")
 setf("2b04b7dd5ea852f2", "label", "Night reduction", "Nachtabsenkung")
-setf("c66f65978915e688", "label", "Softstart (experimental)", "SoftStart (experimentell)")
+def setf_any(i, field, olds, new):
+    n = node(i)
+    if n.get(field) == new:
+        return
+    if n.get(field) not in olds:
+        errors.append(f"{i}.{field}: expected one of {olds!r}, got {n.get(field)!r}")
+        return
+    n[field] = new
+
+
+setf_any("c66f65978915e688", "label", ("Softstart (experimental)", "SoftStart (experimentell)"), "Sanftanlauf (experimentell)")
 rep("96c650af80111193", "format", "Custom functions (Zone 1)", "Zusatzfunktionen (Zone 1)")
 setf("ad1aa3d7ce882c45", "label", "<font color= {{msg.color}} >Night reduction</font>",
      "<font color= {{msg.color}} >Nachtabsenkung</font>")
-setf("3b21b99348cb6165", "label", "<font color= {{msg.color}} >SoftStart</font>",
-     "<font color= {{msg.color}} >SoftStart</font>")
+setf_any("3b21b99348cb6165", "label", ("<font color= {{msg.color}} >SoftStart</font>",),
+         "<font color= {{msg.color}} >Sanftanlauf</font>")
 
 # ---------------------------------------------------------------- Home: texts from display-only functions
 # operating mode (Current state) – only feeds the ui_text
@@ -617,7 +627,7 @@ def remap_form(form_id, value_map, drop):
 
 
 remap_form(MENU_TABS_FORM,
-           {"SETTINGS": "Einstellungen", "CCC": "Heizkurve", "RTC": "Raumregelung", "Pumpspeed": "Pumpendrehzahl", "SCHEDULER": "Zeitplan",
+           {"SETTINGS": "Einstellungen", "CCC": "Heizkurve", "RTC": "Raumregelung", "SOFTSTART": "Sanftanlauf", "Pumpspeed": "Pumpendrehzahl", "SCHEDULER": "Zeitplan",
             "TEMPERATURES": "Temperaturen", "EFFICIENCY": "Effizienz", "Degree_days": "Gradtage"},
            drop={"COOL", "Solar²DHW"})
 remap_form(MENU_HOME_FORM,
@@ -718,6 +728,90 @@ if COP_ST not in B and COP_CH in B:
                   "payloadType": "date", "x": 560, "y": 2140, "wires": [[COP_LD]]})
     B[COP_ST], B[COP_LD], B[COP_IJ] = flows[-3], flows[-2], flows[-1]
     node(COP_CH)["wires"] = [[COP_ST]]
+
+# ================================================================ phase 11: texts produced by function nodes
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import de_extract_funcs as _ef
+
+FTR = {}
+for _f in sorted(glob.glob(os.path.join(os.path.dirname(os.path.abspath(__file__)), "de_funcs", "*.json"))):
+    FTR.update(json.load(open(_f, encoding="utf-8")))
+
+# literals that must stay as they are: used in comparisons (anywhere) or as values of switch/change rules
+_protected = set()
+for _n in flows:
+    if _n["type"] == "function":
+        for _s, _c in _ef.literals(_n.get("func", "")):
+            if _c:
+                _protected.add(_s)
+    elif _n["type"] in ("switch", "change", "trigger", "rbe"):
+        for _r in _n.get("rules", []) if isinstance(_n.get("rules"), list) else []:
+            for _k in ("v", "v2", "from", "to"):
+                if isinstance(_r.get(_k), str):
+                    _protected.add(_r[_k])
+
+_LIT = _ef.LIT
+for _n in flows:
+    if _n["type"] != "function":
+        continue
+    code = _n.get("func", "")
+    masked = _ef.strip_comments(code)
+    out, last = [], 0
+    for _m in _LIT.finditer(masked):
+        s_ = _m.group("s")
+        if s_ in FTR and s_ not in _protected:
+            q = _m.group("q")
+            new = FTR[s_].replace("\\", "\\\\")
+            if q in new:
+                new = new.replace(q, "\\" + q)
+            out.append(code[last:_m.start("s")])
+            out.append(new)
+            last = _m.end("s")
+    if out:
+        out.append(code[last:])
+        _n["func"] = "".join(out)
+
+# ================================================================ phase 12: SoftStart -> Sanftanlauf in all visible texts
+_SS = re.compile(r"softstart", re.I)
+
+
+def _ss_word(m):
+    t = m.group(0)
+    return "SANFTANLAUF" if t.isupper() else "Sanftanlauf"
+
+
+def ss_text(v):
+    return _SS.sub(_ss_word, v) if isinstance(v, str) else v
+
+
+def ss_html(html):
+    out = []
+    for part in _BLOCK.split(html):
+        if _BLOCK.fullmatch(part):
+            out.append(part)
+            continue
+        for tok in _TAG.split(part):
+            out.append(tok if (tok.startswith("<") and tok.endswith(">")) else ss_text(tok))
+    return "".join(out)
+
+
+for n in flows:
+    t = n["type"]
+    if not t.startswith("ui_") or t in ("ui_tab", "ui_group", "ui_base", "ui_ui_control"):
+        continue
+    for k in ("label", "title", "tooltip"):
+        if k in n:
+            n[k] = ss_html(n[k]) if "<" in str(n[k]) else ss_text(n[k])
+    if t in ("ui_text", "ui_gauge", "ui_numeric", "ui_slider"):
+        for k in ("format", "units"):
+            if k in n:
+                n[k] = ss_html(n[k]) if "<" in str(n[k]) else ss_text(n[k])
+    if t in ("ui_dropdown", "ui_form"):
+        for o in n.get("options", []):
+            if "label" in o:
+                o["label"] = ss_text(o["label"])
+    if t == "ui_template" and isinstance(n.get("format"), str):
+        n["format"] = ss_html(n["format"])
 
 if errors:
     print("\n".join("ERROR: " + e for e in errors))
