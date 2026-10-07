@@ -17821,7 +17821,7 @@
         "y": 2060,
         "wires": [
             [
-                "1cbdb190d6f52cb6"
+                "a1c0b0000c0f0050"
             ]
         ]
     },
@@ -19370,7 +19370,7 @@
         "width": 14,
         "height": 1,
         "name": "TOPBAR",
-        "label": "<h1>Eigene Heizkurve (CCC)</h>",
+        "label": "<h1>Eigene Heizkurve</h>",
         "format": "{{msg.payload}}",
         "layout": "row-left",
         "className": "",
@@ -32804,7 +32804,7 @@
         "width": 6,
         "height": 1,
         "name": "WAR function",
-        "label": "CCC-Funktion (Außentemperatur)",
+        "label": "Heizkurve (Außentemperatur)",
         "format": "",
         "layout": "row-left",
         "className": "",
@@ -60671,7 +60671,7 @@
         "order": 3,
         "width": 12,
         "height": 18,
-        "format": "<h3>CCC - Eigene Heizkurve</h3>\n<br/>\n<h3>Was ist das?</h3><br/>\nDie Panasonic-Wärmepumpe kann mit einer Heizkurve betrieben werden. Das ist eine Standardfunktion, die die Zieltemperatur des Heizwassers aus der Außentemperatur berechnet. Sie ist eine native Panasonic-Funktion. Die CCC ist eine Anpassung dieser Heizkurve.<br>\n<br/><h3>Wozu das?</h3><br/>\nDie Standard-Heizkurve nutzt den Außentemperaturfühler der Wärmepumpe oder einen separat installierten externen Fühler. Danach ist der Fühler festgelegt. <br>\nDer Standort des Fühlers (oder der Wärmepumpe) ist für diese Funktion entscheidend. Liegt der Fühler in der direkten Sonne, kann der Messwert um 10-15 Grad ansteigen. Dadurch funktioniert die Standardfunktion kaum noch.<br>\nMit dieser EIGENEN Heizkurve geht das mit JEDEM Fühler in Node-RED. Du kannst jeden vorhandenen Temperatursensor verwenden, sogar einen „externen Sensor“ wie einen Wetterdienst.<br>\n<br/><h3>Was bringt dir diese Funktion?</h3><br/>\nDie Funktion passt die Heizwassertemperatur dynamisch an das Wetter draußen an. Ist es sehr kalt, braucht man mehr Wärme als bei milden Temperaturen, um ein behagliches Haus zu haben. Die Funktion gleicht so den steigenden Wärmeverlust bei sinkender Außentemperatur aus.\n<br/>\nDadurch kann die Wärmepumpe mit niedrigerer, effizienterer Leistung laufen und spart Energie. Das verringert das Takten des Verdichters und verlängert seine Lebensdauer.\n<br/><br/>\n<h3>Wie richtet man das ein?</h3>\n<br/><u>Temperaturprofil</u>\nHier kannst du drei Punkte festlegen, jeweils mit einer Außentemperatur und der dazugehörigen Zieltemperatur des Heizwassers.\n<br/>\nDer erste (obere) Punkt ist die höchste Außentemperatur, standardmäßig 15 °C. Das ist die maximale Außentemperatur, die die Panasonic akzeptiert. Der letzte (untere) Punkt sollte die tiefste Außentemperatur sein, die bei dir realistisch vorkommt.\n<br/>\nMit dem mittleren Punkt kannst du die Kurve nach deinem Geschmack anpassen, z. B. etwas mehr Wärme bei Frost. Daraus entsteht das CCC-Temperaturprofil. Standardwerte: xxx\n<br/><br/><u>Ergebnis</u>\nAus der aktuellen Außentemperatur wird anhand deiner Einstellungen die passende Wassertemperatur ermittelt. Das Ergebnis wird auf ganze Grad Celsius gerundet und unter „Berechnete Temp.“ angezeigt.\n<br/><br/><u>Erweitert</u>\nWenn du statt dieses Flows die CCC-Funktion der Panasonic selbst nutzen möchtest, kannst du das Temperaturprofil an HeishaMon / Panasonic exportieren.\n<br/><br/>\n<h3>Hinweise:</h3>\n- Die Panasonic hat einen eigenen Außenfühler, meist in dem kleinen schwarzen Gummischlauch an der Rückseite des Geräts. Er ist recht ungenau, besonders bei Sonneneinstrahlung. Ein richtiger Außenfühler wird dringend empfohlen<br/>\n- Außentemperaturbereich: -20 °C bis 15 °C<br/>\n- Wassertemperaturbereich: 20 °C bis 60 °C<br/>\n- Die Panasonic arbeitet intern mit 2 Punkten statt mit den 3 in diesem Flow<br/>\n- Wenn du keine drei Punkte brauchst, verwende 2 gleiche Wassertemperaturen, aber unterschiedliche Außentemperaturen<br/>",
+        "format": "<h3>Eigene Heizkurve</h3>\n<br/>\n<h3>Was ist das?</h3><br/>\nDie Panasonic-Wärmepumpe kann mit einer Heizkurve betrieben werden. Das ist eine Standardfunktion, die die Zieltemperatur des Heizwassers aus der Außentemperatur berechnet. Sie ist eine native Panasonic-Funktion. Die eigene Heizkurve ist eine Anpassung dieser Heizkurve.<br>\n<br/><h3>Wozu das?</h3><br/>\nDie Standard-Heizkurve nutzt den Außentemperaturfühler der Wärmepumpe oder einen separat installierten externen Fühler. Danach ist der Fühler festgelegt. <br>\nDer Standort des Fühlers (oder der Wärmepumpe) ist für diese Funktion entscheidend. Liegt der Fühler in der direkten Sonne, kann der Messwert um 10-15 Grad ansteigen. Dadurch funktioniert die Standardfunktion kaum noch.<br>\nMit dieser EIGENEN Heizkurve geht das mit JEDEM Fühler in Node-RED. Du kannst jeden vorhandenen Temperatursensor verwenden, sogar einen „externen Sensor“ wie einen Wetterdienst.<br>\n<br/><h3>Was bringt dir diese Funktion?</h3><br/>\nDie Funktion passt die Heizwassertemperatur dynamisch an das Wetter draußen an. Ist es sehr kalt, braucht man mehr Wärme als bei milden Temperaturen, um ein behagliches Haus zu haben. Die Funktion gleicht so den steigenden Wärmeverlust bei sinkender Außentemperatur aus.\n<br/>\nDadurch kann die Wärmepumpe mit niedrigerer, effizienterer Leistung laufen und spart Energie. Das verringert das Takten des Verdichters und verlängert seine Lebensdauer.\n<br/><br/>\n<h3>Wie richtet man das ein?</h3>\n<br/><u>Temperaturprofil</u>\nHier kannst du drei Punkte festlegen, jeweils mit einer Außentemperatur und der dazugehörigen Zieltemperatur des Heizwassers.\n<br/>\nDer erste (obere) Punkt ist die höchste Außentemperatur, standardmäßig 15 °C. Das ist die maximale Außentemperatur, die die Panasonic akzeptiert. Der letzte (untere) Punkt sollte die tiefste Außentemperatur sein, die bei dir realistisch vorkommt.\n<br/>\nMit dem mittleren Punkt kannst du die Kurve nach deinem Geschmack anpassen, z. B. etwas mehr Wärme bei Frost. Daraus entsteht das Temperaturprofil der Heizkurve. Standardwerte: xxx\n<br/><br/><u>Ergebnis</u>\nAus der aktuellen Außentemperatur wird anhand deiner Einstellungen die passende Wassertemperatur ermittelt. Das Ergebnis wird auf ganze Grad Celsius gerundet und unter „Berechnete Temp.“ angezeigt.\n<br/><br/><u>Erweitert</u>\nWenn du statt dieses Flows die Heizkurven-Funktion der Panasonic selbst nutzen möchtest, kannst du das Temperaturprofil an HeishaMon / Panasonic exportieren.\n<br/><br/>\n<h3>Hinweise:</h3>\n- Die Panasonic hat einen eigenen Außenfühler, meist in dem kleinen schwarzen Gummischlauch an der Rückseite des Geräts. Er ist recht ungenau, besonders bei Sonneneinstrahlung. Ein richtiger Außenfühler wird dringend empfohlen<br/>\n- Außentemperaturbereich: -20 °C bis 15 °C<br/>\n- Wassertemperaturbereich: 20 °C bis 60 °C<br/>\n- Die Panasonic arbeitet intern mit 2 Punkten statt mit den 3 in diesem Flow<br/>\n- Wenn du keine drei Punkte brauchst, verwende 2 gleiche Wassertemperaturen, aber unterschiedliche Außentemperaturen<br/>",
         "storeOutMessages": false,
         "fwdInMessages": false,
         "resendOnRefresh": false,
@@ -90882,6 +90882,26 @@
             [
                 "a1c0b0000c0f0041",
                 "a1c0b0000c0f0042"
+            ]
+        ]
+    },
+    {
+        "id": "a1c0b0000c0f0050",
+        "type": "function",
+        "z": "8c9d42231fd19d3c",
+        "name": "COP Serie umbenennen",
+        "func": "// Legendenname der COP-Serie (Topic COP_HEAT wird anderswo noch gebraucht)\nif (msg.topic === 'COP_DHW') { return null; }\nif (msg.topic === 'COP_HEAT') { msg.topic = 'COP (Heizen)'; }\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1000,
+        "y": 3100,
+        "wires": [
+            [
+                "1cbdb190d6f52cb6"
             ]
         ]
     }

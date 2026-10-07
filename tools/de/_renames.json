@@ -14,5 +14,11 @@
  "RTC-Funktion - Temperatur": "Raumregelung - Temperatur",
  "RTC-Funktion (Temperatur Zone 1)": "Raumregelung (Temperatur Zone 1)",
  "RTC-Funktion (Temperatur Zone 2)": "Raumregelung (Temperatur Zone 2)",
- "Dieser Node-RED-Flow enthält einige eingebaute Funktionen wie die WAR-Funktion, die RTC-Funktion usw.": "Dieser Node-RED-Flow enthält einige eingebaute Funktionen wie die WAR-Funktion, die Raumregelung usw."
+ "Dieser Node-RED-Flow enthält einige eingebaute Funktionen wie die WAR-Funktion, die RTC-Funktion usw.": "Dieser Node-RED-Flow enthält einige eingebaute Funktionen wie die WAR-Funktion, die Raumregelung usw.",
+ "<h1>Eigene Heizkurve (CCC)</h>": "<h1>Eigene Heizkurve</h>",
+ "CCC - Eigene Heizkurve": "Eigene Heizkurve",
+ "Die Panasonic-Wärmepumpe kann mit einer Heizkurve betrieben werden. Das ist eine Standardfunktion, die die Zieltemperatur des Heizwassers aus der Außentemperatur berechnet. Sie ist eine native Panasonic-Funktion. Die CCC ist eine Anpassung dieser Heizkurve.": "Die Panasonic-Wärmepumpe kann mit einer Heizkurve betrieben werden. Das ist eine Standardfunktion, die die Zieltemperatur des Heizwassers aus der Außentemperatur berechnet. Sie ist eine native Panasonic-Funktion. Die eigene Heizkurve ist eine Anpassung dieser Heizkurve.",
+ "Mit dem mittleren Punkt kannst du die Kurve nach deinem Geschmack anpassen, z. B. etwas mehr Wärme bei Frost. Daraus entsteht das CCC-Temperaturprofil. Standardwerte: xxx": "Mit dem mittleren Punkt kannst du die Kurve nach deinem Geschmack anpassen, z. B. etwas mehr Wärme bei Frost. Daraus entsteht das Temperaturprofil der Heizkurve. Standardwerte: xxx",
+ "Wenn du statt dieses Flows die CCC-Funktion der Panasonic selbst nutzen möchtest, kannst du das Temperaturprofil an HeishaMon / Panasonic exportieren.": "Wenn du statt dieses Flows die Heizkurven-Funktion der Panasonic selbst nutzen möchtest, kannst du das Temperaturprofil an HeishaMon / Panasonic exportieren.",
+ "CCC-Funktion (Außentemperatur)": "Heizkurve (Außentemperatur)"
 }

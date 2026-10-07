@@ -675,6 +675,22 @@ series_names("3578d6b18ceb5727", {"Setpoint": "Sollwert", "Water inlet": "Wasser
 
 setf("1f5d513050d612a1", "label", "RTC", "Raumregelung")        # Home: "RTC (24 °C)" = Raumregelung (Raumtemperatur)
 
+# ================================================================ phase 8: COP series name in the Effizienz chart
+# The chart names its series after msg.topic. The topic COP_HEAT is also used elsewhere, so it is renamed only
+# right in front of this chart; COP_DHW is dropped (no domestic hot water).
+COP_REL = "a1c0b0000c0f0050"
+if COP_REL not in B:
+    flows.append({"id": COP_REL, "type": "function", "z": WP_DASH, "name": "COP Serie umbenennen",
+                  "func": "// Legendenname der COP-Serie (Topic COP_HEAT wird anderswo noch gebraucht)\n"
+                          "if (msg.topic === 'COP_DHW') { return null; }\n"
+                          "if (msg.topic === 'COP_HEAT') { msg.topic = 'COP (Heizen)'; }\n"
+                          "return msg;",
+                  "outputs": 1, "timeout": 0, "noerr": 0, "initialize": "", "finalize": "", "libs": [],
+                  "x": 1000, "y": 3100, "wires": [["1cbdb190d6f52cb6"]]})
+    B[COP_REL] = flows[-1]
+    _d = node("01809486b97e6f56")
+    _d["wires"] = [[COP_REL if w == "1cbdb190d6f52cb6" else w for w in out] for out in _d["wires"]]
+
 if errors:
     print("\n".join("ERROR: " + e for e in errors))
     sys.exit(1)
