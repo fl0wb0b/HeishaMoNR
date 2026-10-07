@@ -84,7 +84,7 @@ def comment(i, text, x, y):
 
 # ---------------------------------------------------------------- rooms and comfort bands
 # One comfort band per room. The deviation from the room's OWN band decides which room limits the optimisation, never the
-# absolute temperature. Single source for the defaults function, the input validation and the dashboard widgets.
+# absolute temperature. Single source for the defaults function, the input validation and the dashboard inputs.
 ROOMS = [
     {"id": "ki_oben", "name": "Kinderzimmer oben", "topic": "shellyhtg3-lucas/status/temperature:0",
      "active": True, "min": 22.5, "max": 23.5, "weight": 1, "maxAgeMin": 90},
@@ -93,23 +93,21 @@ ROOMS = [
     {"id": "schlaf", "name": "Schlafzimmer", "topic": "shellies/shellyht-Schlaf/sensor/temperature",
      "active": True, "min": 19, "max": 21, "weight": 1, "maxAgeMin": 90},
 ]
-# numeric dashboard settings per room: (field, label, lowest, highest, step, tooltip); "active" is a switch
+# numeric settings per room: (field, lowest, highest, step, tooltip); "active" is a checkbox
 ROOM_FIELDS = [
-    ("min", "Komfort-Minimum (°C)", 10, 30, 0.5, "Darunter braucht der Raum Wärme."),
-    ("max", "Komfort-Maximum (°C)", 12, 35, 0.5, "Darüber ist der Raum zu warm."),
-    ("weight", "Gewichtung", 0.1, 5, 0.1,
+    ("min", 10, 30, 0.5, "Darunter braucht der Raum Wärme."),
+    ("max", 12, 35, 0.5, "Darüber ist der Raum zu warm."),
+    ("weight", 0.1, 5, 0.1,
      "Faktor für die Abweichung vom Band. Ein höherer Wert macht den Raum bei der Wahl des maßgeblichen Raums wichtiger."),
-    ("maxAgeMin", "Datenalter-Limit (min)", 5, 720, 5, "Ältere Sensorwerte zählen für die Optimierung nicht mehr."),
+    ("maxAgeMin", 5, 720, 5, "Ältere Sensorwerte zählen für die Optimierung nicht mehr."),
 ]
-LIMITS = {f: [lo, hi] for f, _label, lo, hi, _step, _tip in ROOM_FIELDS}
-WIDGETS = [[f"opt_w_{r['id']}_{f}", r["id"], f] for r in ROOMS for f in ["active"] + [x[0] for x in ROOM_FIELDS]]
+LIMITS = {f: [lo, hi] for f, lo, hi, _step, _tip in ROOM_FIELDS}
 MIN_BAND_K = 0.5
 
 
 def js(code):
     """Fill the shared constants into a JS block."""
     return (code.replace("__ROOMS__", json.dumps(ROOMS, ensure_ascii=False))
-                .replace("__WIDGETS__", json.dumps(WIDGETS, ensure_ascii=False))
                 .replace("__LIMITS__", json.dumps(LIMITS))
                 .replace("__MINBAND__", str(MIN_BAND_K)))
 
@@ -119,7 +117,6 @@ DEFAULTS_JS = r"""
 // Standardwerte der Optimierungsebene. Gespeicherte Einstellungen (config.json) und bereits gesetzte Werte bleiben erhalten.
 // Jeder Raum hat ein eigenes Komfortband (min/max), eine Gewichtung und ein Datenalter-Limit.
 var ROOM_FIELDS = ['active', 'min', 'max', 'weight', 'maxAgeMin'];
-var WIDGETS = __WIDGETS__;                  // [Widget-Id, Raum-Id, Feld]: je Dashboard-Eingabefeld ein Ausgang
 var d = {
     rooms: __ROOMS__,
     sensor:  {maxAgeMin: 90, min: 10, max: 35, maxJumpK: 2, emaTauMin: 30, trendWindowMin: 120, trendMinSpanMin: 30, trendMinSamples: 3},
@@ -154,38 +151,31 @@ mergeRooms(cfg.rooms, saved.rooms);
 mergeRooms(cfg.rooms, cur.rooms);
 delete cfg.comfort;                          // fruehere globale Komfortband-Einstellung: ersetzt durch je Raum eigene Baender
 global.set('OPT_cfg', cfg);
-// aktuelle Werte an die Dashboard-Eingabefelder geben (ein Ausgang je Feld)
-return WIDGETS.map(function (w) {
-    var r = cfg.rooms.find(function (x) { return x.id === w[1]; });
-    if (!r || r[w[2]] === undefined) { return null; }
-    return {payload: w[2] === 'active' ? r.active !== false : r[w[2]]};
-});
+return null;
 """
 
 SET_CFG_JS = r"""
-// Dashboard-Eingaben -> Konfiguration. msg.topic = "room:<id>:<feld>" (active, min, max, weight, maxAgeMin) oder "gruppe.feld".
-// Ausgang 1: rote Rueckmeldung bei abgelehnter Eingabe. Ausgang 2: Eingabefelder auf die gueltigen Werte setzen
-// (nach abgelehnter Eingabe und nach dem Umschalten von "Aktiv": der Schalter aendert sich nur ueber diese Nachricht).
-// Ausgang 3: nach jeder uebernommenen Aenderung sofort neu auswerten, damit die Anzeige gleich nachzieht.
+// Eingaben der Raumkarte -> Konfiguration. msg.topic = "room:<id>:<feld>" (active, min, max, weight, maxAgeMin) oder "gruppe.feld".
+// Ausgang 1: rote Rueckmeldung bei abgelehnter Eingabe. Ausgang 2: sofort neu auswerten, damit die Karte wieder die gueltigen Werte zeigt.
 var cfg = global.get('OPT_cfg');
 if (!cfg) { return null; }
 var LIMITS = __LIMITS__, MIN_BAND = __MINBAND__;
-var t = String(msg.topic || ''), v = msg.payload, refresh = false;
+var t = String(msg.topic || ''), v = msg.payload;
+var again = {payload: 'auswerten'};
 function de(x) { return String(x).replace('.', ','); }
-function reject(text) { return [{topic: 'Optimierung', payload: text, highlight: 'red'}, {payload: 'zuruecksetzen'}]; }
+function reject(text) { return [{topic: 'Optimierung', payload: text, highlight: 'red'}, again]; }
 if (t.indexOf('room:') === 0) {
     var p = t.split(':');
     var room = (cfg.rooms || []).find(function (r) { return r.id === p[1]; });
     if (!room) { return null; }
     if (p[2] === 'active') {
         room.active = (v === true || v === 'true' || v === 1);
-        refresh = true;
     } else {
         var lim = LIMITS[p[2]];
         if (!lim) { return null; }
-        var n = (v === null || v === '' || typeof v === 'boolean') ? NaN : Number(v);
+        var n = (v === null || v === undefined || v === '' || typeof v === 'boolean') ? NaN : Number(v);
         if (!isFinite(n) || n < lim[0] || n > lim[1]) {
-            return reject(room.name + ': Der Wert muss zwischen ' + de(lim[0]) + ' und ' + de(lim[1]) + ' liegen. Nichts geändert.');
+            return reject(room.name + ': Ungültiger Wert (erlaubt: ' + de(lim[0]) + ' bis ' + de(lim[1]) + '). Nichts geändert.');
         }
         var lo = (p[2] === 'min') ? n : room.min, hi = (p[2] === 'max') ? n : room.max;
         if (hi - lo < MIN_BAND - 1e-9) {
@@ -203,7 +193,7 @@ try {                                        // dauerhaft speichern, damit die E
     fs.mkdirSync('/data/optimizer', {recursive: true});
     fs.writeFileSync('/data/optimizer/config.json', JSON.stringify(cfg, null, 1));
 } catch (e) { node.warn('Einstellungen konnten nicht gespeichert werden: ' + e.message); }
-return [null, refresh ? {payload: 'aktualisieren'} : null, {payload: 'auswerten'}];
+return [null, again];
 """
 
 ROOM_IN_JS = r"""
@@ -415,7 +405,8 @@ var rooms = [];
     var r = R[rc.id] || {};
     var a = ageMin(r.ts), lim = rc.maxAgeMin || cfg.sensor.maxAgeMin;
     var band = isFinite(rc.min) && isFinite(rc.max) && rc.min < rc.max;
-    var x = {id: rc.id, name: rc.name, active: rc.active !== false && band, hasData: (r.ema !== undefined && a !== null), age: a, lim: lim,
+    var on = rc.active !== false;
+    var x = {id: rc.id, name: rc.name, on: on, active: on && band, hasData: (r.ema !== undefined && a !== null), age: a, lim: lim,
              ema: r.ema, last: r.last, trend: (r.trend === undefined ? null : r.trend), min: rc.min, max: rc.max, weight: rc.weight || 1,
              dev: 0, score: 0, dLow: null, dHigh: null};
     x.valid = x.active && x.hasData && a <= lim;
@@ -436,18 +427,27 @@ valids.forEach(function (x) {
 });
 var nActive = rooms.filter(function (x) { return x.active; }).length;
 var none = !valids.length;
-var rowsRoom = [
-    ['Heizbedarf (maßgeblicher Raum)', none ? '–' : (heat ? heat.name + ' · ' + f(-heat.dev, 1, 'K') + ' unter Minimum · ' + trTxt(heat) : 'keiner'), none || heat ? 'warn' : 'ok'],
-    ['Überschreitung (maßgeblicher Raum)', none ? '–' : (over ? over.name + ' · ' + f(over.dev, 1, 'K') + ' über Maximum · ' + trTxt(over) : 'keine'), none || over ? 'warn' : 'ok'],
-    ['Geringster Abstand zur Grenze', tight ? sg(tight.m, 1, 'K') + ' (' + tight.room.name + ')' : '–', tight && tight.m < 0.3 ? 'warn' : ''],
-    ['Gültig für die Optimierung', valids.length + ' von ' + nActive + ' aktiven Räumen' + (nActive < rooms.length ? ' · ' + (rooms.length - nActive) + ' inaktiv' : ''), valids.length < nActive ? 'warn' : '']
-];
-var detail = rooms.map(function (x) {
-    var why = !x.active ? 'nein (inaktiv)' : (!x.hasData ? 'nein (keine Daten)' : (!x.valid ? 'nein (veraltet, Limit ' + age(x.lim) + ')' : 'ja'));
-    var role = (x === heat) ? 'Heizbedarf' : ((x === over) ? 'Überschreitung' : '');
-    return [x.name, x.hasData ? f(x.ema, 1, '°C') : '–', f(x.min, 1) + ' – ' + f(x.max, 1, '°C'),
-            x.hasData ? sg(x.dLow, 1, 'K') : '–', x.hasData ? sg(x.dHigh, 1, 'K') : '–', x.hasData ? (x.trend === null ? 'n. v.' : trTxt(x)) : '–',
-            why + (x.hasData ? ' · ' + age(x.age) : ''), role, !x.valid ? 'mute' : (x.dev !== 0 ? 'warn' : 'ok')];
+var sum = {
+    heat: none ? '–' : (heat ? heat.name + ' · ' + f(-heat.dev, 1, 'K') + ' unter Minimum · ' + trTxt(heat) : 'keiner'),
+    heatCls: (none || heat) ? 'warn' : 'ok',
+    over: none ? '–' : (over ? over.name + ' · ' + f(over.dev, 1, 'K') + ' über Maximum · ' + trTxt(over) : 'keine'),
+    overCls: (none || over) ? 'warn' : 'ok',
+    tight: tight ? sg(tight.m, 1, 'K') + ' (' + tight.room.name + ')' : '–',
+    tightCls: (tight && tight.m < 0.3) ? 'warn' : '',
+    valid: valids.length + ' von ' + nActive + ' aktiven Räumen' + (nActive < rooms.length ? ' · ' + (rooms.length - nActive) + ' inaktiv' : ''),
+    validCls: valids.length < nActive ? 'warn' : ''
+};
+var roomsOut = rooms.map(function (x) {
+    var why = !x.active ? 'nein (inaktiv)' : (!x.hasData ? 'nein (keine Daten)' : (!x.valid ? 'nein (veraltet)' : 'ja'));
+    return {id: x.id, name: x.name,
+            ist: x.hasData ? f(x.ema, 1, '°C') : '–', band: f(x.min, 1) + ' – ' + f(x.max, 1, '°C'),
+            dLow: x.hasData ? sg(x.dLow, 1, 'K') : '–', dHigh: x.hasData ? sg(x.dHigh, 1, 'K') : '–',
+            cLow: (x.valid && x.dLow < 0) ? 'warn' : '', cHigh: (x.valid && x.dHigh < 0) ? 'warn' : '',
+            trend: x.hasData ? (x.trend === null ? 'n. v.' : trTxt(x)) : '–',
+            valid: why + (x.hasData ? ' · ' + age(x.age) : ''),
+            role: x === heat ? 'heat' : (x === over ? 'over' : ''),
+            cls: !x.valid ? 'mute' : (x.dev !== 0 ? 'warn' : 'ok'),
+            on: x.on, min: x.min, max: x.max, weight: x.weight, maxAgeMin: x.lim};
 });
 
 // ---------- Aussen / Wetter
@@ -456,15 +456,15 @@ var wAge = ageMin(W.ts), wOk = (W.status === 'OK' && wAge !== null && wAge <= cf
 var rowsWx = [
     ['Außen Panasonic', f(tp, 1, '°C'), ''],
     ['Außen Wetterdienst', tw !== null ? f(tw, 1, '°C') : '–', ''],
-    ['Differenz Wetter − Panasonic', (tw !== null && tp !== null) ? sg(tw - tp, 1, 'K') : '–', ''],
+    ['Wetter − Panasonic', (tw !== null && tp !== null) ? sg(tw - tp, 1, 'K') : '–', ''],
     ['Prognose +1 h', wOk ? f(W.f1, 1, '°C') : '–', ''],
     ['Prognose +3 h', wOk ? f(W.f3, 1, '°C') : '–', ''],
     ['Prognose +6 h', wOk ? f(W.f6, 1, '°C') : '–', ''],
     ['Luftfeuchtigkeit', wOk ? f(W.rh, 0, '%') : '–', ''],
     ['Taupunkt', wOk ? f(W.dew, 1, '°C') : '–', ''],
     ['Bewölkung', (wOk && W.clouds !== null && W.clouds !== undefined) ? f(W.clouds, 0, '%') : '–', ''],
-    ['Wetterdaten', (W.status || 'noch nicht abgerufen') + (wAge !== null ? ' · Alter ' + age(wAge) : ''), wOk ? 'ok' : ''],
-    ['Regelwert Außentemperatur', f(tp, 1, '°C') + ' (Panasonic, unverändert)', '']
+    ['Wetterdaten', (W.status || 'noch nicht abgerufen') + (wAge !== null ? ' · ' + age(wAge) : ''), wOk ? 'ok' : ''],
+    ['Regelwert Außentemperatur', f(tp, 1, '°C') + ' (Panasonic)', '']
 ];
 
 // ---------- Waermepumpe
@@ -477,11 +477,11 @@ var rtc = G('F_RTC'), rtcCorr = (rtc && rtc.z1) ? num(rtc.z1.correction_value) :
 var shiftFinal = num(G('SHIFT_Final')), target = num(G('TOP42_Z1_Water_Target_Temp'));
 var inl = num(G('TOP5_Main_Inlet_Temp')), outl = num(G('TOP6_Main_Outlet_Temp')), pw = num(G('TOP16_Heat_Energy_Consumption')), cop = num(G('COP_HEAT'));
 var rowsWp = [
-    ['Betriebszustand', mode + (mode === 'Bereit' ? ' (Verdichter steht)' : '') + (ssOn ? ' · Sanftanlauf aktiv' : ''), ''],
-    ['Soll-Vorlauf (Panasonic-Heizkurve)', f(target, 0, '°C'), ''],
-    ['Basis-Verschiebung (manuell)', f(shiftBase, 0, 'K'), ''],
-    ['Raumregelung-Korrektur (bestehend)', f(rtcCorr, 0, 'K'), ''],
-    ['Finale Verschiebung', f(shiftFinal, 0, 'K'), ''],
+    ['Betriebszustand', mode + (ssOn ? ' · Sanftanlauf' : ''), ''],
+    ['Soll-Vorlauf (Heizkurve)', f(target, 0, '°C'), ''],
+    ['Verschiebung manuell', f(shiftBase, 0, 'K'), ''],
+    ['Korrektur Raumregelung', f(rtcCorr, 0, 'K'), ''],
+    ['Verschiebung final', f(shiftFinal, 0, 'K'), ''],
     ['Vorlauf / Rücklauf', f(outl, 1) + ' / ' + f(inl, 1, '°C'), ''],
     ['Verdichter', f(freq, 0, 'Hz'), ''],
     ['Leistung · COP', f(pw, 0, 'W') + ' · ' + (freq > 0 ? f(cop, 1) : '–'), ''],
@@ -490,13 +490,13 @@ var rowsWp = [
 
 // ---------- Optimierung (Phase 1: nur Beobachtung)
 var reason;
-if (none) { reason = 'Beobachtung · keine gültigen Raumdaten'; }
-else if (heat && over) { reason = 'Beobachtung · Zielkonflikt: ' + heat.name + ' unter Minimum, ' + over.name + ' über Maximum'; }
-else if (heat) { reason = 'Beobachtung · ' + heat.name + ' ' + f(-heat.dev, 1, 'K') + ' unter dem eigenen Minimum (' + trTxt(heat) + ')'; }
-else if (over) { reason = 'Beobachtung · ' + over.name + ' ' + f(over.dev, 1, 'K') + ' über dem eigenen Maximum (' + trTxt(over) + ')'; }
-else { reason = 'Beobachtung · alle gültigen Räume im eigenen Komfortband'; }
+if (none) { reason = 'keine gültigen Raumdaten'; }
+else if (heat && over) { reason = 'Zielkonflikt: ' + heat.name + ' zu kalt, ' + over.name + ' zu warm'; }
+else if (heat) { reason = heat.name + ' zu kalt (' + f(-heat.dev, 1, 'K') + ' unter Minimum)'; }
+else if (over) { reason = over.name + ' zu warm (' + f(over.dev, 1, 'K') + ' über Maximum)'; }
+else { reason = 'alle gültigen Räume im eigenen Komfortband'; }
 
-var out = [{payload: {rows: rowsWx}}, {payload: {rows: rowsRoom}}, {payload: {rows: rowsWp}}, null, null, null, null, {payload: {table: detail}}];
+var out = [{payload: {rows: rowsWx}}, {payload: {sum: sum, rooms: roomsOut}}, {payload: {rows: rowsWp}}, null, null, null, null];
 
 // ---------- Protokoll (alle log.intervalMin Minuten, CSV) und Ereignisse
 var d = new Date(now), pad = function (n) { return (n < 10 ? '0' : '') + n; };
@@ -535,9 +535,9 @@ if (!lastLog || (now - lastLog) >= cfg.log.intervalMin * 60000) {
     lastLog = now;
 }
 var rowsOpt = [
-    ['Modus', 'Phase 1 · nur Beobachtung, kein Eingriff', 'ok'],
-    ['Grund', reason, ''],
-    ['Raumkorrektur durch Optimierung', '0 K (nicht aktiv)', ''],
+    ['Modus', 'Beobachtung, kein Eingriff', 'ok'],
+    ['Bewertung', reason, ''],
+    ['Korrektur', '0 K (nicht aktiv)', ''],
     ['Protokoll', lastLog ? 'letzter Eintrag ' + new Date(lastLog).toLocaleTimeString('de-DE', {hour: '2-digit', minute: '2-digit'}) : 'noch kein Eintrag', '']
 ];
 out[3] = {payload: {rows: rowsOpt}};
@@ -568,75 +568,136 @@ return out;
 
 # ---------------------------------------------------------------- dashboard
 upsert({"id": UI_TAB, "type": "ui_tab", "name": "Optimierung", "icon": "tune", "order": 12.5, "disabled": False, "hidden": False})
-GROUPS = [("opt_g_wx", "Außen & Wetter", 6), ("opt_g_room", "Räume & Komfort", 6), ("opt_g_roomdetail", "Räume im Detail", 12),
-          ("opt_g_wp", "Wärmepumpe", 6), ("opt_g_opt", "Optimierung", 6)]
-GROUPS += [(f"opt_g_cfg_{r['id']}", "Einstellungen: " + r["name"], 6) for r in ROOMS]
+# one wide card for the rooms (situation + settings), three slim status cards next to it; templates: width 0 = group width
+GROUPS = [("opt_g_rooms", "Räume und Komfortbänder", 12), ("opt_g_opt", "Optimierung", 6),
+          ("opt_g_wx", "Außen & Wetter", 6), ("opt_g_wp", "Wärmepumpe", 6)]
 for _order, (gid, gname, gwidth) in enumerate(GROUPS, 1):
     upsert({"id": gid, "type": "ui_group", "name": gname, "tab": UI_TAB, "order": _order, "disp": True,
             "width": gwidth, "collapse": False, "className": ""})
 
+# The dashboard measures "automatic" card heights only once, before the first data arrives, so such cards stay collapsed.
+# Every card therefore starts with a static height and fits itself to its content (marked .optfit): it sets the card size
+# attribute and lets the dashboard lay out the cards again. Hidden cards (other tab) are skipped; on any error the card
+# simply keeps its configured height.
+FIT_JS = """<script>
+(function () {
+    var id = '__ID__', reg = window.__optFit = window.__optFit || {fns: {}};
+    function fit() {
+        try {
+            var card = document.querySelector('[node-id="' + id + '"]'), root = card && card.querySelector('.optfit'), last = root && root.lastElementChild;
+            if (!card || !last || !card.offsetParent) { return; }
+            var px = last.getBoundingClientRect().bottom - card.getBoundingClientRect().top + 10;
+            if (px < 30) { return; }
+            var z = angular.element(document.body).injector().get('uiSizes'), units = Math.max(1, Math.ceil((px + z.cy) / (z.sy + z.cy)));
+            var attr = card.getAttribute('ui-card-size') || '', w = attr.split('x')[0] || '6';
+            if (attr === w + 'x' + units) { return; }
+            card.setAttribute('ui-card-size', w + 'x' + units);
+            var panel = card.closest('ui-card-panel'), ctrl = angular.element(panel).controller('uiCardPanel'), mas = angular.element(panel.parentElement).controller('uiMasonry');
+            ctrl.refreshLayout(function () { if (mas) { mas.refreshLayout(); } });
+        } catch (e) { /* the card keeps its configured height */ }
+    }
+    reg.fns[id] = fit;
+    if (!reg.timer) { reg.timer = setInterval(function () { if (document.visibilityState === 'visible') { Object.keys(reg.fns).forEach(function (k) { reg.fns[k](); }); } }, 1500); }
+    setTimeout(fit, 150);
+})();
+</script>"""
+
 TABLE = ('<style>.opt td{padding:3px 4px;vertical-align:top} .opt .l{color:#666} .opt .v{text-align:right;font-weight:bold}'
          ' .opt .warn{color:#c62828} .opt .ok{color:#2e7d32}</style>'
-         '<table class="opt" style="width:100%"><tr ng-repeat="r in msg.payload.rows track by $index">'
-         '<td class="l">{{r[0]}}</td><td class="v" ng-class="r[2]">{{r[1]}}</td></tr></table>')
-
-# detail table: one row per room (name, actual, own band, distance to lower/upper limit, trend, valid, role, css class)
-DETAIL = """<style>.optd{width:100%;border-collapse:collapse;font-size:13px}
-.optd th{text-align:left;font-weight:normal;color:#666;padding:3px 6px;border-bottom:1px solid #ccc}
-.optd td{padding:4px 6px;vertical-align:top;border-bottom:1px solid #eee} .optd .n{text-align:right;white-space:nowrap}
-.optd .warn{color:#c62828;font-weight:bold} .optd .ok{color:#2e7d32;font-weight:bold} .optd .mute{color:#999}
-.optd-note{font-size:12px;color:#666;padding:4px 6px}</style>
-<div style="overflow-x:auto"><table class="optd"><tr><th>Raum</th><th class="n">Ist</th><th>Komfortband</th><th class="n">Abstand unten</th><th class="n">Abstand oben</th>
-<th>Trend</th><th>Für Optimierung gültig</th><th>Bestimmt</th></tr>
-<tr ng-repeat="r in msg.payload.table track by $index"><td>{{r[0]}}</td><td class="n" ng-class="r[8]">{{r[1]}}</td><td>{{r[2]}}</td>
-<td class="n" ng-class="r[8]">{{r[3]}}</td><td class="n" ng-class="r[8]">{{r[4]}}</td><td>{{r[5]}}</td>
-<td ng-class="{mute: r[8]==='mute'}">{{r[6]}}</td><td>{{r[7]}}</td></tr></table></div>
-<div class="optd-note">Abstand: positiv = noch Luft bis zur Grenze, negativ = Grenze verletzt. Jeder Raum wird nach seinem eigenen Band bewertet.</div>"""
+         '<div class="optfit"><table class="opt" style="width:100%"><tr ng-repeat="r in msg.payload.rows track by $index">'
+         '<td class="l">{{r[0]}}</td><td class="v" ng-class="r[2]">{{r[1]}}</td></tr></table></div>')
 
 
-def template(i, gid, order, height, y):
-    return {"id": i, "type": "ui_template", "z": TAB, "group": gid, "name": "", "order": order, "width": 6,
-            "height": height, "format": TABLE, "storeOutMessages": True, "fwdInMessages": False,
-            "resendOnRefresh": True, "templateScope": "local", "className": "", "x": 1260, "y": y, "wires": [[]]}
+def template(i, gid, height, y):
+    """Status card: label/value rows; full group width, static start height (units), fits itself to the content."""
+    return {"id": i, "type": "ui_template", "z": TAB, "group": gid, "name": "", "order": 1, "width": 0,
+            "height": height, "format": TABLE + FIT_JS.replace("__ID__", i), "storeOutMessages": True,
+            "fwdInMessages": False, "resendOnRefresh": True, "templateScope": "local", "className": "",
+            "x": 1260, "y": y, "wires": [[]]}
 
 
-upsert(template("opt_t_wx", "opt_g_wx", 1, 8, 140))
-upsert(template("opt_t_room", "opt_g_room", 1, 7, 200))
-upsert(template("opt_t_wp", "opt_g_wp", 1, 7, 260))
-upsert(template("opt_t_opt", "opt_g_opt", 1, 3, 320))
-upsert({"id": "opt_t_roomdetail", "type": "ui_template", "z": TAB, "group": "opt_g_roomdetail", "name": "Räume im Detail",
-        "order": 1, "width": 12, "height": 5, "format": DETAIL, "storeOutMessages": True, "fwdInMessages": False,
-        "resendOnRefresh": True, "templateScope": "local", "className": "", "x": 1260, "y": 380, "wires": [[]]})
+upsert(template("opt_t_opt", "opt_g_opt", 4, 140))
+upsert(template("opt_t_wx", "opt_g_wx", 7, 200))
+upsert(template("opt_t_wp", "opt_g_wp", 6, 260))
 
 
-def room_widget(room, field, order, y):
-    """Switch/numeric input of one room setting; sends msg.topic "room:<id>:<field>" to opt_set."""
-    base = {"id": f"opt_w_{room['id']}_{field}", "z": TAB, "group": f"opt_g_cfg_{room['id']}", "order": order,
-            "width": 6, "height": 1, "passthru": False, "topic": f"room:{room['id']}:{field}", "topicType": "str",
-            "className": "", "x": 1500, "y": y, "wires": [["opt_set"]]}
-    if field == "active":
-        base.update({"type": "ui_switch", "name": "Aktiv · " + room["name"], "label": "Aktiv (für die Optimierung)",
-                     "tooltip": "Inaktive Räume werden nur angezeigt, aber nicht bewertet.", "decouple": "true",
-                     "style": "", "onvalue": "true", "onvalueType": "bool", "onicon": "", "oncolor": "",
-                     "offvalue": "false", "offvalueType": "bool", "officon": "", "offcolor": "", "animate": False})
-        return base
-    _f, label, lo, hi, step, tip = next(x for x in ROOM_FIELDS if x[0] == field)
-    base.update({"type": "ui_numeric", "name": label + " · " + room["name"], "label": label, "tooltip": tip, "wrap": False,
-                 "format": "{{value}}", "min": lo, "max": hi, "step": step})
-    return base
+def room_input(field):
+    """Number input of one room setting; the change is sent to opt_set as "room:<id>:<field>"."""
+    _f, lo, hi, step, tip = next(x for x in ROOM_FIELDS if x[0] == field)
+    return ('<input type="number" ng-model="r.%s" ng-model-options="{updateOn: \'change blur\'}" ng-focus="edit()" ng-blur="done()" '
+            'ng-change="set(r, \'%s\', r.%s)" min="%s" max="%s" step="%s" title="%s">' % (field, field, field, lo, hi, step, tip))
 
 
-for _ri, _room in enumerate(ROOMS):
-    for _fi, _field in enumerate(["active"] + [x[0] for x in ROOM_FIELDS]):
-        upsert(room_widget(_room, _field, _fi + 1, 140 + 40 * (_ri * 5 + _fi)))
+# room card: summary, situation per room, settings per room (inputs write back through scope.send -> opt_set)
+ROOMS_TPL = """<style>
+.optr{font-size:14px;line-height:1.4}
+.optr .sum{display:grid;grid-template-columns:max-content 1fr;gap:3px 16px;margin:2px 0 14px}
+.optr .k{color:#666}
+.optr .warn{color:#c62828;font-weight:bold}
+.optr .ok{color:#2e7d32;font-weight:bold}
+.optr .mute{color:#999}
+.optr .sec{margin:18px 0 2px;color:#666;font-size:13px}
+.optr table{width:100%;border-collapse:collapse}
+.optr th{text-align:left;font-weight:normal;color:#666;font-size:12px;padding:4px 6px;border-bottom:1px solid #ccc}
+.optr td{padding:6px;border-bottom:1px solid #eee;vertical-align:middle}
+.optr .n{text-align:right;white-space:nowrap}
+.optr .role{display:block;font-size:12px;color:#c62828}
+.optr input[type=number]{width:64px;padding:3px 4px;font:inherit;text-align:right;border:1px solid #bbb;border-radius:3px;background:transparent;color:inherit}
+.optr input[type=checkbox]{width:18px;height:18px;vertical-align:middle}
+.optr .note{margin-top:6px;font-size:12px;color:#777}
+/* on narrow screens the 12-unit card would be wider than the screen: fit it, the tables scroll inside */
+@media (max-width:700px){ui-card-panel:has(.optr),.nr-dashboard-cardpanel:has(.optr),.nr-dashboard-cardcontainer:has(.optr),md-card.nr-dashboard-template:has(.optr){width:100% !important;min-width:0 !important;max-width:100% !important}}
+</style>
+<div class="optr optfit" ng-if="d">
+<div class="sum">
+<span class="k">Heizbedarf</span><span ng-class="d.sum.heatCls">{{d.sum.heat}}</span>
+<span class="k">Überschreitung</span><span ng-class="d.sum.overCls">{{d.sum.over}}</span>
+<span class="k">Geringster Abstand</span><span ng-class="d.sum.tightCls">{{d.sum.tight}}</span>
+<span class="k">Gültige Räume</span><span ng-class="d.sum.validCls">{{d.sum.valid}}</span>
+</div>
+<div style="overflow-x:auto"><table>
+<tr><th>Raum</th><th class="n">Ist</th><th class="n">Komfortband</th><th class="n">Abstand unten</th><th class="n">Abstand oben</th><th>Trend</th><th>Gültig</th></tr>
+<tr ng-repeat="r in d.rooms track by r.id">
+<td>{{r.name}}<span class="role" ng-if="r.role==='heat'">bestimmt den Heizbedarf</span><span class="role" ng-if="r.role==='over'">bestimmt die Überschreitung</span></td>
+<td class="n" ng-class="r.cls">{{r.ist}}</td><td class="n">{{r.band}}</td>
+<td class="n" ng-class="r.cLow">{{r.dLow}}</td><td class="n" ng-class="r.cHigh">{{r.dHigh}}</td>
+<td>{{r.trend}}</td><td ng-class="r.cls==='mute' ? 'mute' : ''">{{r.valid}}</td></tr>
+</table></div>
+<div class="note">Abstand: positiv = noch Luft bis zur Grenze, negativ = Grenze verletzt. Jeder Raum wird nach seinem eigenen Band bewertet.</div>
+<div class="sec">Einstellungen je Raum</div>
+<div style="overflow-x:auto"><table>
+<tr><th>Raum</th><th>Aktiv</th><th class="n">Minimum °C</th><th class="n">Maximum °C</th><th class="n">Gewichtung</th><th class="n">Datenalter-Limit (min)</th></tr>
+<tr ng-repeat="r in d.rooms track by r.id"><td>{{r.name}}</td>
+<td><input type="checkbox" ng-model="r.on" ng-change="set(r, 'active', r.on)"></td>
+<td class="n">__IN_min__</td><td class="n">__IN_max__</td><td class="n">__IN_weight__</td><td class="n">__IN_maxAgeMin__</td></tr>
+</table></div>
+<div class="note">Änderungen gelten, sobald das Feld verlassen wird. Inaktive Räume werden nur angezeigt, nicht bewertet. Die Gewichtung ist ein Faktor für die Abweichung und entscheidet bei mehreren Verstößen, welcher Raum maßgeblich ist.</div>
+</div>
+<script>
+(function (scope) {
+    scope.d = null; scope.editing = false; scope.pending = false;
+    // new values from the server replace the card, except while a field is being edited (unless the update answers our own change)
+    scope.$watch('msg', function (m) {
+        if (m && m.payload && m.payload.rooms && (!scope.editing || scope.pending)) { scope.d = JSON.parse(JSON.stringify(m.payload)); scope.pending = false; }
+    });
+    scope.edit = function () { scope.editing = true; };
+    scope.done = function () { scope.editing = false; };
+    scope.set = function (r, field, value) { scope.pending = true; scope.send({topic: 'room:' + r.id + ':' + field, payload: value}); };
+})(scope);
+</script>"""
+for _f in ("min", "max", "weight", "maxAgeMin"):
+    ROOMS_TPL = ROOMS_TPL.replace("__IN_%s__" % _f, room_input(_f))
+upsert({"id": "opt_t_rooms", "type": "ui_template", "z": TAB, "group": "opt_g_rooms", "name": "Räume", "order": 1,
+        "width": 0, "height": 12, "format": ROOMS_TPL + FIT_JS.replace("__ID__", "opt_t_rooms"), "storeOutMessages": True, "fwdInMessages": False,
+        "resendOnRefresh": True, "templateScope": "local", "className": "", "x": 1260, "y": 320, "wires": [["opt_set"]]})
 
 # ---------------------------------------------------------------- flow nodes
 upsert(comment("opt_c1", "Phase 1: nur messen, glätten, anzeigen, protokollieren – KEIN Eingriff in die Regelung", 380, 40))
 upsert(comment("opt_c2", "Raumsensoren (Venus-Broker) → Plausibilität, Ausreißer, Glättung, Trend", 380, 80))
 upsert(inject("opt_i_init", "Standardwerte", 0, 3, ["opt_defaults"], 140, 140))
-upsert(fn("opt_defaults", "Standardwerte setzen", js(DEFAULTS_JS), len(WIDGETS), [[w[0]] for w in WIDGETS], 380, 140, FS))
-# output 1: red message for a rejected input, output 2: set the input fields to the valid values, output 3: evaluate now
-upsert(fn("opt_set", "Einstellung übernehmen und speichern", js(SET_CFG_JS), 3, [["opt_ui_toast"], ["opt_defaults"], ["opt_eval"]], 1760, 440, FS))
+upsert(fn("opt_defaults", "Standardwerte setzen", js(DEFAULTS_JS), 0, [], 380, 140, FS))
+# input from the room card; output 1: red message for a rejected input, output 2: evaluate now (the card shows the valid values again)
+upsert(fn("opt_set", "Einstellung übernehmen und speichern", js(SET_CFG_JS), 2, [["opt_ui_toast"], ["opt_eval"]], 1500, 320, FS))
 
 for i, (t, y) in enumerate((("+/status/temperature:0", 200), ("shellies/+/sensor/temperature", 260))):
     upsert({"id": f"opt_mqtt_{i}", "type": "mqtt in", "z": TAB, "name": "", "topic": t, "qos": "1",
@@ -656,9 +717,8 @@ upsert(fn("opt_owm_parse", "OWM-Antwort auswerten", OWM_PARSE_JS, 1, [[]], 880, 
 
 upsert(comment("opt_c4", "Auswertung jede Minute → Anzeige + Protokoll (CSV in /data/optimizer)", 380, 700))
 upsert(inject("opt_i_tick", "jede Minute", 60, 15, ["opt_eval"], 140, 760))
-upsert(fn("opt_eval", "Auswerten · Anzeigen · Protokollieren", EVAL_JS, 8,
-          [["opt_t_wx"], ["opt_t_room"], ["opt_t_wp"], ["opt_t_opt"], ["opt_f_log"], ["opt_f_ev"], ["opt_ui_wxstatus"],
-           ["opt_t_roomdetail"]], 420, 760, FS))
+upsert(fn("opt_eval", "Auswerten · Anzeigen · Protokollieren", EVAL_JS, 7,
+          [["opt_t_wx"], ["opt_t_rooms"], ["opt_t_wp"], ["opt_t_opt"], ["opt_f_log"], ["opt_f_ev"], ["opt_ui_wxstatus"]], 420, 760, FS))
 for fid, name, y in (("opt_f_log", "Protokoll", 700), ("opt_f_ev", "Ereignisse", 780)):
     upsert({"id": fid, "type": "file", "z": TAB, "name": name, "filename": "filename", "filenameType": "msg",
             "appendNewline": False, "createDir": True, "overwriteFile": "false", "encoding": "utf8",
@@ -716,7 +776,9 @@ upsert({"id": "opt_ui_toast", "type": "ui_toast", "z": TAB, "position": "top rig
 upsert(inject("opt_i_owm_load", "Zugangsdaten prüfen", 0, 6, ["opt_owm_load"], 140, 920))
 upsert(fn("opt_owm_load", "Gespeicherten Standort laden", OWM_LOAD_JS, 1, [["opt_ui_form"]], 420, 920, FS))
 # nodes of earlier iterations that no longer exist
-for _rid in ("opt_ui_ctl", "opt_ui_wait", "opt_n_low", "opt_n_high", "opt_n_age"):
+_OLD = ["opt_ui_ctl", "opt_ui_wait", "opt_n_low", "opt_n_high", "opt_n_age", "opt_g_room", "opt_g_roomdetail", "opt_t_room", "opt_t_roomdetail"]
+_OLD += [i for i in B if i.startswith(("opt_w_", "opt_g_cfg_"))]           # per-room inputs and groups of the earlier layout
+for _rid in _OLD:
     if _rid in B:
         flows.remove(B.pop(_rid))
 upsert(fn("opt_owm_save", "Zugangsdaten speichern", OWM_SAVE_JS, 4,

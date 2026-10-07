@@ -66,26 +66,26 @@ for (minute = 0; minute <= 8 * 60; minute++) {
   if (out) {
     if (out[4]) csv.push(out[4].payload);
     if (out[5]) events.push(out[5].payload);
-    if ([60, 240, 290, 480].includes(minute)) { snap[minute] = {room: out[1].payload.rows, detail: out[7].payload.table, opt: out[3].payload.rows}; }
+    if ([60, 240, 290, 480].includes(minute)) { snap[minute] = {sum: out[1].payload.sum, rooms: out[1].payload.rooms, opt: out[3].payload.rows}; }
   }
 }
 const R = gstore.OPT_rooms;
-const byName = (s, name) => s.detail.find(r => r[0] === name);
+const byName = (s, name) => s.rooms.find(r => r.name === name);
 check('Trend Kinderzimmer unten ~ -0,15 K/h', R.ki_unten.trend !== null && Math.abs(R.ki_unten.trend + 0.15) < 0.08, R.ki_unten.trend);
 check('Trend Kinderzimmer oben ~ +0,10 K/h', R.ki_oben.trend !== null && Math.abs(R.ki_oben.trend - 0.10) < 0.08, R.ki_oben.trend);
 check('Ausreisser 28,4 abgelehnt (Sprung)', R.schlaf.rejected >= 1 && R.schlaf.last_reject && R.schlaf.last_reject.why === 'Sprung', JSON.stringify(R.schlaf.last_reject));
 check('99 °C unplausibel abgelehnt', R.ki_unten.rejected >= 1, R.ki_unten.rejected);
 check('Spike floss nicht in den Mittelwert ein', R.schlaf.ema < 22, R.schlaf.ema.toFixed(2));
-console.log('\nMinute 60   Raeume:', snap[60].room.map(x => x[0] + ': ' + x[1]).join(' | '));
-console.log('Minute 480  Raeume:', snap[480].room.map(x => x[0] + ': ' + x[1]).join(' | '));
-console.log('Minute 480  Detail:', snap[480].detail.map(x => x.slice(0, 8).join(' ; ')).join('\n            '));
+console.log('\nMinute 60   Zusammenfassung:', JSON.stringify(snap[60].sum));
+console.log('Minute 480  Zusammenfassung:', JSON.stringify(snap[480].sum));
+console.log('Minute 480  Raeume:', snap[480].rooms.map(x => [x.name, x.ist, x.band, x.dLow, x.dHigh, x.trend, x.valid, x.role].join(' ; ')).join('\n            '));
 check('Minute 60: alle Raeume im eigenen Band (Schlafzimmer 20 °C liegt im Band 19-21)',
-      snap[60].room[0][1] === 'keiner' && snap[60].room[1][1] === 'keine' && snap[60].opt[1][1].includes('im eigenen Komfortband'), snap[60].opt[1][1]);
-check('Minute 240: Heizbedarf = Kinderzimmer unten', snap[240].room[0][1].startsWith('Kinderzimmer unten') && snap[240].room[0][1].includes('unter Minimum'), snap[240].room[0][1]);
-check('Minute 240: Schlafzimmer (offline seit 60 min, Limit 90) noch gueltig', snap[240].room[3][1].startsWith('3 von 3') && byName(snap[240], 'Schlafzimmer')[6].startsWith('ja'), snap[240].room[3][1]);
-check('Minute 290: Schlafzimmer offline seit >90 min zaehlt nicht mehr', snap[290].room[3][1].startsWith('2 von 3') && byName(snap[290], 'Schlafzimmer')[6].startsWith('nein (veraltet'), snap[290].room[3][1]);
+      snap[60].sum.heat === 'keiner' && snap[60].sum.over === 'keine' && snap[60].opt[1][1].includes('im eigenen Komfortband'), snap[60].opt[1][1]);
+check('Minute 240: Heizbedarf = Kinderzimmer unten', snap[240].sum.heat.startsWith('Kinderzimmer unten') && snap[240].sum.heat.includes('unter Minimum'), snap[240].sum.heat);
+check('Minute 240: Schlafzimmer (offline seit 60 min, Limit 90) noch gueltig', snap[240].sum.valid.startsWith('3 von 3') && byName(snap[240], 'Schlafzimmer').valid.startsWith('ja'), snap[240].sum.valid);
+check('Minute 290: Schlafzimmer offline seit >90 min zaehlt nicht mehr', snap[290].sum.valid.startsWith('2 von 3') && byName(snap[290], 'Schlafzimmer').valid.startsWith('nein (veraltet'), snap[290].sum.valid);
 check('Minute 480: Zielkonflikt (unten unter Minimum, oben ueber Maximum)', snap[480].opt[1][1].includes('Zielkonflikt'), snap[480].opt[1][1]);
-check('Minute 480: Rollen in der Detailtabelle', byName(snap[480], 'Kinderzimmer unten')[7] === 'Heizbedarf' && byName(snap[480], 'Kinderzimmer oben')[7] === 'Überschreitung' && byName(snap[480], 'Schlafzimmer')[7] === '', '');
+check('Minute 480: Rollen in der Detailtabelle', byName(snap[480], 'Kinderzimmer unten').role === 'heat' && byName(snap[480], 'Kinderzimmer oben').role === 'over' && byName(snap[480], 'Schlafzimmer').role === '', '');
 check('Phase 1: keine Regelwerte veraendert (es werden nur OPT_*-Variablen geschrieben)', ctrlSnapshot() === ctrl0, '');
 // CSV
 const lines = csv.join('').trim().split('\n');
@@ -202,85 +202,125 @@ function scene(vals) {                      // vals: Raum-ID -> [geglaettete Tem
   Object.keys(vals).forEach(id => { const v = vals[id]; gstore.OPT_rooms[id] = {name: NAMES[id], ema: v[0], last: v[0], ts: NOW - (v[1] || 0) * 60000, trend: v[2] === undefined ? null : v[2]}; });
   NOW += 6 * 60000;
   const o = run('opt_eval', {});
-  return {room: o[1].payload.rows, detail: o[7].payload.table, grund: o[3].payload.rows[1][1], o};
+  return {sum: o[1].payload.sum, rooms: o[1].payload.rooms, grund: o[3].payload.rows[1][1], o};
 }
-const rowOf = (s, id) => s.detail.find(r => r[0] === NAMES[id]);
+const rowOf = (s, id) => s.rooms.find(r => r.id === id);
 const setv = (topic, payload) => run('opt_set', {topic, payload});
 const ALL_OK = {ki_oben: [23.1], ki_unten: [23.0], schlaf: [21.0]};
 
 let s = scene(ALL_OK);
 check('Schlafzimmer 21,0 (Band 19-21) und Kinderzimmer 23,1 (Band 22,5-23,5): kein Heizbedarf, keine Ueberschreitung',
-      s.room[0][1] === 'keiner' && s.room[1][1] === 'keine' && s.grund.includes('im eigenen Komfortband'), s.grund);
-check('kein "kaeltester/waermster Raum" mehr nach absoluter Temperatur', !s.room.some(r => /Kältester|Wärmster/.test(r[0])), '');
-check('Abstand unten/oben: Kinderzimmer oben 23,1 -> +0,6 / +0,4 K', rowOf(s, 'ki_oben')[3] === '+0,6 K' && rowOf(s, 'ki_oben')[4] === '+0,4 K', rowOf(s, 'ki_oben').slice(3, 5).join(' / '));
-check('Abstand: Schlafzimmer 21,0 -> +2,0 K unten, 0,0 K oben; Band wird je Raum angezeigt', rowOf(s, 'schlaf')[3] === '+2,0 K' && rowOf(s, 'schlaf')[4] === '0,0 K' && rowOf(s, 'schlaf')[2] === '19,0 – 21,0 °C', rowOf(s, 'schlaf').slice(2, 5).join(' / '));
-check('geringster Abstand zur Grenze nennt den Raum', s.room[2][1].includes('Schlafzimmer'), s.room[2][1]);
+      s.sum.heat === 'keiner' && s.sum.over === 'keine' && s.grund.includes('im eigenen Komfortband'), s.grund);
+check('kein "kaeltester/waermster Raum" mehr nach absoluter Temperatur', !/Kältester|Wärmster/.test(JSON.stringify(s.o[1].payload)), '');
+check('Abstand unten/oben: Kinderzimmer oben 23,1 -> +0,6 / +0,4 K', rowOf(s, 'ki_oben').dLow === '+0,6 K' && rowOf(s, 'ki_oben').dHigh === '+0,4 K', rowOf(s, 'ki_oben').dLow + ' / ' + rowOf(s, 'ki_oben').dHigh);
+check('Abstand: Schlafzimmer 21,0 -> +2,0 K unten, 0,0 K oben; Band wird je Raum angezeigt', rowOf(s, 'schlaf').dLow === '+2,0 K' && rowOf(s, 'schlaf').dHigh === '0,0 K' && rowOf(s, 'schlaf').band === '19,0 – 21,0 °C', rowOf(s, 'schlaf').band);
+check('geringster Abstand zur Grenze nennt den Raum', s.sum.tight.includes('Schlafzimmer'), s.sum.tight);
+check('Einstellungen je Raum stehen in der Karte (Schlafzimmer 19/21, Gewicht 1, 90 min, aktiv)', (r => r.min === 19 && r.max === 21 && r.weight === 1 && r.maxAgeMin === 90 && r.on === true)(rowOf(s, 'schlaf')), '');
 
 s = scene({ki_oben: [23.9, 0, 0.12], ki_unten: [23.0], schlaf: [18.4, 0, -0.1]});
 check('Schlafzimmer 18,4 -> Heizbedarf 0,6 K, Kinderzimmer oben 23,9 -> Ueberschreitung 0,4 K',
-      s.room[0][1].startsWith('Schlafzimmer · 0,6 K unter Minimum') && s.room[1][1].startsWith('Kinderzimmer oben · 0,4 K über Maximum'), s.room[0][1] + ' | ' + s.room[1][1]);
-check('Zielkonflikt wird benannt, Rollen in der Detailtabelle', s.grund.includes('Zielkonflikt') && rowOf(s, 'schlaf')[7] === 'Heizbedarf' && rowOf(s, 'ki_oben')[7] === 'Überschreitung' && rowOf(s, 'ki_unten')[7] === '', s.grund);
-check('Trend je Raum wird angezeigt', rowOf(s, 'schlaf')[5].includes('-0,10 K/h') && rowOf(s, 'ki_oben')[5].includes('+') === false && rowOf(s, 'ki_oben')[5].startsWith('↑'), rowOf(s, 'schlaf')[5] + ' / ' + rowOf(s, 'ki_oben')[5]);
+      s.sum.heat.startsWith('Schlafzimmer · 0,6 K unter Minimum') && s.sum.over.startsWith('Kinderzimmer oben · 0,4 K über Maximum'), s.sum.heat + ' | ' + s.sum.over);
+check('Zielkonflikt wird benannt, Rollen je Raum', s.grund.includes('Zielkonflikt') && rowOf(s, 'schlaf').role === 'heat' && rowOf(s, 'ki_oben').role === 'over' && rowOf(s, 'ki_unten').role === '', s.grund);
+check('Trend je Raum wird angezeigt', rowOf(s, 'schlaf').trend.includes('-0,10 K/h') && rowOf(s, 'ki_oben').trend.startsWith('↑'), rowOf(s, 'schlaf').trend + ' / ' + rowOf(s, 'ki_oben').trend);
+check('nur verletzte Grenzen werden rot markiert (Schlafzimmer unten, Kinderzimmer oben oben)', rowOf(s, 'schlaf').cLow === 'warn' && rowOf(s, 'schlaf').cHigh === '' && rowOf(s, 'ki_oben').cHigh === 'warn' && rowOf(s, 'ki_oben').cLow === '' && rowOf(s, 'ki_unten').cLow === '' && rowOf(s, 'ki_unten').cHigh === '', rowOf(s, 'schlaf').cLow + '/' + rowOf(s, 'ki_oben').cHigh);
 
 s = scene({ki_oben: [23.0], ki_unten: [22.0], schlaf: [18.4]});
-check('zwei Raeume unter dem Minimum: groessere Unterschreitung gewinnt (Schlafzimmer -0,6 vor Kinderzimmer unten -0,5)', s.room[0][1].startsWith('Schlafzimmer'), s.room[0][1]);
+check('zwei Raeume unter dem Minimum: groessere Unterschreitung gewinnt (Schlafzimmer -0,6 vor Kinderzimmer unten -0,5)', s.sum.heat.startsWith('Schlafzimmer'), s.sum.heat);
 setv('room:ki_unten:weight', 2);
 s = scene({ki_oben: [23.0], ki_unten: [22.0], schlaf: [18.4]});
-check('Gewicht 2 macht Kinderzimmer unten (-0,5 x 2) zum massgeblichen Raum', s.room[0][1].startsWith('Kinderzimmer unten'), s.room[0][1]);
+check('Gewicht 2 macht Kinderzimmer unten (-0,5 x 2) zum massgeblichen Raum', s.sum.heat.startsWith('Kinderzimmer unten') && rowOf(s, 'ki_unten').weight === 2, s.sum.heat);
 setv('room:ki_unten:weight', 1);
 
-const tog = setv('room:schlaf:active', false);
-check('Umschalten von "Aktiv" loest die Aktualisierung der Schalter aus (Ausgang 2), ohne Fehlermeldung', Array.isArray(tog) && tog[0] === null && tog[1] && tog[1].payload === 'aktualisieren' && tog[2].payload === 'auswerten', JSON.stringify(tog));
+setv('room:schlaf:active', false);
 s = scene({ki_oben: [23.0], ki_unten: [23.0], schlaf: [18.0]});
-check('inaktiver Raum wird ignoriert (kein Heizbedarf trotz 18,0), bleibt aber sichtbar', s.room[0][1] === 'keiner' && rowOf(s, 'schlaf')[6].startsWith('nein (inaktiv)') && rowOf(s, 'schlaf')[8] === 'mute' && s.room[3][1].startsWith('2 von 2') && s.room[3][1].includes('1 inaktiv'), s.room[3][1]);
+check('inaktiver Raum wird ignoriert (kein Heizbedarf trotz 18,0), bleibt aber sichtbar', s.sum.heat === 'keiner' && rowOf(s, 'schlaf').valid.startsWith('nein (inaktiv)') && rowOf(s, 'schlaf').cls === 'mute' && rowOf(s, 'schlaf').on === false && s.sum.valid.startsWith('2 von 2') && s.sum.valid.includes('1 inaktiv'), s.sum.valid);
 setv('room:schlaf:active', true);
 
 setv('room:schlaf:maxAgeMin', 30);
 s = scene({ki_oben: [23.0, 45], ki_unten: [23.0, 45], schlaf: [18.0, 45]});
 check('Datenalter-Limit je Raum: Schlafzimmer (30 min) bei 45 min ungueltig, Kinderzimmer (90 min) gueltig',
-      rowOf(s, 'schlaf')[6].startsWith('nein (veraltet') && rowOf(s, 'ki_oben')[6].startsWith('ja') && s.room[0][1] === 'keiner', rowOf(s, 'schlaf')[6] + ' | ' + rowOf(s, 'ki_oben')[6]);
+      rowOf(s, 'schlaf').valid.startsWith('nein (veraltet') && rowOf(s, 'ki_oben').valid.startsWith('ja') && s.sum.heat === 'keiner' && rowOf(s, 'schlaf').maxAgeMin === 30, rowOf(s, 'schlaf').valid + ' | ' + rowOf(s, 'ki_oben').valid);
 setv('room:schlaf:maxAgeMin', 90);
 s = scene({ki_oben: [23.0, 200], ki_unten: [23.0, 200], schlaf: [18.0, 200]});
-check('keine gueltigen Raeume: Hinweis statt "keiner"', s.room[0][1] === '–' && s.grund.includes('keine gültigen Raumdaten'), s.grund);
+check('keine gueltigen Raeume: Hinweis statt "keiner"', s.sum.heat === '–' && s.sum.heatCls === 'warn' && s.grund.includes('keine gültigen Raumdaten'), s.grund);
 s = scene({ki_oben: [23.0], ki_unten: [23.0]});
-check('Raum ohne Daten: "keine Daten", zaehlt nicht', rowOf(s, 'schlaf')[6].startsWith('nein (keine Daten)') && s.room[3][1].startsWith('2 von 3'), rowOf(s, 'schlaf')[6]);
+check('Raum ohne Daten: "keine Daten", zaehlt nicht', rowOf(s, 'schlaf').valid.startsWith('nein (keine Daten)') && s.sum.valid.startsWith('2 von 3'), rowOf(s, 'schlaf').valid);
 
 // ---------- Einstellungen je Raum: Validierung, Speicherung, Neustart
 console.log('\n--- Einstellungen je Raum');
 const cf = () => JSON.parse(files['/data/optimizer/config.json'].data);
 let r2 = setv('room:schlaf:min', 18);
-check('gueltige Eingabe wird uebernommen und in config.json gespeichert, danach sofortige Auswertung (Ausgang 3)', Array.isArray(r2) && r2[0] === null && r2[1] === null && r2[2].payload === 'auswerten' && gstore.OPT_cfg.rooms[2].min === 18 && cf().rooms[2].min === 18, JSON.stringify(cf().rooms[2]));
+check('gueltige Eingabe wird uebernommen, in config.json gespeichert und sofort ausgewertet (Ausgang 2)', Array.isArray(r2) && r2[0] === null && r2[1].payload === 'auswerten' && gstore.OPT_cfg.rooms[2].min === 18 && cf().rooms[2].min === 18, JSON.stringify(cf().rooms[2]));
 const rejectedCases = [
   ['Minimum ueber Maximum (21,8 > 21)', 'room:schlaf:min', 21.8], ['Band schmaler als 0,5 K (max 18,2 bei min 18)', 'room:schlaf:max', 18.2],
   ['ausserhalb des Bereichs (min 40)', 'room:schlaf:min', 40], ['Gewicht 0', 'room:schlaf:weight', 0], ['Datenalter 2 min', 'room:schlaf:maxAgeMin', 2],
-  ['Text statt Zahl', 'room:schlaf:min', 'abc'], ['leerer Wert', 'room:schlaf:min', ''], ['null', 'room:schlaf:max', null], ['Boolean statt Zahl', 'room:schlaf:min', true]];
+  ['Text statt Zahl', 'room:schlaf:min', 'abc'], ['leerer Wert', 'room:schlaf:min', ''], ['null', 'room:schlaf:max', null], ['fehlender Wert (ungueltiges Feld im Browser)', 'room:schlaf:min', undefined], ['Boolean statt Zahl', 'room:schlaf:min', true]];
 rejectedCases.forEach(([name, topic, val]) => {
   const before = JSON.stringify(gstore.OPT_cfg.rooms), fileBefore = files['/data/optimizer/config.json'].data;
   const r = setv(topic, val);
-  check('abgelehnt: ' + name, Array.isArray(r) && r[0].highlight === 'red' && r[0].payload.includes('Nichts geändert') && r[1] && JSON.stringify(gstore.OPT_cfg.rooms) === before && files['/data/optimizer/config.json'].data === fileBefore, r && r[0] ? r[0].payload.slice(0, 60) : r);
+  check('abgelehnt: ' + name, Array.isArray(r) && r[0].highlight === 'red' && r[0].payload.includes('Nichts geändert') && r[1].payload === 'auswerten' && JSON.stringify(gstore.OPT_cfg.rooms) === before && files['/data/optimizer/config.json'].data === fileBefore, r && r[0] ? r[0].payload.slice(0, 70) : r);
 });
+check('Ablehnungstext nennt den erlaubten Bereich', setv('room:schlaf:min', 40)[0].payload.includes('erlaubt: 10 bis 30'), '');
 check('unbekannter Raum / unbekanntes Feld werden ignoriert', setv('room:gibtsnicht:min', 20) === null && setv('room:schlaf:farbe', 20) === null, '');
-check('abgelehnte Eingabe loest keine Auswertung aus', setv('room:schlaf:min', 'abc').length === 2, '');
+const tog = setv('room:schlaf:active', false);
+check('Umschalten von "Aktiv" wird gespeichert und sofort ausgewertet', Array.isArray(tog) && tog[0] === null && tog[1].payload === 'auswerten' && cf().rooms[2].active === false, JSON.stringify(tog));
+setv('room:schlaf:active', true);
 setv('room:ki_oben:min', 22.0); setv('room:ki_oben:weight', 1.5); setv('room:ki_oben:maxAgeMin', 60); setv('room:ki_unten:active', false);
-// Eingabefelder: ein Ausgang je Widget, Werte stimmen mit der Konfiguration ueberein
+
+// Aufbau der Seite: eine Raumkarte, die Eingaben gehen an opt_set; keine Einzelfelder mehr
 const flowsAll = JSON.parse(fs.readFileSync(flowsFile, 'utf8')), nodeBy = {}; flowsAll.forEach(n => { nodeBy[n.id] = n; });
-const dfl = run('opt_defaults', {});
-const wires = nodeBy['opt_defaults'].wires;
-check('opt_defaults: ein Ausgang je Eingabefeld (15), Ausgaenge = Verdrahtung', dfl.length === 15 && wires.length === 15 && nodeBy['opt_defaults'].outputs === 15, dfl.length + '/' + wires.length);
-let mapOk = true, info = '';
-dfl.forEach((m, i) => {
-  const w = nodeBy[wires[i][0]], p = w.topic.split(':'), room = gstore.OPT_cfg.rooms.find(x => x.id === p[1]);
-  const want = p[2] === 'active' ? room.active !== false : room[p[2]];
-  if (!m || m.payload !== want || w.wires[0][0] !== 'opt_set' || w.passthru !== false) { mapOk = false; info += w.id + ' '; }
-});
-check('jedes Eingabefeld bekommt den Wert seines Raums/Felds, sendet an opt_set, ohne Echo (passthru aus)', mapOk, info);
-const sw = nodeBy['opt_w_schlaf_active'];
-check('Schalter "Aktiv": entkoppelt (Server setzt den Zustand), Werte true/false als Bool', sw.type === 'ui_switch' && sw.decouple === 'true' && sw.onvalue === 'true' && sw.offvalue === 'false' && sw.onvalueType === 'bool' && sw.offvalueType === 'bool', JSON.stringify([sw.decouple, sw.onvalue, sw.offvalue]));
-check('Eingabefelder haben Grenzen passend zur Pruefung', nodeBy['opt_w_schlaf_min'].min === 10 && nodeBy['opt_w_schlaf_min'].max === 30 && nodeBy['opt_w_schlaf_maxAgeMin'].min === 5 && nodeBy['opt_w_schlaf_weight'].step === 0.1, '');
-// Struktur: Ausgangszahl = Verdrahtung, alle Ziele existieren
+const card = nodeBy['opt_t_rooms'], html = card.format;
+check('Raumkarte: eigene Gruppe (breit), volle Gruppenbreite, feste Starthoehe, Eingaben gehen an opt_set', card.type === 'ui_template' && card.group === 'opt_g_rooms' && nodeBy['opt_g_rooms'].width === 12 && card.width === 0 && card.height === 12 && card.templateScope === 'local' && JSON.stringify(card.wires) === '[["opt_set"]]', JSON.stringify(card.wires));
+check('Karten: volle Gruppenbreite, feste Starthoehe und Einpass-Skript mit der eigenen Kennung', ['opt_t_rooms', 'opt_t_wx', 'opt_t_wp', 'opt_t_opt'].every(id => nodeBy[id].width === 0 && nodeBy[id].height > 0 && nodeBy[id].format.includes("var id = '" + id + "'") && nodeBy[id].format.includes('class="optfit"') + nodeBy[id].format.includes('optr optfit') === 1), ['opt_t_rooms', 'opt_t_wx', 'opt_t_wp', 'opt_t_opt'].map(id => nodeBy[id].height).join('/'));
+check('Eingabefelder der Karte haben dieselben Grenzen wie die Pruefung', html.includes('min="10" max="30" step="0.5"') && html.includes('min="12" max="35" step="0.5"') && html.includes('min="0.1" max="5" step="0.1"') && html.includes('min="5" max="720" step="5"'), '');
+const tag = (re) => (html.match(re) || []).length;
+check('Raumkarte: HTML-Struktur ausgeglichen (div/table/tr/td/th/span/style/script)', ['div', 'table', 'tr', 'td', 'th', 'span', 'style', 'script'].every(t => tag(new RegExp('<' + t + '[\\s>]', 'g')) === tag(new RegExp('</' + t + '>', 'g'))), ['div', 'table', 'tr', 'td', 'th', 'span'].map(t => t + ':' + tag(new RegExp('<' + t + '[\\s>]', 'g')) + '/' + tag(new RegExp('</' + t + '>', 'g'))).join(' '));
+check('alte Einzelfelder/Gruppen und globale Komfortband-Felder sind entfernt', !flowsAll.some(n => /^opt_w_|^opt_g_cfg_/.test(n.id)) && ['opt_g_room', 'opt_g_roomdetail', 'opt_t_room', 'opt_t_roomdetail', 'opt_n_low', 'opt_n_high', 'opt_n_age'].every(id => !nodeBy[id]), '');
+check('opt_defaults: kein Ausgang mehr, liefert nichts', nodeBy['opt_defaults'].outputs === 0 && run('opt_defaults', {}) === null, '');
 const struct = flowsAll.filter(n => n.id.startsWith('opt_') && n.wires).flatMap(n => (n.type === 'function' && n.wires.length !== n.outputs ? ['Ausgaenge ' + n.id] : []).concat(n.wires.flat().filter(t => !nodeBy[t]).map(t => n.id + '->' + t)));
 check('Flow-Struktur: Ausgaenge passen zur Verdrahtung, alle Ziele existieren', struct.length === 0, struct.join(','));
-check('alte globale Komfortband-Felder sind entfernt', !nodeBy['opt_n_low'] && !nodeBy['opt_n_high'] && !nodeBy['opt_n_age'], '');
+// Einpass-Skript (Seite als Attrappe): Hoehe in Rasterfeldern aus dem Inhalt, Attribut setzen, Layout neu anstossen
+function fitHarness(fitHtml, id, bottom, visible, hasAngular) {
+  const fitSrc = fitHtml.match(/<script>\s*(\(function \(\) \{\s+var id = [\s\S]*?)<\/script>/)[1];
+  const attrs = {'ui-card-size': '12x12'}, calls = [], timers = [];
+  const root = {lastElementChild: {getBoundingClientRect: () => ({bottom})}}, panel = {parentElement: {}};
+  const card = {getAttribute: k => attrs[k], setAttribute: (k, v) => { attrs[k] = v; }, offsetParent: visible ? {} : null, querySelector: () => root, getBoundingClientRect: () => ({top: 100}), closest: () => panel};
+  const ang = {element: el => ({injector: () => ({get: () => ({sy: 48, cy: 6})}), controller: n => n === 'uiCardPanel' ? {refreshLayout: cb => { calls.push('panel'); cb(); }} : {refreshLayout: () => calls.push('masonry')}})};
+  const win = {};
+  const sb = {window: win, document: {querySelector: () => card, body: {}, visibilityState: 'visible'}, setTimeout: fn => { timers.push(fn); return 1; }, setInterval: fn => { timers.push(fn); return 2; }, Object, Math};
+  if (hasAngular) { sb.angular = ang; }
+  vm.runInNewContext(fitSrc, sb);
+  return {run: () => win.__optFit.fns[id](), attrs, calls, timers};
+}
+let fh = fitHarness(card.format, 'opt_t_rooms', 100 + 598, true, true); fh.run();
+check('Einpassen: Inhalt 598 px -> 12 Rasterfelder, Breite bleibt, Layout wird neu angestossen', fh.attrs['ui-card-size'] === '12x12' && fh.calls.length === 0, fh.attrs['ui-card-size']);
+fh = fitHarness(card.format, 'opt_t_rooms', 100 + 757, true, true); fh.run();
+check('Einpassen: Inhalt 757 px (Handy) -> 15 Rasterfelder, Karte und Anordnung werden neu berechnet', fh.attrs['ui-card-size'] === '12x15' && fh.calls.join() === 'panel,masonry', fh.attrs['ui-card-size'] + ' ' + fh.calls.join());
+fh.run(); check('Einpassen: unveraenderte Hoehe loest kein erneutes Layout aus', fh.calls.length === 2, fh.calls.length);
+fh = fitHarness(card.format, 'opt_t_rooms', 100 + 757, false, true); fh.run();
+check('Einpassen: versteckte Karte (anderer Tab) wird nicht veraendert', fh.attrs['ui-card-size'] === '12x12' && fh.calls.length === 0, fh.attrs['ui-card-size']);
+fh = fitHarness(card.format, 'opt_t_rooms', 100 + 5, true, true); fh.run();
+check('Einpassen: leerer Inhalt (noch keine Daten) wird nicht uebernommen', fh.attrs['ui-card-size'] === '12x12', fh.attrs['ui-card-size']);
+fh = fitHarness(card.format, 'opt_t_rooms', 100 + 757, true, false); let fitErr = false; try { fh.run(); } catch (e) { fitErr = true; }
+check('Einpassen: ohne Dashboard-Bibliothek kein Fehler, Karte behaelt die feste Hoehe', !fitErr && fh.attrs['ui-card-size'] === '12x12', '');
+fh = fitHarness(nodeBy['opt_t_wx'].format, 'opt_t_wx', 100 + 319, true, true); fh.attrs['ui-card-size'] = '6x7'; fh.run();
+check('Einpassen: Statuskarte 319 px -> 7 Rasterfelder (6 Spalten breit)', fh.attrs['ui-card-size'] === '6x7', fh.attrs['ui-card-size']);
+// Skript der Raumkarte (Angular-Scope als Attrappe): neue Werte uebernehmen, beim Tippen nicht ueberschreiben, Eingaben senden
+const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
+const watchers = [], sentCard = [], sc = {$watch: (e, fn) => { watchers.push(fn); }, send: m => sentCard.push(m)};
+new Function('scope', script)(sc);
+const feed = m => watchers.forEach(w => w(m));
+const m1 = {payload: {sum: {}, rooms: [{id: 'schlaf', min: 19}]}};
+feed(m1);
+check('Karte: neue Werte werden uebernommen (als Kopie, die Nachricht bleibt unveraendert)', sc.d.rooms[0].min === 19 && sc.d !== m1.payload && (sc.d.rooms[0].min = 5, m1.payload.rooms[0].min === 19), '');
+sc.edit(); feed({payload: {sum: {}, rooms: [{id: 'schlaf', min: 20}]}});
+check('Karte: waehrend der Eingabe wird nichts ueberschrieben', sc.d.rooms[0].min === 5, sc.d.rooms[0].min);
+sc.set({id: 'schlaf'}, 'min', 18.5); feed({payload: {sum: {}, rooms: [{id: 'schlaf', min: 18.5}]}});
+check('Karte: Eingabe wird als "room:<id>:<feld>" gesendet, die Antwort darauf wird auch waehrend der Eingabe uebernommen', JSON.stringify(sentCard[0]) === '{"topic":"room:schlaf:min","payload":18.5}' && sc.d.rooms[0].min === 18.5 && sc.pending === false, JSON.stringify(sentCard[0]));
+sc.done(); feed({payload: {sum: {}, rooms: [{id: 'schlaf', min: 19}]}});
+check('Karte: nach der Eingabe werden Aktualisierungen wieder uebernommen', sc.d.rooms[0].min === 19 && sc.editing === false, '');
+sc.set({id: 'schlaf'}, 'active', false);
+check('Karte: Schalter sendet true/false', JSON.stringify(sentCard[1]) === '{"topic":"room:schlaf:active","payload":false}', JSON.stringify(sentCard[1]));
 // simulierter Neustart: Speicher leer, gespeicherte Werte kommen aus der Datei
 delete gstore.OPT_cfg; run('opt_defaults', {});
 const rr = id => gstore.OPT_cfg.rooms.find(x => x.id === id);
