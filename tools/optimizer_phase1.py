@@ -112,7 +112,7 @@ CONTROL = {"enabled": False, "probe": True, "startK": 0.3, "releaseK": 0.3, "hol
 
 # Phase 4 (shadow only): Quiet recommendation as a coarse power cap. All thresholds are PROVISIONAL and meant to be derived from the
 # logged data (quiet-YYYY-MM.csv); nothing is written to the heat pump.
-QUIET = {"thrHigh": 3.0, "thrMid": 1.5, "thrLow": 0.5, "hyst": 0.3, "errTauMin": 5, "holdMin": 15, "startLockMin": 15,
+QUIET = {"testAtRange": 2.0, "thrHigh": 3.0, "thrMid": 1.5, "thrLow": 0.5, "hyst": 0.3, "errTauMin": 5, "holdMin": 15, "startLockMin": 15,
          "afterDefrostMin": 10, "afterDhwMin": 10, "deficitMaxLevel": 1, "minRunMin": 20, "maxStartsDay": 24,
          "offAtLow": 1, "offAtHigh": 3, "offAtHyst": 0.5}
 
@@ -135,6 +135,7 @@ var d = {
     rooms: __ROOMS__,
     control: __CTL__,
     quiet: __QUIET__,
+    energy: {vrmMaxAgeH: 4, evccMaxAgeH: 6, batteryInstance: 278},
     calcAT: {wNow: 0.5, wHist: 0.25, wFc: 0.25, minHistH: 6},
     sensor:  {maxAgeMin: 90, min: 10, max: 35, maxJumpK: 2, emaTauMin: 30, trendWindowMin: 120, trendMinSpanMin: 30, trendMinSamples: 3},
     weather: {intervalMin: 10, maxAgeMin: 60},
@@ -403,6 +404,246 @@ return [{payload: {owm_key: '', owm_lat: String(nlat), owm_lon: String(nlon)}}, 
         {payload: 'Schlüssel gespeichert (' + key.length + ' Zeichen) · Standort ' + nlat.toFixed(3).replace('.', ',') + ' / ' + nlon.toFixed(3).replace('.', ',') + ' · Wetterdaten werden abgerufen …'}];
 """
 
+EN_IN_JS = r"""
+// Energiedaten NUR LESEN: Venus-MQTT (PV, Netz, Batterie, Haus) und evcc (Tarife, Prognosen). Kein Einfluss auf Heizkurve, Quiet oder Warmwasser.
+var en = global.get('OPT_en') || {};
+var now = Date.now(), t = String(msg.topic || ''), key = null;
+var m = t.match(/^N\/[^/]+\/system\/0\/(.+)$/), mb = t.match(/^N\/[^/]+\/battery\/(\d+)\/Soc$/);
+if (m) { key = 'v:' + m[1]; } else if (mb) { key = 'v:battery/' + mb[1] + '/Soc'; } else if (t.indexOf('evcc/site/') === 0) { key = 'e:' + t.slice(10); }
+if (key === null || !/^(v:(Ac\/(Grid|Consumption|PvOnGrid|PvOnOutput)\/L[1-3]\/Power|Dc\/(Pv|Battery)\/Power|Dc\/Battery\/Soc|battery\/\d+\/Soc)|e:(tariffGrid|tariffFeedIn|battery\/soc|forecast\/(grid|feedIn|solar)))$/.test(key)) { return null; }
+var p = msg.payload;
+if (typeof p === 'string') { try { p = JSON.parse(p); } catch (e) { /* reine Zahl */ } }
+if (key.indexOf('e:forecast/') === 0) {                       // Prognosen: Liste bzw. Objekt
+    if (p === null || typeof p !== 'object') { return null; }
+    en[key] = {v: p, ts: now};
+} else {                                                      // Messwerte: Venus {"value": x} oder reine Zahl
+    var v = (p !== null && typeof p === 'object') ? p.value : p;
+    if (v === null || v === undefined || v === '' || !isFinite(Number(v))) { return null; }
+    var lim = /Soc$/.test(key) ? [0, 100] : (/^e:tariff/.test(key) ? [-1, 3] : [-60000, 60000]);       // unplausible Werte nicht uebernehmen (der letzte gute Wert bleibt und altert)
+    if (Number(v) < lim[0] || Number(v) > lim[1]) { return null; }
+    en[key] = {v: Number(v), ts: now};
+}
+global.set('OPT_en', en);
+return null;
+"""
+
+ENERGY_JS = r"""
+// Energie & Preise: einlesen, pruefen, Datenalter ueberwachen, anzeigen, protokollieren. NUR Anzeige und Protokoll, keinerlei Regelwirkung.
+var cfg = global.get('OPT_cfg');
+if (!cfg) { return null; }
+var E = cfg.energy || {};
+var en = global.get('OPT_en') || {}, W = global.get('OPT_weather') || {};
+var now = Date.now(), MS_MIN = 60000, H = 3600000;
+function ok(v) { return v !== null && v !== undefined && isFinite(v); }
+function f(v, d, unit) { if (!ok(v)) { return '–'; } return Number(v).toFixed(d).replace('.', ',') + (unit ? ' ' + unit : ''); }
+function c(v) { return (v === null || v === undefined || !isFinite(v)) ? '' : String(Math.round(v * 1000) / 1000); }
+function hhmm(ts) { return new Date(ts).toLocaleTimeString('de-DE', {hour: '2-digit', minute: '2-digit'}); }
+function ageTxt(ms) { if (ms === null) { return 'keine Daten'; } var m = Math.round(ms / MS_MIN); return m < 1 ? '< 1 min' : (m < 120 ? m + ' min' : (m / 60).toFixed(1).replace('.', ',') + ' h'); }
+function ev(k, lo, hi) { var e = en[k]; if (!e || typeof e.v !== 'number' || !isFinite(e.v) || e.v < lo || e.v > hi) { return null; } return e.v; }
+function age(k) { var e = en[k]; return e ? now - e.ts : null; }
+function sum3(prefix, lo, hi) { var s = 0, n = 0; ['1', '2', '3'].forEach(function (l) { var v = ev(prefix + '/L' + l + '/Power', lo, hi); if (v !== null) { s += v; n++; } }); return n ? s : null; }
+
+// ---------- Live-Werte (Venus)
+var pvAc = sum3('v:Ac/PvOnOutput', -100, 60000), pvGr = sum3('v:Ac/PvOnGrid', -100, 60000), pvDc = ev('v:Dc/Pv/Power', -100, 60000);
+var pv = (pvAc === null && pvGr === null && pvDc === null) ? null : Math.max(0, (pvAc || 0) + (pvGr || 0) + (pvDc || 0));
+var grid = sum3('v:Ac/Grid', -60000, 60000), home = sum3('v:Ac/Consumption', -100, 60000);
+var kSoc = 'v:battery/' + (isFinite(E.batteryInstance) ? Number(E.batteryInstance) : 278) + '/Soc';                      // Venus: Batterie-Instanz (278)
+var batP = ev('v:Dc/Battery/Power', -60000, 60000), socV = ev(kSoc, 0, 100), socE = ev('e:battery/soc', 0, 100);          // Venus: Batterieleistung positiv = laden
+var socFresh = socV !== null && age(kSoc) <= 30 * MS_MIN;                                  // Venus sendet unveraenderte Werte nicht erneut: sonst evcc als Rueckfall
+var soc = socFresh ? socV : (socE !== null ? socE : socV), socSrc = socFresh ? 'Venus' : (socE !== null ? 'evcc' : (socV !== null ? 'Venus (alt)' : ''));
+var liveAge = null;
+Object.keys(en).forEach(function (k) { if (k.indexOf('v:') === 0 && !/\/Soc$/.test(k)) { var a = now - en[k].ts; if (liveAge === null || a < liveAge) { liveAge = a; } } });
+var liveOk = liveAge !== null && liveAge < 5 * MS_MIN, socAge = socFresh ? age(kSoc) : (socE !== null ? age('e:battery/soc') : age(kSoc));
+// ---------- Preise (evcc): 15-Minuten-Slots [Beginn, Ende, Preis] in Sekunden
+function slots(k) {
+    var e = en[k]; if (!e || !Array.isArray(e.v)) { return null; }
+    var out = [];
+    e.v.forEach(function (s) { if (Array.isArray(s) && isFinite(s[0]) && isFinite(s[1]) && isFinite(s[2]) && s[1] > s[0] && s[2] > -1 && s[2] < 3) { out.push({s: s[0] * 1000, e: s[1] * 1000, p: s[2]}); } });
+    return out.length ? out : null;
+}
+var pSlots = slots('e:forecast/grid'), pCur = ev('e:tariffGrid', -1, 3), pFeed = ev('e:tariffFeedIn', -1, 3);
+var priceCov = null, pMin = null, pAvg = null, pMax = null, pMinAt = null, p3 = null, p3At = null;
+if (pSlots) {
+    var last = pSlots[pSlots.length - 1].e;
+    priceCov = Math.max(0, (last - now) / H);
+    var win = pSlots.filter(function (s) { return s.e > now && s.s < now + 24 * H; });
+    if (win.length) {
+        var wsum = 0, psum = 0;
+        win.forEach(function (s) { var d = Math.min(s.e, now + 24 * H) - Math.max(s.s, now); wsum += d; psum += d * s.p; if (pMin === null || s.p < pMin) { pMin = s.p; pMinAt = s.s; } if (pMax === null || s.p > pMax) { pMax = s.p; } });
+        pAvg = wsum ? psum / wsum : null;
+        var cur = win.filter(function (s) { return s.s <= now && s.e > now; })[0];
+        if (cur) { pCur = cur.p; }
+        for (var i = 0; i < win.length; i++) {                         // guenstigstes 3-Stunden-Fenster (Mittel ueber die Slots ab Beginn)
+            var a0 = Math.max(win[i].s, now), a1 = a0 + 3 * H, s2 = 0, d2 = 0;
+            for (var j = i; j < win.length && win[j].s < a1; j++) { var dd = Math.min(win[j].e, a1) - Math.max(win[j].s, a0); if (dd > 0) { s2 += dd * win[j].p; d2 += dd; } }
+            if (d2 >= 3 * H - 1000 && (p3 === null || s2 / d2 < p3)) { p3 = s2 / d2; p3At = a0; }
+        }
+    }
+}
+// ---------- PV-Prognose: bevorzugt VRM (Stundenwerte in Wh), sonst evcc (15-Minuten-Werte in W) - vorlaeufig
+function series(arr, dt, scale) {                                      // -> [{t (ms), w (mittlere Leistung in W), dt (ms)}]
+    var out = [];
+    if (!Array.isArray(arr)) { return out; }
+    arr.forEach(function (x) { var t0 = Array.isArray(x) ? Number(x[0]) : NaN, v = Array.isArray(x) ? Number(x[1]) : NaN; if (isFinite(t0) && isFinite(v) && v >= 0 && v < 200000) { out.push({t: (t0 > 1e11 ? t0 : t0 * 1000), w: v * scale, dt: dt}); } });
+    return out;
+}
+var vrm = en.vrm || {}, vrmAge = vrm.ts ? now - vrm.ts : null;
+var pvSeries = [], pvSrc = '–';
+var vSer = series(vrm.pv, H, 1);
+var eSol = en['e:forecast/solar'] ? en['e:forecast/solar'].v : null;
+var eSer = series(eSol && eSol.timeseries, 900000, 1);
+if (vSer.length && vrmAge !== null && vrmAge <= (isFinite(E.vrmMaxAgeH) ? Number(E.vrmMaxAgeH) : 4) * H && vSer[vSer.length - 1].t + H - now >= 12 * H) { pvSeries = vSer; pvSrc = 'VRM'; }
+else if (eSer.length && age('e:forecast/solar') !== null && age('e:forecast/solar') <= (isFinite(E.evccMaxAgeH) ? Number(E.evccMaxAgeH) : 6) * H) { pvSeries = eSer; pvSrc = 'evcc (vorläufig)'; }
+var pvCov = pvSeries.length ? Math.max(0, (pvSeries[pvSeries.length - 1].t + pvSeries[pvSeries.length - 1].dt - now) / H) : null;
+var pvKwh24 = null, pvPeak = null, pvPeakAt = null, kToday = null, kTomorrow = null;
+if (pvSeries.length) {
+    pvKwh24 = 0; kToday = 0; kTomorrow = 0;
+    var d0 = new Date(now); d0.setHours(0, 0, 0, 0); var day0 = d0.getTime();
+    pvSeries.forEach(function (s) {
+        var o = Math.min(s.t + s.dt, now + 24 * H) - Math.max(s.t, now);
+        if (o > 0) { pvKwh24 += s.w * o / H / 1000; if (pvPeak === null || s.w > pvPeak) { pvPeak = s.w; pvPeakAt = s.t; } }
+        var e0 = s.t + s.dt;
+        if (s.t >= day0 && e0 <= day0 + 24 * H) { kToday += s.w * s.dt / H / 1000; } else if (s.t >= day0 + 24 * H && e0 <= day0 + 48 * H) { kTomorrow += s.w * s.dt / H / 1000; }
+    });
+}
+// ---------- Anzeige
+var warnS = function (okk) { return okk ? 'ok' : 'warn'; };
+var priceOk = priceCov !== null && priceCov >= 24, pvOk = pvCov !== null && pvCov >= 24;
+var grd = grid === null ? '–' : (grid >= 0 ? f(grid, 0, 'W') + ' Bezug' : f(-grid, 0, 'W') + ' Einspeisung');
+var bat = batP === null ? '–' : (Math.abs(batP) < 20 ? '0 W' : (batP > 0 ? f(batP, 0, 'W') + ' laden' : f(-batP, 0, 'W') + ' entladen'));
+var rows = [
+    ['PV aktuell', f(pv, 0, 'W'), ''],
+    ['Haus', f(home, 0, 'W'), ''],
+    ['Netz', grd, ''],
+    ['Batterie', f(soc, 0, '%') + (socSrc === 'evcc' ? ' (evcc)' : '') + ' · ' + bat, soc !== null && socSrc === 'Venus (alt)' ? 'warn' : ''],
+    ['Strompreis jetzt', pCur !== null ? f(pCur * 100, 1, 'ct/kWh') + (pFeed !== null ? ' · Einspeisung ' + f(pFeed * 100, 1, 'ct') : '') : '–', ''],
+    ['Preis nächste 24 h', pMin !== null ? f(pMin * 100, 1) + ' – ' + f(pAvg * 100, 1) + ' – ' + f(pMax * 100, 1, 'ct/kWh') + ' (min – Ø – max)' : '–', ''],
+    ['Günstigster Slot / 3 h', pMinAt ? hhmm(pMinAt) + ' (' + f(pMin * 100, 1, 'ct') + ') / ab ' + (p3At ? hhmm(p3At) + ' (Ø ' + f(p3 * 100, 1, 'ct') + ')' : '–') : '–', ''],
+    ['PV-Prognose nächste 24 h', pvKwh24 !== null ? f(pvKwh24, 1, 'kWh') + ' · Spitze ' + f(pvPeak, 0, 'W') + ' um ' + hhmm(pvPeakAt) : '–', ''],
+    ['PV-Prognose heute / morgen', kToday !== null ? f(kToday, 1) + ' / ' + f(kTomorrow, 1, 'kWh') : '–', ''],
+    ['Daten Venus (live)', liveOk ? 'ok · Alter ' + ageTxt(liveAge) : 'veraltet · ' + ageTxt(liveAge), warnS(liveOk)],
+    ['Daten Strompreise', pSlots ? (priceOk ? 'ok' : 'zu kurz') + ' · reichen ' + f(priceCov, 0, 'h') + ' voraus' : 'keine Daten', warnS(priceOk)],
+    ['Daten PV-Prognose', pvSeries.length ? pvSrc + (pvOk ? '' : ' (zu kurz)') + ' · reicht ' + f(pvCov, 0, 'h') + ' voraus' : 'keine · VRM: ' + (vrm.status || 'nicht konfiguriert'), warnS(pvOk)],
+    ['VRM-Abruf', (vrm.status || 'nicht konfiguriert') + (vrmAge !== null ? ' · ' + ageTxt(vrmAge) : ''), vrm.status === 'OK' ? 'ok' : '']
+];
+var vi = flow.get('vrmInfo');
+var out = [{payload: {rows: rows}}, null, null, {payload: (!vi || !vi.hasToken) ? 'Noch kein VRM-Token gespeichert. Token und Installations-ID oben eintragen und auf SPEICHERN klicken.'
+    : 'Token gespeichert (' + vi.tokenLen + ' Zeichen) · Installation ' + vi.id + ' · Abruf: ' + (vrm.status || 'noch nicht abgerufen') + (vrmAge !== null ? ' (Alter ' + ageTxt(vrmAge) + ')' : '')}];
+// ---------- Protokoll alle 5 min; stuendlicher Schnappschuss der Prognosen (zum spaeteren Vergleich mit dem, was wirklich war)
+var d = new Date(now), pad = function (n) { return (n < 10 ? '0' : '') + n; };
+var month = d.getFullYear() + '-' + pad(d.getMonth() + 1);
+var iso = month + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+var lastLog = flow.get('enLog');
+if (!lastLog || now - lastLog >= 5 * MS_MIN - 1000) {
+    var cols = ['zeit', 'pv_w', 'haus_w', 'netz_w', 'batterie_w', 'batterie_soc', 'preis_netz', 'preis_einspeisung', 'preis_min_24h', 'preis_mittel_24h', 'preis_max_24h', 'preis_guenstigster_slot',
+                'pv_prog_24h_kwh', 'pv_prog_spitze_w', 'pv_prog_heute_kwh', 'pv_prog_morgen_kwh', 'pv_prog_quelle', 'venus_ok', 'venus_alter_min', 'soc_alter_min', 'preise_reichen_h', 'pv_prognose_reicht_h', 'vrm_status', 'soc_quelle'];
+    var vals = [iso, c(pv), c(home), c(grid), c(batP), c(soc), c(pCur), c(pFeed), c(pMin), c(pAvg), c(pMax), pMinAt ? hhmm(pMinAt) : '',
+                c(pvKwh24), c(pvPeak), c(kToday), c(kTomorrow), pvSrc, liveOk ? 1 : 0, liveAge === null ? '' : c(liveAge / MS_MIN), socAge === null ? '' : c(socAge / MS_MIN), c(priceCov), c(pvCov), String(vrm.status || '').replace(/,/g, ';'), socSrc];
+    var file = '/data/optimizer/energy-' + month + '.csv', head = cols.join(','), needHead = true;
+    if (flow.get('enHead') === month + '|' + head) { needHead = false; }
+    else {
+        flow.set('enHead', month + '|' + head);
+        try { var lastH = null; String(fs.readFileSync(file, 'utf8')).split('\n').forEach(function (l) { if (l.indexOf('zeit,') === 0) { lastH = l; } }); needHead = lastH !== head; } catch (e) { needHead = true; }
+    }
+    out[1] = {filename: file, payload: (needHead ? head + '\n' : '') + vals.join(',') + '\n'};
+    flow.set('enLog', now);
+}
+var lastSnap = flow.get('enSnap');
+if (!lastSnap || now - lastSnap >= H - 1000) {
+    var upto = now + 36 * H;
+    var snap = {t: Math.round(now / 1000), at: num0(G0('TOP14_Outside_Temp')),
+                owm: (W.fpts && W.f_ts && now - W.f_ts < 2 * H) ? W.fpts : null,
+                price: pSlots ? pSlots.filter(function (s) { return s.e > now - 900000 && s.s < upto; }).map(function (s) { return [Math.round(s.s / 1000), s.p]; }) : null,
+                pv: pvSeries.length ? pvSeries.filter(function (s) { return s.t + s.dt > now && s.t < upto; }).map(function (s) { return [Math.round(s.t / 1000), Math.round(s.w), s.dt / 1000]; }) : null, pvSrc: pvSrc};
+    out[2] = {filename: '/data/optimizer/forecast-' + month + '.jsonl', payload: JSON.stringify(snap) + '\n'};
+    flow.set('enSnap', now);
+}
+function G0(k) { return global.get(k); }
+function num0(v) { v = Number(v); return (v === null || v === undefined || !isFinite(v)) ? null : v; }
+return out;
+"""
+
+VRM_REQ_JS = r"""
+// VRM-API (Prognose fuer PV und Verbrauch). Zugangsdaten stehen nur in /data/optimizer/vrm.json (Modus 0600, Eingabe im Dashboard unter
+// SYSTEM > EINSTELLUNGEN); der Token wird NIE in einer Variable, Meldung oder Anzeige abgelegt.
+var j = null;
+try { j = JSON.parse(fs.readFileSync('/data/optimizer/vrm.json', 'utf8')); } catch (e) { /* noch nicht gespeichert */ }
+var en = global.get('OPT_en') || {}; en.vrm = en.vrm || {};
+if (!j || !j.token || !j.id) {
+    en.vrm.status = 'nicht konfiguriert';
+    global.set('OPT_en', en);
+    flow.set('vrmInfo', {hasToken: false});
+    return null;
+}
+flow.set('vrmInfo', {hasToken: true, tokenLen: String(j.token).length, id: j.id});
+var nowS = Math.floor(Date.now() / 1000);
+return {topic: 'vrm', method: 'GET', headers: {'x-authorization': 'Token ' + j.token},
+        url: 'https://vrmapi.victronenergy.com/v2/installations/' + encodeURIComponent(j.id) + '/stats?type=forecast&interval=hours&start=' + (nowS - 3600) + '&end=' + (nowS + 48 * 3600)};
+"""
+
+VRM_PARSE_JS = r"""
+// Antwort der VRM-API einordnen. Fehler setzen nur den Status, die letzten gueltigen Werte bleiben (und altern).
+var en = global.get('OPT_en') || {}, V = en.vrm = en.vrm || {};
+function fail(t) { V.status = t; global.set('OPT_en', en); return null; }
+if (msg.error) { return fail('Fehler: ' + String(msg.error.message || 'unbekannt').replace(/Token\s+\S+/gi, 'Token ***').slice(0, 80)); }
+if (msg.statusCode === 401 || msg.statusCode === 403) { return fail('Token ungültig oder ohne Berechtigung (HTTP ' + msg.statusCode + ')'); }
+if (msg.statusCode !== 200 || !msg.payload || typeof msg.payload !== 'object') { return fail('Fehler: HTTP ' + msg.statusCode); }
+var p = msg.payload;
+if (p.success === false) { return fail('Fehler: ' + String(p.errors || p.error || 'VRM meldet einen Fehler').slice(0, 80)); }
+var rec = p.records;
+if (!rec || typeof rec !== 'object') { return fail('keine Prognose (Anlage ohne Solar oder noch keine Daten)'); }
+function norm(arr) {                                               // [[Zeit, Wert], ...] -> Zeit in Sekunden, nur gueltige Zahlen
+    var o = [];
+    if (!Array.isArray(arr)) { return o; }
+    arr.forEach(function (x) { if (Array.isArray(x)) { var t = Number(x[0]), v = Number(x[1]); if (isFinite(t) && isFinite(v) && v >= 0) { o.push([t > 1e11 ? Math.round(t / 1000) : t, v]); } } });
+    return o;
+}
+var pv = norm(rec.solar_yield_forecast);
+if (!pv.length) {                                                  // sonst Wechselrichter- und Laderegler-Anteil addieren
+    var a = norm(rec.vrm_pv_inverter_yield_fc), b = norm(rec.vrm_pv_charger_yield_fc), map = {};
+    a.concat(b).forEach(function (x) { map[x[0]] = (map[x[0]] || 0) + x[1]; });
+    pv = Object.keys(map).map(Number).sort(function (x, y) { return x - y; }).map(function (t) { return [t, map[t]]; });
+}
+if (!pv.length) { V.keys = Object.keys(rec).slice(0, 12); return fail('keine PV-Prognose in der Antwort (Felder: ' + V.keys.join(', ') + ')'); }
+V.pv = pv; V.cons = norm(rec.vrm_consumption_fc); V.keys = Object.keys(rec).slice(0, 12); V.ts = Date.now(); V.status = 'OK';
+global.set('OPT_en', en);
+return null;
+"""
+
+VRM_SAVE_JS = r"""
+// Formular "VRM" (SYSTEM > EINSTELLUNGEN): pruefen und in /data/optimizer/vrm.json speichern (nur fuer den Node-RED-Benutzer lesbar, Modus 0600).
+var p = msg.payload || {}, file = '/data/optimizer/vrm.json';
+function toast(text, red) { var t = {topic: 'VRM', payload: text}; if (red) { t.highlight = 'red'; } return t; }
+var cur = {};
+try { cur = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { /* neu */ }
+var token = String(p.vrm_token || '').trim(), id = String(p.vrm_id || '').trim();
+if (token && !/^[A-Za-z0-9_\-]{20,128}$/.test(token)) { return [null, toast('Der Token hat ein ungültiges Format (20–128 Zeichen, Buchstaben, Ziffern, _ und -). Es wurde nichts gespeichert.', true), null, null]; }
+if (!token) { token = cur.token || ''; }                           // leer lassen = vorhandenen Token behalten
+if (id === '' && cur.id !== undefined) { id = String(cur.id); }
+if (!token) { return [null, toast('Bitte einen VRM-Zugriffstoken eingeben.', true), null, null]; }
+if (!/^\d{3,12}$/.test(id)) { return [null, toast('Die Installations-ID ist ungültig (nur Ziffern, z. B. 123456).', true), null, null]; }
+try {
+    fs.mkdirSync('/data/optimizer', {recursive: true});
+    fs.writeFileSync(file, JSON.stringify({token: token, id: id, saved: Date.now()}), {mode: 0o600});
+    fs.chmodSync(file, 0o600);
+} catch (e) { return [null, toast('Speichern fehlgeschlagen: ' + e.message, true), null, null]; }
+flow.set('vrmInfo', {hasToken: true, tokenLen: token.length, id: id});
+return [{payload: {vrm_token: '', vrm_id: id}}, toast('Gespeichert. Die Prognose wird jetzt abgerufen.', false), {payload: 'jetzt'},
+        {payload: 'Token gespeichert (' + token.length + ' Zeichen) · Installation ' + id + ' · Prognose wird abgerufen …'}];
+"""
+
+VRM_LOAD_JS = r"""
+// Beim Start: gespeicherte VRM-Zugangsdaten pruefen (nur Status merken) und die Installations-ID ins Formular zurueckschreiben.
+var info = {hasToken: false}, fill = {vrm_token: '', vrm_id: ''};
+try {
+    var j = JSON.parse(fs.readFileSync('/data/optimizer/vrm.json', 'utf8'));
+    info = {hasToken: !!j.token, tokenLen: j.token ? String(j.token).length : 0, id: j.id};
+    fill.vrm_id = String(j.id);
+} catch (e) { /* noch nichts gespeichert */ }
+flow.set('vrmInfo', info);
+return {payload: fill};
+"""
+
 HP_IN_JS = r"""
 // Waermepumpen-Werte vom NAS-Broker (NUR LESEN): zusaetzliche HeishaMon-Werte (Pumpe, Leistung, Luefter ...) und alle Quiet-Mode-Befehle
 // beobachten. Dieser Tab hat keinen MQTT-Ausgang und schreibt nichts an die Waermepumpe.
@@ -484,15 +725,25 @@ var S = G('OPT_state') || {}, sFresh = S.ts && now - S.ts < 5 * MS_MIN;
 var qs = flow.get('qs');
 if (!qs) {
     qs = {errS: null, errTs: 0, target: null, level: null, levelSince: now, lastStart: 0, lastDefrostEnd: 0, lastDhwEnd: 0, freqOn: false, defrost: false, dhw: false,
-          lastMin: 0, lastSave: 0, lastLog: 0, runStart: 0, runs: [], stats: {}};
+          lastMin: 0, lastSave: 0, lastLog: 0, runStart: 0, runs: [], kf: {}, inWin: false, testOpen: null};
     try {
         var sj = JSON.parse(fs.readFileSync('/data/optimizer/quiet-stats.json', 'utf8'));
-        if (sj && sj.stats) { qs.stats = sj.stats; qs.level = sj.level; qs.levelSince = sj.since || now; qs.runs = sj.runs || []; }
+        if (sj && sj.kf) { qs.kf = sj.kf; qs.level = sj.level; qs.levelSince = sj.since || now; qs.runs = sj.runs || []; }
     } catch (e) { /* noch keine Datei */ }
 }
+if (!qs.kf) { qs.kf = {}; }                                                                  // Zustand einer frueheren Version (ohne Kennfeld) uebernehmen
+if (qs.inWin === undefined) { qs.inWin = false; }
+if (qs.testOpen === undefined) { qs.testOpen = null; }
 if (qNow !== null && qs.level !== qNow) { qs.level = qNow; qs.levelSince = now; }        // Stufe geaendert (von wem auch immer) oder erste Beobachtung
-var stat = function (lv) { return qs.stats[lv] = qs.stats[lv] || {n: 0, starts: 0, defrosts: 0, runMin: 0, s: {}}; };
-var FIELDS = ['hz', 'pel', 'pth', 'cop', 'vl', 'rl', 'dt', 'flow', 'at', 'fan'];
+// Kennfeld: je Quiet-Stufe UND Aussentemperaturbereich (damit z. B. Stufe 3 bei 8 C von Stufe 3 bei -5 C getrennt bleibt)
+var BANDS = ['< 0 °C', '0–3 °C', '3–7 °C', '7–12 °C', '> 12 °C'];
+var band = at === null ? null : (at < 0 ? 0 : (at < 3 ? 1 : (at < 7 ? 2 : (at < 12 ? 3 : 4))));
+var stat = function (lv) {
+    if (band === null) { return {n: 0, starts: 0, defrosts: 0, runMin: 0, dMin: 0, s: {}}; }          // ohne Aussentemperatur nichts zuordnen
+    var k = lv + '|' + band;
+    return qs.kf[k] = qs.kf[k] || {n: 0, starts: 0, defrosts: 0, runMin: 0, dMin: 0, s: {}};
+};
+var FIELDS = ['hz', 'pel', 'pth', 'cop', 'vl', 'rl', 'svl', 'srl', 'dt', 'flow', 'at', 'fan'];
 // Wechsel erkennen: Verdichterstart/-ende, Abtauen, Warmwasser
 if (running && !qs.freqOn) { qs.lastStart = now; qs.runStart = now; if (qNow !== null) { stat(qNow).starts++; } }
 if (!running && qs.freqOn && qs.runStart) {
@@ -510,8 +761,9 @@ var mk = Math.floor(now / MS_MIN);
 if (qs.lastMin !== mk) {
     qs.lastMin = mk;
     if (running && !defrost && !dhw && qNow !== null) {
-        var st0 = stat(qNow), vals = {hz: freq, pel: pel, pth: pth, cop: copNow, vl: istVL, rl: istRL, dt: spread, flow: flw, at: at, fan: fan1};
+        var st0 = stat(qNow), vals = {hz: freq, pel: pel, pth: pth, cop: copNow, vl: istVL, rl: istRL, svl: solVL, srl: solRL, dt: spread, flow: flw, at: at, fan: fan1};
         st0.n++;
+        if (sFresh && S.deficit) { st0.dMin++; }                                   // Minuten mit Komfortdefizit
         FIELDS.forEach(function (k) { if (ok(vals[k])) { var a = st0.s[k] = st0.s[k] || [0, 0]; a[0] += vals[k]; a[1] += 1; } });
     }
 }
@@ -530,6 +782,7 @@ var cycleBad = (rtLast !== null && rtLast < qn(Q.minRunMin, 20)) || (startsToday
 var T = [qn(Q.thrHigh, 3), qn(Q.thrMid, 1.5), qn(Q.thrLow, 0.5)], H = qn(Q.hyst, 0.3);
 function lvl(e) { return e >= T[0] ? 0 : (e >= T[1] ? 1 : (e >= T[2] ? 2 : 3)); }
 var target = null, why = [];
+var targetNormal = null;
 if (!running) { why.push('Verdichter steht'); }
 else if (qs.errS === null) { why.push('Rücklauf oder Soll fehlt'); }
 else {
@@ -546,6 +799,7 @@ else {
     why.push('Verdichter seit ' + Math.round(rt || 0) + ' min aktiv');
     qs.target = target;
 }
+targetNormal = target;                                                           // Empfehlung ohne Prioritaetsregel (zum Vergleichen mitgeloggt)
 // Erfahrungswert des Betreibers: bei 1-3 Grad Aussentemperatur muss Quiet aus sein; geht dem Taktungsschutz und dem Leistungsdeckel vor
 var wLo = qn(Q.offAtLow, 1), wHi = qn(Q.offAtHigh, 3), wH = qn(Q.offAtHyst, 0.5);
 var atWin = at !== null && (qs.inWin ? (at >= wLo - wH && at <= wHi + wH) : (at >= wLo && at <= wHi));
@@ -559,10 +813,24 @@ if (dhw) { locks.push('Warmwasser'); } else if (now - qs.lastDhwEnd < qn(Q.after
 if (running && now - qs.lastStart < qn(Q.startLockMin, 15) * MS_MIN) { locks.push('Verdichterstart'); }
 if (ssRamp) { locks.push('Sanftanlauf'); }
 var holdLeft = Math.max(0, qs.levelSince + qn(Q.holdMin, 15) * MS_MIN - now);
-var next = (target !== null && qNow !== null && target !== qNow) ? qNow + (target > qNow ? 1 : -1) : null;
+var next = (targetNormal !== null && qNow !== null && targetNormal !== qNow) ? qNow + (targetNormal > qNow ? 1 : -1) : null;                     // normal: eine Stufe
+var nextP = (target !== null && qNow !== null && target !== qNow) ? (atWin ? target : qNow + (target > qNow ? 1 : -1)) : null;              // Prioritaetsregel im Fenster: direkt auf Ziel
 if (!locks.length && !defrost && !dhw) { why.push(defrost ? '' : 'kein Abtauen / kein Warmwasser'); }
-var nextTxt = target === null ? '–' : (next === null ? 'keiner (Stufe passt)' : qNow + ' → ' + next + (locks.length ? ' (wartet: ' + locks[0] + ')' : (holdLeft > 0 ? ' (frühestens in ' + Math.ceil(holdLeft / MS_MIN) + ' min)' : ' (möglich)')));
+function stepTxt(tg, nx, direct) { return tg === null ? '–' : (nx === null ? 'keiner (Stufe passt)' : qNow + ' → ' + nx + (direct ? ' direkt' : '') + (locks.length ? ' (wartet: ' + locks[0] + ')' : ((holdLeft > 0 && !direct) ? ' (frühestens in ' + Math.ceil(holdLeft / MS_MIN) + ' min)' : ' (möglich)'))); }
+var nextTxt = stepTxt(targetNormal, next, false), nextTxtP = stepTxt(target, nextP, atWin);
 var lockTxt = locks.length ? locks.join(' + ') : (holdLeft > 0 ? 'Haltezeit noch ' + Math.ceil(holdLeft / MS_MIN) + ' min' : 'keine');
+// Kontrolltest Quiet 3 -> 2: NUR ein Hinweis, wann die Bedingungen erfuellt sind. Es wird nie automatisch geschaltet; den Test macht der Betreiber von Hand.
+var tr = [];
+if (qNow !== 3) { tr.push('Stufe ist nicht 3'); }
+if (!running) { tr.push('Verdichter steht'); } else if (now - qs.lastStart < qn(Q.startLockMin, 15) * MS_MIN) { tr.push('Startphase'); }
+if (dhw || now - qs.lastDhwEnd < qn(Q.afterDhwMin, 10) * MS_MIN) { tr.push('Warmwasser'); }
+if (defrost || now - qs.lastDefrostEnd < qn(Q.afterDefrostMin, 10) * MS_MIN) { tr.push('Abtauen'); }
+if (!sFresh) { tr.push('Komfortdaten fehlen'); } else if (S.deficit) { tr.push('Komfortdefizit'); }
+var bins3 = (flow.get('atBins') || []).filter(function (b) { return b[0] > now - 3 * 60 * MS_MIN; }).map(function (b) { return b[1] / b[2]; });
+if (atWin || bins3.some(function (v) { return v >= wLo - wH && v <= wHi + wH; })) { tr.push('Außentemperatur im ' + f(wLo, 0) + '–' + f(wHi, 0) + '-°C-Fenster'); }
+if (bins3.length < 24) { tr.push('zu wenig Außentemperatur-Historie (3 h)'); }
+else if (Math.max.apply(null, bins3) - Math.min.apply(null, bins3) > qn(Q.testAtRange, 2)) { tr.push('Außentemperatur nicht stabil'); }
+var testOk = tr.length === 0;
 
 // ---------- Quellen der Quiet-Stufe (damit nichts unbemerkt gegen einen Regler arbeitet)
 var mq = G('MQTT') || {}, sol = G('F_SOLAR') || {};
@@ -586,34 +854,52 @@ var rows = [
     ['Flow · Pumpe (nur Beobachtung)', f(flw, 1, 'l/min') + ' · ' + (HP.Pump_Duty ? f(HP.Pump_Duty.v, 0) : '–') + ' / ' + (HP.Pump_Speed ? f(HP.Pump_Speed.v, 0, 'U/min') : '–'), ''],
     ['Taktung', 'heute ' + f(startsToday, 0) + ' Starts · Ø Lauf 24 h ' + (meanRun !== null ? f(meanRun, 0, 'min') : '–') + ' (' + runs24.length + ')', cycleBad ? 'warn' : ''],
     ['Quiet aktuell', qNow !== null ? 'Stufe ' + qNow + ' seit ' + dur(now - qs.levelSince) + (prio !== null ? ' · Priorität ' + (prio === 1 ? 'Ton' : 'Leistung') : '') : '–', ''],
-    ['Quiet empfohlen (Shadow)', target !== null ? 'Stufe ' + target : '–', target !== null && qNow !== null && target !== qNow ? 'warn' : ''],
-    ['Nächster Schritt', nextTxt, ''],
+    ['Quiet normal (Shadow)', targetNormal !== null ? 'Stufe ' + targetNormal : '–', ''],
+    ['Quiet nach Prioritätsregeln (Shadow)', target !== null ? 'Stufe ' + target : '–', target !== null && qNow !== null && target !== qNow ? 'warn' : ''],
+    ['Nächster Schritt normal', nextTxt, ''],
+    ['Nächster Schritt Priorität', nextTxtP, ''],
     ['Grund', why.filter(Boolean).join(' · '), ''],
     ['Sperrgrund', lockTxt, ''],
+    ['Kontrolltest Quiet 3 → 2 (nur von Hand)', testOk ? 'Bedingungen erfüllt, jetzt möglich' : 'nicht möglich: ' + tr.join(' · '), testOk ? 'ok' : ''],
     ['Quellen der Stufe', srcs.join(' · ') + (lastCmd ? ' · letzter Befehl ' + hhmm(lastCmd.ts) : ' · kein Befehl beobachtet'), '']
 ];
-var tab = [0, 1, 2, 3].map(function (lv) {
-    var s = qs.stats[lv];
-    if (!s || !s.n) { return ['Stufe ' + lv, '–', '–', '–', '–', '–', '–', '–', '–', '–', '–']; }
-    var m = function (k, d) { var a = s.s[k]; return a && a[1] ? f(a[0] / a[1], d) : '–'; };
-    return ['Stufe ' + lv, f(s.n, 0), m('hz', 0), m('pel', 0), m('pth', 0), m('cop', 1), m('vl', 1) + ' / ' + m('rl', 1) + ' / ' + m('dt', 1), m('flow', 1), m('at', 1), f(s.starts, 0) + ' / ' + (s.starts ? f(s.runMin / s.starts, 0) : '–'), f(s.defrosts, 0)];
+var tab = [];
+[0, 1, 2, 3].forEach(function (lv) {
+    var any = false;
+    BANDS.forEach(function (bn, bi) {
+        var s = qs.kf[lv + '|' + bi];
+        if (!s || !(s.n || s.starts)) { return; }
+        any = true;
+        var m = function (k, d) { var a = s.s[k]; return a && a[1] ? f(a[0] / a[1], d) : '–'; };
+        tab.push(['Stufe ' + lv, bn, f(s.n, 0), m('hz', 0), m('fan', 0), m('pel', 0), m('pth', 0), m('cop', 1), m('vl', 1) + ' / ' + m('rl', 1) + ' / ' + m('dt', 1),
+                  m('svl', 1) + ' / ' + m('srl', 1), m('flow', 1), s.n ? f(s.starts / (s.n / 60), 2) : '–', s.starts ? f(s.runMin / s.starts, 0) : '–', f(s.defrosts, 0), s.n ? f(100 * s.dMin / s.n, 0) + ' %' : '–']);
+    });
+    if (!any) { tab.push(['Stufe ' + lv, 'keine Daten', '–', '–', '–', '–', '–', '–', '–', '–', '–', '–', '–', '–', '–']); }
 });
 
 // ---------- Protokoll: jede Minute bei laufendem Verdichter oder Stufenwechsel, sonst alle 5 min; Statistik alle 10 min sichern
 var month = new Date(now).getFullYear() + '-' + ('0' + (new Date(now).getMonth() + 1)).slice(-2);
-var out = [{payload: {rows: rows}}, {payload: {stats: tab}}, null];
+var out = [{payload: {rows: rows}}, {payload: {stats: tab}}, null, null];
+if (qs.testOpen !== null && qs.testOpen !== testOk) {                                  // Testfenster geoeffnet/geschlossen: Ereignis fuer den Betreiber
+    var evd = new Date(now), evp = function (x) { return (x < 10 ? '0' : '') + x; };
+    var evIso = evd.getFullYear() + '-' + evp(evd.getMonth() + 1) + '-' + evp(evd.getDate()) + ' ' + evp(evd.getHours()) + ':' + evp(evd.getMinutes()) + ':' + evp(evd.getSeconds());
+    var evFile = '/data/optimizer/quiet-events-' + evIso.slice(0, 7) + '.csv', evHead = '';
+    try { fs.readFileSync(evFile, 'utf8'); } catch (e) { evHead = 'zeit,ereignis,wechsel\n'; }
+    out[3] = {filename: evFile, payload: evHead + evIso + ',testfenster_quiet_3_2,' + (testOk ? 'geoeffnet' : 'geschlossen (' + tr.join(' + ').replace(/,/g, ';') + ')') + '\n'};
+}
+qs.testOpen = testOk;
 if (!qs.lastLog || now - qs.lastLog >= (running ? 1 : 5) * MS_MIN - 1000) {
     var d = new Date(now), pad = function (n) { return (n < 10 ? '0' : '') + n; };
     var iso = month + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
-    var cols = ['zeit', 'quiet_aktuell', 'quiet_ziel', 'quiet_naechster', 'quiet_grund', 'quiet_sperre', 'haltezeit_rest_min', 'soll_vl', 'ist_vl', 'soll_rl', 'ist_rl', 'rl_fehler', 'rl_fehler_gegl',
+    var cols = ['zeit', 'quiet_aktuell', 'quiet_ziel_normal', 'quiet_ziel_prioritaet', 'quiet_naechster_normal', 'quiet_naechster_prioritaet', 'quiet_grund', 'quiet_sperre', 'haltezeit_rest_min', 'soll_vl', 'ist_vl', 'soll_rl', 'ist_rl', 'rl_fehler', 'rl_fehler_gegl',
                 'spreizung_ist', 'spreizung_ziel', 'verdichter_hz', 'leistung_el_w', 'leistung_th_heisha_w', 'leistung_th_berechnet_w', 'cop_momentan', 'flow_l_min', 'pumpe_duty', 'pumpe_speed',
                 'pumpe_max_duty', 'fan1', 'fan2', 'verdichter_strom', 'aussen', 'verdichter_laufzeit_min', 'letzte_laufzeit_min', 'starts_heute', 'lauf_mittel_24h_min', 'defrost', 'warmwasser', 'softstart',
-                'raum_defizit', 'raum_defizit_name', 'raum_trend', 'waermeverteilung', 'quiet_prioritaet', 'taktung_kritisch', 'quiet_aussen_regel'];
+                'raum_defizit', 'raum_defizit_name', 'raum_trend', 'waermeverteilung', 'quiet_prioritaet', 'taktung_kritisch', 'quiet_aussen_regel', 'test_moeglich'];
     var hv = function (n) { return HP[n] && typeof HP[n].v === 'number' ? HP[n].v : null; };
-    var vals2 = [iso, qNow, target, next, why.filter(Boolean).join(' | ').replace(/,/g, ';'), locks.join(' + ').replace(/,/g, ';'), Math.ceil(holdLeft / MS_MIN), c(solVL), c(istVL), c(solRL), c(istRL), c(rlErr), c(qs.errS),
+    var vals2 = [iso, qNow, targetNormal, target, next, nextP, why.filter(Boolean).join(' | ').replace(/,/g, ';'), locks.join(' + ').replace(/,/g, ';'), Math.ceil(holdLeft / MS_MIN), c(solVL), c(istVL), c(solRL), c(istRL), c(rlErr), c(qs.errS),
                  c(spread), c(zDelta), c(freq), c(pel), c(pthHs), c(pthCalc), c(copNow), c(flw), c(hv('Pump_Duty')), c(hv('Pump_Speed')), c(hv('Max_Pump_Duty')), c(fan1), c(hv('Fan2_Motor_Speed')),
                  c(hv('Compressor_Current')), c(at), c(rt), c(rtLast), c(startsToday), c(meanRun), defrost ? 1 : 0, dhw ? 1 : 0, ssRamp ? 1 : 0,
-                 sFresh ? (S.deficit ? 1 : 0) : '', sFresh ? String(S.deficitRoom || '').replace(/,/g, ';') : '', sFresh ? c(S.coldTrend) : '', sFresh ? (S.distrib ? 1 : 0) : '', prio === null ? '' : prio, cycleBad ? 1 : 0, atWin ? 1 : 0];
+                 sFresh ? (S.deficit ? 1 : 0) : '', sFresh ? String(S.deficitRoom || '').replace(/,/g, ';') : '', sFresh ? c(S.coldTrend) : '', sFresh ? (S.distrib ? 1 : 0) : '', prio === null ? '' : prio, cycleBad ? 1 : 0, atWin ? 1 : 0, testOk ? 1 : 0];
     var file = '/data/optimizer/quiet-' + month + '.csv', head = cols.join(',');
     var needHead = true;
     if (flow.get('qHead') === month + '|' + head) { needHead = false; }
@@ -625,7 +911,7 @@ if (!qs.lastLog || now - qs.lastLog >= (running ? 1 : 5) * MS_MIN - 1000) {
     qs.lastLog = now;
 }
 if (!qs.lastSave || now - qs.lastSave >= 10 * MS_MIN) {
-    try { fs.mkdirSync('/data/optimizer', {recursive: true}); fs.writeFileSync('/data/optimizer/quiet-stats.json', JSON.stringify({stats: qs.stats, level: qs.level, since: qs.levelSince, runs: qs.runs})); qs.lastSave = now; } catch (e) { /* kein Zugriff */ }
+    try { fs.mkdirSync('/data/optimizer', {recursive: true}); fs.writeFileSync('/data/optimizer/quiet-stats.json', JSON.stringify({kf: qs.kf, level: qs.level, since: qs.levelSince, runs: qs.runs})); qs.lastSave = now; } catch (e) { /* kein Zugriff */ }
 }
 flow.set('qs', qs);
 return out;
@@ -1009,7 +1295,7 @@ return out;
 upsert({"id": UI_TAB, "type": "ui_tab", "name": "Optimierung", "icon": "tune", "order": 12.5, "disabled": False, "hidden": False})
 # one wide card for the rooms (situation + settings), three slim status cards next to it; templates: width 0 = group width
 GROUPS = [("opt_g_rooms", "Räume und Komfortbänder", 12), ("opt_g_opt", "Optimierung", 6),
-          ("opt_g_wx", "Außen & Wetter", 6), ("opt_g_calc", "Berechnete Außentemperatur", 6), ("opt_g_quiet", "Leistung & Quiet (Shadow)", 6), ("opt_g_wp", "Wärmepumpe", 6),
+          ("opt_g_wx", "Außen & Wetter", 6), ("opt_g_calc", "Berechnete Außentemperatur", 6), ("opt_g_quiet", "Leistung & Quiet (Shadow)", 6), ("opt_g_en", "Energie & Preise (nur Anzeige)", 6), ("opt_g_wp", "Wärmepumpe", 6),
           ("opt_g_qstats", "Quiet-Stufen: reale Messwerte", 12)]
 for _order, (gid, gname, gwidth) in enumerate(GROUPS, 1):
     upsert({"id": gid, "type": "ui_group", "name": gname, "tab": UI_TAB, "order": _order, "disp": True,
@@ -1060,12 +1346,13 @@ upsert(template("opt_t_opt", "opt_g_opt", 6, 140))
 upsert(template("opt_t_wx", "opt_g_wx", 7, 200))
 upsert(template("opt_t_calc", "opt_g_calc", 8, 230))
 upsert(template("opt_t_quiet", "opt_g_quiet", 16, 290))
+upsert(template("opt_t_en", "opt_g_en", 14, 350))
 QSTATS = """<style>.optq{width:100%;border-collapse:collapse;font-size:13px}
 .optq th{text-align:left;font-weight:normal;color:#666;padding:4px 6px;border-bottom:1px solid #ccc;font-size:12px}
 .optq td{padding:5px 6px;border-bottom:1px solid #eee;white-space:nowrap}
 .optq-note{font-size:12px;color:#777;padding:6px 2px}</style>
-<div class="optfit"><div style="overflow-x:auto"><table class="optq"><tr><th>Stufe</th><th>Minuten Lauf</th><th>Ø Hz</th><th>Ø P el. (W)</th><th>Ø P th. (W)</th><th>Ø COP</th>
-<th>Ø VL / RL / ΔT (°C)</th><th>Ø Flow (l/min)</th><th>Ø Außen (°C)</th><th>Starts / Ø Lauf (min)</th><th>Abtauungen</th></tr>
+<div class="optfit"><div style="overflow-x:auto"><table class="optq"><tr><th>Stufe</th><th>Außen</th><th>Minuten Lauf</th><th>Ø Hz</th><th>Ø Fan</th><th>Ø P el. (W)</th><th>Ø P th. (W)</th><th>Ø COP</th>
+<th>Ø VL / RL / ΔT (°C)</th><th>Ø Soll VL / RL</th><th>Ø Flow (l/min)</th><th>Starts/h</th><th>Ø Lauf (min)</th><th>Abtauungen</th><th>Komfortdefizit</th></tr>
 <tr ng-repeat="r in msg.payload.stats track by $index"><td ng-repeat="c in r track by $index">{{c}}</td></tr></table></div>
 <div class="optq-note">Nur Minuten mit laufendem Verdichter, ohne Abtauen und Warmwasser. Die Tabelle füllt sich nur für Stufen, die tatsächlich benutzt werden.</div></div>"""
 upsert({"id": "opt_t_qstats", "type": "ui_template", "z": TAB, "group": "opt_g_qstats", "name": "Quiet-Statistik", "order": 1, "width": 0, "height": 4,
@@ -1192,7 +1479,7 @@ for _i, _t in enumerate(("panasonic_heat_pump/main/+", "panasonic_heat_pump/extr
     upsert({"id": f"opt_mqtt_hp_{_i}", "type": "mqtt in", "z": TAB, "name": "", "topic": _t, "qos": "0", "datatype": "auto-detect",
             "broker": "opt_broker_nas", "nl": False, "rap": True, "rh": 0, "inputs": 0, "x": 160, "y": 1120 + 60 * _i, "wires": [["opt_hp_in"]]})
 upsert(fn("opt_hp_in", "Anlagenwerte lesen (nur lesen)", HP_IN_JS, 1, [["opt_f_qev"]], 440, 1180, FS))
-upsert(fn("opt_quiet", "Quiet-Empfehlung (Shadow)", QUIET_JS, 3, [["opt_t_quiet"], ["opt_t_qstats"], ["opt_f_quiet"]], 700, 1060, FS))
+upsert(fn("opt_quiet", "Quiet-Empfehlung (Shadow)", QUIET_JS, 4, [["opt_t_quiet"], ["opt_t_qstats"], ["opt_f_quiet"], ["opt_f_qev"]], 700, 1060, FS))
 for _fid, _name, _y in (("opt_f_qev", "Quiet-Ereignisse", 1180), ("opt_f_quiet", "Quiet-Protokoll", 1060)):
     upsert({"id": _fid, "type": "file", "z": TAB, "name": _name, "filename": "filename", "filenameType": "msg", "appendNewline": False,
             "createDir": True, "overwriteFile": "false", "encoding": "utf8", "x": 960, "y": _y, "wires": [[]]})
@@ -1260,6 +1547,56 @@ for _rid in _OLD:
         flows.remove(B.pop(_rid))
 upsert(fn("opt_owm_save", "Zugangsdaten speichern", OWM_SAVE_JS, 4,
           [["opt_ui_form"], ["opt_ui_toast"], ["opt_owm_req"], ["opt_ui_wxstatus"]], 1100, 960, FS))
+
+# ---------------------------------------------------------------- energy and prices: display and log only, no effect on the control
+# live values from the Venus MQTT (passive: this tab only listens), prices from evcc, PV forecast from the VRM API (token entered in the dashboard)
+upsert(comment("opt_c6", "Energie & Preise: Venus-MQTT (live), evcc (Preise), VRM-API (PV-Prognose) - nur Anzeige und Protokoll", 380, 1360))
+for _i, (_t, _b) in enumerate((("N/+/system/0/#", BROKER), ("evcc/site/+", "opt_broker_nas"), ("evcc/site/forecast/+", "opt_broker_nas"), ("evcc/site/battery/soc", "opt_broker_nas"), ("N/+/battery/278/Soc", BROKER))):
+    upsert({"id": f"opt_mqtt_en{_i}", "type": "mqtt in", "z": TAB, "name": "", "topic": _t, "qos": "0", "datatype": "auto-detect",
+            "broker": _b, "nl": False, "rap": True, "rh": 0, "inputs": 0, "x": 160, "y": 1400 + 50 * _i, "wires": [["opt_en_in"]]})
+upsert(fn("opt_en_in", "Energiewerte lesen (nur lesen)", EN_IN_JS, 0, [], 440, 1425, FS))
+upsert(inject("opt_i_en", "jede Minute", 60, 30, ["opt_energy"], 140, 1540))
+upsert(fn("opt_energy", "Energie & Preise auswerten", ENERGY_JS, 4, [["opt_t_en"], ["opt_f_en"], ["opt_f_fc"], ["opt_ui_vrmstatus"]], 440, 1540, FS))
+for _fid, _name, _y in (("opt_f_en", "Energie-Protokoll", 1500), ("opt_f_fc", "Prognose-Schnappschüsse", 1580)):
+    upsert({"id": _fid, "type": "file", "z": TAB, "name": _name, "filename": "filename", "filenameType": "msg", "appendNewline": False,
+            "createDir": True, "overwriteFile": "false", "encoding": "utf8", "x": 760, "y": _y, "wires": [[]]})
+upsert(inject("opt_i_vrm", "VRM-Prognose abrufen", 1800, 40, ["opt_vrm_req"], 140, 1660))
+upsert(fn("opt_vrm_req", "VRM-Anfrage", VRM_REQ_JS, 1, [["opt_http_vrm"]], 400, 1660, FS))
+upsert({"id": "opt_http_vrm", "type": "http request", "z": TAB, "name": "VRM-API", "method": "GET", "ret": "obj", "paytoqs": "ignore",
+        "url": "", "tls": "", "persist": False, "proxy": "", "insecureHTTPParser": False, "authType": "", "senderr": False,
+        "headers": [], "x": 640, "y": 1660, "wires": [["opt_vrm_parse"]]})
+upsert({"id": "opt_catch_vrm", "type": "catch", "z": TAB, "name": "", "scope": ["opt_http_vrm"], "uncaught": False,
+        "x": 640, "y": 1720, "wires": [["opt_vrm_parse"]]})
+upsert(fn("opt_vrm_parse", "VRM-Antwort auswerten", VRM_PARSE_JS, 1, [[]], 880, 1660))
+head_vrm = head_fmt
+if line and re.search(r"<left>[^<]*</left>", head_fmt):
+    head_vrm = re.sub(r"(<left>)[^<]*(</left>)", r"\1VRM (PV-Prognose für die Optimierung)\2", head_fmt)
+upsert({"id": "opt_ui_vrm_head", "type": "ui_template", "z": TAB, "group": SG, "name": "Linie VRM", "order": base + 4,
+        "width": 24, "height": 1, "format": head_vrm, "storeOutMessages": True, "fwdInMessages": True,
+        "resendOnRefresh": True, "templateScope": "local", "className": "", "x": 1260, "y": 1660, "wires": [[]]})
+upsert({"id": "opt_ui_vrm_form", "type": "ui_form", "z": TAB, "name": "VRM", "label": "", "group": SG,
+        "order": base + 5, "width": 12, "height": 6,
+        "options": [
+            {"label": "Zugriffstoken", "value": "vrm_token", "type": "password", "required": False, "rows": None},
+            {"label": "Installations-ID (Ziffern)", "value": "vrm_id", "type": "text", "required": False, "rows": None}],
+        "formValue": {"vrm_token": "", "vrm_id": ""}, "payload": "", "submit": "SPEICHERN",
+        "cancel": "LEEREN", "topic": "vrm", "topicType": "str", "splitLayout": False, "className": "",
+        "x": 880, "y": 1720, "wires": [["opt_vrm_save"]]})
+upsert({"id": "opt_ui_vrm_info", "type": "ui_template", "z": TAB, "group": SG, "name": "Hinweis VRM",
+        "order": base + 6, "width": 12, "height": 4,
+        "format": '<div style="font-size:13px;color:#666;padding:6px 4px;line-height:1.5">'
+                  'Den Zugriffstoken legt man im VRM-Portal unter Einstellungen > Integrationen an. Er wird nicht angezeigt und nur in einer '
+                  'geschützten Datei auf der NAS gespeichert. Leere Felder behalten ihren gespeicherten Wert. Die Prognose dient nur der '
+                  'Anzeige und dem Protokoll, sie greift nicht in die Regelung ein.</div>',
+        "storeOutMessages": True, "fwdInMessages": True, "resendOnRefresh": True, "templateScope": "local",
+        "className": "", "x": 1260, "y": 1720, "wires": [[]]})
+upsert({"id": "opt_ui_vrmstatus", "type": "ui_text", "z": TAB, "group": SG, "order": base + 7, "width": 24, "height": 1,
+        "name": "Status VRM", "label": "", "format": "{{msg.payload}}", "layout": "row-left",
+        "className": "", "x": 960, "y": 1780, "wires": []})
+upsert(inject("opt_i_vrm_load", "VRM-Zugangsdaten prüfen", 0, 7, ["opt_vrm_load"], 140, 1780))
+upsert(fn("opt_vrm_load", "Gespeicherte Installation laden", VRM_LOAD_JS, 1, [["opt_ui_vrm_form"]], 420, 1780, FS))
+upsert(fn("opt_vrm_save", "VRM-Zugangsdaten speichern", VRM_SAVE_JS, 4,
+          [["opt_ui_vrm_form"], ["opt_ui_toast"], ["opt_vrm_req"], ["opt_ui_vrmstatus"]], 1100, 1720, FS))
 
 # the new page also belongs into the menu configuration (SYSTEM > menu), otherwise it can not be hidden/shown there
 form = B.get("e35b7df78bc6f722")
