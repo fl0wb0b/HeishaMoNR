@@ -12,12 +12,20 @@ class FakeDate extends RealDate {
   static now() { return NOW; }
 }
 const gstore = {}, fstore = {}, envv = {};
+// minimales Dateisystem-Modell (Pfad -> {data, mode}); wirft ENOENT wie das echte fs
+const files = {};
+const fsMock = {
+  readFileSync: (p, enc) => { if (!(p in files)) { const e = new Error("ENOENT: no such file or directory, open '" + p + "'"); e.code = 'ENOENT'; throw e; } return files[p].data; },
+  writeFileSync: (p, data, opt) => { files[p] = {data: String(data), mode: (opt && opt.mode !== undefined) ? opt.mode : (files[p] ? files[p].mode : 0o644)}; },
+  mkdirSync: () => {},
+  chmodSync: (p, mode) => { if (files[p]) { files[p].mode = mode; } },
+};
 const sent = [];
 function makeCtx(store) { return { get: k => store[k], set: (k, v) => { store[k] = v; } }; }
 function run(id, msg) {
   const out = [];
   const node = { send: m => sent.push({id, m}), warn: () => {}, error: () => {}, status: () => {} };
-  const sandbox = { msg, global: makeCtx(gstore), flow: makeCtx(fstore), context: makeCtx({}), env: { get: k => envv[k] }, node, Date: FakeDate, Buffer, Math, JSON, Number, String, Object, Array, isFinite };
+  const sandbox = { fs: fsMock, msg, global: makeCtx(gstore), flow: makeCtx(fstore), context: makeCtx({}), env: { get: k => envv[k] }, node, Date: FakeDate, Buffer, Math, JSON, Number, String, Object, Array, isFinite };
   const code = `(function(msg,global,flow,context,env,node){${F[id]}\n})`;
   return vm.runInNewContext(code, sandbox)(msg, sandbox.global, sandbox.flow, sandbox.context, sandbox.env, node);
 }
@@ -120,5 +128,51 @@ NOW += 90 * 60000; ev2 = run('opt_eval', {});
 const wx2 = ev2[0].payload.rows;
 check('Wetterdaten nach >60 min nicht mehr verwendet (Anzeige "–")', wx2[1][1] === '–' && wx2[3][1] === '–', wx2[1][1]);
 check('Regelwert bleibt Panasonic', wx2[10][1].includes('Panasonic'), wx2[10][1]);
+
+// ---------- Zugangsdaten im Dashboard (SYSTEM > EINSTELLUNGEN)
+console.log('\n--- OpenWeatherMap-Zugangsdaten (Formular, Datei, Schutz)');
+delete envv.OWM_API_KEY; delete envv.OWM_LAT; delete envv.OWM_LON;
+const SECRET = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6';
+let r = run('opt_owm_save', {payload: {owm_key: 'zu kurz!', owm_lat: '50.1', owm_lon: '8.6'}});
+check('ungueltiges Schluesselformat wird abgelehnt (rote Meldung, keine Datei)', r[1] && r[1].highlight === 'red' && !('/data/optimizer/owm.json' in files), r[1] && r[1].payload.slice(0, 40));
+r = run('opt_owm_save', {payload: {owm_key: SECRET, owm_lat: '95', owm_lon: '8.6'}});
+check('Breitengrad 95 abgelehnt', r[1] && r[1].highlight === 'red' && !('/data/optimizer/owm.json' in files), r[1] && r[1].payload);
+r = run('opt_owm_save', {payload: {owm_key: SECRET, owm_lat: '50,1', owm_lon: '8,6'}});
+const f1 = files['/data/optimizer/owm.json'];
+check('gueltige Eingabe gespeichert (Komma-Dezimal akzeptiert)', f1 && JSON.parse(f1.data).lat === 50.1 && JSON.parse(f1.data).lon === 8.6, f1 && f1.data.replace(SECRET, '***'));
+check('Datei nur fuer den Besitzer lesbar (0600)', f1 && f1.mode === 0o600, f1 && f1.mode.toString(8));
+check('Formular: Schluesselfeld wird geleert, Standort zurueckgeschrieben', r[0].payload.owm_key === '' && r[0].payload.owm_lat === '50.1', JSON.stringify(r[0].payload));
+check('Rueckmeldung (gruen) und sofortiger Abruf ausgeloest', r[1] && r[1].highlight === undefined && r[2] && r[2].payload === 'jetzt', r[1] && r[1].payload);
+const dump = JSON.stringify(gstore) + JSON.stringify(fstore) + JSON.stringify(r);
+check('Schluessel steht in keiner Variable und keiner Rueckmeldung', !dump.includes(SECRET), '');
+// Abruf nutzt die Datei
+sent.length = 0; run('opt_owm_req', {});
+const rq = sent.filter(x => x.id === 'opt_owm_req').map(x => x.m);
+check('Abruf liest Schluessel + Standort aus der Datei', rq.length === 2 && rq[0].url.includes(SECRET) && rq[0].url.includes('lat=50.1') && rq[0].url.includes('lon=8.6'), 'Anfragen: ' + rq.length);
+check('owmInfo: Quelle Datei, nur Laenge des Schluessels', fstore.owmInfo.source === 'Datei' && fstore.owmInfo.keyLen === SECRET.length && !JSON.stringify(fstore.owmInfo).includes(SECRET), JSON.stringify(fstore.owmInfo));
+// leeres Schluesselfeld = vorhandenen Schluessel behalten, nur Standort aendern
+r = run('opt_owm_save', {payload: {owm_key: '', owm_lat: '48.2', owm_lon: '11.5'}});
+const f2 = JSON.parse(files['/data/optimizer/owm.json'].data);
+check('Schluesselfeld leer: Schluessel bleibt, Standort wird geaendert', f2.key === SECRET && f2.lat === 48.2 && f2.lon === 11.5, 'lat ' + f2.lat);
+// Start: Standort ins Formular, Status merken
+const ld = run('opt_owm_load', {});
+check('Start: Standort wird ins Formular geschrieben, Schluessel nicht', ld.payload.owm_lat === '48.2' && ld.payload.owm_key === '' && !JSON.stringify(ld).includes(SECRET), JSON.stringify(ld.payload));
+// Statuszeile
+NOW += 60000; const ev3 = run('opt_eval', {});
+check('Statuszeile nennt Schluessel gespeichert + Standort, ohne den Schluessel', ev3[6].payload.includes('Schlüssel gespeichert') && ev3[6].payload.includes('48,200') && !ev3[6].payload.includes(SECRET), ev3[6].payload);
+// ohne Datei und ohne Umgebung
+delete files['/data/optimizer/owm.json']; sent.length = 0; run('opt_owm_req', {});
+check('ohne Datei/Umgebung: nicht konfiguriert, nichts gesendet', gstore.OPT_weather.status === 'nicht konfiguriert' && sent.filter(x => x.id === 'opt_owm_req').length === 0, gstore.OPT_weather.status);
+NOW += 60000; const ev4 = run('opt_eval', {});
+check('Statuszeile fordert zur Eingabe auf', ev4[6].payload.startsWith('Noch kein API-Schlüssel'), ev4[6].payload);
+
+// ---------- Einstellungen ueberleben einen Neustart
+console.log('\n--- Einstellungen dauerhaft');
+run('opt_set', {topic: 'comfort.low', payload: 22.0});
+check('Einstellung wird in config.json geschrieben', files['/data/optimizer/config.json'] && JSON.parse(files['/data/optimizer/config.json'].data).comfort.low === 22.0, '');
+delete gstore.OPT_cfg;                                  // simulierter Neustart: Speicher leer
+const dfl = run('opt_defaults', {});
+check('nach Neustart: gespeicherter Wert kommt zurueck (22,0), Rest sind Standardwerte', gstore.OPT_cfg.comfort.low === 22.0 && gstore.OPT_cfg.comfort.high === 23.5 && dfl[0].payload === 22.0, gstore.OPT_cfg.comfort.low);
+
 console.log('\nERGEBNIS:', assertFails === 0 ? 'alle Pruefungen bestanden' : assertFails + ' Pruefung(en) fehlgeschlagen');
 process.exit(assertFails ? 1 : 0);

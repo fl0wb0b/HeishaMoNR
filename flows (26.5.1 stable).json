@@ -91023,7 +91023,7 @@
         "type": "tab",
         "label": "WP Optimizer",
         "disabled": false,
-        "info": "Phase 1 der Lambda-artigen Optimierung: Sensorik, Glättung, Trends, Protokoll und Anzeige.\nKEIN Eingriff in die Regelung.\n\nTab-Umgebungsvariablen (Tab-Eigenschaften > Umgebungsvariablen):\n  OWM_API_KEY  (Typ: Zugangsdaten) - OpenWeatherMap-API-Schlüssel\n  OWM_LAT, OWM_LON - Standort in Dezimalgrad\nOhne diese Werte läuft alles, nur die Wetterdaten bleiben leer.",
+        "info": "Phase 1 der Lambda-artigen Optimierung: Sensorik, Glättung, Trends, Protokoll und Anzeige.\nKEIN Eingriff in die Regelung.\n\nOpenWeatherMap: API-Schlüssel und Standort werden im Dashboard unter SYSTEM > EINSTELLUNGEN eingetragen und in /data/optimizer/owm.json (Modus 0600) gespeichert.\nErsatzweise können die Tab-Umgebungsvariablen OWM_API_KEY (Typ: Zugangsdaten), OWM_LAT und OWM_LON (Reiter 'Umgebungsvariablen' im Tab-Dialog) benutzt werden.\nOhne Schlüssel läuft alles, nur die Wetterdaten bleiben leer.",
         "env": [
             {
                 "name": "OWM_API_KEY",
@@ -91344,13 +91344,18 @@
         "type": "function",
         "z": "opt_tab",
         "name": "Standardwerte setzen",
-        "func": "\n// Standardwerte der Optimierungsebene. Bereits gesetzte Werte (z. B. aus dem Dashboard) bleiben erhalten.\nvar d = {\n    rooms: [\n        {id: 'ki_oben',  name: 'Kinderzimmer oben',  topic: 'shellyhtg3-lucas/status/temperature:0'},\n        {id: 'ki_unten', name: 'Kinderzimmer unten', topic: 'shellyhtg3-lina/status/temperature:0'},\n        {id: 'schlaf',   name: 'Schlafzimmer',       topic: 'shellies/shellyht-Schlaf/sensor/temperature'}\n    ],\n    comfort: {low: 22.5, high: 23.5},\n    sensor:  {maxAgeMin: 90, min: 10, max: 35, maxJumpK: 2, emaTauMin: 30, trendWindowMin: 120, trendMinSpanMin: 30, trendMinSamples: 3},\n    weather: {intervalMin: 10, maxAgeMin: 60},\n    log:     {intervalMin: 5}\n};\nfunction merge(base, over) {\n    if (!over || typeof over !== 'object') { return base; }\n    Object.keys(over).forEach(function (k) {\n        if (base[k] && typeof base[k] === 'object' && !Array.isArray(base[k]) && typeof over[k] === 'object' && !Array.isArray(over[k])) {\n            base[k] = merge(base[k], over[k]);\n        } else if (over[k] !== undefined && over[k] !== null) { base[k] = over[k]; }\n    });\n    return base;\n}\nvar cfg = merge(d, global.get('OPT_cfg'));\nglobal.set('OPT_cfg', cfg);\n// aktuelle Werte an die Dashboard-Eingabefelder geben\nreturn [{payload: cfg.comfort.low}, {payload: cfg.comfort.high}, {payload: cfg.sensor.maxAgeMin}];\n",
+        "func": "\n// Standardwerte der Optimierungsebene. Bereits gesetzte Werte (z. B. aus dem Dashboard) bleiben erhalten.\nvar d = {\n    rooms: [\n        {id: 'ki_oben',  name: 'Kinderzimmer oben',  topic: 'shellyhtg3-lucas/status/temperature:0'},\n        {id: 'ki_unten', name: 'Kinderzimmer unten', topic: 'shellyhtg3-lina/status/temperature:0'},\n        {id: 'schlaf',   name: 'Schlafzimmer',       topic: 'shellies/shellyht-Schlaf/sensor/temperature'}\n    ],\n    comfort: {low: 22.5, high: 23.5},\n    sensor:  {maxAgeMin: 90, min: 10, max: 35, maxJumpK: 2, emaTauMin: 30, trendWindowMin: 120, trendMinSpanMin: 30, trendMinSamples: 3},\n    weather: {intervalMin: 10, maxAgeMin: 60},\n    log:     {intervalMin: 5}\n};\nfunction merge(base, over) {\n    if (!over || typeof over !== 'object') { return base; }\n    Object.keys(over).forEach(function (k) {\n        if (base[k] && typeof base[k] === 'object' && !Array.isArray(base[k]) && typeof over[k] === 'object' && !Array.isArray(over[k])) {\n            base[k] = merge(base[k], over[k]);\n        } else if (over[k] !== undefined && over[k] !== null) { base[k] = over[k]; }\n    });\n    return base;\n}\n// gespeicherte Einstellungen (ueberleben einen Neustart) -> dann ggf. neuere Werte aus dem Speicher\nvar saved = {};\ntry { saved = JSON.parse(fs.readFileSync('/data/optimizer/config.json', 'utf8')); } catch (e) { /* noch keine Datei */ }\nvar cfg = merge(merge(d, saved), global.get('OPT_cfg'));\nglobal.set('OPT_cfg', cfg);\n// aktuelle Werte an die Dashboard-Eingabefelder geben\nreturn [{payload: cfg.comfort.low}, {payload: cfg.comfort.high}, {payload: cfg.sensor.maxAgeMin}];\n",
         "outputs": 3,
         "timeout": 0,
         "noerr": 0,
         "initialize": "",
         "finalize": "",
-        "libs": [],
+        "libs": [
+            {
+                "var": "fs",
+                "module": "fs"
+            }
+        ],
         "x": 380,
         "y": 140,
         "wires": [
@@ -91369,14 +91374,19 @@
         "id": "opt_set",
         "type": "function",
         "z": "opt_tab",
-        "name": "Einstellung übernehmen",
-        "func": "\n// Eingabefelder im Dashboard -> Konfiguration (msg.topic = Pfad, z. B. comfort.low)\nvar cfg = global.get('OPT_cfg');\nvar v = Number(msg.payload);\nif (!cfg || !isFinite(v)) { return null; }\nvar p = String(msg.topic).split('.');\nif (p.length === 2 && cfg[p[0]] && typeof cfg[p[0]] === 'object') {\n    cfg[p[0]][p[1]] = v;\n    global.set('OPT_cfg', cfg);\n}\nreturn null;\n",
+        "name": "Einstellung übernehmen und speichern",
+        "func": "\n// Eingabefelder im Dashboard -> Konfiguration (msg.topic = Pfad, z. B. comfort.low)\nvar cfg = global.get('OPT_cfg');\nvar v = Number(msg.payload);\nif (!cfg || !isFinite(v)) { return null; }\nvar p = String(msg.topic).split('.');\nif (p.length === 2 && cfg[p[0]] && typeof cfg[p[0]] === 'object') {\n    cfg[p[0]][p[1]] = v;\n    global.set('OPT_cfg', cfg);\n    // dauerhaft speichern, damit die Einstellung einen Neustart ueberlebt\n    try {\n        fs.mkdirSync('/data/optimizer', {recursive: true});\n        fs.writeFileSync('/data/optimizer/config.json', JSON.stringify(cfg, null, 1));\n    } catch (e) { node.warn('Einstellungen konnten nicht gespeichert werden: ' + e.message); }\n}\nreturn null;\n",
         "outputs": 1,
         "timeout": 0,
         "noerr": 0,
         "initialize": "",
         "finalize": "",
-        "libs": [],
+        "libs": [
+            {
+                "var": "fs",
+                "module": "fs"
+            }
+        ],
         "x": 780,
         "y": 440,
         "wires": [
@@ -91447,7 +91457,7 @@
         "id": "opt_c3",
         "type": "comment",
         "z": "opt_tab",
-        "name": "OpenWeatherMap (optional): Schlüssel/Standort als Tab-Umgebungsvariablen eintragen",
+        "name": "OpenWeatherMap (optional): Schlüssel + Standort im Dashboard unter SYSTEM > EINSTELLUNGEN eintragen",
         "info": "",
         "x": 380,
         "y": 540,
@@ -91483,13 +91493,18 @@
         "type": "function",
         "z": "opt_tab",
         "name": "OWM-Anfrage",
-        "func": "\n// OpenWeatherMap abrufen (Free-Tarif: aktuelles Wetter + 3-Stunden-Vorhersage). Ohne Schluessel/Standort passiert nichts.\nvar key = env.get('OWM_API_KEY'), lat = env.get('OWM_LAT'), lon = env.get('OWM_LON');\nvar W = global.get('OPT_weather') || {};\nif (!key || !lat || !lon) {\n    W.status = 'nicht konfiguriert';\n    global.set('OPT_weather', W);\n    return null;\n}\nW.lastTry = Date.now();\nglobal.set('OPT_weather', W);\nvar base = 'https://api.openweathermap.org/data/2.5/';\nvar q = '?lat=' + encodeURIComponent(lat) + '&lon=' + encodeURIComponent(lon) + '&units=metric&lang=de&appid=' + encodeURIComponent(key);\nnode.send({topic: 'current',  url: base + 'weather' + q});\nnode.send({topic: 'forecast', url: base + 'forecast' + q + '&cnt=4'});\nreturn null;\n",
+        "func": "\n// OpenWeatherMap abrufen (Free-Tarif: aktuelles Wetter + 3-Stunden-Vorhersage). Ohne Schluessel/Standort passiert nichts.\n// Schluessel + Standort: bevorzugt aus der geschuetzten Datei (Eingabe im Dashboard unter SYSTEM > EINSTELLUNGEN),\n// ersatzweise aus den Tab-Umgebungsvariablen OWM_API_KEY / OWM_LAT / OWM_LON. Der Schluessel wird NIE in einer\n// Variable oder Meldung abgelegt, die ueber die Admin-API lesbar waere.\nvar key, lat, lon, source = '';\ntry {\n    var j = JSON.parse(fs.readFileSync('/data/optimizer/owm.json', 'utf8'));\n    key = j.key; lat = j.lat; lon = j.lon; source = 'Datei';\n} catch (e) { /* noch nicht gespeichert */ }\nif (!key) { key = env.get('OWM_API_KEY'); if (key) { source = 'Umgebung'; } }\nif (lat === undefined || lat === '') { lat = env.get('OWM_LAT'); }\nif (lon === undefined || lon === '') { lon = env.get('OWM_LON'); }\nvar W = global.get('OPT_weather') || {};\nflow.set('owmInfo', {hasKey: !!key, keyLen: key ? String(key).length : 0, lat: lat, lon: lon, source: source});\nif (!key || lat === undefined || lat === '' || lon === undefined || lon === '') {\n    W.status = 'nicht konfiguriert';\n    global.set('OPT_weather', W);\n    return null;\n}\nW.lastTry = Date.now();\nglobal.set('OPT_weather', W);\nvar base = 'https://api.openweathermap.org/data/2.5/';\nvar q = '?lat=' + encodeURIComponent(lat) + '&lon=' + encodeURIComponent(lon) + '&units=metric&lang=de&appid=' + encodeURIComponent(key);\nnode.send({topic: 'current',  url: base + 'weather' + q});\nnode.send({topic: 'forecast', url: base + 'forecast' + q + '&cnt=4'});\nreturn null;\n",
         "outputs": 1,
         "timeout": 0,
         "noerr": 0,
         "initialize": "",
         "finalize": "",
-        "libs": [],
+        "libs": [
+            {
+                "var": "fs",
+                "module": "fs"
+            }
+        ],
         "x": 380,
         "y": 600,
         "wires": [
@@ -91597,8 +91612,8 @@
         "type": "function",
         "z": "opt_tab",
         "name": "Auswerten · Anzeigen · Protokollieren",
-        "func": "\n// Einmal pro Minute: Werte zusammenfuehren, bewerten, anzeigen und protokollieren. KEIN Eingriff in die Regelung.\nvar cfg = global.get('OPT_cfg');\nif (!cfg) { return null; }\nvar now = Date.now();\nvar R = global.get('OPT_rooms') || {};\nvar W = global.get('OPT_weather') || {};\nvar G = function (k) { return global.get(k); };\n\nfunction num(v) { v = Number(v); return isFinite(v) ? v : null; }\nfunction f(v, d, unit) { if (v === null || v === undefined || !isFinite(v)) { return '–'; } return Number(v).toFixed(d).replace('.', ',') + (unit ? ' ' + unit : ''); }\nfunction ageMin(ts) { return ts ? Math.round((now - ts) / 60000) : null; }\nfunction arrow(t) { if (t === null || t === undefined) { return '·'; } return t >= 0.05 ? '↑' : (t <= -0.05 ? '↓' : '→'); }\nfunction age(a) { return a === null ? 'keine Daten' : (a < 60 ? a + ' min' : (a / 60).toFixed(1).replace('.', ',') + ' h'); }\n\n// ---------- Raeume\nvar sMax = cfg.sensor.maxAgeMin, ids = Object.keys(R);\nvar fresh = [];\nids.forEach(function (id) {\n    var r = R[id], a = ageMin(r.ts);\n    r.age = a; r.valid = (a !== null && a <= sMax && r.ema !== undefined);\n    if (r.valid) { fresh.push(r); }\n});\nvar cold = null, warm = null;\nfresh.forEach(function (r) { if (cold === null || r.ema < cold.ema) { cold = r; } if (warm === null || r.ema > warm.ema) { warm = r; } });\nvar total = (cfg.rooms || []).length;\nvar low = cfg.comfort.low, high = cfg.comfort.high;\nvar band = 'keine Raumdaten', bandCls = 'warn', room = null;\nif (cold && warm) {\n    room = Math.min(cold.ema - low, high - warm.ema);\n    if (cold.ema < low) { band = 'Kältester Raum unter dem Komfortband'; bandCls = 'warn'; }\n    else if (warm.ema > high) { band = 'Wärmster Raum über dem Komfortband'; bandCls = 'warn'; }\n    else { band = 'innerhalb · Spielraum ' + f(room, 1, 'K'); bandCls = 'ok'; }\n}\nvar oldest = fresh.length ? Math.max.apply(null, fresh.map(function (r) { return r.age; })) : null;\nvar rowsRoom = [\n    ['Kältester Raum', cold ? f(cold.ema, 1, '°C') + ' ' + arrow(cold.trend) + ' ' + (cold.trend === null ? 'Trend n. v.' : f(cold.trend, 2, 'K/h')) : '–', cold && cold.ema < low ? 'warn' : ''],\n    ['   ' + (cold ? cold.name : ''), cold ? 'Wert ' + f(cold.last, 1, '°C') + ' · vor ' + age(cold.age) : '', ''],\n    ['Wärmster Raum', warm ? f(warm.ema, 1, '°C') + ' ' + arrow(warm.trend) + ' ' + (warm.trend === null ? 'Trend n. v.' : f(warm.trend, 2, 'K/h')) : '–', warm && warm.ema > high ? 'warn' : ''],\n    ['   ' + (warm ? warm.name : ''), warm ? 'Wert ' + f(warm.last, 1, '°C') + ' · vor ' + age(warm.age) : '', ''],\n    ['Komfortband', f(low, 1) + ' – ' + f(high, 1, '°C'), ''],\n    ['Bewertung', band, bandCls],\n    ['Sensoren aktuell', fresh.length + ' von ' + total + (oldest !== null ? ' · ältester ' + age(oldest) : '') + ' · Limit ' + age(sMax), fresh.length < 2 ? 'warn' : '']\n];\nids.forEach(function (id) {\n    var r = R[id];\n    rowsRoom.push([r.name, r.valid ? f(r.ema, 1, '°C') + ' (' + age(r.age) + ')' : 'veraltet (' + age(r.age) + ')', r.valid ? '' : 'warn']);\n});\n\n// ---------- Aussen / Wetter\nvar tp = num(G('TOP14_Outside_Temp')), tw = (W.ts && ageMin(W.ts) <= cfg.weather.maxAgeMin) ? W.temp : null;\nvar wAge = ageMin(W.ts), wOk = (W.status === 'OK' && wAge !== null && wAge <= cfg.weather.maxAgeMin);\nvar rowsWx = [\n    ['Außen Panasonic', f(tp, 1, '°C'), ''],\n    ['Außen Wetterdienst', tw !== null ? f(tw, 1, '°C') : '–', ''],\n    ['Differenz Wetter − Panasonic', (tw !== null && tp !== null) ? f(tw - tp, 1, 'K') : '–', ''],\n    ['Prognose +1 h', wOk ? f(W.f1, 1, '°C') : '–', ''],\n    ['Prognose +3 h', wOk ? f(W.f3, 1, '°C') : '–', ''],\n    ['Prognose +6 h', wOk ? f(W.f6, 1, '°C') : '–', ''],\n    ['Luftfeuchtigkeit', wOk ? f(W.rh, 0, '%') : '–', ''],\n    ['Taupunkt', wOk ? f(W.dew, 1, '°C') : '–', ''],\n    ['Bewölkung', (wOk && W.clouds !== null && W.clouds !== undefined) ? f(W.clouds, 0, '%') : '–', ''],\n    ['Wetterdaten', (W.status || 'noch nicht abgerufen') + (wAge !== null ? ' · Alter ' + age(wAge) : ''), wOk ? 'ok' : ''],\n    ['Regelwert Außentemperatur', f(tp, 1, '°C') + ' (Panasonic, unverändert)', '']\n];\n\n// ---------- Waermepumpe\nvar freq = num(G('compressor_frequency')) || 0, valve = num(G('TOP20_ThreeWay_Valve_State')), defrost = num(G('TOP26_Defrosting_State')) === 1;\nvar ss = G('F_SS'), ssOn = ss && ss.state === 1;\nvar pOn = num(G('TOP0_Heatpump_State')) === 1;\nvar mode = !pOn ? 'Aus' : (defrost ? 'Abtauen' : (valve === 1 ? 'Warmwasser' : (freq > 0 ? 'Heizen' : 'Bereit (Verdichter steht)')));\nvar shiftBase = null, ccc = G('F_CCC'); if (ccc && ccc.z1) { shiftBase = num(ccc.z1.SP_DIRECT_virt); }\nvar rtc = G('F_RTC'), rtcCorr = (rtc && rtc.z1) ? num(rtc.z1.correction_value) : null;\nvar shiftFinal = num(G('SHIFT_Final')), target = num(G('TOP42_Z1_Water_Target_Temp'));\nvar inl = num(G('TOP5_Main_Inlet_Temp')), outl = num(G('TOP6_Main_Outlet_Temp')), pw = num(G('TOP16_Heat_Energy_Consumption')), cop = num(G('COP_HEAT'));\nvar rowsWp = [\n    ['Betriebszustand', mode + (ssOn ? ' · Sanftanlauf aktiv' : ''), ''],\n    ['Soll-Vorlauf (Panasonic-Heizkurve)', f(target, 0, '°C'), ''],\n    ['Basis-Verschiebung (manuell)', f(shiftBase, 0, 'K'), ''],\n    ['Raumregelung-Korrektur (bestehend)', f(rtcCorr, 0, 'K'), ''],\n    ['Finale Verschiebung', f(shiftFinal, 0, 'K'), ''],\n    ['Vorlauf / Rücklauf', f(outl, 1) + ' / ' + f(inl, 1, '°C'), ''],\n    ['Verdichter', f(freq, 0, 'Hz'), ''],\n    ['Leistung · COP', f(pw, 0, 'W') + ' · ' + (freq > 0 ? f(cop, 1) : '–'), ''],\n    ['Starts heute', f(num(G('Starts_Today')), 0), '']\n];\n\n// ---------- Optimierung (Phase 1)\nvar lastLog = flow.get('lastLog');\nvar reason;\nif (!cold || !warm) { reason = 'Beobachtung · zu wenig aktuelle Raumdaten'; }\nelse if (cold.ema < low) { reason = 'Beobachtung · kältester Raum (' + cold.name + ') liegt unter dem Komfortband'; }\nelse if (warm.ema > high) { reason = 'Beobachtung · wärmster Raum (' + warm.name + ') liegt über dem Komfortband'; }\nelse { reason = 'Beobachtung · beide Räume im Komfortband'; }\nvar out = [{payload: {rows: rowsWx}}, {payload: {rows: rowsRoom}}, {payload: {rows: rowsWp}}, null, null, null];\n\n// ---------- Protokoll (alle log.intervalMin Minuten) und Ereignisse\nvar d = new Date(now), pad = function (n) { return (n < 10 ? '0' : '') + n; };\nvar month = d.getFullYear() + '-' + pad(d.getMonth() + 1);\nvar iso = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());\nfunction c(v) { return (v === null || v === undefined || !isFinite(v)) ? '' : String(Math.round(v * 100) / 100); }\nif (!lastLog || (now - lastLog) >= cfg.log.intervalMin * 60000) {\n    var head = 'zeit,aussen_panasonic,aussen_wetter,wetter_feuchte,wetter_taupunkt,prog_1h,prog_3h,prog_6h,wetter_alter_min,' +\n        'raum_kalt,raum_kalt_trend,raum_kalt_name,raum_warm,raum_warm_trend,raum_warm_name,sensoren_aktuell,' +\n        'soll_vorlauf,shift_basis,shift_rtc,shift_final,vorlauf,ruecklauf,verdichter_hz,leistung_w,cop,defrost,warmwasser,sanftanlauf,starts_heute\\n';\n    var line = [iso, c(tp), c(tw), c(wOk ? W.rh : null), c(wOk ? W.dew : null), c(wOk ? W.f1 : null), c(wOk ? W.f3 : null), c(wOk ? W.f6 : null), c(wAge),\n        c(cold ? cold.ema : null), c(cold ? cold.trend : null), cold ? cold.name : '', c(warm ? warm.ema : null), c(warm ? warm.trend : null), warm ? warm.name : '', fresh.length,\n        c(target), c(shiftBase), c(rtcCorr), c(shiftFinal), c(outl), c(inl), c(freq), c(pw), c(freq > 0 ? cop : null), defrost ? 1 : 0, valve === 1 ? 1 : 0, ssOn ? 1 : 0, c(num(G('Starts_Today')))].join(',') + '\\n';\n    var hdr = flow.get('logHeader');\n    out[4] = {filename: '/data/optimizer/optimizer-' + month + '.csv', payload: (hdr === month ? '' : head) + line};\n    flow.set('logHeader', month);\n    flow.set('lastLog', now);\n    lastLog = now;\n}\nvar rowsOpt = [\n    ['Modus', 'Phase 1 · nur Beobachtung, kein Eingriff', 'ok'],\n    ['Grund', reason, ''],\n    ['Raumkorrektur durch Optimierung', '0 K (nicht aktiv)', ''],\n    ['Protokoll', lastLog ? 'letzter Eintrag ' + new Date(lastLog).toLocaleTimeString('de-DE', {hour: '2-digit', minute: '2-digit'}) : 'noch kein Eintrag', '']\n];\n\nout[3] = {payload: {rows: rowsOpt}};\n// Zustandswechsel als Ereignisse (fuer die spaetere Auswertung)\nvar prev = flow.get('prevState') || {};\nvar cur = {verdichter: freq > 0 ? 1 : 0, defrost: defrost ? 1 : 0, warmwasser: valve === 1 ? 1 : 0, sanftanlauf: ssOn ? 1 : 0,\n           komfort: (cold && warm) ? ((cold.ema < low) ? 'kalt' : (warm.ema > high ? 'warm' : 'ok')) : 'unbekannt'};\nvar ev = [];\nObject.keys(cur).forEach(function (k) { if (prev[k] !== undefined && prev[k] !== cur[k]) { ev.push(iso + ',' + k + ',' + prev[k] + '->' + cur[k]); } });\nflow.set('prevState', cur);\nif (ev.length) {\n    var eh = flow.get('evHeader');\n    out[5] = {filename: '/data/optimizer/optimizer-events-' + month + '.csv', payload: (eh === month ? '' : 'zeit,ereignis,wechsel\\n') + ev.join('\\n') + '\\n'};\n    flow.set('evHeader', month);\n}\nreturn out;\n",
-        "outputs": 6,
+        "func": "\n// Einmal pro Minute: Werte zusammenfuehren, bewerten, anzeigen und protokollieren. KEIN Eingriff in die Regelung.\nvar cfg = global.get('OPT_cfg');\nif (!cfg) { return null; }\nvar now = Date.now();\nvar R = global.get('OPT_rooms') || {};\nvar W = global.get('OPT_weather') || {};\nvar G = function (k) { return global.get(k); };\n\nfunction num(v) { v = Number(v); return isFinite(v) ? v : null; }\nfunction f(v, d, unit) { if (v === null || v === undefined || !isFinite(v)) { return '–'; } return Number(v).toFixed(d).replace('.', ',') + (unit ? ' ' + unit : ''); }\nfunction ageMin(ts) { return ts ? Math.round((now - ts) / 60000) : null; }\nfunction arrow(t) { if (t === null || t === undefined) { return '·'; } return t >= 0.05 ? '↑' : (t <= -0.05 ? '↓' : '→'); }\nfunction age(a) { return a === null ? 'keine Daten' : (a < 60 ? a + ' min' : (a / 60).toFixed(1).replace('.', ',') + ' h'); }\n\n// ---------- Raeume\nvar sMax = cfg.sensor.maxAgeMin, ids = Object.keys(R);\nvar fresh = [];\nids.forEach(function (id) {\n    var r = R[id], a = ageMin(r.ts);\n    r.age = a; r.valid = (a !== null && a <= sMax && r.ema !== undefined);\n    if (r.valid) { fresh.push(r); }\n});\nvar cold = null, warm = null;\nfresh.forEach(function (r) { if (cold === null || r.ema < cold.ema) { cold = r; } if (warm === null || r.ema > warm.ema) { warm = r; } });\nvar total = (cfg.rooms || []).length;\nvar low = cfg.comfort.low, high = cfg.comfort.high;\nvar band = 'keine Raumdaten', bandCls = 'warn', room = null;\nif (cold && warm) {\n    room = Math.min(cold.ema - low, high - warm.ema);\n    if (cold.ema < low) { band = 'Kältester Raum unter dem Komfortband'; bandCls = 'warn'; }\n    else if (warm.ema > high) { band = 'Wärmster Raum über dem Komfortband'; bandCls = 'warn'; }\n    else { band = 'innerhalb · Spielraum ' + f(room, 1, 'K'); bandCls = 'ok'; }\n}\nvar oldest = fresh.length ? Math.max.apply(null, fresh.map(function (r) { return r.age; })) : null;\nvar rowsRoom = [\n    ['Kältester Raum', cold ? f(cold.ema, 1, '°C') + ' ' + arrow(cold.trend) + ' ' + (cold.trend === null ? 'Trend n. v.' : f(cold.trend, 2, 'K/h')) : '–', cold && cold.ema < low ? 'warn' : ''],\n    ['   ' + (cold ? cold.name : ''), cold ? 'Wert ' + f(cold.last, 1, '°C') + ' · vor ' + age(cold.age) : '', ''],\n    ['Wärmster Raum', warm ? f(warm.ema, 1, '°C') + ' ' + arrow(warm.trend) + ' ' + (warm.trend === null ? 'Trend n. v.' : f(warm.trend, 2, 'K/h')) : '–', warm && warm.ema > high ? 'warn' : ''],\n    ['   ' + (warm ? warm.name : ''), warm ? 'Wert ' + f(warm.last, 1, '°C') + ' · vor ' + age(warm.age) : '', ''],\n    ['Komfortband', f(low, 1) + ' – ' + f(high, 1, '°C'), ''],\n    ['Bewertung', band, bandCls],\n    ['Sensoren aktuell', fresh.length + ' von ' + total + (oldest !== null ? ' · ältester ' + age(oldest) : '') + ' · Limit ' + age(sMax), fresh.length < 2 ? 'warn' : '']\n];\nids.forEach(function (id) {\n    var r = R[id];\n    rowsRoom.push([r.name, r.valid ? f(r.ema, 1, '°C') + ' (' + age(r.age) + ')' : 'veraltet (' + age(r.age) + ')', r.valid ? '' : 'warn']);\n});\n\n// ---------- Aussen / Wetter\nvar tp = num(G('TOP14_Outside_Temp')), tw = (W.ts && ageMin(W.ts) <= cfg.weather.maxAgeMin) ? W.temp : null;\nvar wAge = ageMin(W.ts), wOk = (W.status === 'OK' && wAge !== null && wAge <= cfg.weather.maxAgeMin);\nvar rowsWx = [\n    ['Außen Panasonic', f(tp, 1, '°C'), ''],\n    ['Außen Wetterdienst', tw !== null ? f(tw, 1, '°C') : '–', ''],\n    ['Differenz Wetter − Panasonic', (tw !== null && tp !== null) ? f(tw - tp, 1, 'K') : '–', ''],\n    ['Prognose +1 h', wOk ? f(W.f1, 1, '°C') : '–', ''],\n    ['Prognose +3 h', wOk ? f(W.f3, 1, '°C') : '–', ''],\n    ['Prognose +6 h', wOk ? f(W.f6, 1, '°C') : '–', ''],\n    ['Luftfeuchtigkeit', wOk ? f(W.rh, 0, '%') : '–', ''],\n    ['Taupunkt', wOk ? f(W.dew, 1, '°C') : '–', ''],\n    ['Bewölkung', (wOk && W.clouds !== null && W.clouds !== undefined) ? f(W.clouds, 0, '%') : '–', ''],\n    ['Wetterdaten', (W.status || 'noch nicht abgerufen') + (wAge !== null ? ' · Alter ' + age(wAge) : ''), wOk ? 'ok' : ''],\n    ['Regelwert Außentemperatur', f(tp, 1, '°C') + ' (Panasonic, unverändert)', '']\n];\n\n// ---------- Waermepumpe\nvar freq = num(G('compressor_frequency')) || 0, valve = num(G('TOP20_ThreeWay_Valve_State')), defrost = num(G('TOP26_Defrosting_State')) === 1;\nvar ss = G('F_SS'), ssOn = ss && ss.state === 1;\nvar pOn = num(G('TOP0_Heatpump_State')) === 1;\nvar mode = !pOn ? 'Aus' : (defrost ? 'Abtauen' : (valve === 1 ? 'Warmwasser' : (freq > 0 ? 'Heizen' : 'Bereit (Verdichter steht)')));\nvar shiftBase = null, ccc = G('F_CCC'); if (ccc && ccc.z1) { shiftBase = num(ccc.z1.SP_DIRECT_virt); }\nvar rtc = G('F_RTC'), rtcCorr = (rtc && rtc.z1) ? num(rtc.z1.correction_value) : null;\nvar shiftFinal = num(G('SHIFT_Final')), target = num(G('TOP42_Z1_Water_Target_Temp'));\nvar inl = num(G('TOP5_Main_Inlet_Temp')), outl = num(G('TOP6_Main_Outlet_Temp')), pw = num(G('TOP16_Heat_Energy_Consumption')), cop = num(G('COP_HEAT'));\nvar rowsWp = [\n    ['Betriebszustand', mode + (ssOn ? ' · Sanftanlauf aktiv' : ''), ''],\n    ['Soll-Vorlauf (Panasonic-Heizkurve)', f(target, 0, '°C'), ''],\n    ['Basis-Verschiebung (manuell)', f(shiftBase, 0, 'K'), ''],\n    ['Raumregelung-Korrektur (bestehend)', f(rtcCorr, 0, 'K'), ''],\n    ['Finale Verschiebung', f(shiftFinal, 0, 'K'), ''],\n    ['Vorlauf / Rücklauf', f(outl, 1) + ' / ' + f(inl, 1, '°C'), ''],\n    ['Verdichter', f(freq, 0, 'Hz'), ''],\n    ['Leistung · COP', f(pw, 0, 'W') + ' · ' + (freq > 0 ? f(cop, 1) : '–'), ''],\n    ['Starts heute', f(num(G('Starts_Today')), 0), '']\n];\n\n// ---------- Optimierung (Phase 1)\nvar lastLog = flow.get('lastLog');\nvar reason;\nif (!cold || !warm) { reason = 'Beobachtung · zu wenig aktuelle Raumdaten'; }\nelse if (cold.ema < low) { reason = 'Beobachtung · kältester Raum (' + cold.name + ') liegt unter dem Komfortband'; }\nelse if (warm.ema > high) { reason = 'Beobachtung · wärmster Raum (' + warm.name + ') liegt über dem Komfortband'; }\nelse { reason = 'Beobachtung · beide Räume im Komfortband'; }\nvar out = [{payload: {rows: rowsWx}}, {payload: {rows: rowsRoom}}, {payload: {rows: rowsWp}}, null, null, null, null];\n\n// ---------- Protokoll (alle log.intervalMin Minuten) und Ereignisse\nvar d = new Date(now), pad = function (n) { return (n < 10 ? '0' : '') + n; };\nvar month = d.getFullYear() + '-' + pad(d.getMonth() + 1);\nvar iso = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());\nfunction c(v) { return (v === null || v === undefined || !isFinite(v)) ? '' : String(Math.round(v * 100) / 100); }\nif (!lastLog || (now - lastLog) >= cfg.log.intervalMin * 60000) {\n    var head = 'zeit,aussen_panasonic,aussen_wetter,wetter_feuchte,wetter_taupunkt,prog_1h,prog_3h,prog_6h,wetter_alter_min,' +\n        'raum_kalt,raum_kalt_trend,raum_kalt_name,raum_warm,raum_warm_trend,raum_warm_name,sensoren_aktuell,' +\n        'soll_vorlauf,shift_basis,shift_rtc,shift_final,vorlauf,ruecklauf,verdichter_hz,leistung_w,cop,defrost,warmwasser,sanftanlauf,starts_heute\\n';\n    var line = [iso, c(tp), c(tw), c(wOk ? W.rh : null), c(wOk ? W.dew : null), c(wOk ? W.f1 : null), c(wOk ? W.f3 : null), c(wOk ? W.f6 : null), c(wAge),\n        c(cold ? cold.ema : null), c(cold ? cold.trend : null), cold ? cold.name : '', c(warm ? warm.ema : null), c(warm ? warm.trend : null), warm ? warm.name : '', fresh.length,\n        c(target), c(shiftBase), c(rtcCorr), c(shiftFinal), c(outl), c(inl), c(freq), c(pw), c(freq > 0 ? cop : null), defrost ? 1 : 0, valve === 1 ? 1 : 0, ssOn ? 1 : 0, c(num(G('Starts_Today')))].join(',') + '\\n';\n    var hdr = flow.get('logHeader');\n    out[4] = {filename: '/data/optimizer/optimizer-' + month + '.csv', payload: (hdr === month ? '' : head) + line};\n    flow.set('logHeader', month);\n    flow.set('lastLog', now);\n    lastLog = now;\n}\nvar rowsOpt = [\n    ['Modus', 'Phase 1 · nur Beobachtung, kein Eingriff', 'ok'],\n    ['Grund', reason, ''],\n    ['Raumkorrektur durch Optimierung', '0 K (nicht aktiv)', ''],\n    ['Protokoll', lastLog ? 'letzter Eintrag ' + new Date(lastLog).toLocaleTimeString('de-DE', {hour: '2-digit', minute: '2-digit'}) : 'noch kein Eintrag', '']\n];\n\nout[3] = {payload: {rows: rowsOpt}};\n// Zustandswechsel als Ereignisse (fuer die spaetere Auswertung)\nvar prev = flow.get('prevState') || {};\nvar cur = {verdichter: freq > 0 ? 1 : 0, defrost: defrost ? 1 : 0, warmwasser: valve === 1 ? 1 : 0, sanftanlauf: ssOn ? 1 : 0,\n           komfort: (cold && warm) ? ((cold.ema < low) ? 'kalt' : (warm.ema > high ? 'warm' : 'ok')) : 'unbekannt'};\nvar ev = [];\nObject.keys(cur).forEach(function (k) { if (prev[k] !== undefined && prev[k] !== cur[k]) { ev.push(iso + ',' + k + ',' + prev[k] + '->' + cur[k]); } });\nflow.set('prevState', cur);\nif (ev.length) {\n    var eh = flow.get('evHeader');\n    out[5] = {filename: '/data/optimizer/optimizer-events-' + month + '.csv', payload: (eh === month ? '' : 'zeit,ereignis,wechsel\\n') + ev.join('\\n') + '\\n'};\n    flow.set('evHeader', month);\n}\n// Statuszeile fuer SYSTEM > EINSTELLUNGEN (OpenWeatherMap)\nvar info = flow.get('owmInfo');\nvar owmTxt;\nif (!info || !info.hasKey) { owmTxt = 'Noch kein API-Schlüssel gespeichert. Schlüssel und Standort oben eintragen und auf SPEICHERN klicken.'; }\nelse {\n    owmTxt = 'Schlüssel gespeichert (' + info.keyLen + ' Zeichen, Quelle: ' + info.source + ')'\n        + (info.lat !== undefined && info.lat !== '' ? ' · Standort ' + f(Number(info.lat), 3) + ' / ' + f(Number(info.lon), 3) : ' · Standort fehlt')\n        + ' · Wetterdaten: ' + (W.status || 'noch nicht abgerufen') + (wAge !== null ? ' (Alter ' + age(wAge) + ')' : '');\n}\nout[6] = {payload: owmTxt};\nreturn out;\n",
+        "outputs": 7,
         "timeout": 0,
         "noerr": 0,
         "initialize": "",
@@ -91624,6 +91639,9 @@
             ],
             [
                 "opt_f_ev"
+            ],
+            [
+                "opt_ui_wxstatus"
             ]
         ]
     },
@@ -91659,6 +91677,221 @@
         "y": 780,
         "wires": [
             []
+        ]
+    },
+    {
+        "id": "opt_ui_head",
+        "type": "ui_template",
+        "z": "opt_tab",
+        "group": "81a6692d7ea02db2",
+        "name": "Linie OpenWeatherMap",
+        "order": 7,
+        "width": 24,
+        "height": 1,
+        "format": "<html>\n <!--box-shadow: (left) -5px (top) -5px (blur) 5px (spread)5px (color)#888;-->\n<head>\n<hr style=\n    \"border-top: 1px solid #a39d99;\n    border-width: 0px 0px 0;\n    width: 100%;\n    margin-left: auto;\n    margin-right: auto;\n    height: 0px;\n    margin-top: 0;\n    border-bottom: 1px solid #a39d99;\n    box-shadow: 0 0 3px #a39d99\";\n\t>\n<left>OpenWeatherMap (Wetterdienst für die Optimierung)</left> \n</html>\n",
+        "storeOutMessages": true,
+        "fwdInMessages": true,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "className": "",
+        "x": 1260,
+        "y": 880,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "opt_ui_form",
+        "type": "ui_form",
+        "z": "opt_tab",
+        "name": "OpenWeatherMap",
+        "label": "",
+        "group": "81a6692d7ea02db2",
+        "order": 8,
+        "width": 12,
+        "height": 6,
+        "options": [
+            {
+                "label": "API-Schlüssel",
+                "value": "owm_key",
+                "type": "password",
+                "required": false,
+                "rows": null
+            },
+            {
+                "label": "Breitengrad (z. B. 50.1)",
+                "value": "owm_lat",
+                "type": "text",
+                "required": false,
+                "rows": null
+            },
+            {
+                "label": "Längengrad (z. B. 8.6)",
+                "value": "owm_lon",
+                "type": "text",
+                "required": false,
+                "rows": null
+            }
+        ],
+        "formValue": {
+            "owm_key": "",
+            "owm_lat": "",
+            "owm_lon": ""
+        },
+        "payload": "",
+        "submit": "SPEICHERN",
+        "cancel": "LEEREN",
+        "topic": "owm",
+        "topicType": "str",
+        "splitLayout": false,
+        "className": "",
+        "x": 960,
+        "y": 920,
+        "wires": [
+            [
+                "opt_owm_save"
+            ]
+        ]
+    },
+    {
+        "id": "opt_ui_info",
+        "type": "ui_template",
+        "z": "opt_tab",
+        "group": "81a6692d7ea02db2",
+        "name": "Hinweis OpenWeatherMap",
+        "order": 9,
+        "width": 12,
+        "height": 4,
+        "format": "<div style=\"font-size:13px;color:#666;padding:6px 4px;line-height:1.5\">Der Schlüssel (kostenlos auf openweathermap.org) wird nicht angezeigt und nur in einer geschützten Datei auf der NAS gespeichert. Leere Felder behalten ihren gespeicherten Wert, der gespeicherte Standort steht in der Statuszeile unten. Neue Schlüssel sind manchmal erst nach ein bis zwei Stunden freigeschaltet.<br>Die Wetterdaten dienen vorerst nur der Anzeige und dem Protokoll, sie greifen nicht in die Regelung ein.</div>",
+        "storeOutMessages": true,
+        "fwdInMessages": true,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "className": "",
+        "x": 1260,
+        "y": 960,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "opt_ui_wxstatus",
+        "type": "ui_text",
+        "z": "opt_tab",
+        "group": "81a6692d7ea02db2",
+        "order": 10,
+        "width": 24,
+        "height": 1,
+        "name": "Status OpenWeatherMap",
+        "label": "",
+        "format": "{{msg.payload}}",
+        "layout": "row-left",
+        "className": "",
+        "x": 960,
+        "y": 1000,
+        "wires": []
+    },
+    {
+        "id": "opt_ui_toast",
+        "type": "ui_toast",
+        "z": "opt_tab",
+        "position": "top right",
+        "displayTime": "5",
+        "highlight": "",
+        "sendall": true,
+        "outputs": 0,
+        "ok": "OK",
+        "cancel": "",
+        "raw": false,
+        "className": "",
+        "topic": "",
+        "name": "Rückmeldung",
+        "x": 1220,
+        "y": 920,
+        "wires": []
+    },
+    {
+        "id": "opt_i_owm_load",
+        "type": "inject",
+        "z": "opt_tab",
+        "name": "Zugangsdaten prüfen",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": true,
+        "onceDelay": "6",
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 140,
+        "y": 920,
+        "wires": [
+            [
+                "opt_owm_load"
+            ]
+        ]
+    },
+    {
+        "id": "opt_owm_load",
+        "type": "function",
+        "z": "opt_tab",
+        "name": "Gespeicherten Standort laden",
+        "func": "\n// Beim Start: gespeicherte Zugangsdaten pruefen (nur Status merken) und den Standort ins Formular zurueckschreiben.\n// Der Schluessel selbst wird weder angezeigt noch in einer Variable abgelegt.\nvar info = {hasKey: false, keyLen: 0, source: ''};\nvar fill = {owm_key: '', owm_lat: '', owm_lon: ''};\ntry {\n    var j = JSON.parse(fs.readFileSync('/data/optimizer/owm.json', 'utf8'));\n    info = {hasKey: !!j.key, keyLen: j.key ? String(j.key).length : 0, lat: j.lat, lon: j.lon, source: 'Datei'};\n    fill.owm_lat = String(j.lat); fill.owm_lon = String(j.lon);\n} catch (e) { /* noch nichts gespeichert */ }\nflow.set('owmInfo', info);\nreturn {payload: fill};\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [
+            {
+                "var": "fs",
+                "module": "fs"
+            }
+        ],
+        "x": 420,
+        "y": 920,
+        "wires": [
+            [
+                "opt_ui_form"
+            ]
+        ]
+    },
+    {
+        "id": "opt_owm_save",
+        "type": "function",
+        "z": "opt_tab",
+        "name": "Zugangsdaten speichern",
+        "func": "\n// Formular \"OpenWeatherMap\" (SYSTEM > EINSTELLUNGEN): pruefen und in /data/optimizer/owm.json speichern (nur fuer den\n// Node-RED-Benutzer lesbar, Modus 0600). Der Schluessel taucht in keiner Variable und keiner Anzeige auf.\nvar p = msg.payload || {};\nvar file = '/data/optimizer/owm.json';\nfunction toast(text, red) { var t = {topic: 'OpenWeatherMap', payload: text}; if (red) { t.highlight = 'red'; } return t; }\n\nvar cur = {};\ntry { cur = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { /* neu */ }\n\nvar key = String(p.owm_key || '').trim();\nvar lat = String(p.owm_lat || '').trim().replace(',', '.');\nvar lon = String(p.owm_lon || '').trim().replace(',', '.');\nif (key && !/^[A-Za-z0-9]{16,64}$/.test(key)) {\n    return [null, toast('Der API-Schlüssel hat ein ungültiges Format (16–64 Zeichen, nur Buchstaben und Ziffern). Es wurde nichts gespeichert.', true), null, null];\n}\nif (!key) { key = cur.key || ''; }                 // leer lassen = vorhandenen Schluessel behalten\nif (lat === '' && cur.lat !== undefined) { lat = String(cur.lat); }\nif (lon === '' && cur.lon !== undefined) { lon = String(cur.lon); }\nvar nlat = Number(lat), nlon = Number(lon);\nif (!key) { return [null, toast('Bitte einen API-Schlüssel eingeben.', true), null, null]; }\nif (lat === '' || !isFinite(nlat) || nlat < -90 || nlat > 90) { return [null, toast('Breitengrad ungültig (-90 bis 90, z. B. 50.1).', true), null, null]; }\nif (lon === '' || !isFinite(nlon) || nlon < -180 || nlon > 180) { return [null, toast('Längengrad ungültig (-180 bis 180, z. B. 8.6).', true), null, null]; }\n\ntry {\n    fs.mkdirSync('/data/optimizer', {recursive: true});\n    fs.writeFileSync(file, JSON.stringify({key: key, lat: nlat, lon: nlon, saved: Date.now()}), {mode: 0o600});\n    fs.chmodSync(file, 0o600);\n} catch (e) {\n    return [null, toast('Speichern fehlgeschlagen: ' + e.message, true), null, null];\n}\nflow.set('owmInfo', {hasKey: true, keyLen: key.length, lat: nlat, lon: nlon, source: 'Datei'});\nreturn [{payload: {owm_key: '', owm_lat: String(nlat), owm_lon: String(nlon)}},      // Schluesselfeld leeren\n        toast('Gespeichert. Die Wetterdaten werden jetzt abgerufen.', false),\n        {payload: 'jetzt'},                                                        // sofort abrufen\n        {payload: 'Schlüssel gespeichert (' + key.length + ' Zeichen) · Standort ' + nlat.toFixed(3).replace('.', ',') + ' / ' + nlon.toFixed(3).replace('.', ',') + ' · Wetterdaten werden abgerufen …'}];\n",
+        "outputs": 4,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [
+            {
+                "var": "fs",
+                "module": "fs"
+            }
+        ],
+        "x": 1100,
+        "y": 960,
+        "wires": [
+            [
+                "opt_ui_form"
+            ],
+            [
+                "opt_ui_toast"
+            ],
+            [
+                "opt_owm_req"
+            ],
+            [
+                "opt_ui_wxstatus"
+            ]
         ]
     }
 ]

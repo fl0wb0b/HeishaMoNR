@@ -44,10 +44,11 @@ env = old_env if old_env else [
 upsert({"id": TAB, "type": "tab", "label": "WP Optimizer", "disabled": False,
         "info": "Phase 1 der Lambda-artigen Optimierung: Sensorik, Glättung, Trends, Protokoll und Anzeige.\n"
                 "KEIN Eingriff in die Regelung.\n\n"
-                "Tab-Umgebungsvariablen (Tab-Eigenschaften > Umgebungsvariablen):\n"
-                "  OWM_API_KEY  (Typ: Zugangsdaten) - OpenWeatherMap-API-Schlüssel\n"
-                "  OWM_LAT, OWM_LON - Standort in Dezimalgrad\n"
-                "Ohne diese Werte läuft alles, nur die Wetterdaten bleiben leer.",
+                "OpenWeatherMap: API-Schlüssel und Standort werden im Dashboard unter SYSTEM > EINSTELLUNGEN "
+                "eingetragen und in /data/optimizer/owm.json (Modus 0600) gespeichert.\n"
+                "Ersatzweise können die Tab-Umgebungsvariablen OWM_API_KEY (Typ: Zugangsdaten), OWM_LAT und "
+                "OWM_LON (Reiter 'Umgebungsvariablen' im Tab-Dialog) benutzt werden.\n"
+                "Ohne Schlüssel läuft alles, nur die Wetterdaten bleiben leer.",
         "env": env})
 
 # ---------------------------------------------------------------- broker (own client id so it never kicks other clients)
@@ -60,9 +61,12 @@ upsert({"id": BROKER, "type": "mqtt-broker", "name": "MQTT (Venus) Optimizer", "
         "userProps": "", "sessionExpiry": ""})
 
 
-def fn(i, name, code, outputs=1, wires=None, x=0, y=0):
+FS = [{"var": "fs", "module": "fs"}]       # core module, allowed on this instance (functionExternalModules: true)
+
+
+def fn(i, name, code, outputs=1, wires=None, x=0, y=0, libs=None):
     return {"id": i, "type": "function", "z": TAB, "name": name, "func": code, "outputs": outputs, "timeout": 0,
-            "noerr": 0, "initialize": "", "finalize": "", "libs": [], "x": x, "y": y,
+            "noerr": 0, "initialize": "", "finalize": "", "libs": libs or [], "x": x, "y": y,
             "wires": wires if wires is not None else [[] for _ in range(outputs)]}
 
 
@@ -99,7 +103,10 @@ function merge(base, over) {
     });
     return base;
 }
-var cfg = merge(d, global.get('OPT_cfg'));
+// gespeicherte Einstellungen (ueberleben einen Neustart) -> dann ggf. neuere Werte aus dem Speicher
+var saved = {};
+try { saved = JSON.parse(fs.readFileSync('/data/optimizer/config.json', 'utf8')); } catch (e) { /* noch keine Datei */ }
+var cfg = merge(merge(d, saved), global.get('OPT_cfg'));
 global.set('OPT_cfg', cfg);
 // aktuelle Werte an die Dashboard-Eingabefelder geben
 return [{payload: cfg.comfort.low}, {payload: cfg.comfort.high}, {payload: cfg.sensor.maxAgeMin}];
@@ -114,6 +121,11 @@ var p = String(msg.topic).split('.');
 if (p.length === 2 && cfg[p[0]] && typeof cfg[p[0]] === 'object') {
     cfg[p[0]][p[1]] = v;
     global.set('OPT_cfg', cfg);
+    // dauerhaft speichern, damit die Einstellung einen Neustart ueberlebt
+    try {
+        fs.mkdirSync('/data/optimizer', {recursive: true});
+        fs.writeFileSync('/data/optimizer/config.json', JSON.stringify(cfg, null, 1));
+    } catch (e) { node.warn('Einstellungen konnten nicht gespeichert werden: ' + e.message); }
 }
 return null;
 """
@@ -175,9 +187,20 @@ return null;
 
 OWM_REQ_JS = r"""
 // OpenWeatherMap abrufen (Free-Tarif: aktuelles Wetter + 3-Stunden-Vorhersage). Ohne Schluessel/Standort passiert nichts.
-var key = env.get('OWM_API_KEY'), lat = env.get('OWM_LAT'), lon = env.get('OWM_LON');
+// Schluessel + Standort: bevorzugt aus der geschuetzten Datei (Eingabe im Dashboard unter SYSTEM > EINSTELLUNGEN),
+// ersatzweise aus den Tab-Umgebungsvariablen OWM_API_KEY / OWM_LAT / OWM_LON. Der Schluessel wird NIE in einer
+// Variable oder Meldung abgelegt, die ueber die Admin-API lesbar waere.
+var key, lat, lon, source = '';
+try {
+    var j = JSON.parse(fs.readFileSync('/data/optimizer/owm.json', 'utf8'));
+    key = j.key; lat = j.lat; lon = j.lon; source = 'Datei';
+} catch (e) { /* noch nicht gespeichert */ }
+if (!key) { key = env.get('OWM_API_KEY'); if (key) { source = 'Umgebung'; } }
+if (lat === undefined || lat === '') { lat = env.get('OWM_LAT'); }
+if (lon === undefined || lon === '') { lon = env.get('OWM_LON'); }
 var W = global.get('OPT_weather') || {};
-if (!key || !lat || !lon) {
+flow.set('owmInfo', {hasKey: !!key, keyLen: key ? String(key).length : 0, lat: lat, lon: lon, source: source});
+if (!key || lat === undefined || lat === '' || lon === undefined || lon === '') {
     W.status = 'nicht konfiguriert';
     global.set('OPT_weather', W);
     return null;
@@ -232,6 +255,58 @@ if (msg.topic === 'forecast' && Array.isArray(p.list) && W.temp !== undefined) {
 }
 global.set('OPT_weather', W);
 return null;
+"""
+
+OWM_LOAD_JS = r"""
+// Beim Start: gespeicherte Zugangsdaten pruefen (nur Status merken) und den Standort ins Formular zurueckschreiben.
+// Der Schluessel selbst wird weder angezeigt noch in einer Variable abgelegt.
+var info = {hasKey: false, keyLen: 0, source: ''};
+var fill = {owm_key: '', owm_lat: '', owm_lon: ''};
+try {
+    var j = JSON.parse(fs.readFileSync('/data/optimizer/owm.json', 'utf8'));
+    info = {hasKey: !!j.key, keyLen: j.key ? String(j.key).length : 0, lat: j.lat, lon: j.lon, source: 'Datei'};
+    fill.owm_lat = String(j.lat); fill.owm_lon = String(j.lon);
+} catch (e) { /* noch nichts gespeichert */ }
+flow.set('owmInfo', info);
+return {payload: fill};
+"""
+
+OWM_SAVE_JS = r"""
+// Formular "OpenWeatherMap" (SYSTEM > EINSTELLUNGEN): pruefen und in /data/optimizer/owm.json speichern (nur fuer den
+// Node-RED-Benutzer lesbar, Modus 0600). Der Schluessel taucht in keiner Variable und keiner Anzeige auf.
+var p = msg.payload || {};
+var file = '/data/optimizer/owm.json';
+function toast(text, red) { var t = {topic: 'OpenWeatherMap', payload: text}; if (red) { t.highlight = 'red'; } return t; }
+
+var cur = {};
+try { cur = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { /* neu */ }
+
+var key = String(p.owm_key || '').trim();
+var lat = String(p.owm_lat || '').trim().replace(',', '.');
+var lon = String(p.owm_lon || '').trim().replace(',', '.');
+if (key && !/^[A-Za-z0-9]{16,64}$/.test(key)) {
+    return [null, toast('Der API-Schlüssel hat ein ungültiges Format (16–64 Zeichen, nur Buchstaben und Ziffern). Es wurde nichts gespeichert.', true), null, null];
+}
+if (!key) { key = cur.key || ''; }                 // leer lassen = vorhandenen Schluessel behalten
+if (lat === '' && cur.lat !== undefined) { lat = String(cur.lat); }
+if (lon === '' && cur.lon !== undefined) { lon = String(cur.lon); }
+var nlat = Number(lat), nlon = Number(lon);
+if (!key) { return [null, toast('Bitte einen API-Schlüssel eingeben.', true), null, null]; }
+if (lat === '' || !isFinite(nlat) || nlat < -90 || nlat > 90) { return [null, toast('Breitengrad ungültig (-90 bis 90, z. B. 50.1).', true), null, null]; }
+if (lon === '' || !isFinite(nlon) || nlon < -180 || nlon > 180) { return [null, toast('Längengrad ungültig (-180 bis 180, z. B. 8.6).', true), null, null]; }
+
+try {
+    fs.mkdirSync('/data/optimizer', {recursive: true});
+    fs.writeFileSync(file, JSON.stringify({key: key, lat: nlat, lon: nlon, saved: Date.now()}), {mode: 0o600});
+    fs.chmodSync(file, 0o600);
+} catch (e) {
+    return [null, toast('Speichern fehlgeschlagen: ' + e.message, true), null, null];
+}
+flow.set('owmInfo', {hasKey: true, keyLen: key.length, lat: nlat, lon: nlon, source: 'Datei'});
+return [{payload: {owm_key: '', owm_lat: String(nlat), owm_lon: String(nlon)}},      // Schluesselfeld leeren
+        toast('Gespeichert. Die Wetterdaten werden jetzt abgerufen.', false),
+        {payload: 'jetzt'},                                                        // sofort abrufen
+        {payload: 'Schlüssel gespeichert (' + key.length + ' Zeichen) · Standort ' + nlat.toFixed(3).replace('.', ',') + ' / ' + nlon.toFixed(3).replace('.', ',') + ' · Wetterdaten werden abgerufen …'}];
 """
 
 EVAL_JS = r"""
@@ -328,7 +403,7 @@ if (!cold || !warm) { reason = 'Beobachtung · zu wenig aktuelle Raumdaten'; }
 else if (cold.ema < low) { reason = 'Beobachtung · kältester Raum (' + cold.name + ') liegt unter dem Komfortband'; }
 else if (warm.ema > high) { reason = 'Beobachtung · wärmster Raum (' + warm.name + ') liegt über dem Komfortband'; }
 else { reason = 'Beobachtung · beide Räume im Komfortband'; }
-var out = [{payload: {rows: rowsWx}}, {payload: {rows: rowsRoom}}, {payload: {rows: rowsWp}}, null, null, null];
+var out = [{payload: {rows: rowsWx}}, {payload: {rows: rowsRoom}}, {payload: {rows: rowsWp}}, null, null, null, null];
 
 // ---------- Protokoll (alle log.intervalMin Minuten) und Ereignisse
 var d = new Date(now), pad = function (n) { return (n < 10 ? '0' : '') + n; };
@@ -368,6 +443,16 @@ if (ev.length) {
     out[5] = {filename: '/data/optimizer/optimizer-events-' + month + '.csv', payload: (eh === month ? '' : 'zeit,ereignis,wechsel\n') + ev.join('\n') + '\n'};
     flow.set('evHeader', month);
 }
+// Statuszeile fuer SYSTEM > EINSTELLUNGEN (OpenWeatherMap)
+var info = flow.get('owmInfo');
+var owmTxt;
+if (!info || !info.hasKey) { owmTxt = 'Noch kein API-Schlüssel gespeichert. Schlüssel und Standort oben eintragen und auf SPEICHERN klicken.'; }
+else {
+    owmTxt = 'Schlüssel gespeichert (' + info.keyLen + ' Zeichen, Quelle: ' + info.source + ')'
+        + (info.lat !== undefined && info.lat !== '' ? ' · Standort ' + f(Number(info.lat), 3) + ' / ' + f(Number(info.lon), 3) : ' · Standort fehlt')
+        + ' · Wetterdaten: ' + (W.status || 'noch nicht abgerufen') + (wAge !== null ? ' (Alter ' + age(wAge) + ')' : '');
+}
+out[6] = {payload: owmTxt};
 return out;
 """
 
@@ -412,8 +497,8 @@ upsert(numeric("opt_n_age", "Sensor gilt als veraltet nach (min)", "sensor.maxAg
 upsert(comment("opt_c1", "Phase 1: nur messen, glätten, anzeigen, protokollieren – KEIN Eingriff in die Regelung", 380, 40))
 upsert(comment("opt_c2", "Raumsensoren (Venus-Broker) → Plausibilität, Ausreißer, Glättung, Trend", 380, 80))
 upsert(inject("opt_i_init", "Standardwerte", 0, 3, ["opt_defaults"], 140, 140))
-upsert(fn("opt_defaults", "Standardwerte setzen", DEFAULTS_JS, 3, [["opt_n_low"], ["opt_n_high"], ["opt_n_age"]], 380, 140))
-upsert(fn("opt_set", "Einstellung übernehmen", SET_CFG_JS, 1, [[]], 780, 440))
+upsert(fn("opt_defaults", "Standardwerte setzen", DEFAULTS_JS, 3, [["opt_n_low"], ["opt_n_high"], ["opt_n_age"]], 380, 140, FS))
+upsert(fn("opt_set", "Einstellung übernehmen und speichern", SET_CFG_JS, 1, [[]], 780, 440, FS))
 
 for i, (t, y) in enumerate((("+/status/temperature:0", 200), ("shellies/+/sensor/temperature", 260))):
     upsert({"id": f"opt_mqtt_{i}", "type": "mqtt in", "z": TAB, "name": "", "topic": t, "qos": "1",
@@ -421,9 +506,9 @@ for i, (t, y) in enumerate((("+/status/temperature:0", 200), ("shellies/+/sensor
             "x": 160, "y": y, "wires": [["opt_room_in"]]})
 upsert(fn("opt_room_in", "Raumsensor verarbeiten", ROOM_IN_JS, 1, [[]], 420, 230))
 
-upsert(comment("opt_c3", "OpenWeatherMap (optional): Schlüssel/Standort als Tab-Umgebungsvariablen eintragen", 380, 540))
+upsert(comment("opt_c3", "OpenWeatherMap (optional): Schlüssel + Standort im Dashboard unter SYSTEM > EINSTELLUNGEN eintragen", 380, 540))
 upsert(inject("opt_i_wx", "Wetter abrufen", 600, 20, ["opt_owm_req"], 140, 600))
-upsert(fn("opt_owm_req", "OWM-Anfrage", OWM_REQ_JS, 1, [["opt_http"]], 380, 600))
+upsert(fn("opt_owm_req", "OWM-Anfrage", OWM_REQ_JS, 1, [["opt_http"]], 380, 600, FS))
 upsert({"id": "opt_http", "type": "http request", "z": TAB, "name": "OpenWeatherMap", "method": "GET", "ret": "obj",
         "paytoqs": "ignore", "url": "", "tls": "", "persist": False, "proxy": "", "insecureHTTPParser": False,
         "authType": "", "senderr": False, "headers": [], "x": 620, "y": 600, "wires": [["opt_owm_parse"]]})
@@ -433,12 +518,70 @@ upsert(fn("opt_owm_parse", "OWM-Antwort auswerten", OWM_PARSE_JS, 1, [[]], 880, 
 
 upsert(comment("opt_c4", "Auswertung jede Minute → Anzeige + Protokoll (CSV in /data/optimizer)", 380, 700))
 upsert(inject("opt_i_tick", "jede Minute", 60, 15, ["opt_eval"], 140, 760))
-upsert(fn("opt_eval", "Auswerten · Anzeigen · Protokollieren", EVAL_JS, 6,
-          [["opt_t_wx"], ["opt_t_room"], ["opt_t_wp"], ["opt_t_opt"], ["opt_f_log"], ["opt_f_ev"]], 420, 760))
+upsert(fn("opt_eval", "Auswerten · Anzeigen · Protokollieren", EVAL_JS, 7,
+          [["opt_t_wx"], ["opt_t_room"], ["opt_t_wp"], ["opt_t_opt"], ["opt_f_log"], ["opt_f_ev"], ["opt_ui_wxstatus"]], 420, 760))
 for fid, name, y in (("opt_f_log", "Protokoll", 700), ("opt_f_ev", "Ereignisse", 780)):
     upsert({"id": fid, "type": "file", "z": TAB, "name": name, "filename": "filename", "filenameType": "msg",
             "appendNewline": False, "createDir": True, "overwriteFile": "false", "encoding": "utf8",
             "x": 960, "y": y, "wires": [[]]})
+
+# ---------------------------------------------------------------- OpenWeatherMap: Eingabe im Dashboard (SYSTEM > EINSTELLUNGEN)
+import re
+
+sys_tab = next(n for n in flows if n["type"] == "ui_tab" and n["name"] == "SYSTEM")
+sys_group = next(g for g in flows if g["type"] == "ui_group" and g["tab"] == sys_tab["id"]
+                 and g["name"] in ("EINSTELLUNGEN", "SETTINGS"))
+SG = sys_group["id"]
+base = 1 + max(n.get("order", 0) for n in flows
+               if n.get("group") == SG and n["type"].startswith("ui_") and not n["id"].startswith("opt_"))
+
+# heading in the style of the existing "Node-RED-Einstellungen" line
+line = next((n for n in flows if n.get("group") == SG and n["type"] == "ui_template"
+             and not n["id"].startswith("opt_")), None)
+head_fmt = line["format"] if line else "<b>OpenWeatherMap</b>"
+if line and re.search(r"<left>[^<]*</left>", head_fmt):
+    head_fmt = re.sub(r"(<left>)[^<]*(</left>)", r"\1OpenWeatherMap (Wetterdienst für die Optimierung)\2", head_fmt)
+upsert({"id": "opt_ui_head", "type": "ui_template", "z": TAB, "group": SG, "name": "Linie OpenWeatherMap", "order": base,
+        "width": 24, "height": 1, "format": head_fmt, "storeOutMessages": True, "fwdInMessages": True,
+        "resendOnRefresh": True, "templateScope": "local", "className": "", "x": 1260, "y": 880, "wires": [[]]})
+
+upsert({"id": "opt_ui_form", "type": "ui_form", "z": TAB, "name": "OpenWeatherMap", "label": "", "group": SG,
+        "order": base + 1, "width": 12, "height": 6,
+        "options": [
+            {"label": "API-Schlüssel", "value": "owm_key", "type": "password", "required": False, "rows": None},
+            {"label": "Breitengrad (z. B. 50.1)", "value": "owm_lat", "type": "text", "required": False, "rows": None},
+            {"label": "Längengrad (z. B. 8.6)", "value": "owm_lon", "type": "text", "required": False, "rows": None}],
+        "formValue": {"owm_key": "", "owm_lat": "", "owm_lon": ""}, "payload": "", "submit": "SPEICHERN",
+        "cancel": "LEEREN", "topic": "owm", "topicType": "str", "splitLayout": False, "className": "",
+        "x": 960, "y": 920, "wires": [["opt_owm_save"]]})
+
+upsert({"id": "opt_ui_info", "type": "ui_template", "z": TAB, "group": SG, "name": "Hinweis OpenWeatherMap",
+        "order": base + 2, "width": 12, "height": 4,
+        "format": '<div style="font-size:13px;color:#666;padding:6px 4px;line-height:1.5">'
+                  'Der Schlüssel (kostenlos auf openweathermap.org) wird nicht angezeigt und nur in einer geschützten '
+                  'Datei auf der NAS gespeichert. Leere Felder behalten ihren gespeicherten Wert, der gespeicherte Standort '
+                  'steht in der Statuszeile unten. Neue Schlüssel sind manchmal erst nach ein bis zwei Stunden freigeschaltet.<br>'
+                  'Die Wetterdaten dienen vorerst nur der Anzeige und dem Protokoll, sie greifen nicht in die '
+                  'Regelung ein.</div>',
+        "storeOutMessages": True, "fwdInMessages": True, "resendOnRefresh": True, "templateScope": "local",
+        "className": "", "x": 1260, "y": 960, "wires": [[]]})
+
+upsert({"id": "opt_ui_wxstatus", "type": "ui_text", "z": TAB, "group": SG, "order": base + 3, "width": 24, "height": 1,
+        "name": "Status OpenWeatherMap", "label": "", "format": "{{msg.payload}}", "layout": "row-left",
+        "className": "", "x": 960, "y": 1000, "wires": []})
+
+upsert({"id": "opt_ui_toast", "type": "ui_toast", "z": TAB, "position": "top right", "displayTime": "5",
+        "highlight": "", "sendall": True, "outputs": 0, "ok": "OK", "cancel": "", "raw": False, "className": "",
+        "topic": "", "name": "Rückmeldung", "x": 1220, "y": 920, "wires": []})
+
+upsert(inject("opt_i_owm_load", "Zugangsdaten prüfen", 0, 6, ["opt_owm_load"], 140, 920))
+upsert(fn("opt_owm_load", "Gespeicherten Standort laden", OWM_LOAD_JS, 1, [["opt_ui_form"]], 420, 920, FS))
+# nodes of earlier iterations that no longer exist
+for _rid in ("opt_ui_ctl", "opt_ui_wait"):
+    if _rid in B:
+        flows.remove(B.pop(_rid))
+upsert(fn("opt_owm_save", "Zugangsdaten speichern", OWM_SAVE_JS, 4,
+          [["opt_ui_form"], ["opt_ui_toast"], ["opt_owm_req"], ["opt_ui_wxstatus"]], 1100, 960, FS))
 
 # the new page also belongs into the menu configuration (SYSTEM > menu), otherwise it can not be hidden/shown there
 form = B.get("e35b7df78bc6f722")
