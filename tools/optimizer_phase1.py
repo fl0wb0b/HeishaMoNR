@@ -114,8 +114,7 @@ CONTROL = {"enabled": False, "probe": True, "startK": 0.3, "releaseK": 0.3, "hol
 # logged data (quiet-YYYY-MM.csv); nothing is written to the heat pump.
 QUIET = {"thrHigh": 3.0, "thrMid": 1.5, "thrLow": 0.5, "hyst": 0.3, "errTauMin": 5, "holdMin": 15, "startLockMin": 15,
          "afterDefrostMin": 10, "afterDhwMin": 10, "deficitMaxLevel": 1, "minRunMin": 20, "maxStartsDay": 24,
-         "offAtLow": 1, "offAtHigh": 3, "offAtHyst": 0.5,
-         "note": "Stufe 3 hat der Betreiber bewusst wegen der Taktung gesetzt"}
+         "offAtLow": 1, "offAtHigh": 3, "offAtHyst": 0.5}
 
 
 def js(code):
@@ -591,8 +590,7 @@ var rows = [
     ['Nächster Schritt', nextTxt, ''],
     ['Grund', why.filter(Boolean).join(' · '), ''],
     ['Sperrgrund', lockTxt, ''],
-    ['Quellen der Stufe', srcs.join(' · ') + (lastCmd ? ' · letzter Befehl ' + hhmm(lastCmd.ts) : ' · kein Befehl beobachtet'), ''],
-    ['Hinweis', (Q.note || '') + ' · bei ' + f(wLo, 0) + '–' + f(wHi, 0) + ' °C Außentemperatur muss Quiet aus sein · Schwellen vorläufig (' + f(T[0], 1) + ' / ' + f(T[1], 1) + ' / ' + f(T[2], 1) + ' K), nur Vorschlag', '']
+    ['Quellen der Stufe', srcs.join(' · ') + (lastCmd ? ' · letzter Befehl ' + hhmm(lastCmd.ts) : ' · kein Befehl beobachtet'), '']
 ];
 var tab = [0, 1, 2, 3].map(function (lv) {
     var s = qs.stats[lv];
