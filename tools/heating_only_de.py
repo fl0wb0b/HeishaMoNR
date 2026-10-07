@@ -868,6 +868,35 @@ if ERR_FN not in B and ERR_UI in B and ERR_IN in B:
     B[ERR_FN] = flows[-1]
     node(ERR_IN)["wires"] = [[ERR_FN if w == ERR_UI else w for w in out] for out in node(ERR_IN)["wires"]]
 
+# the stored menu configuration (global GUI.tabs) still carries the old tab keys and COOL/Solar2DHW = true; it is replayed
+# at every connect and would show those tabs again. Clean it up while replaying.
+_FIX = """// Gespeicherte Menue-Konfiguration an die deutschen Tab-Namen anpassen; Cool und Solar2DHW bleiben ausgeblendet
+function fixTabs(m) {
+    if (!m || m.topic !== 'tabs' || !m.payload || typeof m.payload !== 'object') { return m; }
+    var map = {SETTINGS: 'Einstellungen', CCC: 'Heizkurve', RTC: 'Raumregelung', SOFTSTART: 'Sanftanlauf',
+               Pumpspeed: 'Pumpendrehzahl', SCHEDULER: 'Zeitplan', TEMPERATURES: 'Temperaturen',
+               EFFICIENCY: 'Effizienz', Degree_days: 'Gradtage'};
+    var p = {};
+    Object.keys(m.payload).forEach(function (k) {
+        if (k === 'COOL' || k === 'Solar²DHW') { return; }
+        p[map[k] || k] = m.payload[k];
+    });
+    var c = Object.assign({}, m);
+    c.payload = p;
+    return c;
+}
+"""
+_SID = "5a44b5cc5e9f4844"
+_code = node(_SID)["func"]
+if "function fixTabs" not in _code:
+    _code = _FIX + _code
+    for _a, _b in (("node.send([null,object[property]]);", "node.send([null,fixTabs(object[property])]);"),
+                   ("node.send([null,null,object[property]]);", "node.send([null,null,fixTabs(object[property])]);")):
+        if _a not in _code:
+            errors.append(f"{_SID}: {_a!r} not found")
+        _code = _code.replace(_a, _b)
+    node(_SID)["func"] = _code
+
 if errors:
     print("\n".join("ERROR: " + e for e in errors))
     sys.exit(1)
