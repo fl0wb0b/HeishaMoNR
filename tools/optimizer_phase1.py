@@ -110,12 +110,21 @@ CONTROL = {"enabled": False, "probe": True, "startK": 0.3, "releaseK": 0.3, "hol
            "startLockMin": 15, "afterDefrostMin": 10, "afterDhwMin": 10}
 
 
+# Phase 4 (shadow only): Quiet recommendation as a coarse power cap. All thresholds are PROVISIONAL and meant to be derived from the
+# logged data (quiet-YYYY-MM.csv); nothing is written to the heat pump.
+QUIET = {"thrHigh": 3.0, "thrMid": 1.5, "thrLow": 0.5, "hyst": 0.3, "errTauMin": 5, "holdMin": 15, "startLockMin": 15,
+         "afterDefrostMin": 10, "afterDhwMin": 10, "deficitMaxLevel": 1, "minRunMin": 20, "maxStartsDay": 24,
+         "offAtLow": 1, "offAtHigh": 3, "offAtHyst": 0.5,
+         "note": "Stufe 3 hat der Betreiber bewusst wegen der Taktung gesetzt"}
+
+
 def js(code):
     """Fill the shared constants into a JS block."""
     return (code.replace("__ROOMS__", json.dumps(ROOMS, ensure_ascii=False))
                 .replace("__LIMITS__", json.dumps(LIMITS))
                 .replace("__MINBAND__", str(MIN_BAND_K))
-                .replace("__CTL__", json.dumps(CONTROL)))
+                .replace("__CTL__", json.dumps(CONTROL))
+                .replace("__QUIET__", json.dumps(QUIET, ensure_ascii=False)))
 
 
 # ---------------------------------------------------------------- defaults / configuration
@@ -126,6 +135,7 @@ var ROOM_FIELDS = ['active', 'min', 'max', 'weight', 'maxAgeMin'];
 var d = {
     rooms: __ROOMS__,
     control: __CTL__,
+    quiet: __QUIET__,
     calcAT: {wNow: 0.5, wHist: 0.25, wFc: 0.25, minHistH: 6},
     sensor:  {maxAgeMin: 90, min: 10, max: 35, maxJumpK: 2, emaTauMin: 30, trendWindowMin: 120, trendMinSpanMin: 30, trendMinSamples: 3},
     weather: {intervalMin: 10, maxAgeMin: 60},
@@ -392,6 +402,235 @@ return [{payload: {owm_key: '', owm_lat: String(nlat), owm_lon: String(nlon)}}, 
         toast('Gespeichert. Die Wetterdaten werden jetzt abgerufen.', false),
         {payload: 'jetzt'},                                                        // sofort abrufen
         {payload: 'Schlüssel gespeichert (' + key.length + ' Zeichen) · Standort ' + nlat.toFixed(3).replace('.', ',') + ' / ' + nlon.toFixed(3).replace('.', ',') + ' · Wetterdaten werden abgerufen …'}];
+"""
+
+HP_IN_JS = r"""
+// Waermepumpen-Werte vom NAS-Broker (NUR LESEN): zusaetzliche HeishaMon-Werte (Pumpe, Leistung, Luefter ...) und alle Quiet-Mode-Befehle
+// beobachten. Dieser Tab hat keinen MQTT-Ausgang und schreibt nichts an die Waermepumpe.
+var hp = global.get('OPT_hp') || {};
+var now = Date.now();
+var parts = String(msg.topic || '').split('/');                       // panasonic_heat_pump/<main|extra|commands>/<Name>
+var grp = parts[1] || '', name = parts.slice(2).join('/');
+var raw = (msg.payload === undefined || msg.payload === null) ? '' : String(msg.payload);
+var n = Number(raw), val = (raw !== '' && isFinite(n)) ? n : raw;
+var d = new Date(now), pad = function (x) { return (x < 10 ? '0' : '') + x; };
+var iso = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+var month = iso.slice(0, 7), file = '/data/optimizer/quiet-events-' + month + '.csv';
+function event(what, change) {
+    var head = '';
+    try { fs.readFileSync(file, 'utf8'); } catch (e) { head = 'zeit,ereignis,wechsel\n'; }
+    return {filename: file, payload: head + iso + ',' + what + ',' + String(change).replace(/,/g, ';') + '\n'};
+}
+if (grp === 'commands') {
+    if (name === 'SetQuietMode') {                                    // ein Befehl an die Waermepumpe, von irgendeiner Funktion oder Quelle
+        var src = global.get('MQTT_Source');
+        hp._lastCmd = {ts: now, v: val, src: src === undefined ? 'unbekannt' : String(src)};
+        global.set('OPT_hp', hp);
+        return event('quiet_befehl', 'Stufe ' + val + ' (Quelle: ' + hp._lastCmd.src + ')');
+    }
+    return null;
+}
+var prev = hp[name];
+hp[name] = {v: val, ts: now};
+var res = null;
+if (name === 'Quiet_Mode_Level' && prev && prev.v !== val) {          // die Stufe hat sich geaendert: mit oder ohne Befehl aus Node-RED?
+    var byCmd = hp._lastCmd && now - hp._lastCmd.ts < 15000;
+    res = event('quiet_stufe', prev.v + '->' + val + (byCmd ? ' (per Befehl, Quelle: ' + hp._lastCmd.src + ')' : ' (ohne Befehl aus Node-RED: Anlage, Fernbedienung oder HeishaMon)'));
+}
+if ((name === 'Quiet_Mode_Schedule' || name === 'Quiet_Mode_Priority') && prev && prev.v !== val) { res = event(name === 'Quiet_Mode_Schedule' ? 'quiet_zeitplan' : 'quiet_prioritaet', prev.v + '->' + val); }
+global.set('OPT_hp', hp);
+return res;
+"""
+
+QUIET_JS = r"""
+// Phase 4 (Shadow): Quiet-Empfehlung als grober Leistungsdeckel. Schreibt NICHTS an die Waermepumpe (kein MQTT-Ausgang in diesem Tab).
+// Heizkurve (Temperaturniveau) und Quiet (Leistungsdeckel) bleiben getrennte Groessen; Pumpendrehzahl wird nur beobachtet.
+// Ziel: moeglichst lange mit niedriger stabiler Leistung durchlaufen (Ruecklauf langsam am Soll halten), ohne zu takten.
+var cfg = global.get('OPT_cfg');
+if (!cfg) { return null; }
+var Q = cfg.quiet || {};
+var now = Date.now(), MS_MIN = 60000;
+var G = function (k) { return global.get(k); };
+function num(v) { if (v === null || v === undefined || v === '') { return null; } v = Number(v); return isFinite(v) ? v : null; }
+function ok(v) { return v !== null && v !== undefined && isFinite(v); }
+function f(v, d, unit) { if (!ok(v)) { return '–'; } return Number(v).toFixed(d).replace('.', ',') + (unit ? ' ' + unit : ''); }
+function sg(v, d, unit) { if (!ok(v)) { return '–'; } var r = Number(Number(v).toFixed(d)); return (r > 0 ? '+' : '') + r.toFixed(d).replace('.', ',') + (unit ? ' ' + unit : ''); }
+function qn(v, dflt) { v = num(v); return v === null ? dflt : v; }
+function c(v) { return (v === null || v === undefined || !isFinite(v)) ? '' : String(Math.round(v * 100) / 100); }
+function hhmm(ts) { return ts ? new Date(ts).toLocaleTimeString('de-DE', {hour: '2-digit', minute: '2-digit'}) : '–'; }
+function dur(ms) { var m = Math.round(ms / MS_MIN); return m < 120 ? m + ' min' : (m < 2880 ? (m / 60).toFixed(1).replace('.', ',') + ' h' : (m / 1440).toFixed(1).replace('.', ',') + ' Tage'); }
+
+// ---------- Eingaenge
+var HP = G('OPT_hp') || {};
+function hpv(name) { var e = HP[name]; return (e && typeof e.v === 'number' && now - e.ts < 10 * MS_MIN) ? e.v : null; }
+var solVL = num(G('TOP42_Z1_Water_Target_Temp')), istVL = num(G('TOP6_Main_Outlet_Temp')), istRL = num(G('TOP5_Main_Inlet_Temp'));
+var zDelta = num(G('TOP23_Heat_Delta'));                                              // Ziel-Spreizung (Einstellung der Waermepumpe)
+var solRL = (solVL !== null && zDelta !== null) ? solVL - zDelta : null;               // abgeleiteter Soll-Ruecklauf
+var rlErr = (solRL !== null && istRL !== null) ? solRL - istRL : null;                 // > 0: Ruecklauf liegt unter dem Soll
+var spread = (istVL !== null && istRL !== null) ? istVL - istRL : null;
+var freq = num(G('compressor_frequency')) || 0, running = freq > 0;
+var pel = num(G('TOP16_Heat_Energy_Consumption')), flw = num(G('TOP1_Pump_Flow')), cop = num(G('COP_HEAT'));
+var pthHs = hpv('Heat_Power_Production_Extra'); if (!running || pthHs === null || pthHs < -100) { pthHs = null; }
+var pthCalc = (running && flw !== null && spread !== null) ? flw * spread * 69.7 : null;     // W = l/min * K * 4,18 kJ/(kg K) * 1000 / 60
+var pth = pthHs !== null ? pthHs : pthCalc;
+var copNow = (running && pel !== null && pel > 100 && pth !== null) ? pth / pel : null;
+var qNow = num(G('TOP18_Quiet_Mode_Level'));
+var rt = num(G('compressor_runtime')), rtLast = num(G('compressor_last_runtime')), startsToday = num(G('Starts_Today'));
+var defrost = num(G('TOP26_Defrosting_State')) === 1, dhw = num(G('TOP20_ThreeWay_Valve_State')) === 1;
+var ss = G('F_SS') || {}, ssRamp = ss.state === 1 && Math.abs(num(ss.correction_value) || 0) > 0;
+var at = num(G('TOP14_Outside_Temp')), fan1 = num(G('TOP62_Fan1_Motor_Speed'));
+var S = G('OPT_state') || {}, sFresh = S.ts && now - S.ts < 5 * MS_MIN;
+
+// ---------- Zustand (ueberlebt Neustarts per Datei)
+var qs = flow.get('qs');
+if (!qs) {
+    qs = {errS: null, errTs: 0, target: null, level: null, levelSince: now, lastStart: 0, lastDefrostEnd: 0, lastDhwEnd: 0, freqOn: false, defrost: false, dhw: false,
+          lastMin: 0, lastSave: 0, lastLog: 0, runStart: 0, runs: [], stats: {}};
+    try {
+        var sj = JSON.parse(fs.readFileSync('/data/optimizer/quiet-stats.json', 'utf8'));
+        if (sj && sj.stats) { qs.stats = sj.stats; qs.level = sj.level; qs.levelSince = sj.since || now; qs.runs = sj.runs || []; }
+    } catch (e) { /* noch keine Datei */ }
+}
+if (qNow !== null && qs.level !== qNow) { qs.level = qNow; qs.levelSince = now; }        // Stufe geaendert (von wem auch immer) oder erste Beobachtung
+var stat = function (lv) { return qs.stats[lv] = qs.stats[lv] || {n: 0, starts: 0, defrosts: 0, runMin: 0, s: {}}; };
+var FIELDS = ['hz', 'pel', 'pth', 'cop', 'vl', 'rl', 'dt', 'flow', 'at', 'fan'];
+// Wechsel erkennen: Verdichterstart/-ende, Abtauen, Warmwasser
+if (running && !qs.freqOn) { qs.lastStart = now; qs.runStart = now; if (qNow !== null) { stat(qNow).starts++; } }
+if (!running && qs.freqOn && qs.runStart) {
+    qs.runs.push([qs.runStart, Math.round((now - qs.runStart) / MS_MIN), qNow]);
+    qs.runs = qs.runs.filter(function (r) { return r[0] > now - 24 * 60 * MS_MIN; });
+    if (qNow !== null) { stat(qNow).runMin += Math.round((now - qs.runStart) / MS_MIN); }
+    qs.runStart = 0;
+}
+if (defrost && !qs.defrost && qNow !== null) { stat(qNow).defrosts++; }
+if (!defrost && qs.defrost) { qs.lastDefrostEnd = now; }
+if (!dhw && qs.dhw) { qs.lastDhwEnd = now; }
+qs.freqOn = running; qs.defrost = defrost; qs.dhw = dhw;
+// Statistik je Quiet-Stufe: nur Minuten mit laufendem Verdichter (ohne Abtauen/Warmwasser), einmal pro Minute
+var mk = Math.floor(now / MS_MIN);
+if (qs.lastMin !== mk) {
+    qs.lastMin = mk;
+    if (running && !defrost && !dhw && qNow !== null) {
+        var st0 = stat(qNow), vals = {hz: freq, pel: pel, pth: pth, cop: copNow, vl: istVL, rl: istRL, dt: spread, flow: flw, at: at, fan: fan1};
+        st0.n++;
+        FIELDS.forEach(function (k) { if (ok(vals[k])) { var a = st0.s[k] = st0.s[k] || [0, 0]; a[0] += vals[k]; a[1] += 1; } });
+    }
+}
+// geglaetteter Ruecklauffehler (Zeitkonstante ~5 min)
+if (rlErr !== null) {
+    var tau = qn(Q.errTauMin, 5), dtm = qs.errTs ? (now - qs.errTs) / MS_MIN : 0;
+    qs.errS = (qs.errS === null || dtm > 30) ? rlErr : qs.errS + (rlErr - qs.errS) * (1 - Math.exp(-dtm / tau));
+    qs.errTs = now;
+}
+// Taktung der letzten 24 h
+var runs24 = qs.runs.filter(function (r) { return r[0] > now - 24 * 60 * MS_MIN; });
+var meanRun = runs24.length ? runs24.reduce(function (a, r) { return a + r[1]; }, 0) / runs24.length : null;
+var cycleBad = (rtLast !== null && rtLast < qn(Q.minRunMin, 20)) || (startsToday !== null && startsToday > qn(Q.maxStartsDay, 24));      // kurze Laeufe oder viele Starts
+
+// ---------- Empfehlung (Ziel-Stufe) aus dem Ruecklauffehler; Schwellen sind vorlaeufig und werden aus den Daten abgeleitet
+var T = [qn(Q.thrHigh, 3), qn(Q.thrMid, 1.5), qn(Q.thrLow, 0.5)], H = qn(Q.hyst, 0.3);
+function lvl(e) { return e >= T[0] ? 0 : (e >= T[1] ? 1 : (e >= T[2] ? 2 : 3)); }
+var target = null, why = [];
+if (!running) { why.push('Verdichter steht'); }
+else if (qs.errS === null) { why.push('Rücklauf oder Soll fehlt'); }
+else {
+    var raw = lvl(qs.errS);
+    target = raw;
+    if (qs.target !== null && raw > qs.target) { target = Math.max(qs.target, lvl(qs.errS + H)); }          // weniger Leistung nur mit Abstand (Hysterese)
+    why.push('RL ' + (qs.errS >= 0 ? f(qs.errS, 1, 'K') + ' unter' : f(-qs.errS, 1, 'K') + ' über') + ' Soll-RL');
+    var cap = qn(Q.deficitMaxLevel, 1);
+    if (sFresh && S.deficit && (S.coldTrend === null || S.coldTrend <= 0.05)) {                           // Raumkomfort hat Vorrang vor Leistungsbegrenzung
+        why.push((S.deficitRoom || 'Raum') + ' unter Komfortminimum' + (S.distrib ? ' (Wärmeverteilungsproblem, Quiet kann es nicht lösen)' : ''));
+        if (target > cap) { target = cap; why.push('Deckel höchstens Stufe ' + cap); }
+    } else if (sFresh) { why.push('Räume im Komfortband'); }
+    if (cycleBad && qNow !== null && target < qNow && !(sFresh && S.deficit)) { target = qNow; why.push('Taktungsschutz: kurze Läufe/viele Starts, nicht mehr Leistung freigeben'); }
+    why.push('Verdichter seit ' + Math.round(rt || 0) + ' min aktiv');
+    qs.target = target;
+}
+// Erfahrungswert des Betreibers: bei 1-3 Grad Aussentemperatur muss Quiet aus sein; geht dem Taktungsschutz und dem Leistungsdeckel vor
+var wLo = qn(Q.offAtLow, 1), wHi = qn(Q.offAtHigh, 3), wH = qn(Q.offAtHyst, 0.5);
+var atWin = at !== null && (qs.inWin ? (at >= wLo - wH && at <= wHi + wH) : (at >= wLo && at <= wHi));
+qs.inWin = atWin;
+if (atWin) { target = 0; why.unshift('Außentemperatur ' + f(at, 1, '°C') + ' im Bereich ' + f(wLo, 0) + '–' + f(wHi, 0) + ' °C: Quiet muss aus sein (Erfahrung des Betreibers)'); }
+if (!running) { qs.target = null; }
+// naechster Schritt: hoechstens eine Stufe, nach Mindesthaltezeit, nicht bei Sperren
+var locks = [];
+if (defrost) { locks.push('Abtauen'); } else if (now - qs.lastDefrostEnd < qn(Q.afterDefrostMin, 10) * MS_MIN) { locks.push('nach dem Abtauen'); }
+if (dhw) { locks.push('Warmwasser'); } else if (now - qs.lastDhwEnd < qn(Q.afterDhwMin, 10) * MS_MIN) { locks.push('nach Warmwasser'); }
+if (running && now - qs.lastStart < qn(Q.startLockMin, 15) * MS_MIN) { locks.push('Verdichterstart'); }
+if (ssRamp) { locks.push('Sanftanlauf'); }
+var holdLeft = Math.max(0, qs.levelSince + qn(Q.holdMin, 15) * MS_MIN - now);
+var next = (target !== null && qNow !== null && target !== qNow) ? qNow + (target > qNow ? 1 : -1) : null;
+if (!locks.length && !defrost && !dhw) { why.push(defrost ? '' : 'kein Abtauen / kein Warmwasser'); }
+var nextTxt = target === null ? '–' : (next === null ? 'keiner (Stufe passt)' : qNow + ' → ' + next + (locks.length ? ' (wartet: ' + locks[0] + ')' : (holdLeft > 0 ? ' (frühestens in ' + Math.ceil(holdLeft / MS_MIN) + ' min)' : ' (möglich)')));
+var lockTxt = locks.length ? locks.join(' + ') : (holdLeft > 0 ? 'Haltezeit noch ' + Math.ceil(holdLeft / MS_MIN) + ' min' : 'keine');
+
+// ---------- Quellen der Quiet-Stufe (damit nichts unbemerkt gegen einen Regler arbeitet)
+var mq = G('MQTT') || {}, sol = G('F_SOLAR') || {};
+var srcs = ['HeishaMoNR-Quiet-Logik ' + ((ss.state === 1 && ss.QM_state === 1) ? 'AN (Stufe ' + ss.QM_active_level + ')' : 'aus'),
+            'Scheduler ' + (mq.allow_scheduler === 1 ? 'darf senden' : 'aus'), 'Solar ' + (sol.state === 1 ? 'AN' : 'aus'),
+            'WP-Zeitplan ' + (HP.Quiet_Mode_Schedule && HP.Quiet_Mode_Schedule.v === 1 ? 'AN' : 'aus')];
+var prio = HP.Quiet_Mode_Priority ? HP.Quiet_Mode_Priority.v : null;
+var lastCmd = HP._lastCmd;
+
+var rows = [
+    ['Soll-VL (Heizkurve)', f(solVL, 1, '°C'), ''],
+    ['Ist-VL', f(istVL, 1, '°C'), ''],
+    ['Soll-RL (Soll-VL − Ziel-Spreizung ' + f(zDelta, 0) + ' K)', f(solRL, 1, '°C'), ''],
+    ['Ist-RL', f(istRL, 1, '°C'), ''],
+    ['Rücklauffehler (Soll-RL − Ist-RL)', rlErr !== null ? sg(rlErr, 1, 'K') + (rlErr >= 0 ? ' (RL unter Soll)' : ' (RL über Soll)') : '–', ''],
+    ['Spreizung Ist / Ziel', f(spread, 1) + ' / ' + f(zDelta, 1, 'K'), ''],
+    ['Verdichter', running ? f(freq, 0, 'Hz') + ' · seit ' + Math.round(rt || 0) + ' min' : 'steht (letzter Lauf ' + f(rtLast, 0, 'min') + ')', ''],
+    ['Leistung elektrisch', f(pel, 0, 'W'), ''],
+    ['Leistung thermisch', pth !== null ? f(pth, 0, 'W') + (pthHs !== null ? ' (HeishaMon)' : ' (berechnet)') : '–', ''],
+    ['COP', copNow !== null ? f(copNow, 1) : '–', ''],
+    ['Flow · Pumpe (nur Beobachtung)', f(flw, 1, 'l/min') + ' · ' + (HP.Pump_Duty ? f(HP.Pump_Duty.v, 0) : '–') + ' / ' + (HP.Pump_Speed ? f(HP.Pump_Speed.v, 0, 'U/min') : '–'), ''],
+    ['Taktung', 'heute ' + f(startsToday, 0) + ' Starts · Ø Lauf 24 h ' + (meanRun !== null ? f(meanRun, 0, 'min') : '–') + ' (' + runs24.length + ')', cycleBad ? 'warn' : ''],
+    ['Quiet aktuell', qNow !== null ? 'Stufe ' + qNow + ' seit ' + dur(now - qs.levelSince) + (prio !== null ? ' · Priorität ' + (prio === 1 ? 'Ton' : 'Leistung') : '') : '–', ''],
+    ['Quiet empfohlen (Shadow)', target !== null ? 'Stufe ' + target : '–', target !== null && qNow !== null && target !== qNow ? 'warn' : ''],
+    ['Nächster Schritt', nextTxt, ''],
+    ['Grund', why.filter(Boolean).join(' · '), ''],
+    ['Sperrgrund', lockTxt, ''],
+    ['Quellen der Stufe', srcs.join(' · ') + (lastCmd ? ' · letzter Befehl ' + hhmm(lastCmd.ts) : ' · kein Befehl beobachtet'), ''],
+    ['Hinweis', (Q.note || '') + ' · bei ' + f(wLo, 0) + '–' + f(wHi, 0) + ' °C Außentemperatur muss Quiet aus sein · Schwellen vorläufig (' + f(T[0], 1) + ' / ' + f(T[1], 1) + ' / ' + f(T[2], 1) + ' K), nur Vorschlag', '']
+];
+var tab = [0, 1, 2, 3].map(function (lv) {
+    var s = qs.stats[lv];
+    if (!s || !s.n) { return ['Stufe ' + lv, '–', '–', '–', '–', '–', '–', '–', '–', '–', '–']; }
+    var m = function (k, d) { var a = s.s[k]; return a && a[1] ? f(a[0] / a[1], d) : '–'; };
+    return ['Stufe ' + lv, f(s.n, 0), m('hz', 0), m('pel', 0), m('pth', 0), m('cop', 1), m('vl', 1) + ' / ' + m('rl', 1) + ' / ' + m('dt', 1), m('flow', 1), m('at', 1), f(s.starts, 0) + ' / ' + (s.starts ? f(s.runMin / s.starts, 0) : '–'), f(s.defrosts, 0)];
+});
+
+// ---------- Protokoll: jede Minute bei laufendem Verdichter oder Stufenwechsel, sonst alle 5 min; Statistik alle 10 min sichern
+var month = new Date(now).getFullYear() + '-' + ('0' + (new Date(now).getMonth() + 1)).slice(-2);
+var out = [{payload: {rows: rows}}, {payload: {stats: tab}}, null];
+if (!qs.lastLog || now - qs.lastLog >= (running ? 1 : 5) * MS_MIN - 1000) {
+    var d = new Date(now), pad = function (n) { return (n < 10 ? '0' : '') + n; };
+    var iso = month + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+    var cols = ['zeit', 'quiet_aktuell', 'quiet_ziel', 'quiet_naechster', 'quiet_grund', 'quiet_sperre', 'haltezeit_rest_min', 'soll_vl', 'ist_vl', 'soll_rl', 'ist_rl', 'rl_fehler', 'rl_fehler_gegl',
+                'spreizung_ist', 'spreizung_ziel', 'verdichter_hz', 'leistung_el_w', 'leistung_th_heisha_w', 'leistung_th_berechnet_w', 'cop_momentan', 'flow_l_min', 'pumpe_duty', 'pumpe_speed',
+                'pumpe_max_duty', 'fan1', 'fan2', 'verdichter_strom', 'aussen', 'verdichter_laufzeit_min', 'letzte_laufzeit_min', 'starts_heute', 'lauf_mittel_24h_min', 'defrost', 'warmwasser', 'softstart',
+                'raum_defizit', 'raum_defizit_name', 'raum_trend', 'waermeverteilung', 'quiet_prioritaet', 'taktung_kritisch', 'quiet_aussen_regel'];
+    var hv = function (n) { return HP[n] && typeof HP[n].v === 'number' ? HP[n].v : null; };
+    var vals2 = [iso, qNow, target, next, why.filter(Boolean).join(' | ').replace(/,/g, ';'), locks.join(' + ').replace(/,/g, ';'), Math.ceil(holdLeft / MS_MIN), c(solVL), c(istVL), c(solRL), c(istRL), c(rlErr), c(qs.errS),
+                 c(spread), c(zDelta), c(freq), c(pel), c(pthHs), c(pthCalc), c(copNow), c(flw), c(hv('Pump_Duty')), c(hv('Pump_Speed')), c(hv('Max_Pump_Duty')), c(fan1), c(hv('Fan2_Motor_Speed')),
+                 c(hv('Compressor_Current')), c(at), c(rt), c(rtLast), c(startsToday), c(meanRun), defrost ? 1 : 0, dhw ? 1 : 0, ssRamp ? 1 : 0,
+                 sFresh ? (S.deficit ? 1 : 0) : '', sFresh ? String(S.deficitRoom || '').replace(/,/g, ';') : '', sFresh ? c(S.coldTrend) : '', sFresh ? (S.distrib ? 1 : 0) : '', prio === null ? '' : prio, cycleBad ? 1 : 0, atWin ? 1 : 0];
+    var file = '/data/optimizer/quiet-' + month + '.csv', head = cols.join(',');
+    var needHead = true;
+    if (flow.get('qHead') === month + '|' + head) { needHead = false; }
+    else {
+        flow.set('qHead', month + '|' + head);
+        try { var lastH = null; String(fs.readFileSync(file, 'utf8')).split('\n').forEach(function (l) { if (l.indexOf('zeit,') === 0) { lastH = l; } }); needHead = lastH !== head; } catch (e) { needHead = true; }
+    }
+    out[2] = {filename: file, payload: (needHead ? head + '\n' : '') + vals2.join(',') + '\n'};
+    qs.lastLog = now;
+}
+if (!qs.lastSave || now - qs.lastSave >= 10 * MS_MIN) {
+    try { fs.mkdirSync('/data/optimizer', {recursive: true}); fs.writeFileSync('/data/optimizer/quiet-stats.json', JSON.stringify({stats: qs.stats, level: qs.level, since: qs.levelSince, runs: qs.runs})); qs.lastSave = now; } catch (e) { /* kein Zugriff */ }
+}
+flow.set('qs', qs);
+return out;
 """
 
 EVAL_JS = r"""
@@ -663,6 +902,8 @@ try {
     global.set('OPT_shift_applied', ctApplied);                                                     // wird von der Summenfunktion gelesen (nur wenn frisch)
     global.set('OPT_shift_ts', now);
     flow.set('ctl', ctSt);
+    var ctWorst = ctBelow.length ? ctPick(ctBelow, 'mLow') : null;                                  // Komfortzustand fuer die Quiet-Empfehlung
+    global.set('OPT_state', {ts: now, deficit: ctBelow.length > 0, deficitRoom: ctWorst ? ctWorst.x.name : '', coldTrend: ctWorst ? ctWorst.tr : null, distrib: ctDistrib, valid: valids.length, active: ctAct.length});
     ctRes = {on: ctOn, probe: ctProbe, cur: ctSt.cur, want: ctWant, applied: ctApplied, code: ctCode, lead: ctLead ? ctLead.x.name : '', distrib: ctDistrib,
              locks: ctLocks, holdLeft: ctHoldLeft, since: ctSt.since, startK: ctStart, relK: ctRel, holdMin: ctHold / MS_MIN, rtcOn: ctRtcOn};
 } catch (e) {
@@ -689,7 +930,7 @@ else if (heat) { reason = heat.name + ' zu kalt (' + f(-heat.dev, 1, 'K') + ' un
 else if (over) { reason = over.name + ' zu warm (' + f(over.dev, 1, 'K') + ' über Maximum)'; }
 else { reason = 'alle gültigen Räume im eigenen Komfortband'; }
 
-var out = [{payload: {rows: rowsWx}}, {payload: {sum: sum, rooms: roomsOut, ctl: ctlOut}}, {payload: {rows: rowsWp}}, null, null, null, null, {payload: {rows: rowsCalc}}];
+var out = [{payload: {rows: rowsWx}}, {payload: {sum: sum, rooms: roomsOut, ctl: ctlOut}}, {payload: {rows: rowsWp}}, null, null, null, null, {payload: {rows: rowsCalc}}, {payload: 'quiet'}];
 
 // ---------- Protokoll (alle log.intervalMin Minuten, CSV) und Ereignisse
 var d = new Date(now), pad = function (n) { return (n < 10 ? '0' : '') + n; };
@@ -770,7 +1011,8 @@ return out;
 upsert({"id": UI_TAB, "type": "ui_tab", "name": "Optimierung", "icon": "tune", "order": 12.5, "disabled": False, "hidden": False})
 # one wide card for the rooms (situation + settings), three slim status cards next to it; templates: width 0 = group width
 GROUPS = [("opt_g_rooms", "Räume und Komfortbänder", 12), ("opt_g_opt", "Optimierung", 6),
-          ("opt_g_wx", "Außen & Wetter", 6), ("opt_g_calc", "Berechnete Außentemperatur", 6), ("opt_g_wp", "Wärmepumpe", 6)]
+          ("opt_g_wx", "Außen & Wetter", 6), ("opt_g_calc", "Berechnete Außentemperatur", 6), ("opt_g_quiet", "Leistung & Quiet (Shadow)", 6), ("opt_g_wp", "Wärmepumpe", 6),
+          ("opt_g_qstats", "Quiet-Stufen: reale Messwerte", 12)]
 for _order, (gid, gname, gwidth) in enumerate(GROUPS, 1):
     upsert({"id": gid, "type": "ui_group", "name": gname, "tab": UI_TAB, "order": _order, "disp": True,
             "width": gwidth, "collapse": False, "className": ""})
@@ -819,6 +1061,18 @@ def template(i, gid, height, y):
 upsert(template("opt_t_opt", "opt_g_opt", 6, 140))
 upsert(template("opt_t_wx", "opt_g_wx", 7, 200))
 upsert(template("opt_t_calc", "opt_g_calc", 8, 230))
+upsert(template("opt_t_quiet", "opt_g_quiet", 16, 290))
+QSTATS = """<style>.optq{width:100%;border-collapse:collapse;font-size:13px}
+.optq th{text-align:left;font-weight:normal;color:#666;padding:4px 6px;border-bottom:1px solid #ccc;font-size:12px}
+.optq td{padding:5px 6px;border-bottom:1px solid #eee;white-space:nowrap}
+.optq-note{font-size:12px;color:#777;padding:6px 2px}</style>
+<div class="optfit"><div style="overflow-x:auto"><table class="optq"><tr><th>Stufe</th><th>Minuten Lauf</th><th>Ø Hz</th><th>Ø P el. (W)</th><th>Ø P th. (W)</th><th>Ø COP</th>
+<th>Ø VL / RL / ΔT (°C)</th><th>Ø Flow (l/min)</th><th>Ø Außen (°C)</th><th>Starts / Ø Lauf (min)</th><th>Abtauungen</th></tr>
+<tr ng-repeat="r in msg.payload.stats track by $index"><td ng-repeat="c in r track by $index">{{c}}</td></tr></table></div>
+<div class="optq-note">Nur Minuten mit laufendem Verdichter, ohne Abtauen und Warmwasser. Die Tabelle füllt sich nur für Stufen, die tatsächlich benutzt werden.</div></div>"""
+upsert({"id": "opt_t_qstats", "type": "ui_template", "z": TAB, "group": "opt_g_qstats", "name": "Quiet-Statistik", "order": 1, "width": 0, "height": 4,
+        "format": QSTATS + FIT_JS.replace("__ID__", "opt_t_qstats"), "storeOutMessages": True, "fwdInMessages": False, "resendOnRefresh": True,
+        "templateScope": "local", "className": "", "x": 1260, "y": 320, "wires": [[]]})
 upsert(template("opt_t_wp", "opt_g_wp", 6, 260))
 
 
@@ -926,8 +1180,24 @@ upsert(fn("opt_owm_parse", "OWM-Antwort auswerten", OWM_PARSE_JS, 1, [[]], 880, 
 
 upsert(comment("opt_c4", "Auswertung jede Minute → Anzeige + Protokoll (CSV in /data/optimizer)", 380, 700))
 upsert(inject("opt_i_tick", "jede Minute", 60, 15, ["opt_eval"], 140, 760))
-upsert(fn("opt_eval", "Auswerten · Anzeigen · Protokollieren", EVAL_JS, 8,
-          [["opt_t_wx"], ["opt_t_rooms"], ["opt_t_wp"], ["opt_t_opt"], ["opt_f_log"], ["opt_f_ev"], ["opt_ui_wxstatus"], ["opt_t_calc"]], 420, 760, FS))
+upsert(fn("opt_eval", "Auswerten · Anzeigen · Protokollieren", EVAL_JS, 9,
+          [["opt_t_wx"], ["opt_t_rooms"], ["opt_t_wp"], ["opt_t_opt"], ["opt_f_log"], ["opt_f_ev"], ["opt_ui_wxstatus"], ["opt_t_calc"], ["opt_quiet"]], 420, 760, FS))
+
+# ---------------------------------------------------------------- phase 4 (shadow): quiet recommendation; READ ONLY, there is no mqtt out in this tab
+upsert(comment("opt_c5", "Quiet-Empfehlung (Shadow): Anlagenwerte nur lesen, Stufe NICHT schalten", 380, 1060))
+upsert({"id": "opt_broker_nas", "type": "mqtt-broker", "name": "MQTT (NAS) Optimizer lesen", "broker": "10.10.10.128", "port": "1883",
+        "clientid": "nodered-optimizer-nas", "autoConnect": True, "usetls": False, "protocolVersion": "4", "keepalive": "60",
+        "cleansession": True, "autoUnsubscribe": True, "birthTopic": "", "birthQos": "0", "birthRetain": "false", "birthPayload": "",
+        "birthMsg": {}, "closeTopic": "", "closeQos": "0", "closeRetain": "false", "closePayload": "", "closeMsg": {}, "willTopic": "",
+        "willQos": "0", "willRetain": "false", "willPayload": "", "willMsg": {}, "userProps": "", "sessionExpiry": ""})
+for _i, _t in enumerate(("panasonic_heat_pump/main/+", "panasonic_heat_pump/extra/+", "panasonic_heat_pump/commands/SetQuietMode")):
+    upsert({"id": f"opt_mqtt_hp_{_i}", "type": "mqtt in", "z": TAB, "name": "", "topic": _t, "qos": "0", "datatype": "auto-detect",
+            "broker": "opt_broker_nas", "nl": False, "rap": True, "rh": 0, "inputs": 0, "x": 160, "y": 1120 + 60 * _i, "wires": [["opt_hp_in"]]})
+upsert(fn("opt_hp_in", "Anlagenwerte lesen (nur lesen)", HP_IN_JS, 1, [["opt_f_qev"]], 440, 1180, FS))
+upsert(fn("opt_quiet", "Quiet-Empfehlung (Shadow)", QUIET_JS, 3, [["opt_t_quiet"], ["opt_t_qstats"], ["opt_f_quiet"]], 700, 1060, FS))
+for _fid, _name, _y in (("opt_f_qev", "Quiet-Ereignisse", 1180), ("opt_f_quiet", "Quiet-Protokoll", 1060)):
+    upsert({"id": _fid, "type": "file", "z": TAB, "name": _name, "filename": "filename", "filenameType": "msg", "appendNewline": False,
+            "createDir": True, "overwriteFile": "false", "encoding": "utf8", "x": 960, "y": _y, "wires": [[]]})
 for fid, name, y in (("opt_f_log", "Protokoll", 700), ("opt_f_ev", "Ereignisse", 780)):
     upsert({"id": fid, "type": "file", "z": TAB, "name": name, "filename": "filename", "filenameType": "msg",
             "appendNewline": False, "createDir": True, "overwriteFile": "false", "encoding": "utf8",
