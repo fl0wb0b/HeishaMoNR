@@ -249,7 +249,17 @@ check('Raum ohne Daten: "keine Daten", zaehlt nicht', rowOf(s, 'schlaf').valid.s
 console.log('\n--- Einstellungen je Raum');
 const cf = () => JSON.parse(files['/data/optimizer/config.json'].data);
 let r2 = setv('room:schlaf:min', 18);
-check('gueltige Eingabe wird uebernommen, in config.json gespeichert und sofort ausgewertet (Ausgang 2)', Array.isArray(r2) && r2[0] === null && r2[1].payload === 'auswerten' && gstore.OPT_cfg.rooms[2].min === 18 && cf().rooms[2].min === 18, JSON.stringify(cf().rooms[2]));
+check('gueltige Eingabe wird uebernommen, in config.json gespeichert und sofort ausgewertet (Ausgang 2)', Array.isArray(r2) && r2[0] === null && r2[1].payload === 'auswerten' && gstore.OPT_cfg.rooms[2].min === 18 && cf().rooms.find(x => x.id === 'schlaf').min === 18, JSON.stringify(cf().rooms));
+check('Standardwerte: ein alter Wert aus dem Speicher (pMaxKw 9, Tarif) ueberschreibt neue Standardwerte von plan/energy nicht; ein in config.json gesetzter Wert gewinnt; Raum-Eingaben bleiben', (() => {
+  const keepCfg = files['/data/optimizer/config.json'].data;
+  gstore.OPT_cfg.plan.pMaxKw = 9; gstore.OPT_cfg.energy.tariff = {buy: [['00:00', '24:00', 9.99]], sell: 1}; gstore.OPT_cfg.rooms[2].min = 18.5;
+  run('opt_defaults', {}); const a = gstore.OPT_cfg.plan.pMaxKw === 5 && gstore.OPT_cfg.energy.tariff.buy[0][2] === 0.21 && gstore.OPT_cfg.rooms[2].min === 18.5;
+  const sv = JSON.parse(keepCfg); sv.plan = {pMaxKw: 4}; files['/data/optimizer/config.json'].data = JSON.stringify(sv); gstore.OPT_cfg.plan.pMaxKw = 9; run('opt_defaults', {});
+  const b = gstore.OPT_cfg.plan.pMaxKw === 4 && gstore.OPT_cfg.plan.mMax === 1.6; files['/data/optimizer/config.json'].data = keepCfg; run('opt_defaults', {}); return a && b; })(), '');
+check('Speichern haelt nur die Eingabe fest: keine Standardwerte (plan, energy, ...) werden in config.json eingefroren, andere Raeume bleiben unberuehrt', !('plan' in cf()) && !('energy' in cf()) && !('quiet' in cf()) && cf().rooms.find(x => x.id === 'schlaf').min === 18 && cf().rooms.every(x => !('name' in x) && !('topic' in x)), JSON.stringify(cf()));
+setv('room:ki_oben:weight', 2); setv('control.holdMin', 50);
+check('weitere Eingaben ergaenzen die Datei (anderer Raum, Gruppenwert), frueheres bleibt', cf().rooms.find(x => x.id === 'schlaf').min === 18 && cf().rooms.find(x => x.id === 'ki_oben').weight === 2 && cf().control.holdMin === 50 && !('plan' in cf()), JSON.stringify(cf()));
+check('nach einem Neustart gelten gespeicherte Eingaben UND neue Standardwerte (plan bleibt frisch)', (() => { delete gstore.OPT_cfg; run('opt_defaults', {}); return gstore.OPT_cfg.rooms[2].min === 18 && gstore.OPT_cfg.rooms[0].weight === 2 && gstore.OPT_cfg.control.holdMin === 50 && gstore.OPT_cfg.plan.pMaxKw === 5; })(), '');
 const rejectedCases = [
   ['Minimum ueber Maximum (21,8 > 21)', 'room:schlaf:min', 21.8], ['Band schmaler als 0,5 K (max 18,2 bei min 18)', 'room:schlaf:max', 18.2],
   ['ausserhalb des Bereichs (min 40)', 'room:schlaf:min', 40], ['Gewicht 0', 'room:schlaf:weight', 0], ['Datenalter 2 min', 'room:schlaf:maxAgeMin', 2],
@@ -262,7 +272,7 @@ rejectedCases.forEach(([name, topic, val]) => {
 check('Ablehnungstext nennt den erlaubten Bereich', setv('room:schlaf:min', 40)[0].payload.includes('erlaubt: 10 bis 30'), '');
 check('unbekannter Raum / unbekanntes Feld werden ignoriert', setv('room:gibtsnicht:min', 20) === null && setv('room:schlaf:farbe', 20) === null, '');
 const tog = setv('room:schlaf:active', false);
-check('Umschalten von "Aktiv" wird gespeichert und sofort ausgewertet', Array.isArray(tog) && tog[0] === null && tog[1].payload === 'auswerten' && cf().rooms[2].active === false, JSON.stringify(tog));
+check('Umschalten von "Aktiv" wird gespeichert und sofort ausgewertet', Array.isArray(tog) && tog[0] === null && tog[1].payload === 'auswerten' && cf().rooms.find(x => x.id === 'schlaf').active === false, JSON.stringify(tog));
 setv('room:schlaf:active', true);
 setv('room:ki_oben:min', 22.0); setv('room:ki_oben:weight', 1.5); setv('room:ki_oben:maxAgeMin', 60); setv('room:ki_unten:active', false);
 
@@ -770,13 +780,26 @@ console.log('\n--- Phase 4b: Kennfeld je Quiet-Stufe und Aussentemperatur');
 world(); let outs = collect(20); let tab = outs[outs.length - 1][1].payload.stats;
 check('Kennfeld: Stufe 3 bei 5 °C landet im Bereich 3-7 °C, andere Stufen "keine Daten"', trow(tab, 3, '3–7 °C') && nm(trow(tab, 3, '3–7 °C')[2]) >= 19 && trow(tab, 0)[1] === 'keine Daten' && trow(tab, 2)[1] === 'keine Daten', JSON.stringify(trow(tab, 3, '3–7 °C')));
 const r3 = trow(tab, 3, '3–7 °C');
-check('Kennfeld-Spalten: Hz 20, Fan 400, P el. 600, Soll VL/RL 29,0 / 26,0, Flow 12,0, Komfortdefizit 0 %', r3[3] === '20' && r3[4] === '400' && r3[5] === '600' && r3[9] === '29,0 / 26,0' && r3[10] === '12,0' && r3[14] === '0 %', r3.join(' | '));
+check('Kennfeld-Spalten: Hz 20, Fan 400, P el. 600, Soll VL/RL 29,0 / 26,0, Flow 12,0, Komfortdefizit 0 %', r3[3] === '20' && r3[4] === '400' && r3[5] === '600' && r3[11] === '29,0 / 26,0' && r3[12] === '12,0' && r3[16] === '0 %', r3.join(' | '));
 [[-2, '< 0 °C'], [1, '0–3 °C'], [2.9, '0–3 °C'], [3, '3–7 °C'], [8, '7–12 °C'], [12, '> 12 °C'], [15, '> 12 °C']].forEach(([a, b]) => { world({TOP14_Outside_Temp: a}); const o = collect(3); const t = o[o.length - 1][1].payload.stats; check('Aussentemperatur ' + a + ' °C -> Bereich ' + b, !!trow(t, 3, b), t.filter(r => r[1] !== 'keine Daten').map(r => r[1]).join()); });
 world({TOP14_Outside_Temp: -2}); collect(5); gstore.TOP14_Outside_Temp = 8; outs = collect(5); tab = outs[outs.length - 1][1].payload.stats;
-check('gleiche Stufe bei -2 und 8 °C wird getrennt gefuehrt (nicht vermischt)', !!trow(tab, 3, '< 0 °C') && !!trow(tab, 3, '7–12 °C') && trow(tab, 3, '< 0 °C')[8].startsWith('28,5'), tab.filter(r => r[1] !== 'keine Daten').map(r => r[1] + ':' + r[2]).join(' '));
+check('gleiche Stufe bei -2 und 8 °C wird getrennt gefuehrt (nicht vermischt)', !!trow(tab, 3, '< 0 °C') && !!trow(tab, 3, '7–12 °C') && trow(tab, 3, '< 0 °C')[10].startsWith('28,5'), tab.filter(r => r[1] !== 'keine Daten').map(r => r[1] + ':' + r[2]).join(' '));
 world({}); gstore.OPT_state = {ts: T0, deficit: true, deficitRoom: 'Schlafzimmer', coldTrend: 0, distrib: false, valid: 3, active: 3};
 outs = collect(10, () => { gstore.OPT_state.ts = NOW; }); tab = outs[outs.length - 1][1].payload.stats;
-check('Komfortdefizit-Anteil je Kennfeldzeile (hier 100 %)', trow(tab, 3, '3–7 °C')[14] === '100 %', trow(tab, 3, '3–7 °C')[14]);
+world({TOP14_Outside_Temp: 5, compressor_frequency: 32, compressor_runtime: 1, TOP16_Heat_Energy_Consumption: 591, TOP1_Pump_Flow: 40, TOP6_Main_Outlet_Temp: 31, TOP5_Main_Inlet_Temp: 24});
+collect(2, () => { gstore.compressor_runtime = 1; });                                              // Anlauf: Frequenzspitze und grosse Spreizung, noch nicht eingeschwungen
+let mt = collect(1)[0][1].payload.stats, mr = trow(mt, 3, '3–7 °C');
+check('Hoechstwerte: die Frequenzspitze im Anlauf (32 Hz) wird erfasst, die Leistungsspitze im Anlauf (Laufzeit 1 min) nicht (keine Kapazitaet)', mr && mr[7] === '32' && mr[8] === '–', mr && mr.slice(0, 10).join(' | '));
+world({TOP14_Outside_Temp: 5, compressor_frequency: 20, compressor_runtime: 30, TOP16_Heat_Energy_Consumption: 600, TOP1_Pump_Flow: 12, TOP6_Main_Outlet_Temp: 31, TOP5_Main_Inlet_Temp: 27});
+collect(3, () => { gstore.compressor_runtime = 30; });
+gstore.compressor_frequency = 30; gstore.TOP16_Heat_Energy_Consumption = 800; gstore.TOP1_Pump_Flow = 14; gstore.compressor_runtime = 31; collect(2, () => { gstore.compressor_runtime = 31; });
+gstore.compressor_frequency = 18; gstore.TOP16_Heat_Energy_Consumption = 400; gstore.TOP1_Pump_Flow = 10; collect(2, () => { gstore.compressor_runtime = 32; });
+mt = collect(1)[0][1].payload.stats; mr = trow(mt, 3, '3–7 °C');
+const kfm = fstore.qs.kf['3|2'].mx;
+check('Hoechstwerte: im eingeschwungenen Lauf (ab 10 min) wird die hoechste Frequenz (30 Hz) und die hoechste Waermeleistung (14 l/min x 4 K x 69,7 = 3903 W) festgehalten, spaetere kleinere Werte aendern sie nicht', kfm.hz === 30 && Math.abs(kfm.pth - 3903.2) < 1 && mr[7] === '30' && mr[8] === '3903', JSON.stringify(kfm) + ' ' + (mr && mr[7] + '/' + mr[8]));
+collect(11, () => { gstore.compressor_runtime = 33; });
+check('Hoechstwerte werden mit der Statistik gesichert und ueberstehen einen Neustart (quiet-stats.json enthaelt mx, nach dem Laden noch da)', (() => { const fj = files['/data/optimizer/quiet-stats.json']; const j = fj ? JSON.parse(fj.data) : null; const mxf = j && j.kf['3|2'] && j.kf['3|2'].mx; delete fstore.qs; collect(1); const mxr = fstore.qs.kf['3|2'].mx; return !!mxf && mxf.hz === 30 && mxr && mxr.hz === 30 && Math.abs(mxr.pth - 3903.2) < 1; })(), '');
+check('Komfortdefizit-Anteil je Kennfeldzeile (hier 100 %)', trow(tab, 3, '3–7 °C')[16] === '100 %', trow(tab, 3, '3–7 °C')[16]);
 world({}); collect(3); gstore.compressor_frequency = 0; collect(2); gstore.compressor_frequency = 20; collect(40);
 check('Starts/h und mittlere Laufzeit je Zeile (2 Starts)', fstore.qs.kf['3|2'].starts === 2 && trow(collect(1)[0][1].payload.stats, 3, '3–7 °C')[11] !== '–', JSON.stringify(fstore.qs.kf['3|2'].starts));
 
@@ -978,6 +1001,7 @@ function pworld(o) {
   NOW = T0 + (O.start || 0);
   Object.assign(gstore, {Z1_Heat_Curve_Outside_Low_Temp: -13, Z1_Heat_Curve_Outside_High_Temp: 11, Z1_Heat_Curve_Target_Low_Temp: 38, Z1_Heat_Curve_Target_High_Temp: 29, compressor_frequency: 0, TOP26_Defrosting_State: 0, TOP20_ThreeWay_Valve_State: 0});
   if (O.running) { Object.assign(gstore, {compressor_frequency: 40, TOP16_Heat_Energy_Consumption: 600}); }
+  if (O.quiet !== undefined) { gstore.TOP18_Quiet_Mode_Level = O.quiet; }
   run('opt_defaults', {});
   if (O.wide) { gstore.OPT_cfg.rooms.forEach(r => { r.min = 18; r.max = 26; }); }
   if (O.band) { gstore.OPT_cfg.rooms.forEach(r => { r.min = O.band[0]; r.max = O.band[1]; }); }
@@ -988,10 +1012,11 @@ function pworld(o) {
 }
 function step(minutes, hook) {
   let o = null; const all = [];
-  for (let m = 0; m < minutes; m++) { NOW += 60000; pfeed(); if (hook) { hook(m); } o = run('opt_plan', {}); all.push(o); }
+  for (let m = 0; m < minutes; m++) { NOW += 60000; pfeed(); if (hook) { hook(m); } o = run('opt_plan', {}); all.push(o); lastOut = o; }
   return all;
 }
 const planNow = () => fstore.plan.plan;
+let lastOut = null; const planRows = () => lastOut[0].payload.rows;
 const cumDev = P => { let d = 0; return P.slots.slice(0, 104).map(x => (d += x.p - x.b)); };
 const sumF = (P, k, n) => P.slots.slice(0, n || 104).reduce((a, x) => a + x[k], 0);
 
@@ -1076,6 +1101,19 @@ pworld({band: [22.5, 23.5], rooms: {ki_oben: 23, ki_unten: 23, schlaf: 23}}); st
 check('Komfort: enges Band (1 K) -> kleine Reserve (3 kWh/K x (0,5 K - 0,3 K Sicherheitsabstand) = 0,6 kWh), Verschiebung hoechstens so gross', Math.abs(P.res.down - 0.6) < 1e-9 && cumDev(P).every(d => Math.abs(d) <= 0.6 + 1e-9), P.res.down.toFixed(2) + ' ' + Math.max(...cumDev(P).map(Math.abs)).toFixed(2));
 pworld({band: [22.5, 23.5], rooms: {ki_oben: 23, ki_unten: 23, schlaf: 23}, trend: {ki_oben: -0.3}}); step(2); P = planNow();
 check('Komfort: kuehlt ein Raum ab (-0,3 K/h), schrumpft die Reserve nach hinten (Trend ueber 2 h eingerechnet)', P.res.down === 0, P.res.down.toFixed(2));
+
+// ---- 3b) Leistungsgrenze der Anlage (5-kW-Modell) und Deckel der Quiet-Stufe
+pworld({wide: true}); step(2); P = planNow();
+check('Leistungsgrenze: ohne gesetzte Quiet-Stufe gilt die Nennleistung 5 kW (nicht mehr 9 kW), Quelle "Modell"', P.cap.kw === 5 && P.cap.src === 'Modell' && gstore.OPT_cfg.plan.pMaxKw === 5, JSON.stringify(P.cap));
+pworld({wide: true, quiet: 3}); step(2); P = planNow(); let rcap = Object.fromEntries(planRows());
+check('Leistungsgrenze: Quiet 3 begrenzt auf die Annahme 3,3 kW (ungemessen, so gekennzeichnet), Anzeige nennt Bedarf und Grenz-Aussentemperatur (15 - 3,3/0,22 = 0 °C)', P.cap.kw === 3.3 && P.cap.src === 'Annahme' && /^3,3 kW \(Annahme\) · höchster Bedarf \d,\d kW um \d\d:\d\d · reicht bis ca\. 0 °C Außen$/.test(rcap['Leistungsgrenze (Quiet 3)']), JSON.stringify(P.cap) + ' | ' + rcap['Leistungsgrenze (Quiet 3)']);
+pworld({wide: true, quiet: 3, qs: {kf: {'3|1': {n: 100, starts: 1, defrosts: 0, runMin: 100, dMin: 0, s: {}, mx: {hz: 32, pth: 3800, pel: 900}}}}}); step(2); P = planNow();
+check('Leistungsgrenze: ein hoeherer gemessener Dauerwert (3,8 kW) ersetzt die Annahme, Quelle "gemessen"', P.cap.kw === 3.8 && P.cap.src === 'gemessen' && P.cap.obs === 3.8, JSON.stringify(P.cap));
+pworld({wide: true, quiet: 3, atBase: -8}); step(2); P = planNow(); rcap = Object.fromEntries(planRows());
+check('Leistungsgrenze: reicht der Deckel im Frost nicht (Bedarf ueber 90 % der Grenze), steht die Zeile auf Warnung', P.maxDemand.kw > P.cap.kw * 0.9 && planRows().find(x => x[0].startsWith('Leistungsgrenze'))[2] === 'warn', P.maxDemand.kw.toFixed(1) + ' kW vs ' + P.cap.kw);
+check('Leistungsgrenze: der Plan empfiehlt nie mehr Waerme, als die Grenze liefern kann (ausser der ohnehin noetige Normalverlauf)', P.slots.slice(0, 96).every(x => x.p <= Math.max(x.b, P.cap.kw * 0.25 + 0.05 + 1e-9)), Math.max(...P.slots.map(x => x.p)).toFixed(2));
+pworld({wide: true, quiet: 1}); step(2); P = planNow();
+check('Leistungsgrenze: fuer Stufen ohne Annahme (hier Stufe 1) gilt die Nennleistung', P.cap.kw === 5 && P.cap.src === 'Modell' && P.cap.level === 1, JSON.stringify(P.cap));
 
 // ---- 4) Prognosevertrauen je Horizont
 pworld({wide: true}); step(2); P = planNow();
