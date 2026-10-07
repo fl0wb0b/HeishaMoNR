@@ -679,7 +679,7 @@ if (!j || !j.token || !j.id) {
 }
 flow.set('vrmInfo', {hasToken: true, tokenLen: String(j.token).length, id: j.id});
 var nowS = Math.floor(Date.now() / 1000);
-return {topic: 'vrm', method: 'GET', headers: {'x-authorization': 'Token ' + j.token},
+return {topic: 'vrm', headers: {'x-authorization': 'Token ' + j.token},
         url: 'https://vrmapi.victronenergy.com/v2/installations/' + encodeURIComponent(j.id) + '/stats?type=forecast&interval=hours&start=' + (nowS - 3600) + '&end=' + (nowS + 48 * 3600)};
 """
 
