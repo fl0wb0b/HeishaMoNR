@@ -82087,6 +82087,13 @@
                 "type": "checkbox",
                 "required": false,
                 "rows": null
+            },
+            {
+                "label": "OPTIMIERUNG",
+                "value": "Optimierung",
+                "type": "checkbox",
+                "required": false,
+                "rows": null
             }
         ],
         "formValue": {
@@ -82098,7 +82105,8 @@
             "Zeitplan": false,
             "Temperaturen": false,
             "Effizienz": false,
-            "Gradtage": false
+            "Gradtage": false,
+            "Optimierung": false
         },
         "payload": "",
         "submit": "Setzen",
@@ -91008,6 +91016,649 @@
             [
                 "fce687f80b334b9e"
             ]
+        ]
+    },
+    {
+        "id": "opt_tab",
+        "type": "tab",
+        "label": "WP Optimizer",
+        "disabled": false,
+        "info": "Phase 1 der Lambda-artigen Optimierung: Sensorik, Glättung, Trends, Protokoll und Anzeige.\nKEIN Eingriff in die Regelung.\n\nTab-Umgebungsvariablen (Tab-Eigenschaften > Umgebungsvariablen):\n  OWM_API_KEY  (Typ: Zugangsdaten) - OpenWeatherMap-API-Schlüssel\n  OWM_LAT, OWM_LON - Standort in Dezimalgrad\nOhne diese Werte läuft alles, nur die Wetterdaten bleiben leer.",
+        "env": [
+            {
+                "name": "OWM_API_KEY",
+                "value": "",
+                "type": "cred"
+            },
+            {
+                "name": "OWM_LAT",
+                "value": "",
+                "type": "str"
+            },
+            {
+                "name": "OWM_LON",
+                "value": "",
+                "type": "str"
+            }
+        ]
+    },
+    {
+        "id": "opt_broker_venus",
+        "type": "mqtt-broker",
+        "name": "MQTT (Venus) Optimizer",
+        "broker": "192.168.5.11",
+        "port": "1883",
+        "clientid": "nodered-optimizer",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": "4",
+        "keepalive": "60",
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "opt_ui_tab",
+        "type": "ui_tab",
+        "name": "Optimierung",
+        "icon": "tune",
+        "order": 12.5,
+        "disabled": false,
+        "hidden": false
+    },
+    {
+        "id": "opt_g_wx",
+        "type": "ui_group",
+        "name": "Außen & Wetter",
+        "tab": "opt_ui_tab",
+        "order": 1,
+        "disp": true,
+        "width": 6,
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "opt_g_room",
+        "type": "ui_group",
+        "name": "Räume & Komfort",
+        "tab": "opt_ui_tab",
+        "order": 2,
+        "disp": true,
+        "width": 6,
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "opt_g_wp",
+        "type": "ui_group",
+        "name": "Wärmepumpe",
+        "tab": "opt_ui_tab",
+        "order": 3,
+        "disp": true,
+        "width": 6,
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "opt_g_opt",
+        "type": "ui_group",
+        "name": "Optimierung & Einstellungen",
+        "tab": "opt_ui_tab",
+        "order": 4,
+        "disp": true,
+        "width": 6,
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "opt_t_wx",
+        "type": "ui_template",
+        "z": "opt_tab",
+        "group": "opt_g_wx",
+        "name": "",
+        "order": 1,
+        "width": 6,
+        "height": 8,
+        "format": "<style>.opt td{padding:3px 4px;vertical-align:top} .opt .l{color:#666} .opt .v{text-align:right;font-weight:bold} .opt .warn{color:#c62828} .opt .ok{color:#2e7d32}</style><table class=\"opt\" style=\"width:100%\"><tr ng-repeat=\"r in msg.payload.rows track by $index\"><td class=\"l\">{{r[0]}}</td><td class=\"v\" ng-class=\"r[2]\">{{r[1]}}</td></tr></table>",
+        "storeOutMessages": true,
+        "fwdInMessages": false,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "className": "",
+        "x": 1260,
+        "y": 140,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "opt_t_room",
+        "type": "ui_template",
+        "z": "opt_tab",
+        "group": "opt_g_room",
+        "name": "",
+        "order": 1,
+        "width": 6,
+        "height": 9,
+        "format": "<style>.opt td{padding:3px 4px;vertical-align:top} .opt .l{color:#666} .opt .v{text-align:right;font-weight:bold} .opt .warn{color:#c62828} .opt .ok{color:#2e7d32}</style><table class=\"opt\" style=\"width:100%\"><tr ng-repeat=\"r in msg.payload.rows track by $index\"><td class=\"l\">{{r[0]}}</td><td class=\"v\" ng-class=\"r[2]\">{{r[1]}}</td></tr></table>",
+        "storeOutMessages": true,
+        "fwdInMessages": false,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "className": "",
+        "x": 1260,
+        "y": 200,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "opt_t_wp",
+        "type": "ui_template",
+        "z": "opt_tab",
+        "group": "opt_g_wp",
+        "name": "",
+        "order": 1,
+        "width": 6,
+        "height": 7,
+        "format": "<style>.opt td{padding:3px 4px;vertical-align:top} .opt .l{color:#666} .opt .v{text-align:right;font-weight:bold} .opt .warn{color:#c62828} .opt .ok{color:#2e7d32}</style><table class=\"opt\" style=\"width:100%\"><tr ng-repeat=\"r in msg.payload.rows track by $index\"><td class=\"l\">{{r[0]}}</td><td class=\"v\" ng-class=\"r[2]\">{{r[1]}}</td></tr></table>",
+        "storeOutMessages": true,
+        "fwdInMessages": false,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "className": "",
+        "x": 1260,
+        "y": 260,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "opt_t_opt",
+        "type": "ui_template",
+        "z": "opt_tab",
+        "group": "opt_g_opt",
+        "name": "",
+        "order": 1,
+        "width": 6,
+        "height": 3,
+        "format": "<style>.opt td{padding:3px 4px;vertical-align:top} .opt .l{color:#666} .opt .v{text-align:right;font-weight:bold} .opt .warn{color:#c62828} .opt .ok{color:#2e7d32}</style><table class=\"opt\" style=\"width:100%\"><tr ng-repeat=\"r in msg.payload.rows track by $index\"><td class=\"l\">{{r[0]}}</td><td class=\"v\" ng-class=\"r[2]\">{{r[1]}}</td></tr></table>",
+        "storeOutMessages": true,
+        "fwdInMessages": false,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "className": "",
+        "x": 1260,
+        "y": 320,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "opt_n_low",
+        "type": "ui_numeric",
+        "z": "opt_tab",
+        "name": "Komfortband unten (°C)",
+        "label": "Komfortband unten (°C)",
+        "tooltip": "",
+        "group": "opt_g_opt",
+        "order": 2,
+        "width": 6,
+        "height": 1,
+        "wrap": false,
+        "passthru": false,
+        "topic": "comfort.low",
+        "topicType": "str",
+        "format": "{{value}}",
+        "min": 15,
+        "max": 26,
+        "step": 0.1,
+        "className": "",
+        "x": 560,
+        "y": 400,
+        "wires": [
+            [
+                "opt_set"
+            ]
+        ]
+    },
+    {
+        "id": "opt_n_high",
+        "type": "ui_numeric",
+        "z": "opt_tab",
+        "name": "Komfortband oben (°C)",
+        "label": "Komfortband oben (°C)",
+        "tooltip": "",
+        "group": "opt_g_opt",
+        "order": 3,
+        "width": 6,
+        "height": 1,
+        "wrap": false,
+        "passthru": false,
+        "topic": "comfort.high",
+        "topicType": "str",
+        "format": "{{value}}",
+        "min": 16,
+        "max": 28,
+        "step": 0.1,
+        "className": "",
+        "x": 560,
+        "y": 440,
+        "wires": [
+            [
+                "opt_set"
+            ]
+        ]
+    },
+    {
+        "id": "opt_n_age",
+        "type": "ui_numeric",
+        "z": "opt_tab",
+        "name": "Sensor gilt als veraltet nach (min)",
+        "label": "Sensor gilt als veraltet nach (min)",
+        "tooltip": "",
+        "group": "opt_g_opt",
+        "order": 4,
+        "width": 6,
+        "height": 1,
+        "wrap": false,
+        "passthru": false,
+        "topic": "sensor.maxAgeMin",
+        "topicType": "str",
+        "format": "{{value}}",
+        "min": 5,
+        "max": 360,
+        "step": 5,
+        "className": "",
+        "x": 560,
+        "y": 480,
+        "wires": [
+            [
+                "opt_set"
+            ]
+        ]
+    },
+    {
+        "id": "opt_c1",
+        "type": "comment",
+        "z": "opt_tab",
+        "name": "Phase 1: nur messen, glätten, anzeigen, protokollieren – KEIN Eingriff in die Regelung",
+        "info": "",
+        "x": 380,
+        "y": 40,
+        "wires": []
+    },
+    {
+        "id": "opt_c2",
+        "type": "comment",
+        "z": "opt_tab",
+        "name": "Raumsensoren (Venus-Broker) → Plausibilität, Ausreißer, Glättung, Trend",
+        "info": "",
+        "x": 380,
+        "y": 80,
+        "wires": []
+    },
+    {
+        "id": "opt_i_init",
+        "type": "inject",
+        "z": "opt_tab",
+        "name": "Standardwerte",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": true,
+        "onceDelay": "3",
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 140,
+        "y": 140,
+        "wires": [
+            [
+                "opt_defaults"
+            ]
+        ]
+    },
+    {
+        "id": "opt_defaults",
+        "type": "function",
+        "z": "opt_tab",
+        "name": "Standardwerte setzen",
+        "func": "\n// Standardwerte der Optimierungsebene. Bereits gesetzte Werte (z. B. aus dem Dashboard) bleiben erhalten.\nvar d = {\n    rooms: [\n        {id: 'ki_oben',  name: 'Kinderzimmer oben',  topic: 'shellyhtg3-lucas/status/temperature:0'},\n        {id: 'ki_unten', name: 'Kinderzimmer unten', topic: 'shellyhtg3-lina/status/temperature:0'},\n        {id: 'schlaf',   name: 'Schlafzimmer',       topic: 'shellies/shellyht-Schlaf/sensor/temperature'}\n    ],\n    comfort: {low: 22.5, high: 23.5},\n    sensor:  {maxAgeMin: 90, min: 10, max: 35, maxJumpK: 2, emaTauMin: 30, trendWindowMin: 120, trendMinSpanMin: 30, trendMinSamples: 3},\n    weather: {intervalMin: 10, maxAgeMin: 60},\n    log:     {intervalMin: 5}\n};\nfunction merge(base, over) {\n    if (!over || typeof over !== 'object') { return base; }\n    Object.keys(over).forEach(function (k) {\n        if (base[k] && typeof base[k] === 'object' && !Array.isArray(base[k]) && typeof over[k] === 'object' && !Array.isArray(over[k])) {\n            base[k] = merge(base[k], over[k]);\n        } else if (over[k] !== undefined && over[k] !== null) { base[k] = over[k]; }\n    });\n    return base;\n}\nvar cfg = merge(d, global.get('OPT_cfg'));\nglobal.set('OPT_cfg', cfg);\n// aktuelle Werte an die Dashboard-Eingabefelder geben\nreturn [{payload: cfg.comfort.low}, {payload: cfg.comfort.high}, {payload: cfg.sensor.maxAgeMin}];\n",
+        "outputs": 3,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 380,
+        "y": 140,
+        "wires": [
+            [
+                "opt_n_low"
+            ],
+            [
+                "opt_n_high"
+            ],
+            [
+                "opt_n_age"
+            ]
+        ]
+    },
+    {
+        "id": "opt_set",
+        "type": "function",
+        "z": "opt_tab",
+        "name": "Einstellung übernehmen",
+        "func": "\n// Eingabefelder im Dashboard -> Konfiguration (msg.topic = Pfad, z. B. comfort.low)\nvar cfg = global.get('OPT_cfg');\nvar v = Number(msg.payload);\nif (!cfg || !isFinite(v)) { return null; }\nvar p = String(msg.topic).split('.');\nif (p.length === 2 && cfg[p[0]] && typeof cfg[p[0]] === 'object') {\n    cfg[p[0]][p[1]] = v;\n    global.set('OPT_cfg', cfg);\n}\nreturn null;\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 780,
+        "y": 440,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "opt_mqtt_0",
+        "type": "mqtt in",
+        "z": "opt_tab",
+        "name": "",
+        "topic": "+/status/temperature:0",
+        "qos": "1",
+        "datatype": "auto-detect",
+        "broker": "opt_broker_venus",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 160,
+        "y": 200,
+        "wires": [
+            [
+                "opt_room_in"
+            ]
+        ]
+    },
+    {
+        "id": "opt_mqtt_1",
+        "type": "mqtt in",
+        "z": "opt_tab",
+        "name": "",
+        "topic": "shellies/+/sensor/temperature",
+        "qos": "1",
+        "datatype": "auto-detect",
+        "broker": "opt_broker_venus",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 160,
+        "y": 260,
+        "wires": [
+            [
+                "opt_room_in"
+            ]
+        ]
+    },
+    {
+        "id": "opt_room_in",
+        "type": "function",
+        "z": "opt_tab",
+        "name": "Raumsensor verarbeiten",
+        "func": "\n// Raumsensor: Plausibilitaet, Ausreisser, Glaettung (EMA), Trend (Regression in K/h). Keine Regelwirkung.\nvar cfg = global.get('OPT_cfg');\nif (!cfg) { return null; }\nvar room = (cfg.rooms || []).find(function (r) { return r.topic === msg.topic; });\nif (!room) { return null; }                       // anderer Shelly, nicht in der Liste\n\nvar v = msg.payload;\nif (Buffer.isBuffer(v)) { v = v.toString(); }\nif (typeof v === 'string') { try { v = JSON.parse(v); } catch (e) { /* reine Zahl */ } }\nif (v && typeof v === 'object') { v = (v.tC !== undefined) ? v.tC : ((v.temperature !== undefined) ? v.temperature : v.value); }\nv = Number(v);\n\nvar s = cfg.sensor, now = Date.now();\nvar R = global.get('OPT_rooms') || {};\nvar st = R[room.id] || {name: room.name, samples: [], ok: 0, rejected: 0};\nst.name = room.name;\n\nfunction reject(why) {\n    st.rejected++; st.last_reject = {ts: now, v: v, why: why};\n    R[room.id] = st; global.set('OPT_rooms', R);\n    return null;\n}\nif (!isFinite(v) || v < s.min || v > s.max) { return reject('unplausibel'); }\n// Ausreisser: ein Sprung ueber maxJumpK gegenueber dem letzten Wert gilt erst, wenn ihn ein zweiter Wert bestaetigt\nif (st.last !== undefined && (now - st.ts) < 30 * 60000 && Math.abs(v - st.last) > s.maxJumpK) {\n    if (st.pending !== undefined && Math.abs(v - st.pending) <= 1.0) { delete st.pending; }\n    else { st.pending = v; return reject('Sprung'); }\n} else { delete st.pending; }\n\nvar dtMin = st.ts ? Math.max(0, (now - st.ts) / 60000) : 0;\nvar alpha = (st.ema === undefined) ? 1 : 1 - Math.exp(-dtMin / s.emaTauMin);\nst.ema = (st.ema === undefined) ? v : st.ema + alpha * (v - st.ema);\nst.last = v; st.ts = now; st.ok++;\n\nvar cutoff = now - 3 * 3600 * 1000;\nst.samples.push([now, v]);\nst.samples = st.samples.filter(function (x) { return x[0] >= cutoff; });\nif (st.samples.length > 300) { st.samples = st.samples.slice(-300); }\n\n// Trend ueber das Fenster (lineare Regression), nur mit genug Messpunkten und Zeitspanne\nvar from = now - s.trendWindowMin * 60000;\nvar pts = st.samples.filter(function (x) { return x[0] >= from; });\nst.trend = null;\nif (pts.length >= s.trendMinSamples && (pts[pts.length - 1][0] - pts[0][0]) >= s.trendMinSpanMin * 60000) {\n    var n = pts.length, t0 = pts[0][0], sx = 0, sy = 0, sxx = 0, sxy = 0;\n    pts.forEach(function (p) { var x = (p[0] - t0) / 3600000; sx += x; sy += p[1]; sxx += x * x; sxy += x * p[1]; });\n    var den = n * sxx - sx * sx;\n    if (den > 1e-9) { st.trend = Math.round(((n * sxy - sx * sy) / den) * 100) / 100; }\n}\nR[room.id] = st;\nglobal.set('OPT_rooms', R);\nreturn null;\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 420,
+        "y": 230,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "opt_c3",
+        "type": "comment",
+        "z": "opt_tab",
+        "name": "OpenWeatherMap (optional): Schlüssel/Standort als Tab-Umgebungsvariablen eintragen",
+        "info": "",
+        "x": 380,
+        "y": 540,
+        "wires": []
+    },
+    {
+        "id": "opt_i_wx",
+        "type": "inject",
+        "z": "opt_tab",
+        "name": "Wetter abrufen",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "600",
+        "crontab": "",
+        "once": true,
+        "onceDelay": "20",
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 140,
+        "y": 600,
+        "wires": [
+            [
+                "opt_owm_req"
+            ]
+        ]
+    },
+    {
+        "id": "opt_owm_req",
+        "type": "function",
+        "z": "opt_tab",
+        "name": "OWM-Anfrage",
+        "func": "\n// OpenWeatherMap abrufen (Free-Tarif: aktuelles Wetter + 3-Stunden-Vorhersage). Ohne Schluessel/Standort passiert nichts.\nvar key = env.get('OWM_API_KEY'), lat = env.get('OWM_LAT'), lon = env.get('OWM_LON');\nvar W = global.get('OPT_weather') || {};\nif (!key || !lat || !lon) {\n    W.status = 'nicht konfiguriert';\n    global.set('OPT_weather', W);\n    return null;\n}\nW.lastTry = Date.now();\nglobal.set('OPT_weather', W);\nvar base = 'https://api.openweathermap.org/data/2.5/';\nvar q = '?lat=' + encodeURIComponent(lat) + '&lon=' + encodeURIComponent(lon) + '&units=metric&lang=de&appid=' + encodeURIComponent(key);\nnode.send({topic: 'current',  url: base + 'weather' + q});\nnode.send({topic: 'forecast', url: base + 'forecast' + q + '&cnt=4'});\nreturn null;\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 380,
+        "y": 600,
+        "wires": [
+            [
+                "opt_http"
+            ]
+        ]
+    },
+    {
+        "id": "opt_http",
+        "type": "http request",
+        "z": "opt_tab",
+        "name": "OpenWeatherMap",
+        "method": "GET",
+        "ret": "obj",
+        "paytoqs": "ignore",
+        "url": "",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": false,
+        "headers": [],
+        "x": 620,
+        "y": 600,
+        "wires": [
+            [
+                "opt_owm_parse"
+            ]
+        ]
+    },
+    {
+        "id": "opt_catch",
+        "type": "catch",
+        "z": "opt_tab",
+        "name": "",
+        "scope": [
+            "opt_http"
+        ],
+        "uncaught": false,
+        "x": 620,
+        "y": 660,
+        "wires": [
+            [
+                "opt_owm_parse"
+            ]
+        ]
+    },
+    {
+        "id": "opt_owm_parse",
+        "type": "function",
+        "z": "opt_tab",
+        "name": "OWM-Antwort auswerten",
+        "func": "\n// Antwort von OpenWeatherMap einordnen. Fehler setzen nur den Status, die letzten gueltigen Werte bleiben (und altern).\nvar W = global.get('OPT_weather') || {};\nif (msg.error) {                                   // aus dem catch-Node\n    W.status = 'Fehler: ' + String((msg.error.message || 'unbekannt')).replace(/appid=[^&\\s]+/g, 'appid=***').slice(0, 80);\n    global.set('OPT_weather', W);\n    return null;\n}\nif (msg.statusCode !== 200 || !msg.payload || typeof msg.payload !== 'object') {\n    W.status = 'Fehler: HTTP ' + msg.statusCode;\n    global.set('OPT_weather', W);\n    return null;\n}\nvar p = msg.payload, now = Date.now();\nfunction dew(t, rh) { var a = 17.62, b = 243.12, g = Math.log(Math.max(rh, 1) / 100) + a * t / (b + t); return b * g / (a - g); }\nif (msg.topic === 'current' && p.main) {\n    W.temp = p.main.temp; W.rh = p.main.humidity; W.dew = Math.round(dew(p.main.temp, p.main.humidity) * 10) / 10;\n    W.clouds = p.clouds ? p.clouds.all : null; W.wind = p.wind ? p.wind.speed : null; W.pressure = p.main.pressure;\n    W.desc = (p.weather && p.weather[0]) ? p.weather[0].description : '';\n    W.ts = now; W.status = 'OK';\n}\nif (msg.topic === 'forecast' && Array.isArray(p.list) && W.temp !== undefined) {\n    // +1/+3/+6 h per linearer Interpolation zwischen \"jetzt\" und den 3-Stunden-Werten\n    var pts = [{t: now, v: W.temp, h: W.rh, c: W.clouds}].concat(p.list.map(function (e) {\n        return {t: e.dt * 1000, v: e.main.temp, h: e.main.humidity, c: e.clouds ? e.clouds.all : null};\n    }));\n    function at(hours, key) {\n        var target = now + hours * 3600000;\n        for (var i = 1; i < pts.length; i++) {\n            if (pts[i].t >= target) {\n                var a = pts[i - 1], b = pts[i], f = (target - a.t) / (b.t - a.t);\n                return Math.round((a[key] + f * (b[key] - a[key])) * 10) / 10;\n            }\n        }\n        return null;\n    }\n    W.f1 = at(1, 'v'); W.f3 = at(3, 'v'); W.f6 = at(6, 'v');\n    W.f3_rh = at(3, 'h'); W.f_ts = now;\n}\nglobal.set('OPT_weather', W);\nreturn null;\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 880,
+        "y": 600,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "opt_c4",
+        "type": "comment",
+        "z": "opt_tab",
+        "name": "Auswertung jede Minute → Anzeige + Protokoll (CSV in /data/optimizer)",
+        "info": "",
+        "x": 380,
+        "y": 700,
+        "wires": []
+    },
+    {
+        "id": "opt_i_tick",
+        "type": "inject",
+        "z": "opt_tab",
+        "name": "jede Minute",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "60",
+        "crontab": "",
+        "once": true,
+        "onceDelay": "15",
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 140,
+        "y": 760,
+        "wires": [
+            [
+                "opt_eval"
+            ]
+        ]
+    },
+    {
+        "id": "opt_eval",
+        "type": "function",
+        "z": "opt_tab",
+        "name": "Auswerten · Anzeigen · Protokollieren",
+        "func": "\n// Einmal pro Minute: Werte zusammenfuehren, bewerten, anzeigen und protokollieren. KEIN Eingriff in die Regelung.\nvar cfg = global.get('OPT_cfg');\nif (!cfg) { return null; }\nvar now = Date.now();\nvar R = global.get('OPT_rooms') || {};\nvar W = global.get('OPT_weather') || {};\nvar G = function (k) { return global.get(k); };\n\nfunction num(v) { v = Number(v); return isFinite(v) ? v : null; }\nfunction f(v, d, unit) { if (v === null || v === undefined || !isFinite(v)) { return '–'; } return Number(v).toFixed(d).replace('.', ',') + (unit ? ' ' + unit : ''); }\nfunction ageMin(ts) { return ts ? Math.round((now - ts) / 60000) : null; }\nfunction arrow(t) { if (t === null || t === undefined) { return '·'; } return t >= 0.05 ? '↑' : (t <= -0.05 ? '↓' : '→'); }\nfunction age(a) { return a === null ? 'keine Daten' : (a < 60 ? a + ' min' : (a / 60).toFixed(1).replace('.', ',') + ' h'); }\n\n// ---------- Raeume\nvar sMax = cfg.sensor.maxAgeMin, ids = Object.keys(R);\nvar fresh = [];\nids.forEach(function (id) {\n    var r = R[id], a = ageMin(r.ts);\n    r.age = a; r.valid = (a !== null && a <= sMax && r.ema !== undefined);\n    if (r.valid) { fresh.push(r); }\n});\nvar cold = null, warm = null;\nfresh.forEach(function (r) { if (cold === null || r.ema < cold.ema) { cold = r; } if (warm === null || r.ema > warm.ema) { warm = r; } });\nvar total = (cfg.rooms || []).length;\nvar low = cfg.comfort.low, high = cfg.comfort.high;\nvar band = 'keine Raumdaten', bandCls = 'warn', room = null;\nif (cold && warm) {\n    room = Math.min(cold.ema - low, high - warm.ema);\n    if (cold.ema < low) { band = 'Kältester Raum unter dem Komfortband'; bandCls = 'warn'; }\n    else if (warm.ema > high) { band = 'Wärmster Raum über dem Komfortband'; bandCls = 'warn'; }\n    else { band = 'innerhalb · Spielraum ' + f(room, 1, 'K'); bandCls = 'ok'; }\n}\nvar oldest = fresh.length ? Math.max.apply(null, fresh.map(function (r) { return r.age; })) : null;\nvar rowsRoom = [\n    ['Kältester Raum', cold ? f(cold.ema, 1, '°C') + ' ' + arrow(cold.trend) + ' ' + (cold.trend === null ? 'Trend n. v.' : f(cold.trend, 2, 'K/h')) : '–', cold && cold.ema < low ? 'warn' : ''],\n    ['   ' + (cold ? cold.name : ''), cold ? 'Wert ' + f(cold.last, 1, '°C') + ' · vor ' + age(cold.age) : '', ''],\n    ['Wärmster Raum', warm ? f(warm.ema, 1, '°C') + ' ' + arrow(warm.trend) + ' ' + (warm.trend === null ? 'Trend n. v.' : f(warm.trend, 2, 'K/h')) : '–', warm && warm.ema > high ? 'warn' : ''],\n    ['   ' + (warm ? warm.name : ''), warm ? 'Wert ' + f(warm.last, 1, '°C') + ' · vor ' + age(warm.age) : '', ''],\n    ['Komfortband', f(low, 1) + ' – ' + f(high, 1, '°C'), ''],\n    ['Bewertung', band, bandCls],\n    ['Sensoren aktuell', fresh.length + ' von ' + total + (oldest !== null ? ' · ältester ' + age(oldest) : '') + ' · Limit ' + age(sMax), fresh.length < 2 ? 'warn' : '']\n];\nids.forEach(function (id) {\n    var r = R[id];\n    rowsRoom.push([r.name, r.valid ? f(r.ema, 1, '°C') + ' (' + age(r.age) + ')' : 'veraltet (' + age(r.age) + ')', r.valid ? '' : 'warn']);\n});\n\n// ---------- Aussen / Wetter\nvar tp = num(G('TOP14_Outside_Temp')), tw = (W.ts && ageMin(W.ts) <= cfg.weather.maxAgeMin) ? W.temp : null;\nvar wAge = ageMin(W.ts), wOk = (W.status === 'OK' && wAge !== null && wAge <= cfg.weather.maxAgeMin);\nvar rowsWx = [\n    ['Außen Panasonic', f(tp, 1, '°C'), ''],\n    ['Außen Wetterdienst', tw !== null ? f(tw, 1, '°C') : '–', ''],\n    ['Differenz Wetter − Panasonic', (tw !== null && tp !== null) ? f(tw - tp, 1, 'K') : '–', ''],\n    ['Prognose +1 h', wOk ? f(W.f1, 1, '°C') : '–', ''],\n    ['Prognose +3 h', wOk ? f(W.f3, 1, '°C') : '–', ''],\n    ['Prognose +6 h', wOk ? f(W.f6, 1, '°C') : '–', ''],\n    ['Luftfeuchtigkeit', wOk ? f(W.rh, 0, '%') : '–', ''],\n    ['Taupunkt', wOk ? f(W.dew, 1, '°C') : '–', ''],\n    ['Bewölkung', (wOk && W.clouds !== null && W.clouds !== undefined) ? f(W.clouds, 0, '%') : '–', ''],\n    ['Wetterdaten', (W.status || 'noch nicht abgerufen') + (wAge !== null ? ' · Alter ' + age(wAge) : ''), wOk ? 'ok' : ''],\n    ['Regelwert Außentemperatur', f(tp, 1, '°C') + ' (Panasonic, unverändert)', '']\n];\n\n// ---------- Waermepumpe\nvar freq = num(G('compressor_frequency')) || 0, valve = num(G('TOP20_ThreeWay_Valve_State')), defrost = num(G('TOP26_Defrosting_State')) === 1;\nvar ss = G('F_SS'), ssOn = ss && ss.state === 1;\nvar pOn = num(G('TOP0_Heatpump_State')) === 1;\nvar mode = !pOn ? 'Aus' : (defrost ? 'Abtauen' : (valve === 1 ? 'Warmwasser' : (freq > 0 ? 'Heizen' : 'Bereit (Verdichter steht)')));\nvar shiftBase = null, ccc = G('F_CCC'); if (ccc && ccc.z1) { shiftBase = num(ccc.z1.SP_DIRECT_virt); }\nvar rtc = G('F_RTC'), rtcCorr = (rtc && rtc.z1) ? num(rtc.z1.correction_value) : null;\nvar shiftFinal = num(G('SHIFT_Final')), target = num(G('TOP42_Z1_Water_Target_Temp'));\nvar inl = num(G('TOP5_Main_Inlet_Temp')), outl = num(G('TOP6_Main_Outlet_Temp')), pw = num(G('TOP16_Heat_Energy_Consumption')), cop = num(G('COP_HEAT'));\nvar rowsWp = [\n    ['Betriebszustand', mode + (ssOn ? ' · Sanftanlauf aktiv' : ''), ''],\n    ['Soll-Vorlauf (Panasonic-Heizkurve)', f(target, 0, '°C'), ''],\n    ['Basis-Verschiebung (manuell)', f(shiftBase, 0, 'K'), ''],\n    ['Raumregelung-Korrektur (bestehend)', f(rtcCorr, 0, 'K'), ''],\n    ['Finale Verschiebung', f(shiftFinal, 0, 'K'), ''],\n    ['Vorlauf / Rücklauf', f(outl, 1) + ' / ' + f(inl, 1, '°C'), ''],\n    ['Verdichter', f(freq, 0, 'Hz'), ''],\n    ['Leistung · COP', f(pw, 0, 'W') + ' · ' + (freq > 0 ? f(cop, 1) : '–'), ''],\n    ['Starts heute', f(num(G('Starts_Today')), 0), '']\n];\n\n// ---------- Optimierung (Phase 1)\nvar lastLog = flow.get('lastLog');\nvar reason;\nif (!cold || !warm) { reason = 'Beobachtung · zu wenig aktuelle Raumdaten'; }\nelse if (cold.ema < low) { reason = 'Beobachtung · kältester Raum (' + cold.name + ') liegt unter dem Komfortband'; }\nelse if (warm.ema > high) { reason = 'Beobachtung · wärmster Raum (' + warm.name + ') liegt über dem Komfortband'; }\nelse { reason = 'Beobachtung · beide Räume im Komfortband'; }\nvar out = [{payload: {rows: rowsWx}}, {payload: {rows: rowsRoom}}, {payload: {rows: rowsWp}}, null, null, null];\n\n// ---------- Protokoll (alle log.intervalMin Minuten) und Ereignisse\nvar d = new Date(now), pad = function (n) { return (n < 10 ? '0' : '') + n; };\nvar month = d.getFullYear() + '-' + pad(d.getMonth() + 1);\nvar iso = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());\nfunction c(v) { return (v === null || v === undefined || !isFinite(v)) ? '' : String(Math.round(v * 100) / 100); }\nif (!lastLog || (now - lastLog) >= cfg.log.intervalMin * 60000) {\n    var head = 'zeit,aussen_panasonic,aussen_wetter,wetter_feuchte,wetter_taupunkt,prog_1h,prog_3h,prog_6h,wetter_alter_min,' +\n        'raum_kalt,raum_kalt_trend,raum_kalt_name,raum_warm,raum_warm_trend,raum_warm_name,sensoren_aktuell,' +\n        'soll_vorlauf,shift_basis,shift_rtc,shift_final,vorlauf,ruecklauf,verdichter_hz,leistung_w,cop,defrost,warmwasser,sanftanlauf,starts_heute\\n';\n    var line = [iso, c(tp), c(tw), c(wOk ? W.rh : null), c(wOk ? W.dew : null), c(wOk ? W.f1 : null), c(wOk ? W.f3 : null), c(wOk ? W.f6 : null), c(wAge),\n        c(cold ? cold.ema : null), c(cold ? cold.trend : null), cold ? cold.name : '', c(warm ? warm.ema : null), c(warm ? warm.trend : null), warm ? warm.name : '', fresh.length,\n        c(target), c(shiftBase), c(rtcCorr), c(shiftFinal), c(outl), c(inl), c(freq), c(pw), c(freq > 0 ? cop : null), defrost ? 1 : 0, valve === 1 ? 1 : 0, ssOn ? 1 : 0, c(num(G('Starts_Today')))].join(',') + '\\n';\n    var hdr = flow.get('logHeader');\n    out[4] = {filename: '/data/optimizer/optimizer-' + month + '.csv', payload: (hdr === month ? '' : head) + line};\n    flow.set('logHeader', month);\n    flow.set('lastLog', now);\n    lastLog = now;\n}\nvar rowsOpt = [\n    ['Modus', 'Phase 1 · nur Beobachtung, kein Eingriff', 'ok'],\n    ['Grund', reason, ''],\n    ['Raumkorrektur durch Optimierung', '0 K (nicht aktiv)', ''],\n    ['Protokoll', lastLog ? 'letzter Eintrag ' + new Date(lastLog).toLocaleTimeString('de-DE', {hour: '2-digit', minute: '2-digit'}) : 'noch kein Eintrag', '']\n];\n\nout[3] = {payload: {rows: rowsOpt}};\n// Zustandswechsel als Ereignisse (fuer die spaetere Auswertung)\nvar prev = flow.get('prevState') || {};\nvar cur = {verdichter: freq > 0 ? 1 : 0, defrost: defrost ? 1 : 0, warmwasser: valve === 1 ? 1 : 0, sanftanlauf: ssOn ? 1 : 0,\n           komfort: (cold && warm) ? ((cold.ema < low) ? 'kalt' : (warm.ema > high ? 'warm' : 'ok')) : 'unbekannt'};\nvar ev = [];\nObject.keys(cur).forEach(function (k) { if (prev[k] !== undefined && prev[k] !== cur[k]) { ev.push(iso + ',' + k + ',' + prev[k] + '->' + cur[k]); } });\nflow.set('prevState', cur);\nif (ev.length) {\n    var eh = flow.get('evHeader');\n    out[5] = {filename: '/data/optimizer/optimizer-events-' + month + '.csv', payload: (eh === month ? '' : 'zeit,ereignis,wechsel\\n') + ev.join('\\n') + '\\n'};\n    flow.set('evHeader', month);\n}\nreturn out;\n",
+        "outputs": 6,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 420,
+        "y": 760,
+        "wires": [
+            [
+                "opt_t_wx"
+            ],
+            [
+                "opt_t_room"
+            ],
+            [
+                "opt_t_wp"
+            ],
+            [
+                "opt_t_opt"
+            ],
+            [
+                "opt_f_log"
+            ],
+            [
+                "opt_f_ev"
+            ]
+        ]
+    },
+    {
+        "id": "opt_f_log",
+        "type": "file",
+        "z": "opt_tab",
+        "name": "Protokoll",
+        "filename": "filename",
+        "filenameType": "msg",
+        "appendNewline": false,
+        "createDir": true,
+        "overwriteFile": "false",
+        "encoding": "utf8",
+        "x": 960,
+        "y": 700,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "opt_f_ev",
+        "type": "file",
+        "z": "opt_tab",
+        "name": "Ereignisse",
+        "filename": "filename",
+        "filenameType": "msg",
+        "appendNewline": false,
+        "createDir": true,
+        "overwriteFile": "false",
+        "encoding": "utf8",
+        "x": 960,
+        "y": 780,
+        "wires": [
+            []
         ]
     }
 ]
