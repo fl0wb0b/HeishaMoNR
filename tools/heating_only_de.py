@@ -703,6 +703,22 @@ if OUT_TOP not in B and "a1c0b0000c0f0042" in B:
     B[OUT_TOP] = flows[-1]
     node("a1c0b0000c0f0042")["wires"] = [[OUT_TOP]]
 
+# the COP chart gets the same store/load as the other line charts, otherwise every deploy of the tab empties it
+COP_ST, COP_LD, COP_IJ, COP_CH = "a1c0b0000c0f0060", "a1c0b0000c0f0061", "a1c0b0000c0f0062", "a1c0b0000c0f0012"
+if COP_ST not in B and COP_CH in B:
+    flows.append({"id": COP_ST, "type": "function", "z": WP_DASH, "name": "COP Diagramm speichern",
+                  "func": 'global.set("chart-cop", msg, "file");', "outputs": 1, "timeout": 0, "noerr": 0,
+                  "initialize": "", "finalize": "", "libs": [], "x": 980, "y": 2100, "wires": [[]]})
+    flows.append({"id": COP_LD, "type": "function", "z": WP_DASH, "name": "COP Diagramm laden",
+                  "func": 'var m = global.get("chart-cop", "file");\nreturn m ? m : null;', "outputs": 1,
+                  "timeout": 0, "noerr": 0, "initialize": "", "finalize": "", "libs": [], "x": 760, "y": 2140,
+                  "wires": [[COP_CH]]})
+    flows.append({"id": COP_IJ, "type": "inject", "z": WP_DASH, "name": "", "props": [{"p": "payload"}],
+                  "repeat": "", "crontab": "", "once": True, "onceDelay": "2", "topic": "", "payload": "",
+                  "payloadType": "date", "x": 560, "y": 2140, "wires": [[COP_LD]]})
+    B[COP_ST], B[COP_LD], B[COP_IJ] = flows[-3], flows[-2], flows[-1]
+    node(COP_CH)["wires"] = [[COP_ST]]
+
 if errors:
     print("\n".join("ERROR: " + e for e in errors))
     sys.exit(1)

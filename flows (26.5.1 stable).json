@@ -90684,7 +90684,9 @@
         "x": 760,
         "y": 2100,
         "wires": [
-            []
+            [
+                "a1c0b0000c0f0060"
+            ]
         ]
     },
     {
@@ -90922,6 +90924,69 @@
         "wires": [
             [
                 "a1c0b0000c0f0043"
+            ]
+        ]
+    },
+    {
+        "id": "a1c0b0000c0f0060",
+        "type": "function",
+        "z": "8c9d42231fd19d3c",
+        "name": "COP Diagramm speichern",
+        "func": "global.set(\"chart-cop\", msg, \"file\");",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 980,
+        "y": 2100,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "a1c0b0000c0f0061",
+        "type": "function",
+        "z": "8c9d42231fd19d3c",
+        "name": "COP Diagramm laden",
+        "func": "var m = global.get(\"chart-cop\", \"file\");\nreturn m ? m : null;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 760,
+        "y": 2140,
+        "wires": [
+            [
+                "a1c0b0000c0f0012"
+            ]
+        ]
+    },
+    {
+        "id": "a1c0b0000c0f0062",
+        "type": "inject",
+        "z": "8c9d42231fd19d3c",
+        "name": "",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": true,
+        "onceDelay": "2",
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 560,
+        "y": 2140,
+        "wires": [
+            [
+                "a1c0b0000c0f0061"
             ]
         ]
     }
