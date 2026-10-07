@@ -611,7 +611,7 @@ def remap_form(form_id, value_map, drop):
 
 
 remap_form(MENU_TABS_FORM,
-           {"SETTINGS": "Einstellungen", "Pumpspeed": "Pumpendrehzahl", "SCHEDULER": "Zeitplan",
+           {"SETTINGS": "Einstellungen", "CCC": "Heizkurve", "Pumpspeed": "Pumpendrehzahl", "SCHEDULER": "Zeitplan",
             "TEMPERATURES": "Temperaturen", "EFFICIENCY": "Effizienz", "Degree_days": "Gradtage"},
            drop={"COOL", "Solar²DHW"})
 remap_form(MENU_HOME_FORM,
@@ -624,6 +624,48 @@ remap_form(MENU_SETTINGS_FORM,
 
 # the flow re-sends "hide Power" every 5 minutes; add the tabs of a heating-only installation to it
 setf("63c695317a49ea6b", "payload", '{"tabs":{"hide":["Power"]}}', '{"tabs":{"hide":["Power","Cool","Solar²DHW"]}}')
+# a string payload would be read by ui_control as "switch to tab <text>"; it has to be an object to hide tabs
+setf("63c695317a49ea6b", "payloadType", "str", "json")
+
+# ================================================================ phase 6: CCC -> Heizkurve, Pumpspeed chart legend
+setf("12842f4ef6ffc342", "label", "CCC", "Heizkurve")           # Home: "CCC (13 °C)" = Heizkurve (Außentemperatur)
+rep("f2ccd5d9f4518044", "func", "msg1.topic = 'Flow (L/min)';", "msg1.topic = 'Durchfluss (l/min)';")
+rep("f2ccd5d9f4518044", "func", "msg2.topic = 'Maximum pumpspeed (%)';", "msg2.topic = 'Max. Pumpendrehzahl (%)';")
+rep("f2ccd5d9f4518044", "func", "msg4.topic = 'Mode';", "msg4.topic = 'Modus';")
+
+# ================================================================ phase 7: chart legends (series names = msg.topic)
+def series_names(i, mapping):
+    """Rename series by changing `msg.topic = 'old'` assignments; refuses if the text is also compared in the node."""
+    n = node(i)
+    code = n["func"]
+    for old, new in mapping.items():
+        pat = re.compile(r"(\.topic\s*=\s*)(['\"])" + re.escape(old) + r"\2")
+        k = len(pat.findall(code))
+        if k == 0:
+            if new in code:
+                continue
+            errors.append(f"{i}: topic {old!r} not found")
+            continue
+        if re.search(r"(==|!=)=?\s*['\"]" + re.escape(old) + r"['\"]|['\"]" + re.escape(old) + r"['\"]\s*(==|!=)", code):
+            errors.append(f"{i}: {old!r} is compared in the code, not renaming")
+            continue
+        code = pat.sub(lambda m: m.group(1) + m.group(2) + new + m.group(2), code)
+    n["func"] = code
+
+
+series_names("5b0c451c1ec63b84", {"T outside": "Außentemp.", "SP WAR": "Sollwert Heizkurve"})        # Heizkurve zone 1 profile
+series_names("6500967add5c38cf", {"T outside": "Außentemp.", "SP WAR": "Sollwert Heizkurve"})        # Heizkurve zone 2 profile
+for fid in ("6c95ed35d3dcaea3", "9a4c2e2328c9aa18"):                                                   # Heizkurve time chart
+    series_names(fid, {"T outside": "Außentemp.", "CCC Setpoint": "Sollwert Heizkurve",
+                       "T outside custom": "Außentemp. (eigener Sensor)"})
+series_names("38a2e1df7e0bdb2a", {"Room SP": "Raum Soll", "Room PV": "Raum Ist", "Floor T1": "Boden T1",
+                                  "Floor T2": "Boden T2", "Trigger": "Auslösen", "Revert": "Zurücknehmen",
+                                  "+custom": "+eigen"})
+series_names("cf7a6e8cc8d1ebce", {"Room2 SP": "Raum 2 Soll", "Room2 PV": "Raum 2 Ist", "Trigger": "Auslösen",
+                                  "Revert": "Zurücknehmen", "+custom": "+eigen"})
+series_names("3578d6b18ceb5727", {"Setpoint": "Sollwert", "Water inlet": "Wasser Rücklauf",
+                                  "Water outlet": "Wasser Vorlauf", "Frequency": "Frequenz",
+                                  "Correction": "Korrektur", "QuietMode level": "Leisemodus-Stufe"})
 
 if errors:
     print("\n".join("ERROR: " + e for e in errors))
