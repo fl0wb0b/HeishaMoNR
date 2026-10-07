@@ -487,8 +487,14 @@ SKIP_GROUPS = {"ABOUT"}                       # changelog / acknowledgements sta
 HIDE_TABS = ["Cool", "Solar²DHW"]             # not used with a heating-only installation
 
 TR = {}
+_RENAMES = {}
 for _f in sorted(glob.glob(os.path.join(os.path.dirname(os.path.abspath(__file__)), "de", "*.json"))):
-    TR.update(json.load(open(_f, encoding="utf-8")))
+    _t = json.load(open(_f, encoding="utf-8"))
+    (_RENAMES if os.path.basename(_f).startswith("_renames") else TR).update(_t)
+# _renames*.json maps an earlier German wording to the current one, so changed translations also reach
+# dashboards that were already translated (the other tables map the English original)
+for _old, _new in _RENAMES.items():
+    TR.setdefault(_old, _new)
 
 _TAG = re.compile(r"(<[^>]+>)")
 _BLOCK = re.compile(r"(<(?:style|script)\b.*?</(?:style|script)>)", re.S | re.I)

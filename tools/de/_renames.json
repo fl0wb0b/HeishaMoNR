@@ -1,0 +1,18 @@
+{
+ "RTC": "Raumregelung",
+ "<h1>Raumtemperatur-Regelung (RTC)</h>": "<h1>Raumtemperatur-Regelung</h>",
+ "RTC-Ergebnisse": "Ergebnisse Raumregelung",
+ "RTC - Raumtemperatur-Korrektur": "Raumregelung - Raumtemperatur-Korrektur",
+ "Schalte zuletzt den Schalter [RTC] oben links im Dashboard ein.": "Schalte zuletzt den Schalter [Raumregelung] oben links im Dashboard ein.",
+ "Die Panasonic hat einen Temperaturfühler im Wand-Fernbedienteil. Er ist aber ungenau und für diese RTC-Funktion wirklich nicht geeignet. Verwende einen eigenen Raumfühler mit 0,1 °C Genauigkeit, z. B. einen BMP280 oder BME280, und platziere ihn außerhalb direkter Sonne und kalter Zugluft.": "Die Panasonic hat einen Temperaturfühler im Wand-Fernbedienteil. Er ist aber ungenau und für diese Raumregelung wirklich nicht geeignet. Verwende einen eigenen Raumfühler mit 0,1 °C Genauigkeit, z. B. einen BMP280 oder BME280, und platziere ihn außerhalb direkter Sonne und kalter Zugluft.",
+ "Für die Automatisierungen muss die RTC-Funktion NICHT aktiviert sein.": "Für die Automatisierungen muss die Raumregelung NICHT aktiviert sein.",
+ "Wenn ein, wird der RTC-Raumsollwert auf den rechts eingestellten niedrigen Sollwert gesenkt.": "Wenn ein, wird der Raumsollwert der Raumregelung auf den rechts eingestellten niedrigen Sollwert gesenkt.",
+ "Wenn aus, wird der RTC-Raumsollwert auf den rechts eingestellten normalen Sollwert zurückgesetzt.": "Wenn aus, wird der Raumsollwert der Raumregelung auf den rechts eingestellten normalen Sollwert zurückgesetzt.",
+ "Raumsollwert setzen (RTC)": "Raumsollwert setzen (Raumregelung)",
+ "RTC (Zone 1)": "Raumregelung (Zone 1)",
+ "RTC (Zone 2)": "Raumregelung (Zone 2)",
+ "RTC-Funktion - Temperatur": "Raumregelung - Temperatur",
+ "RTC-Funktion (Temperatur Zone 1)": "Raumregelung (Temperatur Zone 1)",
+ "RTC-Funktion (Temperatur Zone 2)": "Raumregelung (Temperatur Zone 2)",
+ "Dieser Node-RED-Flow enthält einige eingebaute Funktionen wie die WAR-Funktion, die RTC-Funktion usw.": "Dieser Node-RED-Flow enthält einige eingebaute Funktionen wie die WAR-Funktion, die Raumregelung usw."
+}

@@ -5093,7 +5093,7 @@
         "width": 11,
         "height": 1,
         "name": "TOPBAR",
-        "label": "<h1>Raumtemperatur-Regelung (RTC)</h>",
+        "label": "<h1>Raumtemperatur-Regelung</h>",
         "format": "",
         "layout": "row-left",
         "className": "",
@@ -6370,7 +6370,7 @@
         "order": 26,
         "width": 7,
         "height": 1,
-        "format": "<html>\n <!--box-shadow: (left) -5px (top) -5px (blur) 5px (spread)5px (color)#888;-->\n<head>\n<hr style=\n    \"border-top: 1px solid #a39d99;\n    border-width: 0px 0px 0;\n    width: 100%;\n    margin-left: auto;\n    margin-right: auto;\n    height: 0px;\n    margin-top: 0;\n    border-bottom: 1px solid #a39d99;\n    box-shadow: 0 0 3px #a39d99\";\n\t>\n<left>RTC-Ergebnisse</left> \n</html>\n",
+        "format": "<html>\n <!--box-shadow: (left) -5px (top) -5px (blur) 5px (spread)5px (color)#888;-->\n<head>\n<hr style=\n    \"border-top: 1px solid #a39d99;\n    border-width: 0px 0px 0;\n    width: 100%;\n    margin-left: auto;\n    margin-right: auto;\n    height: 0px;\n    margin-top: 0;\n    border-bottom: 1px solid #a39d99;\n    box-shadow: 0 0 3px #a39d99\";\n\t>\n<left>Ergebnisse Raumregelung</left> \n</html>\n",
         "storeOutMessages": false,
         "fwdInMessages": false,
         "resendOnRefresh": false,
@@ -22290,7 +22290,7 @@
         "order": 26,
         "width": 7,
         "height": 1,
-        "format": "<html>\n <!--box-shadow: (left) -5px (top) -5px (blur) 5px (spread)5px (color)#888;-->\n<head>\n<hr style=\n    \"border-top: 1px solid #a39d99;\n    border-width: 0px 0px 0;\n    width: 100%;\n    margin-left: auto;\n    margin-right: auto;\n    height: 0px;\n    margin-top: 0;\n    border-bottom: 1px solid #a39d99;\n    box-shadow: 0 0 3px #a39d99\";\n\t>\n<left>RTC-Ergebnisse</left> \n</html>\n",
+        "format": "<html>\n <!--box-shadow: (left) -5px (top) -5px (blur) 5px (spread)5px (color)#888;-->\n<head>\n<hr style=\n    \"border-top: 1px solid #a39d99;\n    border-width: 0px 0px 0;\n    width: 100%;\n    margin-left: auto;\n    margin-right: auto;\n    height: 0px;\n    margin-top: 0;\n    border-bottom: 1px solid #a39d99;\n    box-shadow: 0 0 3px #a39d99\";\n\t>\n<left>Ergebnisse Raumregelung</left> \n</html>\n",
         "storeOutMessages": false,
         "fwdInMessages": false,
         "resendOnRefresh": false,
@@ -29511,7 +29511,7 @@
                 "type": "str"
             },
             {
-                "label": "RTC-Funktion - Temperatur",
+                "label": "Raumregelung - Temperatur",
                 "value": "RTC",
                 "type": "str"
             },
@@ -29767,12 +29767,12 @@
                 "type": "str"
             },
             {
-                "label": "RTC-Funktion (Temperatur Zone 1)",
+                "label": "Raumregelung (Temperatur Zone 1)",
                 "value": "RTC_Z1",
                 "type": "str"
             },
             {
-                "label": "RTC-Funktion (Temperatur Zone 2)",
+                "label": "Raumregelung (Temperatur Zone 2)",
                 "value": "RTC_Z2",
                 "type": "str"
             },
@@ -30040,12 +30040,12 @@
                 "type": "str"
             },
             {
-                "label": "RTC-Funktion (Temperatur Zone 1)",
+                "label": "Raumregelung (Temperatur Zone 1)",
                 "value": "RTC_Z1",
                 "type": "str"
             },
             {
-                "label": "RTC-Funktion (Temperatur Zone 2)",
+                "label": "Raumregelung (Temperatur Zone 2)",
                 "value": "RTC_Z2",
                 "type": "str"
             },
@@ -30313,12 +30313,12 @@
                 "type": "str"
             },
             {
-                "label": "RTC-Funktion (Temperatur Zone 1)",
+                "label": "Raumregelung (Temperatur Zone 1)",
                 "value": "RTC_Z1",
                 "type": "str"
             },
             {
-                "label": "RTC-Funktion (Temperatur Zone 2)",
+                "label": "Raumregelung (Temperatur Zone 2)",
                 "value": "RTC_Z2",
                 "type": "str"
             },
@@ -30586,12 +30586,12 @@
                 "type": "str"
             },
             {
-                "label": "RTC-Funktion (Temperatur Zone 1)",
+                "label": "Raumregelung (Temperatur Zone 1)",
                 "value": "RTC_Z1",
                 "type": "str"
             },
             {
-                "label": "RTC-Funktion (Temperatur Zone 2)",
+                "label": "Raumregelung (Temperatur Zone 2)",
                 "value": "RTC_Z2",
                 "type": "str"
             },
@@ -30986,12 +30986,12 @@
                 "type": "str"
             },
             {
-                "label": "RTC-Funktion (Temperatur Zone 1)",
+                "label": "Raumregelung (Temperatur Zone 1)",
                 "value": "RTC_Z1",
                 "type": "str"
             },
             {
-                "label": "RTC-Funktion (Temperatur Zone 2)",
+                "label": "Raumregelung (Temperatur Zone 2)",
                 "value": "RTC_Z2",
                 "type": "str"
             },
@@ -31280,12 +31280,12 @@
                 "type": "str"
             },
             {
-                "label": "RTC-Funktion (Temperatur Zone 1)",
+                "label": "Raumregelung (Temperatur Zone 1)",
                 "value": "RTC_Z1",
                 "type": "str"
             },
             {
-                "label": "RTC-Funktion (Temperatur Zone 2)",
+                "label": "Raumregelung (Temperatur Zone 2)",
                 "value": "RTC_Z2",
                 "type": "str"
             },
@@ -31574,12 +31574,12 @@
                 "type": "str"
             },
             {
-                "label": "RTC-Funktion (Temperatur Zone 1)",
+                "label": "Raumregelung (Temperatur Zone 1)",
                 "value": "RTC_Z1",
                 "type": "str"
             },
             {
-                "label": "RTC-Funktion (Temperatur Zone 2)",
+                "label": "Raumregelung (Temperatur Zone 2)",
                 "value": "RTC_Z2",
                 "type": "str"
             },
@@ -32825,7 +32825,7 @@
         "width": 6,
         "height": 1,
         "name": "RTC function1",
-        "label": "RTC-Funktion (Temperatur Zone 1)",
+        "label": "Raumregelung (Temperatur Zone 1)",
         "format": "",
         "layout": "row-left",
         "className": "",
@@ -34815,7 +34815,7 @@
         "width": 6,
         "height": 1,
         "name": "RTC function2",
-        "label": "RTC-Funktion (Temperatur Zone 2)",
+        "label": "Raumregelung (Temperatur Zone 2)",
         "format": "",
         "layout": "row-left",
         "className": "",
@@ -60810,7 +60810,7 @@
         "order": 3,
         "width": 24,
         "height": 26,
-        "format": "<h3>RTC - Raumtemperatur-Korrektur</h3>\n<br/>\n<h3>Was bringt dir diese Funktion?</h3>\nDiese Funktion korrigiert die Heizwassertemperatur anhand der tatsächlichen Raumtemperatur. Das ist z. B. nützlich, wenn die Sonne den Raum aufwärmt: Steigt die Raumtemperatur, senkt die Funktion den Sollwert automatisch ab.\n<br/><br/>\nGrundlage der Korrektur ist die Temperaturdifferenz zwischen [Raum Ist] und [Raum Soll]. <br/>\n<br/>\nDie Temperaturdifferenz ist in Bereiche unterteilt, die du in der Spalte [Differenz] einstellen kannst. Ist der Raum zu warm, wird die Wassertemperatur um den negativen Korrekturwert verringert.<br/>\nIst der Raum zu kalt, wird die Wassertemperatur um den positiven Korrekturwert erhöht.<br/>\nInnerhalb eines Differenzbereichs bleibt die Korrektur konstant<br/>\n<br/>\nRichtig eingestellt sorgt die Funktion für eine stabilere (behaglichere) Raumtemperatur. Falsch eingestellt kann sie dagegen zu stärkeren Schwankungen führen, was zusätzlichen Verschleiß und höhere Energiekosten verursachen kann. Nimm dir deshalb Zeit für eine passende Einstellung.\n<br/><br/>\n\n<h3>Konfiguration</h3>\nTrage zuerst die gewünschte Temperatur bei [Raum Soll] ein.\n<br/>\nLege dann fest, ab welcher Abweichung die Wassertemperatur um 1, 2 oder 3 Grad geändert wird. Das erfordert etwas Experimentieren. Bei Fußbodenheizung funktionieren kleinere Deltas (0,1) besser, weil sie träge reagiert. Bei Heizkörpern kannst du die Deltas erhöhen (0,5). Ändere immer nur wenig und beobachte das Ergebnis mindestens 1 bis 2 Tage.<br>\nSchalte zuletzt den Schalter [RTC] oben links im Dashboard ein.\n<br/><br/>\n\nStandardwerte:<br/>\n+/-0,5 Grad Differenz ergibt eine Korrektur von +/-1 Grad. <br>\n+/-1,0 Grad Differenz ergibt eine Korrektur von +/-2 Grad. <br>\n+/-1,5 Grad Differenz ergibt eine Korrektur von +/-3 Grad. <br>\n<br>\n<h3>Voraussetzungen:</h3>\nDie Panasonic hat einen Temperaturfühler im Wand-Fernbedienteil. Er ist aber ungenau und für diese RTC-Funktion wirklich nicht geeignet. Verwende einen eigenen Raumfühler mit 0,1 °C Genauigkeit, z. B. einen BMP280 oder BME280, und platziere ihn außerhalb direkter Sonne und kalter Zugluft.<br/> Die Messwerte müssen in diesem Node-RED-Flow verfügbar sein.<br>\n<br/>\n-----------------------------------\n<br/>\n<u>Lineare Korrektur berechnen</u>\nStandardmäßig erfolgt die Korrektur der Wassertemperatur aufgrund der Differenz zwischen Soll- und Raumtemperatur in Stufen. Zwischen den letzten beiden  <br/>\nWenn aktiviert, werden die Sollwerte (Wassertemperaturen) schrittweise in 1-°C-Schritten berechnet. Das gilt nur zwischen den Bereichen +3 und +eigener Wert.<br/>\n<br/>\n<u>Automatisierungen:</u>\nFür die Automatisierung musst du zwei Temperaturen (dT) einstellen. <br/>\n[Aktion auslösen über dT]: Liegt die Raumtemperatur über dieser Linie, werden die gewählten Aktionen ausgeführt.<br/>\n[Aktion zurücknehmen unter dT]: Fällt die Raumtemperatur unter diese Linie, werden die gegenteiligen Aktionen ausgeführt.<br/>\nBeide dT-Temperaturen (oberhalb/unterhalb) beziehen sich auf den Sollwert.<br/>\n<br/>\nAktion: Betriebsart ändern<br/>\nLiegt die Raumtemperatur über dT, wird der Heizmodus aus der aktuellen Betriebsart entfernt.<br/>\nLiegt die Raumtemperatur unter dT, wird der Heizmodus der aktuellen Betriebsart wieder hinzugefügt.<br/>\n<br/>\nAktion: Wärmepumpe aus-/einschalten<br/>\nLiegt die Raumtemperatur über dT, wird die Wärmepumpe ausgeschaltet. (Bedingung: Betriebsart muss „Nur Heizen“ oder „Auto (Heizen)“ sein)<br/>\nLiegt die Raumtemperatur unter dT, wird die Wärmepumpe wieder eingeschaltet.<br/>\n<br/>\n",
+        "format": "<h3>Raumregelung - Raumtemperatur-Korrektur</h3>\n<br/>\n<h3>Was bringt dir diese Funktion?</h3>\nDiese Funktion korrigiert die Heizwassertemperatur anhand der tatsächlichen Raumtemperatur. Das ist z. B. nützlich, wenn die Sonne den Raum aufwärmt: Steigt die Raumtemperatur, senkt die Funktion den Sollwert automatisch ab.\n<br/><br/>\nGrundlage der Korrektur ist die Temperaturdifferenz zwischen [Raum Ist] und [Raum Soll]. <br/>\n<br/>\nDie Temperaturdifferenz ist in Bereiche unterteilt, die du in der Spalte [Differenz] einstellen kannst. Ist der Raum zu warm, wird die Wassertemperatur um den negativen Korrekturwert verringert.<br/>\nIst der Raum zu kalt, wird die Wassertemperatur um den positiven Korrekturwert erhöht.<br/>\nInnerhalb eines Differenzbereichs bleibt die Korrektur konstant<br/>\n<br/>\nRichtig eingestellt sorgt die Funktion für eine stabilere (behaglichere) Raumtemperatur. Falsch eingestellt kann sie dagegen zu stärkeren Schwankungen führen, was zusätzlichen Verschleiß und höhere Energiekosten verursachen kann. Nimm dir deshalb Zeit für eine passende Einstellung.\n<br/><br/>\n\n<h3>Konfiguration</h3>\nTrage zuerst die gewünschte Temperatur bei [Raum Soll] ein.\n<br/>\nLege dann fest, ab welcher Abweichung die Wassertemperatur um 1, 2 oder 3 Grad geändert wird. Das erfordert etwas Experimentieren. Bei Fußbodenheizung funktionieren kleinere Deltas (0,1) besser, weil sie träge reagiert. Bei Heizkörpern kannst du die Deltas erhöhen (0,5). Ändere immer nur wenig und beobachte das Ergebnis mindestens 1 bis 2 Tage.<br>\nSchalte zuletzt den Schalter [Raumregelung] oben links im Dashboard ein.\n<br/><br/>\n\nStandardwerte:<br/>\n+/-0,5 Grad Differenz ergibt eine Korrektur von +/-1 Grad. <br>\n+/-1,0 Grad Differenz ergibt eine Korrektur von +/-2 Grad. <br>\n+/-1,5 Grad Differenz ergibt eine Korrektur von +/-3 Grad. <br>\n<br>\n<h3>Voraussetzungen:</h3>\nDie Panasonic hat einen Temperaturfühler im Wand-Fernbedienteil. Er ist aber ungenau und für diese Raumregelung wirklich nicht geeignet. Verwende einen eigenen Raumfühler mit 0,1 °C Genauigkeit, z. B. einen BMP280 oder BME280, und platziere ihn außerhalb direkter Sonne und kalter Zugluft.<br/> Die Messwerte müssen in diesem Node-RED-Flow verfügbar sein.<br>\n<br/>\n-----------------------------------\n<br/>\n<u>Lineare Korrektur berechnen</u>\nStandardmäßig erfolgt die Korrektur der Wassertemperatur aufgrund der Differenz zwischen Soll- und Raumtemperatur in Stufen. Zwischen den letzten beiden  <br/>\nWenn aktiviert, werden die Sollwerte (Wassertemperaturen) schrittweise in 1-°C-Schritten berechnet. Das gilt nur zwischen den Bereichen +3 und +eigener Wert.<br/>\n<br/>\n<u>Automatisierungen:</u>\nFür die Automatisierung musst du zwei Temperaturen (dT) einstellen. <br/>\n[Aktion auslösen über dT]: Liegt die Raumtemperatur über dieser Linie, werden die gewählten Aktionen ausgeführt.<br/>\n[Aktion zurücknehmen unter dT]: Fällt die Raumtemperatur unter diese Linie, werden die gegenteiligen Aktionen ausgeführt.<br/>\nBeide dT-Temperaturen (oberhalb/unterhalb) beziehen sich auf den Sollwert.<br/>\n<br/>\nAktion: Betriebsart ändern<br/>\nLiegt die Raumtemperatur über dT, wird der Heizmodus aus der aktuellen Betriebsart entfernt.<br/>\nLiegt die Raumtemperatur unter dT, wird der Heizmodus der aktuellen Betriebsart wieder hinzugefügt.<br/>\n<br/>\nAktion: Wärmepumpe aus-/einschalten<br/>\nLiegt die Raumtemperatur über dT, wird die Wärmepumpe ausgeschaltet. (Bedingung: Betriebsart muss „Nur Heizen“ oder „Auto (Heizen)“ sein)<br/>\nLiegt die Raumtemperatur unter dT, wird die Wärmepumpe wieder eingeschaltet.<br/>\n<br/>\n",
         "storeOutMessages": false,
         "fwdInMessages": false,
         "resendOnRefresh": false,
@@ -60949,7 +60949,7 @@
         "order": 3,
         "width": 15,
         "height": 32,
-        "format": "<h3>Anleitung Zeitplan</h3>\n<br/>\n<h3>Was bringt dir der Zeitplan?</h3>\nDu kannst bestimmte Aufgaben programmieren, die zu einer festgelegten Zeit und an einem festgelegten Tag gestartet werden.<br/>\n<br/>\n<h3>Was ist der Hauptunterschied zum eingebauten Panasonic-Zeitplan?</h3>\nDer Panasonic-Zeitplan schaltet die Wärmepumpe immer ein, wenn eine Aufgabe ansteht. Dieser Zeitplan lässt dir die Kontrolle darüber. Der Panasonic-Zeitplan kann gleichzeitig mit diesem laufen. Das kann für einzelne Spezialfälle praktisch sein, es wird aber dringend empfohlen, nur einen Zeitplan zu verwenden, um widersprüchliche Aufgaben und unerwartetes Verhalten zu vermeiden. Beide Zeitpläne kommunizieren nicht miteinander.\n\n<br/><br/>\n<u>Aktiv</u>\nSchaltet die Aufgabe einfach ein oder aus.\n\n<br/><br/>\n<u>Name</u>\nVergib einen eigenen kurzen Namen oder eine Beschreibung für die Aufgabe.\n<br/><br/>\n<u>Aktion</u>\nWähle die gewünschte Aktion aus.<br>\n\n<i>Warmwasser erzwingen</i><br/>\nDiese Aktion macht mehrere Dinge:<br/>\n1 - Warmwasser zur aktuellen Betriebsart hinzufügen, falls es fehlt<br/>\n2 - [Warmwasser erzwingen] einschalten<br/>\n3 - Warmwasserlauf bis zur Zieltemperatur ausführen<br/>\n4 - [Warmwasser erzwingen] ausschalten<br/>\n5 - Warmwasser wieder aus der Betriebsart entfernen, falls es in Schritt 1 gefehlt hat<br/>\n<br/>\nAchtung: Der erzwungene Warmwasserlauf startet nicht, wenn die aktuelle Warmwassertemperatur über dem Wert bei [Warmwasser erzwingen - nur erlauben unter] in den Zeitplan-Einstellungen liegt. Wenn du das nicht möchtest, stelle diese Temperatur sehr hoch ein (z. B. 100 °C). Die internen Panasonic-Regeln (minimales dT) werden immer eingehalten.\n<br/><br/>\nDie geplante Aktion „Warmwasser erzwingen“ unterscheidet sich grundlegend vom Schalter „Warmwasser erzwingen“ in den Einstellungen oder am Regler. Sie benötigt bestimmte Bedingungen.\n<br/><br/>\n<i>- Desinfektion erzwingen</i>\nDiese Aktion macht mehrere Dinge:<br/>\n1 - Warmwasser zur aktuellen Betriebsart hinzufügen, falls es fehlt<br/>\n2 - [Warmwasser erzwingen] + [Desinfektion erzwingen] einschalten<br/>\n3 - Desinfektionslauf bis zur Zieltemperatur ausführen<br/>\n4 - [Desinfektion erzwingen] + [Warmwasser erzwingen] ausschalten<br/>\n5 - Warmwasser wieder aus der Betriebsart entfernen<br/>\n<br/>\n<i>- Leisemodus</i>\nStellt den Leisemodus auf die angegebene Stufe.\n<br/><br/>\n<i>- Betriebsart</i>\nStellt die Betriebsart wie angegeben ein.\n<br><br>\n<i>- Nachtabsenkung Wassertemperatur ein/aus</i>\nFügt der Wassertemperatur eine negative Korrektur hinzu, sodass die resultierende Wassertemperatur sinkt (aber nie unter 20 °C).\n<br/><br/>\n<i>- Nachtabsenkung Raumtemperatur ein/aus</i>\nWenn ein, wird der RTC-Raumsollwert auf den rechts eingestellten niedrigen Sollwert gesenkt.<br/>\nWenn aus, wird der RTC-Raumsollwert auf den rechts eingestellten normalen Sollwert zurückgesetzt.<br/>\nStandard: EIN = 18 °C, AUS = 21 °C, BEREICH 0 °C - 30 °C<br/>\n<br/>\n<u>Einschalten</u>\nStandardmäßig wird eine Aufgabe nicht ausgeführt, wenn die Wärmepumpe ausgeschaltet ist. Soll die Wärmepumpe eingeschaltet und die Aufgabe ausgeführt werden, aktiviere den Schalter „Einschalten“.\n<br/><br/>\n<u>Grenzen der Heizwassertemperatur</u>\nHier legst du die absolute obere und untere Grenze fest, die die Heizwassertemperatur nie über- bzw. unterschreiten soll. Das kann Schwingen verhindern, Verdichterläufe verlängern und die Wärmepumpe effizienter machen.</br>\n<u>Nachtabsenkung Raumsollwert</u><br/>\nHier stellst du den niedrigen und den normalen Raumsollwert für die Aufgabe „Nachtabsenkung Raumsollwert“ ein.<br>\n<br>\n<u>Bedingung</u>\nJede Zeile im Zeitplan kann mit einer Bedingung verknüpft werden. Bei der Auswahl erscheint der zugehörige Einstellungsbereich mit Anleitung.<br>\nDu kannst mehrere geplante Aktionen derselben Bedingung zuordnen (flexibel).<br><br>",
+        "format": "<h3>Anleitung Zeitplan</h3>\n<br/>\n<h3>Was bringt dir der Zeitplan?</h3>\nDu kannst bestimmte Aufgaben programmieren, die zu einer festgelegten Zeit und an einem festgelegten Tag gestartet werden.<br/>\n<br/>\n<h3>Was ist der Hauptunterschied zum eingebauten Panasonic-Zeitplan?</h3>\nDer Panasonic-Zeitplan schaltet die Wärmepumpe immer ein, wenn eine Aufgabe ansteht. Dieser Zeitplan lässt dir die Kontrolle darüber. Der Panasonic-Zeitplan kann gleichzeitig mit diesem laufen. Das kann für einzelne Spezialfälle praktisch sein, es wird aber dringend empfohlen, nur einen Zeitplan zu verwenden, um widersprüchliche Aufgaben und unerwartetes Verhalten zu vermeiden. Beide Zeitpläne kommunizieren nicht miteinander.\n\n<br/><br/>\n<u>Aktiv</u>\nSchaltet die Aufgabe einfach ein oder aus.\n\n<br/><br/>\n<u>Name</u>\nVergib einen eigenen kurzen Namen oder eine Beschreibung für die Aufgabe.\n<br/><br/>\n<u>Aktion</u>\nWähle die gewünschte Aktion aus.<br>\n\n<i>Warmwasser erzwingen</i><br/>\nDiese Aktion macht mehrere Dinge:<br/>\n1 - Warmwasser zur aktuellen Betriebsart hinzufügen, falls es fehlt<br/>\n2 - [Warmwasser erzwingen] einschalten<br/>\n3 - Warmwasserlauf bis zur Zieltemperatur ausführen<br/>\n4 - [Warmwasser erzwingen] ausschalten<br/>\n5 - Warmwasser wieder aus der Betriebsart entfernen, falls es in Schritt 1 gefehlt hat<br/>\n<br/>\nAchtung: Der erzwungene Warmwasserlauf startet nicht, wenn die aktuelle Warmwassertemperatur über dem Wert bei [Warmwasser erzwingen - nur erlauben unter] in den Zeitplan-Einstellungen liegt. Wenn du das nicht möchtest, stelle diese Temperatur sehr hoch ein (z. B. 100 °C). Die internen Panasonic-Regeln (minimales dT) werden immer eingehalten.\n<br/><br/>\nDie geplante Aktion „Warmwasser erzwingen“ unterscheidet sich grundlegend vom Schalter „Warmwasser erzwingen“ in den Einstellungen oder am Regler. Sie benötigt bestimmte Bedingungen.\n<br/><br/>\n<i>- Desinfektion erzwingen</i>\nDiese Aktion macht mehrere Dinge:<br/>\n1 - Warmwasser zur aktuellen Betriebsart hinzufügen, falls es fehlt<br/>\n2 - [Warmwasser erzwingen] + [Desinfektion erzwingen] einschalten<br/>\n3 - Desinfektionslauf bis zur Zieltemperatur ausführen<br/>\n4 - [Desinfektion erzwingen] + [Warmwasser erzwingen] ausschalten<br/>\n5 - Warmwasser wieder aus der Betriebsart entfernen<br/>\n<br/>\n<i>- Leisemodus</i>\nStellt den Leisemodus auf die angegebene Stufe.\n<br/><br/>\n<i>- Betriebsart</i>\nStellt die Betriebsart wie angegeben ein.\n<br><br>\n<i>- Nachtabsenkung Wassertemperatur ein/aus</i>\nFügt der Wassertemperatur eine negative Korrektur hinzu, sodass die resultierende Wassertemperatur sinkt (aber nie unter 20 °C).\n<br/><br/>\n<i>- Nachtabsenkung Raumtemperatur ein/aus</i>\nWenn ein, wird der Raumsollwert der Raumregelung auf den rechts eingestellten niedrigen Sollwert gesenkt.<br/>\nWenn aus, wird der Raumsollwert der Raumregelung auf den rechts eingestellten normalen Sollwert zurückgesetzt.<br/>\nStandard: EIN = 18 °C, AUS = 21 °C, BEREICH 0 °C - 30 °C<br/>\n<br/>\n<u>Einschalten</u>\nStandardmäßig wird eine Aufgabe nicht ausgeführt, wenn die Wärmepumpe ausgeschaltet ist. Soll die Wärmepumpe eingeschaltet und die Aufgabe ausgeführt werden, aktiviere den Schalter „Einschalten“.\n<br/><br/>\n<u>Grenzen der Heizwassertemperatur</u>\nHier legst du die absolute obere und untere Grenze fest, die die Heizwassertemperatur nie über- bzw. unterschreiten soll. Das kann Schwingen verhindern, Verdichterläufe verlängern und die Wärmepumpe effizienter machen.</br>\n<u>Nachtabsenkung Raumsollwert</u><br/>\nHier stellst du den niedrigen und den normalen Raumsollwert für die Aufgabe „Nachtabsenkung Raumsollwert“ ein.<br>\n<br>\n<u>Bedingung</u>\nJede Zeile im Zeitplan kann mit einer Bedingung verknüpft werden. Bei der Auswahl erscheint der zugehörige Einstellungsbereich mit Anleitung.<br>\nDu kannst mehrere geplante Aktionen derselben Bedingung zuordnen (flexibel).<br><br>",
         "storeOutMessages": false,
         "fwdInMessages": false,
         "resendOnRefresh": false,
@@ -62180,7 +62180,7 @@
         "order": 3,
         "width": 13,
         "height": 17,
-        "format": "<h3>MQTT-Sensoren</h3>\nDieser Node-RED-Flow enthält einige eingebaute Funktionen wie die WAR-Funktion, die RTC-Funktion usw.<br>\nJede der genannten Funktionen (Spalte „Verwendungszweck“) benötigt eine eigene Messung von einem Sensor. In diesem Bereich kannst du jeden Sensor einer bestimmten Funktion zuordnen.<br>\n<br>\nStelle zuerst sicher, dass deine Sensoren im Flow-Tab [WP Input] richtig angeschlossen sind.<br>\n<br>\nSobald der Sensor richtig angeschlossen ist, füllt sich die Dropdown-Liste unter „MQTT-Sensor-Topic“. Das kann etwas dauern, weil die Liste mit den eintreffenden Werten wächst.<br>\n<br>\nWenn du das richtige Topic siehst, wähle es aus, warte kurz und prüfe, ob die Werte stimmen.<br><br>\n<u>Hinweis:</u>Wenn sich die Topic-Liste nach dem Anschließen nicht aktualisiert, klicke auf das [Papierkorb]-Symbol und beginne noch einmal mit der Auswahl des richtigen Sensors.<br>\n<br>\n<h3>1-Wire-Sensoren</h3>\nAls Alternative zu den MQTT-Sensoren gibt es die 1-Wire-Option der HeishaMon. Damit erhältst du über 20 Messwerte von verschiedenen Sensoren und Sensortypen. <br>\n<br>\nDu kannst einen Sensor auswählen und ihn mit einer bestimmten Funktion „verbinden“. ABER: Wähle nicht mehrere Sensoren für denselben Zweck (= Funktion) aus. Das führt wahrscheinlich zu Problemen. <br>\n<br>\nDu kannst zusätzliche Sensoren in den Diagrammen Temperaturen > Warmwasser, Temperaturen > Heizen oder Raumtemperatur anzeigen lassen. <br>\nIn diesem Fall wird der Name aus der Spalte „Beschreibung“ als Name im Diagramm verwendet.<br><br>\n<u>Hinweis:</u>Wenn du den Namen änderst, nachdem er schon im Diagramm erscheint, musst du das Diagramm wahrscheinlich zurücksetzen, um den alten Legendeneintrag zu entfernen. \n<br><br>\n",
+        "format": "<h3>MQTT-Sensoren</h3>\nDieser Node-RED-Flow enthält einige eingebaute Funktionen wie die WAR-Funktion, die Raumregelung usw.<br>\nJede der genannten Funktionen (Spalte „Verwendungszweck“) benötigt eine eigene Messung von einem Sensor. In diesem Bereich kannst du jeden Sensor einer bestimmten Funktion zuordnen.<br>\n<br>\nStelle zuerst sicher, dass deine Sensoren im Flow-Tab [WP Input] richtig angeschlossen sind.<br>\n<br>\nSobald der Sensor richtig angeschlossen ist, füllt sich die Dropdown-Liste unter „MQTT-Sensor-Topic“. Das kann etwas dauern, weil die Liste mit den eintreffenden Werten wächst.<br>\n<br>\nWenn du das richtige Topic siehst, wähle es aus, warte kurz und prüfe, ob die Werte stimmen.<br><br>\n<u>Hinweis:</u>Wenn sich die Topic-Liste nach dem Anschließen nicht aktualisiert, klicke auf das [Papierkorb]-Symbol und beginne noch einmal mit der Auswahl des richtigen Sensors.<br>\n<br>\n<h3>1-Wire-Sensoren</h3>\nAls Alternative zu den MQTT-Sensoren gibt es die 1-Wire-Option der HeishaMon. Damit erhältst du über 20 Messwerte von verschiedenen Sensoren und Sensortypen. <br>\n<br>\nDu kannst einen Sensor auswählen und ihn mit einer bestimmten Funktion „verbinden“. ABER: Wähle nicht mehrere Sensoren für denselben Zweck (= Funktion) aus. Das führt wahrscheinlich zu Problemen. <br>\n<br>\nDu kannst zusätzliche Sensoren in den Diagrammen Temperaturen > Warmwasser, Temperaturen > Heizen oder Raumtemperatur anzeigen lassen. <br>\nIn diesem Fall wird der Name aus der Spalte „Beschreibung“ als Name im Diagramm verwendet.<br><br>\n<u>Hinweis:</u>Wenn du den Namen änderst, nachdem er schon im Diagramm erscheint, musst du das Diagramm wahrscheinlich zurücksetzen, um den alten Legendeneintrag zu entfernen. \n<br><br>\n",
         "storeOutMessages": false,
         "fwdInMessages": false,
         "resendOnRefresh": false,
@@ -62202,7 +62202,7 @@
         "order": 2,
         "width": 17,
         "height": 9,
-        "format": "<html>\n\n<head>\n    <style>\n        .box {\n            border-left: 1px solid #a39d99;\n            /*border-top: 1px solid #a39d99;\n            /* This is your left border */\n            padding-left: 10px;\n            padding-top: 10px;\n            /* Spacing between border and text */\n            margin: 5px 0;\n            height: 100%;\n            /* Adjust as needed */\n        }\n    </style>\n</head>\n\n<body>\n    <div class=\"box\">\nFür die Automatisierungen muss die RTC-Funktion NICHT aktiviert sein.<br>\nSobald du einen der Aktions-Schalter aktivierst, ist die jeweilige Automatisierung aktiv.<br>\n<br>\n\n1. Zielzone wählen.<br>\n2. „Aktion auslösen über dT“ einstellen.<br>\n3. „Aktion zurücknehmen unter dT“ einstellen.<br>\n<br>\n\n- Die Zielzone ist die einzige Zone, auf die die Automatisierung reagiert. Das ist beabsichtigt, um unerwünschtes Aufschwingen zu verhindern. <br>\n- dT ist die Temperaturdifferenz zwischen Ist- und Solltemperatur. <br>\n- Liegt dT über dem Auslöse-dT, werden die gewählten Automatisierungsaktionen aktiviert.<br>\n- Fällt dT unter das Zurücknehmen-dT, werden die gewählten Automatisierungsaktionen zurückgenommen.<br>\n\n<br>\n<br>\nBeispiel:<br>\n„Aktion auslösen über dT“ ist auf 1,5 °C eingestellt<br>\nSollwert: 21 °C<br>\n-------------------<br>\nFall 1: Isttemperatur = 22,4 °C. dT = 1,4.<br>\nKeine Aktion<br>\n<br>\nFall 2: Isttemperatur = 22,501 °C. dT = 1,501.<br>\nDie Aktion wird ausgelöst.<br>\n\n    </div>\n</body>\n\n</html>",
+        "format": "<html>\n\n<head>\n    <style>\n        .box {\n            border-left: 1px solid #a39d99;\n            /*border-top: 1px solid #a39d99;\n            /* This is your left border */\n            padding-left: 10px;\n            padding-top: 10px;\n            /* Spacing between border and text */\n            margin: 5px 0;\n            height: 100%;\n            /* Adjust as needed */\n        }\n    </style>\n</head>\n\n<body>\n    <div class=\"box\">\nFür die Automatisierungen muss die Raumregelung NICHT aktiviert sein.<br>\nSobald du einen der Aktions-Schalter aktivierst, ist die jeweilige Automatisierung aktiv.<br>\n<br>\n\n1. Zielzone wählen.<br>\n2. „Aktion auslösen über dT“ einstellen.<br>\n3. „Aktion zurücknehmen unter dT“ einstellen.<br>\n<br>\n\n- Die Zielzone ist die einzige Zone, auf die die Automatisierung reagiert. Das ist beabsichtigt, um unerwünschtes Aufschwingen zu verhindern. <br>\n- dT ist die Temperaturdifferenz zwischen Ist- und Solltemperatur. <br>\n- Liegt dT über dem Auslöse-dT, werden die gewählten Automatisierungsaktionen aktiviert.<br>\n- Fällt dT unter das Zurücknehmen-dT, werden die gewählten Automatisierungsaktionen zurückgenommen.<br>\n\n<br>\n<br>\nBeispiel:<br>\n„Aktion auslösen über dT“ ist auf 1,5 °C eingestellt<br>\nSollwert: 21 °C<br>\n-------------------<br>\nFall 1: Isttemperatur = 22,4 °C. dT = 1,4.<br>\nKeine Aktion<br>\n<br>\nFall 2: Isttemperatur = 22,501 °C. dT = 1,501.<br>\nDie Aktion wird ausgelöst.<br>\n\n    </div>\n</body>\n\n</html>",
         "storeOutMessages": true,
         "fwdInMessages": true,
         "resendOnRefresh": true,
@@ -63218,7 +63218,7 @@
                 "type": "str"
             },
             {
-                "label": "Raumsollwert setzen (RTC)",
+                "label": "Raumsollwert setzen (Raumregelung)",
                 "value": "Room setpoint RTC",
                 "type": "str"
             },
@@ -64856,7 +64856,7 @@
                 "type": "str"
             },
             {
-                "label": "Raumsollwert setzen (RTC)",
+                "label": "Raumsollwert setzen (Raumregelung)",
                 "value": "Room setpoint RTC",
                 "type": "str"
             },
@@ -65983,7 +65983,7 @@
                 "type": "str"
             },
             {
-                "label": "Raumsollwert setzen (RTC)",
+                "label": "Raumsollwert setzen (Raumregelung)",
                 "value": "Room setpoint RTC",
                 "type": "str"
             },
@@ -66903,7 +66903,7 @@
                 "type": "str"
             },
             {
-                "label": "Raumsollwert setzen (RTC)",
+                "label": "Raumsollwert setzen (Raumregelung)",
                 "value": "Room setpoint RTC",
                 "type": "str"
             },
@@ -67823,7 +67823,7 @@
                 "type": "str"
             },
             {
-                "label": "Raumsollwert setzen (RTC)",
+                "label": "Raumsollwert setzen (Raumregelung)",
                 "value": "Room setpoint RTC",
                 "type": "str"
             },
@@ -68743,7 +68743,7 @@
                 "type": "str"
             },
             {
-                "label": "Raumsollwert setzen (RTC)",
+                "label": "Raumsollwert setzen (Raumregelung)",
                 "value": "Room setpoint RTC",
                 "type": "str"
             },
@@ -69663,7 +69663,7 @@
                 "type": "str"
             },
             {
-                "label": "Raumsollwert setzen (RTC)",
+                "label": "Raumsollwert setzen (Raumregelung)",
                 "value": "Room setpoint RTC",
                 "type": "str"
             },
@@ -70583,7 +70583,7 @@
                 "type": "str"
             },
             {
-                "label": "Raumsollwert setzen (RTC)",
+                "label": "Raumsollwert setzen (Raumregelung)",
                 "value": "Room setpoint RTC",
                 "type": "str"
             },
@@ -71503,7 +71503,7 @@
                 "type": "str"
             },
             {
-                "label": "Raumsollwert setzen (RTC)",
+                "label": "Raumsollwert setzen (Raumregelung)",
                 "value": "Room setpoint RTC",
                 "type": "str"
             },
@@ -72423,7 +72423,7 @@
                 "type": "str"
             },
             {
-                "label": "Raumsollwert setzen (RTC)",
+                "label": "Raumsollwert setzen (Raumregelung)",
                 "value": "Room setpoint RTC",
                 "type": "str"
             },
