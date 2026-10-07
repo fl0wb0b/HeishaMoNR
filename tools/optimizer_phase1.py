@@ -1787,8 +1787,7 @@ return out;
 upsert({"id": UI_TAB, "type": "ui_tab", "name": "Optimierung", "icon": "tune", "order": 12.5, "disabled": False, "hidden": False})
 # one wide card for the rooms (situation + settings), three slim status cards next to it; templates: width 0 = group width
 GROUPS = [("opt_g_rooms", "Räume und Komfortbänder", 12), ("opt_g_opt", "Optimierung", 6),
-          ("opt_g_wx", "Außen & Wetter", 6), ("opt_g_calc", "Berechnete Außentemperatur", 6), ("opt_g_quiet", "Leistung & Quiet (Shadow)", 6), ("opt_g_en", "Energie & Preise (nur Anzeige)", 6), ("opt_g_fq", "Prognosegüte (nur Anzeige)", 6), ("opt_g_wp", "Wärmepumpe", 6),
-          ("opt_g_qstats", "Quiet-Stufen: reale Messwerte", 12)]
+          ("opt_g_wx", "Außen & Wetter", 6), ("opt_g_calc", "Berechnete Außentemperatur", 6), ("opt_g_quiet", "Leistung & Quiet (Shadow)", 6), ("opt_g_en", "Energie & Preise (nur Anzeige)", 6), ("opt_g_fq", "Prognosegüte (nur Anzeige)", 6), ("opt_g_wp", "Wärmepumpe", 6)]
 for _order, (gid, gname, gwidth) in enumerate(GROUPS, 1):
     upsert({"id": gid, "type": "ui_group", "name": gname, "tab": UI_TAB, "order": _order, "disp": True,
             "width": gwidth, "collapse": False, "className": ""})
@@ -1797,6 +1796,10 @@ for _order, (gid, gname, gwidth) in enumerate(GROUPS, 1):
 UI_TAB_PLAN = "opt_ui_tab_plan"
 upsert({"id": UI_TAB_PLAN, "type": "ui_tab", "name": "Wärmefahrplan", "icon": "schedule", "order": 12.6, "disabled": False, "hidden": False})
 upsert({"id": "opt_g_plan", "type": "ui_group", "name": "Wärmefahrplan (Shadow)", "tab": UI_TAB_PLAN, "order": 1, "disp": True, "width": 18, "collapse": False, "className": ""})
+# same for the Quiet statistics (12 wide table next to tall 6 wide cards was laid out on top of them)
+UI_TAB_QUIET = "opt_ui_tab_quiet"
+upsert({"id": UI_TAB_QUIET, "type": "ui_tab", "name": "Quiet-Messwerte", "icon": "equalizer", "order": 12.7, "disabled": False, "hidden": False})
+upsert({"id": "opt_g_qstats", "type": "ui_group", "name": "Quiet-Stufen: reale Messwerte", "tab": UI_TAB_QUIET, "order": 1, "disp": True, "width": 18, "collapse": False, "className": ""})
 
 # The dashboard measures "automatic" card heights only once, before the first data arrives, so such cards stay collapsed.
 # Every card therefore starts with a static height and fits itself to its content (marked .optfit): it sets the card size
@@ -1816,11 +1819,22 @@ FIT_JS = """<script>
             if (attr === w + 'x' + units) { return; }
             card.setAttribute('ui-card-size', w + 'x' + units);
             var panel = card.closest('ui-card-panel'), ctrl = angular.element(panel).controller('uiCardPanel'), mas = angular.element(panel.parentElement).controller('uiMasonry');
-            ctrl.refreshLayout(function () { if (mas) { mas.refreshLayout(); } });
+            ctrl.refreshLayout(function () { if (mas) { mas.refreshLayout(); } setTimeout(relayout, 150); });
         } catch (e) { /* the card keeps its configured height */ }
     }
-    reg.fns[id] = fit;
-    if (!reg.timer) { reg.timer = setInterval(function () { if (document.visibilityState === 'visible') { Object.keys(reg.fns).forEach(function (k) { reg.fns[k](); }); } }, 1500); }
+    // The dashboard lays the cards out with the panel heights it sees at that moment, which lag one change behind (the new height only reaches
+    // the DOM after its next digest). So lay the cards out again whenever any card height has changed since the last layout.
+    function relayout() {
+        try {
+            var sig = Array.prototype.map.call(document.querySelectorAll('ui-card-panel'), function (p) { return Math.round(p.getBoundingClientRect().height); }).join(',');
+            if (sig === reg.sig) { return; }
+            reg.sig = sig;
+            var p0 = document.querySelector('ui-card-panel'), mas = p0 && angular.element(p0.parentElement).controller('uiMasonry');
+            if (mas) { mas.refreshLayout(); }
+        } catch (e) { /* the layout stays as it is */ }
+    }
+    reg.fns[id] = fit; reg.relayout = relayout;
+    if (!reg.timer) { reg.timer = setInterval(function () { if (document.visibilityState === 'visible') { Object.keys(reg.fns).forEach(function (k) { reg.fns[k](); }); if (reg.relayout) { reg.relayout(); } } }, 1500); }
     setTimeout(fit, 150);
 })();
 </script>"""
@@ -1842,7 +1856,7 @@ def template(i, gid, height, y):
 upsert(template("opt_t_opt", "opt_g_opt", 6, 140))
 upsert(template("opt_t_wx", "opt_g_wx", 7, 200))
 upsert(template("opt_t_calc", "opt_g_calc", 8, 230))
-upsert(template("opt_t_quiet", "opt_g_quiet", 16, 290))
+upsert(template("opt_t_quiet", "opt_g_quiet", 22, 290))
 upsert(template("opt_t_en", "opt_g_en", 14, 350))
 upsert(template("opt_t_fq", "opt_g_fq", 12, 400))
 QSTATS = """<style>.optq{width:100%;border-collapse:collapse;font-size:13px}
