@@ -975,7 +975,7 @@ function pfeed() {
 function pworld(o) {
   O = o || {};
   [fstore, files, gstore, envv].forEach(x => Object.keys(x).forEach(k => delete x[k]));
-  NOW = T0;
+  NOW = T0 + (O.start || 0);
   Object.assign(gstore, {Z1_Heat_Curve_Outside_Low_Temp: -13, Z1_Heat_Curve_Outside_High_Temp: 11, Z1_Heat_Curve_Target_Low_Temp: 38, Z1_Heat_Curve_Target_High_Temp: 29, compressor_frequency: 0, TOP26_Defrosting_State: 0, TOP20_ThreeWay_Valve_State: 0});
   if (O.running) { Object.assign(gstore, {compressor_frequency: 40, TOP16_Heat_Energy_Consumption: 600}); }
   run('opt_defaults', {});
@@ -1034,6 +1034,19 @@ check('Kosten nachvollziehbar: je Slot Preis/COP + Defrost-Strafe + Unsicherheit
 check('Taupunkt je Slot plausibel (unter der Lufttemperatur bei 85 % Feuchte, ca. 2 K darunter)', P.slots.every(x => x.dew < x.at && x.at - x.dew < 6), P.slots[0].at.toFixed(1) + ' / ' + P.slots[0].dew.toFixed(1));
 check('Anzeige: Auflösung der Quellen bleibt bekannt (Temperatur 3 h, PV 60 min, Preis 15 min)', rowsT['Auflösung der Quellen'] === 'Temperatur 3 h · PV 60 min · Preis 15 min', rowsT['Auflösung der Quellen']);
 check('Anzeige: Ersparnis nur als Modell, PV-Fenster und Batterie getrennt (keine gemeinsame Entscheidung)', /Ersparnis Modell/.test(rowsT['Verschobene Wärme']) && rowsT['Batterie'] === '60 % (Venus)' && !/Batterie/.test(rowsT['PV-günstigstes Fenster']), rowsT['Verschobene Wärme']);
+
+// ---- 2b) Konsistenz der Kennzahlen (24 h): Plan nie teurer als Normalverlauf, Potenzial ohne Komfortgrenze nie schlechter als mit; Slots nach 24 h bleiben Prognose
+{
+  let worst = '', bad = false;
+  const scen = [{wide: true}, {wide: true, atBase: 6}, {atBase: 0, band: [20, 26], rooms: {ki_oben: 22.4, ki_unten: 22.6, schlaf: 22.5}}, {wide: true, atBase: -5, rh: 95}, {band: [22.5, 23.5], rooms: {ki_oben: 23, ki_unten: 23, schlaf: 23}}, {wide: true, rooms: {ki_oben: 25.9, ki_unten: 22, schlaf: 22}},
+    {start: 19 * 3600000 + 45 * 60000, atBase: 10, rh: 80, rooms: {ki_oben: 23.6, ki_unten: 23, schlaf: 20.8}},                 // wie live am 7.10. um 19:45: Raum ueber Maximum, Abend-Hochtarif am Ende des Fensters
+    {start: 19 * 3600000 + 45 * 60000, atBase: 4, rh: 85, wide: true}];
+  scen.forEach((o, k) => { pworld(o); step(2); const PP = planNow(), sm = PP.sum; const keep = Math.abs(sumF(PP, 'p', 96) - sumF(PP, 'b', 96)) < 1e-9 && Math.abs(sumF(PP, 'pPot', 96) - sumF(PP, 'b', 96)) < 1e-9; if (!keep) { bad = true; worst += ' #' + k + ' Summe im Fenster nicht erhalten'; }
+    if (!(sm.costP <= sm.costB + 1e-9 && sm.costPot <= sm.costP + 1e-9)) { bad = true; worst += ' #' + k + ' B ' + sm.costB.toFixed(1) + ' P ' + sm.costP.toFixed(1) + ' Pot ' + sm.costPot.toFixed(1); } });
+  check('Kennzahlen: Waermesumme im angezeigten 24-h-Fenster bleibt erhalten (Plan und Potenzial), Plan nie teurer als Normalverlauf, Potenzial nie schlechter als mit Komfortgrenzen (8 Lagen)' + worst, !bad, worst);
+  pworld({wide: true}); step(2); const PQ = planNow();
+  check('Plan: nur die angezeigten 24 h werden verschoben, die Slots danach (bis 26 h) bleiben im Normalverlauf und NORMAL', PQ.slots.slice(96).every(x => x.p === x.b && x.pPot === x.b && x.rec === 0) && Math.abs(sumF(PQ, 'p', 96) - sumF(PQ, 'b', 96)) < 1e-9, '');
+}
 
 // ---- 3) Komfortband ist harte Grenze
 pworld({wide: true, rooms: {ki_oben: 22.0, ki_unten: 23, schlaf: 20}, band: [22.5, 23.5]}); step(2); P = planNow();

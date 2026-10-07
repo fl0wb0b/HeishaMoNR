@@ -1307,8 +1307,10 @@ function buildPlan() {
     for (i = 0; i < N; i++) { cum += slots[i].bedarf / qn; var rr = Math.round(cum); bq.push(rr - prevR); prevR = rr; }
     var cq = slots.map(function (x) { return x.cost * qn; }), lam = pn('shiftPenaltyPct', 2) / 100 * cbar * qn, mMin = pn('mMin', 0.4), mMax = pn('mMax', 1.6), capQ = Math.floor(pn('pMaxKw', 9) * 0.25 / qn);
     var enough = bSum >= pn('minDemandKwh', 4);
-    var pq = enough ? planDP(bq, cq, lam, Math.floor(rDown / qn), Math.floor(rUp / qn), mMin, mMax, capQ) : bq.slice();
-    var pqPot = enough ? planDP(bq, cq, lam, Math.floor(maxSh / qn), Math.floor(maxSh / qn), mMin, mMax, capQ) : bq.slice();     // Potenzial ohne Komfortgrenze (nur zum Vergleich)
+    // Geplant wird genau ueber die angezeigten 24 h (Summe bleibt dort erhalten); die letzten Slots (bis 26 h) sind nur Prognose fuer den spaeteren Vergleich und bleiben im Normalverlauf
+    var b24 = bq.slice(0, NDAY), c24 = cq.slice(0, NDAY), tail = bq.slice(NDAY);
+    var pq = enough ? planDP(b24, c24, lam, Math.floor(rDown / qn), Math.floor(rUp / qn), mMin, mMax, capQ).concat(tail) : bq.slice();
+    var pqPot = enough ? planDP(b24, c24, lam, Math.floor(maxSh / qn), Math.floor(maxSh / qn), mMin, mMax, capQ).concat(tail) : bq.slice();     // Potenzial ohne Komfortgrenze (nur zum Vergleich)
     var tol = pn('recTol', 0.1), cumD = 0;
     slots.forEach(function (x, ix) {
         x.b = bq[ix] * qn; x.p = pq[ix] * qn; x.pPot = pqPot[ix] * qn;
@@ -1356,7 +1358,7 @@ if (P.status === 'ok' && P.slots && pl.snapHour !== hourNow) {
         return [x.t, Math.round(x.at * 100) / 100, Math.round(x.rh), Math.round(x.cop * 100) / 100, x.price, x.pv === null ? null : Math.round(x.pv), Math.round(x.b * 1000) / 1000, Math.round(x.p * 1000) / 1000, Math.round(x.risk * 100) / 100,
                 Math.round(x.cA * 100) / 100, Math.round(x.cP * 100) / 100, x.att, x.rec, Math.round(x.cost * 100) / 100, x.off, x.quiet, Math.round(x.pPot * 1000) / 1000, Math.round(x.dew * 10) / 10, Math.round(x.base * 100) / 100, Math.round(x.dPen * 100) / 100, Math.round(x.uPen * 100) / 100,
                 Math.round(x.resBack * 1000) / 1000, Math.round(x.resFwd * 1000) / 1000];
-    }), meta: {model: P.model, res: {at_min: 180, rh_min: 180, pv_min: P.sum.pvRes, price_min: 15}, reserve: {state: P.res.state, down: P.res.down, up: P.res.up, stale: P.res.stale, missing: P.res.missing}, conf_at: P.conf.at.map(function (a) { return [a.h, Math.round(a.c * 100) / 100, a.n]; }),
+    }), meta: {plan_slots: 96, model: P.model, res: {at_min: 180, rh_min: 180, pv_min: P.sum.pvRes, price_min: 15}, reserve: {state: P.res.state, down: P.res.down, up: P.res.up, stale: P.res.stale, missing: P.res.missing}, conf_at: P.conf.at.map(function (a) { return [a.h, Math.round(a.c * 100) / 100, a.n]; }),
             conf_pv: P.conf.pv.map(function (a) { return [a.h, Math.round(a.c * 100) / 100, a.n]; })}};
     pl.snaps = (pl.snaps || []).filter(function (x) { return x.t0 > now - pn('snapKeepH', 27) * H; });
     pl.snaps.push(snap); pl.snapHour = hourNow;
