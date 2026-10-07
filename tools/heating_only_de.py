@@ -461,6 +461,138 @@ if OUT_TXT not in B:
         if x.get("group") == "bf4af523ba16d457" and x["id"] != OUT_TXT and x.get("order", 0) >= 3:
             x["order"] += 1
 
+# the value only arrives when HeishaMon sends it; replay the stored one at start and every 5 minutes
+OUT_INJ, OUT_FN = "a1c0b0000c0f0044", "a1c0b0000c0f0045"
+if OUT_FN not in B:
+    flows.append({"id": OUT_INJ, "type": "inject", "z": WP_DASH, "name": "Außentemperatur nachreichen",
+                  "props": [{"p": "payload"}], "repeat": "300", "crontab": "", "once": True, "onceDelay": "5",
+                  "topic": "", "payload": "", "payloadType": "date", "x": 150, "y": 2220,
+                  "wires": [[OUT_FN]]})
+    flows.append({"id": OUT_FN, "type": "function", "z": WP_DASH, "name": "T_outside lesen",
+                  "func": "var t = global.get('T_outside', 'file');\n"
+                          "if (t === undefined || isNaN(Number(t))) { return null; }\n"
+                          "msg.payload = Number(t);\n"
+                          "msg.topic = 'T_outside';\n"
+                          "return msg;",
+                  "outputs": 1, "timeout": 0, "noerr": 0, "initialize": "", "finalize": "", "libs": [],
+                  "x": 380, "y": 2220, "wires": [[OUT_TXT, OUT_RBE]]})
+    B[OUT_INJ], B[OUT_FN] = flows[-2], flows[-1]
+
+# ================================================================ phase 4: remaining pages, translation tables
+import glob
+import os
+
+SCOPE_TABS = ["Settings", "Pumpspeed", "CCC", "RTC", "SoftStart", "Scheduler", "SYSTEM"]
+SKIP_GROUPS = {"ABOUT"}                       # changelog / acknowledgements stay English
+HIDE_TABS = ["Cool", "Solar²DHW"]             # not used with a heating-only installation
+
+TR = {}
+for _f in sorted(glob.glob(os.path.join(os.path.dirname(os.path.abspath(__file__)), "de", "*.json"))):
+    TR.update(json.load(open(_f, encoding="utf-8")))
+
+_TAG = re.compile(r"(<[^>]+>)")
+_BLOCK = re.compile(r"(<(?:style|script)\b.*?</(?:style|script)>)", re.S | re.I)
+
+
+def tr_str(v):
+    return TR.get(v, v) if isinstance(v, str) else v
+
+
+def tr_html(html):
+    """Translate visible text segments of a template; style/script blocks and tags stay untouched."""
+    out = []
+    for part in _BLOCK.split(html):
+        if _BLOCK.fullmatch(part):
+            out.append(part)
+            continue
+        for tok in _TAG.split(part):
+            if tok.startswith("<") and tok.endswith(">"):
+                out.append(tok)
+                continue
+            key = re.sub(r"\s+", " ", tok.strip())
+            if key in TR and TR[key] != key:
+                lead = tok[: len(tok) - len(tok.lstrip())]
+                trail = tok[len(tok.rstrip()):]
+                out.append(lead + TR[key] + trail)
+            else:
+                out.append(tok)
+    return "".join(out)
+
+
+ui_tabs = {n["id"]: n for n in flows if n["type"] == "ui_tab"}
+ui_groups = {n["id"]: n for n in flows if n["type"] == "ui_group"}
+scope_tab_ids = {i for i, t in ui_tabs.items() if t["name"] in SCOPE_TABS or t["name"] in
+                 [tr_str(x) for x in SCOPE_TABS]}
+old_names = {}                                # for the "<tab>_<group>" references
+
+
+def us(x):
+    return x.replace(" ", "_")
+
+
+# remember the old names before anything is renamed (needed to follow group show/hide references)
+for gid, g in ui_groups.items():
+    if g["tab"] in scope_tab_ids:
+        old_names[gid] = (ui_tabs[g["tab"]]["name"], g["name"])
+
+for tid in scope_tab_ids:
+    t = ui_tabs[tid]
+    t["name"] = tr_str(t["name"])
+for gid, (otab, ogrp) in old_names.items():
+    if ogrp not in SKIP_GROUPS:
+        ui_groups[gid]["name"] = tr_str(ui_groups[gid]["name"])
+
+# follow "<tab name>_<group name>" references (dashboard show/hide payloads) for renamed tabs/groups
+ref_map = {}
+for gid, (otab, ogrp) in old_names.items():
+    ntab, ngrp = ui_tabs[ui_groups[gid]["tab"]]["name"], ui_groups[gid]["name"]
+    if (otab, ogrp) != (ntab, ngrp):
+        ref_map[us(otab) + "_" + us(ogrp)] = us(ntab) + "_" + us(ngrp)
+if ref_map:
+    pat = re.compile("(?<![A-Za-z0-9_])(" + "|".join(re.escape(k) for k in sorted(ref_map, key=len, reverse=True))
+                     + ")(?![A-Za-z0-9_])")
+    for n in flows:
+        if n["type"] in ("ui_tab", "ui_group"):
+            continue
+        for k, v in list(n.items()):
+            if isinstance(v, str) and pat.search(v):
+                n[k] = pat.sub(lambda m: ref_map[m.group(1)], v)
+
+for n in flows:
+    g = ui_groups.get(n.get("group"))
+    if not g or g["tab"] not in scope_tab_ids or g["id"] not in old_names or old_names[g["id"]][1] in SKIP_GROUPS:
+        continue
+    t = n["type"]
+    if not t.startswith("ui_"):
+        continue
+    for k in ("label", "title", "tooltip"):
+        if k in n:
+            n[k] = tr_str(n[k])
+    if t in ("ui_text", "ui_gauge", "ui_numeric", "ui_slider"):
+        for k in ("format", "units"):
+            if k in n:
+                n[k] = tr_str(n[k])
+    if t == "ui_dropdown":
+        for o in n.get("options", []):
+            if "label" in o:
+                o["label"] = tr_str(o["label"])
+        if "place" in n:
+            n["place"] = tr_str(n["place"])
+    if t == "ui_form":
+        for o in n.get("options", []):
+            if "label" in o:
+                o["label"] = tr_str(o["label"])
+        for k in ("submit", "cancel"):
+            if k in n:
+                n[k] = tr_str(n[k])
+    if t == "ui_template" and isinstance(n.get("format"), str):
+        n["format"] = tr_html(n["format"])
+
+for tn in HIDE_TABS:
+    for t in ui_tabs.values():
+        if t["name"] == tn:
+            t["hidden"] = True
+
 if errors:
     print("\n".join("ERROR: " + e for e in errors))
     sys.exit(1)
