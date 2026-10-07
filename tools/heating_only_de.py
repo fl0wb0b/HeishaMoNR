@@ -147,6 +147,9 @@ for old, new in (("msg1.topic='Setpoint (Zone 1)';", "msg1.topic='Soll (Zone 1)'
                  ("msg3.topic='Room Actual (Zone 1)';", "msg3.topic='Raum Ist (Zone 1)';")):
     rep("9f3df8b1cba0bbda", "func", old, new)
 setf("93759ef7c600fe14", "label", "Help", "Hilfe")
+# the dashboard addresses groups as "<tab name>_<group name>", so the tab rename must be followed here
+rep("93759ef7c600fe14", "payload", "Temperatures_Help", "Temperaturen_Help")
+rep("7d8b052fee984598", "payload", "Temperatures_Help", "Temperaturen_Help")
 
 HELP_DE = """<h3>Informationen zu den Diagrammen</h3>
 <br/>
