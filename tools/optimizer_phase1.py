@@ -117,13 +117,24 @@ QUIET = {"testAtRange": 2.0, "thrHigh": 3.0, "thrMid": 1.5, "thrLow": 0.5, "hyst
          "offAtLow": 1, "offAtHigh": 3, "offAtHyst": 0.5}
 
 
+# Heat plan (shadow only): every number here is a conservative DEFAULT, not a measured value; measured data moves them only slowly.
+PLAN = {"tbalC": 15, "uaKwPerK": 0.22, "uaPriorKh": 300, "learnDays": 21, "learnMinHdd": 30,
+        "etaPrior": 0.45, "etaPriorMin": 600, "evapApproachK": 6, "condApproachK": 2,
+        "defrostLoss": 0.15, "uncertaintyPremium": 0.05, "shiftPenaltyPct": 2,
+        "bufferKwhPerK": 3, "guardK": 0.3, "trendHorizonH": 2, "staleMaxAgeMin": 240, "staleDriftKph": 0.1, "maxShiftKwh": 8, "mMin": 0.4, "mMax": 1.6, "pMaxKw": 9, "recTol": 0.1,
+        "quantKwh": 0.05, "minDemandKwh": 4, "windowH": 3, "anchorTauH": 4, "snapKeepH": 27,
+        "confPrior": {"at": {"1": 0.95, "3": 0.9, "6": 0.8, "12": 0.65, "24": 0.5}, "pv": {"1": 0.85, "3": 0.75, "6": 0.6, "12": 0.45, "24": 0.35}},
+        "confN0": {"at": 168, "pv": 100}, "confSigma": {"atK": 2.5, "pvRel": 0.6}, "confMin": 0.2, "confMax": 0.98}
+
+
 def js(code):
     """Fill the shared constants into a JS block."""
     return (code.replace("__ROOMS__", json.dumps(ROOMS, ensure_ascii=False))
                 .replace("__LIMITS__", json.dumps(LIMITS))
                 .replace("__MINBAND__", str(MIN_BAND_K))
                 .replace("__CTL__", json.dumps(CONTROL))
-                .replace("__QUIET__", json.dumps(QUIET, ensure_ascii=False)))
+                .replace("__QUIET__", json.dumps(QUIET, ensure_ascii=False))
+                .replace("__PLAN__", json.dumps(PLAN, ensure_ascii=False)))
 
 
 # ---------------------------------------------------------------- defaults / configuration
@@ -135,6 +146,7 @@ var d = {
     rooms: __ROOMS__,
     control: __CTL__,
     quiet: __QUIET__,
+    plan: __PLAN__,
     energy: {vrmMaxAgeH: 4, evccMaxAgeH: 6, batteryInstance: 278,
              tariff: {buy: [['00:00', '05:00', 0.21], ['05:00', '24:00', 0.31]], sell: 0.06, source: 'VRM Dynamic ESS (fester HT/NT-Tarif)'},       // Kaufpreis EUR/kWh je Zeitfenster, Verkaufspreis
              battery: {capacityKwh: 43, maxChargeKw: 12, maxDischargeKw: 12, costEurKwh: 0.01}, grid: {importKw: 32, exportKw: 32}},          // Werte aus VRM Dynamic ESS (fuer spaetere Phasen)
@@ -272,7 +284,7 @@ return null;
 """
 
 OWM_REQ_JS = r"""
-// OpenWeatherMap abrufen (Free-Tarif: aktuelles Wetter + 3-Stunden-Vorhersage fuer 24 h). Ohne Schluessel/Standort passiert nichts.
+// OpenWeatherMap abrufen (Free-Tarif: aktuelles Wetter + 3-Stunden-Vorhersage fuer 36 h). Ohne Schluessel/Standort passiert nichts.
 // Schluessel + Standort: bevorzugt aus der geschuetzten Datei (Eingabe im Dashboard unter SYSTEM > EINSTELLUNGEN),
 // ersatzweise aus den Tab-Umgebungsvariablen OWM_API_KEY / OWM_LAT / OWM_LON. Der Schluessel wird NIE in einer
 // Variable oder Meldung abgelegt, die ueber die Admin-API lesbar waere.
@@ -296,7 +308,7 @@ global.set('OPT_weather', W);
 var base = 'https://api.openweathermap.org/data/2.5/';
 var q = '?lat=' + encodeURIComponent(lat) + '&lon=' + encodeURIComponent(lon) + '&units=metric&lang=de&appid=' + encodeURIComponent(key);
 node.send({topic: 'current',  url: base + 'weather' + q});
-node.send({topic: 'forecast', url: base + 'forecast' + q + '&cnt=8'});
+node.send({topic: 'forecast', url: base + 'forecast' + q + '&cnt=12'});
 return null;
 """
 
@@ -643,6 +655,9 @@ FQ_H.forEach(function (h) {
 });
 fqRows.push(['Gesammelt', fqHist.length + ' Stunden Ist-Werte · ' + fqSn.length + ' Prognose-Schnappschüsse', '']);
 out[4] = {payload: {rows: fqRows}};
+global.set('OPT_plan_in', {ts: now, price: pSlots ? pSlots.filter(function (s) { return s.e > now - 2 * H && s.s < now + 40 * H; }).map(function (s) { return [s.s, s.e, s.p]; }) : null, priceSrc: pSrc,
+    pv: pvSeries.length ? pvSeries.filter(function (s) { return s.t + s.dt > now - 2 * H && s.t < now + 40 * H; }).map(function (s) { return [s.t, Math.round(s.w), s.dt]; }) : null, pvSrc: pvSrc,
+    pvNow: pv, soc: soc, socSrc: socSrc, liveOk: liveOk, grid: grid, batP: batP});
 function G0(k) { return global.get(k); }
 function num0(v) { v = Number(v); return (v === null || v === undefined || !isFinite(v)) ? null : v; }
 function jload(file, dflt) { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { return dflt; } }
@@ -1003,6 +1018,396 @@ if (!qs.lastSave || now - qs.lastSave >= 10 * MS_MIN) {
 flow.set('qs', qs);
 return out;
 """
+
+PLAN_JS = r"""// Waermefahrplan (Shadow): 15-Minuten-Plan fuer die naechsten 24 h. Verteilt die ohnehin noetige Heizwaerme auf die guenstigsten Slots,
+// nur innerhalb der thermischen Reserve des Gebaeudes. Schreibt NICHTS an die Waermepumpe (kein MQTT-Ausgang), wirkt auf nichts.
+// Es werden nur Informationen benutzt, die zum Planungszeitpunkt vorlagen; jeder Plan wird als Schnappschuss festgehalten und spaeter nie veraendert.
+var cfg = global.get('OPT_cfg');
+if (!cfg) { return null; }
+var PC = cfg.plan || {}, QC = cfg.quiet || {};
+var now = Date.now(), MS_MIN = 60000, Q15 = 900000, H = 3600000, N = 104, NDAY = 96;       // 104 Slots = 26 h (24 h Anzeige + Reserve fuer den Vergleich nach +24 h)
+var G = function (k) { return global.get(k); };
+function num(v) { if (v === null || v === undefined || v === '') { return null; } v = Number(v); return isFinite(v) ? v : null; }
+function ok(v) { return v !== null && v !== undefined && isFinite(v); }
+function pn(k, d) { var v = num(PC[k]); return v === null ? d : v; }
+function clamp(x, lo, hi) { return Math.min(hi, Math.max(lo, x)); }
+function lerp(x, x0, y0, x1, y1) { return y0 + (y1 - y0) * (x - x0) / (x1 - x0); }
+function f(v, d, unit) { if (!ok(v)) { return '–'; } return Number(v).toFixed(d).replace('.', ',') + (unit ? ' ' + unit : ''); }
+function c(v, d) { if (!ok(v)) { return ''; } var m = Math.pow(10, d === undefined ? 3 : d); return String(Math.round(v * m) / m); }
+function hhmm(ts) { return ts ? new Date(ts).toLocaleTimeString('de-DE', {hour: '2-digit', minute: '2-digit'}) : '–'; }
+function jload(file, dflt) { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { return dflt; } }
+function jsave(file, obj) { try { fs.mkdirSync('/data/optimizer', {recursive: true}); fs.writeFileSync(file, JSON.stringify(obj)); } catch (e) { /* kein Zugriff */ } }
+function dayStart(ts) { var d = new Date(ts); d.setHours(0, 0, 0, 0); return d.getTime(); }
+
+// ---------- Optimierung der Waermeverteilung (exakt, dynamische Programmierung ueber die kumulierte Abweichung vom Normalverlauf)
+// b[i]: normaler Bedarf je Slot, c[i]: Kosten je Waermeeinheit, lam: Strafe je verschobener Einheit, rd/ru: erlaubte Abweichung (Einheiten) nach unten/oben,
+// Summe der Abweichungen am Ende = 0 (die Tagessumme bleibt erhalten). Ergebnis: p[i] (Einheiten je Slot).
+function planDP(b, c, lam, rd, ru, mMin, mMax, cap) {
+    var n = b.length, w = rd + ru + 1, off = rd, INF = 1e18, cost = [], i, s, p;
+    for (s = 0; s < w; s++) { cost.push(INF); }
+    cost[off] = 0;
+    var chP = [], chS = [];
+    for (i = 0; i < n; i++) {
+        var lo = Math.ceil(mMin * b[i] - 1e-9), hi = Math.floor(mMax * b[i] + 1e-9);
+        if (ok(cap)) { hi = Math.min(hi, cap); }
+        lo = Math.min(lo, b[i]); hi = Math.max(hi, b[i]);                                           // der Normalverlauf ist immer erlaubt
+        var nx = [], cp = [], cs = [];
+        for (s = 0; s < w; s++) { nx.push(INF); cp.push(0); cs.push(0); }
+        for (s = 0; s < w; s++) {
+            if (cost[s] >= INF) { continue; }
+            for (p = lo; p <= hi; p++) {
+                var ns = s + (p - b[i]);
+                if (ns < 0 || ns >= w) { continue; }
+                var v = cost[s] + c[i] * p + lam * Math.abs(p - b[i]);
+                if (v < nx[ns] - 1e-12) { nx[ns] = v; cp[ns] = p; cs[ns] = s; }
+            }
+        }
+        cost = nx; chP.push(cp); chS.push(cs);
+    }
+    var out = new Array(n), st = off;
+    for (i = n - 1; i >= 0; i--) { out[i] = chP[i][st]; st = chS[i][st]; }
+    return out;
+}
+
+// ---------- Zustand (ueberlebt Neustarts per Datei: Lernwerte und Plan-Schnappschuesse der letzten Stunden)
+var pl = flow.get('plan');
+if (!pl) {
+    pl = {acc: null, hour: null, day: null, lastTs: null, prevDefrost: false, plan: null, planSlot: 0, snaps: [], learn: {days: []}, lastSave: 0};
+    var pj = jload('/data/optimizer/plan-state.json', null);
+    if (pj && typeof pj === 'object') { pl.learn = pj.learn || pl.learn; pl.snaps = Array.isArray(pj.snaps) ? pj.snaps : []; pl.day = pj.day || null; }
+    if (pl.snaps.length) { pl.snapHour = pl.snaps[pl.snaps.length - 1].t0; }                // diese Stunde hat schon einen Schnappschuss
+}
+var out = [null, null, null, null, null];                                                       // Anzeige, Ist-Protokoll, Vergleich, Schnappschuss, (frei)
+
+// ---------- Eingaenge: Waermepumpe (nur lesen)
+var HP = G('OPT_hp') || {};
+function hpv(name) { var e = HP[name]; return (e && typeof e.v === 'number' && now - e.ts < 10 * MS_MIN) ? e.v : null; }
+var freq = num(G('compressor_frequency')) || 0, running = freq > 0;
+var pel = num(G('TOP16_Heat_Energy_Consumption')), flw = num(G('TOP1_Pump_Flow'));
+var istVL = num(G('TOP6_Main_Outlet_Temp')), istRL = num(G('TOP5_Main_Inlet_Temp'));
+var spread = (istVL !== null && istRL !== null) ? istVL - istRL : null;
+var pthHs = hpv('Heat_Power_Production_Extra'); if (!running || pthHs === null || pthHs < -100) { pthHs = null; }
+var pthCalc = (running && flw !== null && spread !== null) ? flw * spread * 69.7 : null;
+var pth = pthHs !== null ? pthHs : pthCalc;
+var defrost = num(G('TOP26_Defrosting_State')) === 1, dhw = num(G('TOP20_ThreeWay_Valve_State')) === 1;
+var atNow = num(G('TOP14_Outside_Temp')), qLevel = num(G('TOP18_Quiet_Mode_Level'));
+var PI = G('OPT_plan_in') || {}, piFresh = PI.ts && now - PI.ts < 5 * MS_MIN;
+var Rr = G('OPT_rooms') || {}, Sx = G('OPT_state') || {}, sxFresh = Sx.ts && now - Sx.ts < 5 * MS_MIN;
+var ROOMS = cfg.rooms || [];
+
+// ---------- Ist-Werte je 15-Minuten-Slot (Grundlage fuer den spaeteren Vergleich) und je Tag (Lernen des Waermebedarfs)
+var s0 = Math.floor(now / Q15) * Q15, dtH = pl.lastTs ? Math.min(now - pl.lastTs, 3 * MS_MIN) / H : 0;
+pl.lastTs = now;
+function newAcc(t) { return {s: t, n: 0, atS: 0, atN: 0, pvS: 0, pvN: 0, thH: 0, elH: 0, thA: 0, elA: 0, dhwMin: 0, runMin: 0, defrosts: 0, hzS: 0, hzN: 0}; }
+function priceAt(slots, t) { if (!Array.isArray(slots)) { return null; } for (var i = 0; i < slots.length; i++) { if (slots[i][0] <= t && slots[i][1] > t) { return slots[i][2]; } } return null; }
+var roomIds = ROOMS.map(function (r) { return r.id; });
+var ACT_COLS = ['ist_aussen', 'ist_pv_w', 'ist_preis', 'ist_cop', 'ist_waerme_kwh', 'ist_strom_kwh', 'ist_abtauungen', 'ist_ww_min', 'ist_verdichter_min', 'ist_hz', 'ist_quiet_stufe', 'ist_soc'].concat(roomIds.map(function (id) { return 'ist_raum_' + id; }));
+function csvOut(file, head, lines) {                                                           // Kopfzeile einmal je Datei (und bei geaenderten Spalten neu)
+    var needHead = true, key = file + '|' + head;
+    pl.heads = pl.heads || {};
+    if (pl.heads[file] === key) { needHead = false; }
+    else {
+        pl.heads[file] = key;
+        try { var lastH = null; String(fs.readFileSync(file, 'utf8')).split('\n').forEach(function (l) { if (l.indexOf('slot_start,') === 0) { lastH = l; } }); needHead = lastH !== head; } catch (e) { needHead = true; }
+    }
+    return {filename: file, payload: (needHead ? head + '\n' : '') + lines.join('\n') + '\n'};
+}
+function stamp(ts) {
+    var d = new Date(ts), p2 = function (x) { return (x < 10 ? '0' : '') + x; };
+    return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()) + ' ' + p2(d.getHours()) + ':' + p2(d.getMinutes());
+}
+function monthOf(ts) { return stamp(ts).slice(0, 7); }
+
+if (pl.acc && pl.acc.s !== s0) {                                                               // Slot abgeschlossen: Ist-Werte festhalten und mit den frueheren Plaenen vergleichen
+    var a = pl.acc;
+    if (a.n >= 8) {
+        var actual = {at: a.atN ? a.atS / a.atN : null, pv: a.pvN ? a.pvS / a.pvN : null, price: priceAt(PI.price, a.s), cop: a.elH > 0.005 ? a.thH / a.elH : null,
+                      th: a.thH, el: a.elA, defr: a.defrosts, dhw: a.dhwMin, run: a.runMin, hz: a.hzN ? a.hzS / a.hzN : null, q: a.q === undefined ? null : a.q, soc: a.soc === undefined ? null : a.soc, rooms: a.rooms || {}};
+        var aVals = [actual.at, actual.pv, actual.price, actual.cop, actual.th, actual.el, actual.defr, actual.dhw, actual.run, actual.hz, actual.q, actual.soc].map(function (v, i) { return c(v, i === 0 || i === 9 ? 2 : 3); })
+            .concat(roomIds.map(function (id) { return c(actual.rooms[id], 2); }));
+        var mo = monthOf(a.s);
+        out[1] = csvOut('/data/optimizer/plan-actuals-' + mo + '.csv', 'slot_start,' + ACT_COLS.join(','), [stamp(a.s) + ',' + aVals.join(',')]);
+        // Vergleich: was wurde damals (vor ca. 0/1/3/6/12/24 h) prognostiziert und empfohlen, was ist tatsaechlich passiert
+        var EV_COLS = ['vorlauf_soll_h', 'vorlauf_ist_h', 'plan_zeit', 'prog_aussen', 'prog_feuchte', 'prog_cop', 'prog_preis', 'prog_pv_w', 'prog_bedarf_kwh', 'plan_waerme_kwh', 'prog_kosten_ct_kwh', 'prog_defrost_risiko', 'prog_taupunkt', 'prog_kosten_basis_ct_kwh', 'prog_strafe_defrost_ct_kwh', 'prog_strafe_unsicher_ct_kwh', 'prog_reserve_hinten_kwh', 'prog_reserve_vorn_kwh',
+                       'vertrauen_aussen', 'vertrauen_pv', 'attraktivitaet', 'empfehlung', 'offset_hinweis', 'quiet_hinweis'];
+        var evLines = [];
+        [0, 1, 3, 6, 12, 24].forEach(function (L) {
+            var T0 = L === 0 ? Math.floor(a.s / H) * H : Math.round((a.s - L * H) / H) * H;
+            var sn = null; (pl.snaps || []).forEach(function (x) { if (x.t0 === T0) { sn = x; } });
+            if (!sn) { return; }
+            var k = Math.round((a.s - sn.s0) / Q15); if (k < 0 || k >= sn.slots.length) { return; }
+            var sl = sn.slots[k], K = sn.cols;
+            var g = function (name) { return sl[K.indexOf(name)]; };
+            var recT = {1: 'VORZIEHEN', 0: 'NORMAL', '-1': 'VERSCHIEBEN'}[g('rec')];
+            evLines.push([stamp(a.s), L, c((a.s - sn.t) / H, 2), stamp(sn.t), c(g('at'), 2), c(g('rh'), 0), c(g('cop'), 2), c(g('price'), 4), c(g('pv'), 0), c(g('bedarf'), 3), c(g('plan'), 3), c(g('kosten'), 2), c(g('defrost'), 2), c(g('taupunkt'), 1), c(g('kosten_basis'), 2), c(g('strafe_defrost'), 2), c(g('strafe_unsicher'), 2), c(g('reserve_hinten'), 3), c(g('reserve_vorn'), 3),
+                          c(g('conf_at'), 2), c(g('conf_pv'), 2), c(g('att'), 0), recT, c(g('offset'), 1), String(g('quiet')).replace(/,/g, ';')].concat(aVals).join(','));
+        });
+        if (evLines.length) { out[2] = csvOut('/data/optimizer/plan-eval-' + mo + '.csv', 'slot_start,' + EV_COLS.join(',') + ',' + ACT_COLS.join(','), evLines); }
+    }
+    pl.acc = null;
+}
+if (!pl.acc) { pl.acc = newAcc(s0); }
+var acc = pl.acc;
+acc.n++;
+if (atNow !== null) { acc.atS += atNow; acc.atN++; }
+if (piFresh && ok(PI.pvNow)) { acc.pvS += PI.pvNow; acc.pvN++; }
+if (running) { acc.runMin++; acc.hzS += freq; acc.hzN++; }
+var thW = (running && pth !== null) ? pth : 0, elW = (running && pel !== null) ? pel : 0;
+acc.thA += thW * dtH / 1000; acc.elA += elW * dtH / 1000;
+if (running && !dhw && !defrost) { acc.thH += thW * dtH / 1000; acc.elH += elW * dtH / 1000; }
+if (dhw) { acc.dhwMin++; }
+if (defrost && !pl.prevDefrost) { acc.defrosts++; }
+pl.prevDefrost = defrost;
+acc.q = qLevel; acc.soc = piFresh && ok(PI.soc) ? PI.soc : acc.soc;
+acc.rooms = {}; ROOMS.forEach(function (rc) { var r = Rr[rc.id]; if (r && r.ts && now - r.ts < (rc.maxAgeMin || 90) * MS_MIN && ok(r.ema)) { acc.rooms[rc.id] = r.ema; } });
+// Tagessumme fuer das Lernen: Heizgradstunden gegen gelieferte Waerme (ohne Warmwasser und Abtauen)
+var d0 = dayStart(now);
+if (pl.day && pl.day.d0 !== d0) {
+    if (pl.day.n >= 1200) { pl.learn.days.push([pl.day.d0, Math.round(pl.day.hdd * 100) / 100, Math.round(pl.day.q * 1000) / 1000, pl.day.n]); }
+    while (pl.learn.days.length > pn('learnDays', 21)) { pl.learn.days.shift(); }
+    pl.day = null; pl.lastSave = 0;
+}
+if (!pl.day) { pl.day = {d0: d0, hdd: 0, q: 0, n: 0}; }
+pl.day.n++;
+if (atNow !== null) { pl.day.hdd += Math.max(0, pn('tbalC', 15) - atNow) / 60; }
+if (running && !dhw && !defrost && pth !== null) { pl.day.q += pth * dtH / 1000; }
+
+// ---------- Plan berechnen: einmal pro 15-Minuten-Slot, bis er gelingt jede Minute
+function buildPlan() {
+    var P = {s0: s0, t: now, status: 'ok', why: '', slots: null};
+    // Wetter-Prognose (OWM, 3-Stunden-Punkte)
+    var W = G('OPT_weather') || {};
+    var pts = (Array.isArray(W.fpts) ? W.fpts : []).filter(function (p) { return ok(p[0]) && ok(p[1]); }).sort(function (x, y) { return x[0] - y[0]; });
+    if (!(W.f_ts && now - W.f_ts < 2 * H && pts.length >= 3 && pts[pts.length - 1][0] >= now + 18 * H)) { P.status = 'keine Wetterprognose'; P.why = 'Die Wetterprognose fehlt oder ist zu alt oder zu kurz.'; return P; }
+    function wAt(t, idx) {
+        if (t <= pts[0][0]) { return num(pts[0][idx]); }
+        for (var i = 1; i < pts.length; i++) {
+            if (pts[i][0] >= t) { var y0 = num(pts[i - 1][idx]), y1 = num(pts[i][idx]); return (y0 === null || y1 === null) ? null : lerp(t, pts[i - 1][0], y0, pts[i][0], y1); }
+        }
+        return num(pts[pts.length - 1][idx]);
+    }
+    // Preise
+    var pr = PI.price;
+    if (!piFresh || !Array.isArray(pr) || !pr.length) { P.status = 'keine Preise'; P.why = 'Die Preisdaten fehlen oder sind zu alt.'; return P; }
+    // Heizkurve der Waermepumpe (Soll-Vorlauf je Aussentemperatur)
+    var cvLo = num(G('Z1_Heat_Curve_Outside_Low_Temp')), cvHi = num(G('Z1_Heat_Curve_Outside_High_Temp')), cvTl = num(G('Z1_Heat_Curve_Target_Low_Temp')), cvTh = num(G('Z1_Heat_Curve_Target_High_Temp'));
+    if (cvLo === null || cvHi === null || cvTl === null || cvTh === null || cvHi <= cvLo) { P.status = 'keine Heizkurve'; P.why = 'Die Heizkurve der Wärmepumpe ist nicht bekannt.'; return P; }
+    var curve = function (t) { return t <= cvLo ? cvTh : (t >= cvHi ? cvTl : cvTh + (cvTl - cvTh) * (t - cvLo) / (cvHi - cvLo)); };
+
+    // Prognosevertrauen je Vorlauf: konservative Standardwerte, die die gemessene Prognoseguete nur langsam (n / (n + n0)) veraendert
+    var fq = flow.get('enFq') || jload('/data/optimizer/forecast-quality.json', {at: {}, pv: {}});
+    var HZ = [1, 3, 6, 12, 24], cMin = pn('confMin', 0.2), cMax = pn('confMax', 0.98);
+    function anchors(kind) {
+        var pri = (PC.confPrior || {})[kind] || {}, n0 = num((PC.confN0 || {})[kind]), sgm = num((PC.confSigma || {})[kind === 'at' ? 'atK' : 'pvRel']);
+        if (n0 === null) { n0 = kind === 'at' ? 168 : 100; }
+        if (sgm === null) { sgm = kind === 'at' ? 2.5 : 0.6; }
+        return HZ.map(function (h) {
+            var p = num(pri[h]); if (p === null) { p = Math.max(cMin, 1 - h / 48); }
+            var e = (fq[kind] || {})[h], meas = null, n = 0;
+            if (e && e.n > 0) {
+                if (kind === 'at') { n = e.n; meas = 1 / (1 + Math.pow((e.abs / e.n) / sgm, 2)); }
+                else if (e.act > 0) { n = e.n; meas = 1 / (1 + Math.pow((e.abs / e.act) / sgm, 2)); }
+            }
+            var w = meas === null ? 0 : n / (n + n0);
+            return {h: h, c: clamp((1 - w) * p + w * (meas === null ? p : meas), cMin, cMax), n: n, w: w, prior: p, meas: meas};
+        });
+    }
+    var cAt = anchors('at'), cPv = anchors('pv');
+    function confAt(an, L) {
+        if (L <= an[0].h) { return an[0].c; }
+        for (var i = 1; i < an.length; i++) { if (L <= an[i].h) { return lerp(L, an[i - 1].h, an[i - 1].c, an[i].h, an[i].c); } }
+        return an[an.length - 1].c;
+    }
+    P.conf = {at: cAt, pv: cPv};
+
+    // Modellparameter: Waermebedarf (Gebaeudeverlust, aus den Tagesdaten gelernt) und COP (Anteil am Carnot-Wert, aus der Quiet-Statistik gelernt)
+    var days = (pl.learn.days || []).filter(function (d) { return d[1] >= pn('learnMinHdd', 30); }), sQ = 0, sH = 0;
+    days.forEach(function (d) { sQ += d[2]; sH += d[1]; });
+    var ua0 = pn('uaKwPerK', 0.22), uaH0 = pn('uaPriorKh', 300), ua = (ua0 * uaH0 + sQ) / (uaH0 + sH), tbal = pn('tbalC', 15);
+    var apE = pn('evapApproachK', 6), apC = pn('condApproachK', 2);
+    function carnot(t, vl) { var th = vl + apC + 273.15, tc = t - apE + 273.15; return th > tc + 5 ? th / (th - tc) : null; }
+    var qs = flow.get('qs') || {}, kf = qs.kf || {}, etaS = 0, etaN = 0;
+    Object.keys(kf).forEach(function (k) {
+        var s = kf[k]; if (!s || !s.s || s.n < 10 || !s.s.cop || !s.s.vl || !s.s.at || !s.s.cop[1] || !s.s.vl[1] || !s.s.at[1]) { return; }
+        var ca = carnot(s.s.at[0] / s.s.at[1], s.s.vl[0] / s.s.vl[1]), co = s.s.cop[0] / s.s.cop[1];
+        if (ca !== null && ca > 1 && co > 0.5 && co < 9) { etaS += (co / ca) * s.n; etaN += s.n; }
+    });
+    var etaP = pn('etaPrior', 0.45), etaW = etaN / (etaN + pn('etaPriorMin', 600)), eta = clamp((1 - etaW) * etaP + etaW * (etaN ? etaS / etaN : etaP), 0.25, 0.65);
+    P.model = {ua: ua, uaDays: days.length, uaLearned: sH > 0, tbal: tbal, eta: eta, etaMin: etaN, etaW: etaW};
+
+    // Raeume: Reserve des Gebaeudes (wie viel Waerme darf nach vorn / hinten verschoben werden, ohne ein Komfortband zu verlassen)
+    var rs = [];
+    ROOMS.forEach(function (rc) {
+        if (rc.active === false || !(rc.min < rc.max)) { return; }
+        // Die Sensoren melden selten (Shelly H&T: oft nur alle 1-2 h). Aeltere Werte als das Limit der Raumlogik zaehlen hier bis staleMaxAgeMin mit einem Abschlag je Stunde Alter.
+        var r = Rr[rc.id] || {}, a = r.ts ? (now - r.ts) / MS_MIN : null, lim = rc.maxAgeMin || cfg.sensor.maxAgeMin;
+        if (!ok(r.ema) || a === null || a > pn('staleMaxAgeMin', 240)) { rs.push({name: rc.name, valid: false, age: a}); return; }
+        var tr = ok(r.trend) ? r.trend : 0, th = pn('trendHorizonH', 2), stale = a > lim, allow = stale ? pn('staleDriftKph', 0.1) * a / 60 : 0;
+        rs.push({name: rc.name, valid: true, stale: stale, age: a, dLow: r.ema - rc.min, dHigh: rc.max - r.ema, eLow: r.ema + Math.min(0, tr) * th - rc.min - allow, eHigh: rc.max - (r.ema + Math.max(0, tr) * th) - allow, min: rc.min, max: rc.max});
+    });
+    var val = rs.filter(function (x) { return x.valid; }), cold = val.filter(function (x) { return x.dLow < 0; }), warm = val.filter(function (x) { return x.dHigh < 0; });
+    var bufK = pn('bufferKwhPerK', 3), guard = pn('guardK', 0.3), maxSh = pn('maxShiftKwh', 8), rDown = 0, rUp = 0, rState;
+    var mDown = val.length ? Math.min.apply(null, val.map(function (x) { return x.eLow; })) : null, mUp = val.length ? Math.min.apply(null, val.map(function (x) { return x.eHigh; })) : null;
+    if (!val.length) { rState = 'keine Raumdaten'; }
+    else if (val.length < rs.length) { rState = 'Raumdaten unvollständig'; }
+    else if ((cold.length && warm.length) || (sxFresh && Sx.distrib)) { rState = 'Wärmeverteilungskonflikt'; }
+    else if (cold.length) { rState = 'Raum unter Minimum'; rUp = bufK * Math.max(0, mUp - guard); }
+    else if (warm.length) { rState = 'Raum über Maximum'; rDown = bufK * Math.max(0, mDown - guard); }
+    else { rState = 'alle im Band'; rDown = bufK * Math.max(0, mDown - guard); rUp = bufK * Math.max(0, mUp - guard); }
+    rDown = Math.min(rDown, maxSh); rUp = Math.min(rUp, maxSh);
+    var critDown = null, critUp = null;
+    val.forEach(function (x) { if (critDown === null || x.eLow < critDown.eLow) { critDown = x; } if (critUp === null || x.eHigh < critUp.eHigh) { critUp = x; } });
+    P.res = {state: rState, down: rDown, up: rUp, critDown: critDown ? critDown.name : '', critUp: critUp ? critUp.name : '', valid: val.length, active: rs.length,
+             stale: val.filter(function (x) { return x.stale; }).map(function (x) { return x.name + ' ' + Math.round(x.age) + ' min'; }), missing: rs.filter(function (x) { return !x.valid; }).map(function (x) { return x.name; })};
+    var tRoom = ROOMS.filter(function (rc) { return rc.active !== false && rc.min < rc.max; }).map(function (rc) { return (rc.min + rc.max) / 2; });
+    tRoom = tRoom.length ? tRoom.reduce(function (x, y) { return x + y; }, 0) / tRoom.length : 22;
+
+    // Prognose je Slot (Aufloesung der Quellen bleibt bekannt: Temperatur 3 h, PV 1 h bzw. 15 min, Preis 15 min)
+    var owmNow = wAt(now, 1), anchor = (atNow !== null && owmNow !== null) ? clamp(atNow - owmNow, -5, 5) : 0, tauA = pn('anchorTauH', 4);
+    var raw = [], i;
+    var pvArr = PI.pv, pvRes = Array.isArray(pvArr) && pvArr.length ? pvArr[0][2] / MS_MIN : null;
+    function pvMean(a, b) {
+        if (!Array.isArray(pvArr) || !pvArr.length) { return null; }
+        var sw = 0, dt = 0;
+        pvArr.forEach(function (x) { var q0 = x[0], q1 = x[0] + x[2], o = Math.min(q1, b) - Math.max(q0, a); if (o > 0) { sw += x[1] * o; dt += o; } });
+        return dt >= (b - a) * 0.9 ? sw / dt : null;
+    }
+    for (i = 0; i < N; i++) {
+        var t = s0 + i * Q15, ctr = t + Q15 / 2, L = Math.max(0, (ctr - now) / H);
+        var atF = wAt(ctr, 1), rhF = wAt(ctr, 2), price = priceAt(pr, t);
+        if (atF === null || price === null) { P.status = price === null ? 'keine Preise' : 'keine Wetterprognose'; P.why = 'Für ' + hhmm(t) + ' fehlen Daten.'; return P; }
+        raw.push({t: t, L: L, atF: atF + anchor * Math.exp(-L / tauA), rhF: rhF, price: price, pv: pvMean(t, t + Q15)});
+    }
+    var m24 = 0, r24 = 0, rn = 0, p24 = 0;
+    for (i = 0; i < NDAY; i++) { m24 += raw[i].atF; if (raw[i].rhF !== null) { r24 += raw[i].rhF; rn++; } }
+    var atRef = m24 / NDAY, rhRef = rn ? r24 / rn : 70;                                         // Schrumpfziel: Tagesmittel der Prognose
+    function defr(t, rh) {
+        var rT = t <= -10 ? 0.15 : (t <= -5 ? lerp(t, -10, 0.15, -5, 0.5) : (t <= -2 ? lerp(t, -5, 0.5, -2, 0.95) : (t <= 3 ? 1 : (t <= 6 ? lerp(t, 3, 1, 6, 0.3) : (t <= 8 ? lerp(t, 6, 0.3, 8, 0) : 0)))));
+        var rH = clamp((rh - 55) / 35, 0, 1);
+        return rT * (0.3 + 0.7 * rH);
+    }
+    function dewp(t, rh) { var a = 17.62, b = 243.12, g = Math.log(Math.max(rh, 1) / 100) + a * t / (b + t); return b * g / (a - g); }
+    var qOffLo = num(QC.offAtLow), qOffHi = num(QC.offAtHigh); if (qOffLo === null) { qOffLo = 1; } if (qOffHi === null) { qOffHi = 3; }
+    var uaKw = ua, dflLoss = pn('defrostLoss', 0.15), uncP = pn('uncertaintyPremium', 0.05), slots = [], cbarS = 0;
+    raw.forEach(function (x, ix) {
+        var cA = confAt(cAt, x.L), cP = confAt(cPv, x.L);
+        var atE = cA * x.atF + (1 - cA) * atRef, rhE = cA * (x.rhF === null ? rhRef : x.rhF) + (1 - cA) * rhRef;   // je schlechter die Prognose, desto weniger weicht sie vom Tagesmittel ab
+        var vl = curve(atE), cg = carnot(atE, vl), cop = cg === null ? null : clamp(eta * cg, 1.5, 6.5);
+        if (cop === null) { cop = 3; }
+        var bedarf = uaKw * Math.max(0, tbal - atE) * (Q15 / H);                                   // kWh Waerme je Slot
+        var risk = defr(atE, rhE), base = x.price * 100 / cop, dPen = base * dflLoss * risk, uPen = base * uncP * (1 - cA);
+        slots.push({t: x.t, L: x.L, at: atE, atRaw: x.atF, rh: rhE, dew: dewp(atE, rhE), vl: vl, cop: cop, price: x.price, pv: x.pv, bedarf: bedarf, risk: risk, cA: cA, cP: cP, base: base, dPen: dPen, uPen: uPen, cost: base + dPen + uPen});
+        if (ix < NDAY) { cbarS += (base + dPen + uPen); }
+    });
+    var qn = Math.max(0.01, pn('quantKwh', 0.05)), bSum = 0, cbarW = 0;
+    for (i = 0; i < NDAY; i++) { bSum += slots[i].bedarf; cbarW += slots[i].cost * slots[i].bedarf; }
+    var cbar = bSum > 0 ? cbarW / bSum : cbarS / NDAY;
+    // Normalverlauf in ganzen Einheiten (kumuliertes Runden: Tagessumme bleibt exakt erhalten)
+    var bq = [], cum = 0, prevR = 0;
+    for (i = 0; i < N; i++) { cum += slots[i].bedarf / qn; var rr = Math.round(cum); bq.push(rr - prevR); prevR = rr; }
+    var cq = slots.map(function (x) { return x.cost * qn; }), lam = pn('shiftPenaltyPct', 2) / 100 * cbar * qn, mMin = pn('mMin', 0.4), mMax = pn('mMax', 1.6), capQ = Math.floor(pn('pMaxKw', 9) * 0.25 / qn);
+    var enough = bSum >= pn('minDemandKwh', 4);
+    var pq = enough ? planDP(bq, cq, lam, Math.floor(rDown / qn), Math.floor(rUp / qn), mMin, mMax, capQ) : bq.slice();
+    var pqPot = enough ? planDP(bq, cq, lam, Math.floor(maxSh / qn), Math.floor(maxSh / qn), mMin, mMax, capQ) : bq.slice();     // Potenzial ohne Komfortgrenze (nur zum Vergleich)
+    var tol = pn('recTol', 0.1), cumD = 0;
+    slots.forEach(function (x, ix) {
+        x.b = bq[ix] * qn; x.p = pq[ix] * qn; x.pPot = pqPot[ix] * qn;
+        cumD += x.p - x.b; x.resBack = rDown + cumD; x.resFwd = rUp - cumD;                      // Reserve, die nach diesem Slot noch uebrig ist
+        var m = x.b >= 0.02 ? x.p / x.b : null;
+        x.m = m;
+        x.rec = (!enough || m === null) ? 0 : (m >= 1 + tol ? 1 : (m <= 1 - tol ? -1 : 0));
+        x.att = Math.round(clamp(50 + 50 * (cbar - x.cost) / (0.4 * cbar), 0, 100));
+        var off = 0;
+        if (x.rec !== 0 && m !== null) { off = clamp(Math.round((m - 1) * Math.max(3, x.vl - tRoom) * 2) / 2, -2, 2); }
+        x.off = off;
+        var needW = x.p / 0.25 * 1000, hint = '–';
+        if (x.at >= qOffLo && x.at <= qOffHi) { hint = 'Stufe 0 (' + qOffLo + '–' + qOffHi + ' °C)'; }
+        else {
+            var bi = x.at < 0 ? 0 : (x.at < 3 ? 1 : (x.at < 7 ? 2 : (x.at < 12 ? 3 : 4)));
+            [0, 1, 2, 3].forEach(function (lv) { var s = kf[lv + '|' + bi]; if (s && s.n >= 30 && s.s && s.s.pth && s.s.pth[1] >= 20 && s.s.pth[0] / s.s.pth[1] >= needW * 1.1 && needW > 0) { hint = 'Stufe ' + lv + ' (gemessen)'; } });
+        }
+        x.quiet = hint;
+    });
+    // Kennzahlen und Fenster
+    var sumB = 0, sumUp = 0, costB = 0, costP = 0, costPot = 0;
+    for (i = 0; i < NDAY; i++) { var q = slots[i]; sumB += q.b; sumUp += Math.max(0, q.p - q.b); costB += q.cost * q.b; costP += q.cost * q.p; costPot += q.cost * q.pPot; }
+    var W3 = Math.round(pn('windowH', 3) * 4), bestT = null, bestP = null;
+    for (i = 0; i + W3 <= NDAY; i++) {
+        var sc = 0, sp = 0, np = 0;
+        for (var j = i; j < i + W3; j++) { sc += slots[j].cost; if (slots[j].pv !== null) { sp += slots[j].pv; np++; } }
+        if (bestT === null || sc / W3 < bestT.v) { bestT = {i: i, v: sc / W3}; }
+        if (np === W3 && (bestP === null || sp / W3 > bestP.v)) { bestP = {i: i, v: sp / W3}; }
+    }
+    P.slots = slots; P.cbar = cbar; P.enough = enough; P.eta = eta;
+    P.sum = {bedarf: sumB, up: sumUp, costB: costB, costP: costP, costPot: costPot, thermWin: bestT, pvWin: bestP, atRef: atRef, anchor: anchor, pvRes: pvRes, wRes: 180};
+    return P;
+}
+
+if (!pl.plan || pl.planSlot !== s0 || pl.plan.status !== 'ok') {
+    pl.plan = buildPlan(); pl.planSlot = s0;
+}
+var P = pl.plan;
+
+// ---------- Schnappschuss: je Stunde ein Plan mit allen Eingaengen (bleibt unveraendert, wird nur fuer den spaeteren Vergleich gelesen)
+var SNAP_COLS = ['t', 'at', 'rh', 'cop', 'price', 'pv', 'bedarf', 'plan', 'defrost', 'conf_at', 'conf_pv', 'att', 'rec', 'kosten', 'offset', 'quiet', 'plan_pot', 'taupunkt', 'kosten_basis', 'strafe_defrost', 'strafe_unsicher', 'reserve_hinten', 'reserve_vorn'];
+var hourNow = Math.floor(now / H) * H;
+if (P.status === 'ok' && P.slots && pl.snapHour !== hourNow) {
+    var snap = {t0: hourNow, s0: P.s0, t: now, status: 'ok', cols: SNAP_COLS, slots: P.slots.map(function (x) {
+        return [x.t, Math.round(x.at * 100) / 100, Math.round(x.rh), Math.round(x.cop * 100) / 100, x.price, x.pv === null ? null : Math.round(x.pv), Math.round(x.b * 1000) / 1000, Math.round(x.p * 1000) / 1000, Math.round(x.risk * 100) / 100,
+                Math.round(x.cA * 100) / 100, Math.round(x.cP * 100) / 100, x.att, x.rec, Math.round(x.cost * 100) / 100, x.off, x.quiet, Math.round(x.pPot * 1000) / 1000, Math.round(x.dew * 10) / 10, Math.round(x.base * 100) / 100, Math.round(x.dPen * 100) / 100, Math.round(x.uPen * 100) / 100,
+                Math.round(x.resBack * 1000) / 1000, Math.round(x.resFwd * 1000) / 1000];
+    }), meta: {model: P.model, res: {at_min: 180, rh_min: 180, pv_min: P.sum.pvRes, price_min: 15}, reserve: {state: P.res.state, down: P.res.down, up: P.res.up, stale: P.res.stale, missing: P.res.missing}, conf_at: P.conf.at.map(function (a) { return [a.h, Math.round(a.c * 100) / 100, a.n]; }),
+            conf_pv: P.conf.pv.map(function (a) { return [a.h, Math.round(a.c * 100) / 100, a.n]; })}};
+    pl.snaps = (pl.snaps || []).filter(function (x) { return x.t0 > now - pn('snapKeepH', 27) * H; });
+    pl.snaps.push(snap); pl.snapHour = hourNow;
+    var jl = {t0: snap.t0, s0: snap.s0, t: snap.t, cols: snap.cols, meta: snap.meta, slots: snap.slots.map(function (sl) { var r = sl.slice(); r[0] = Math.round(r[0] / 1000); return r; })};
+    out[3] = {filename: '/data/optimizer/plan-snapshots-' + monthOf(now) + '.jsonl', payload: JSON.stringify(jl) + '\n'};
+    pl.lastSave = 0;
+}
+if (!pl.lastSave || now - pl.lastSave >= 60 * MS_MIN) { jsave('/data/optimizer/plan-state.json', {learn: pl.learn, snaps: pl.snaps, day: pl.day}); pl.lastSave = now; }
+
+// ---------- Anzeige
+var warnCls = function (okk) { return okk ? 'ok' : 'warn'; };
+var rows = [];
+if (P.status !== 'ok') { rows.push(['Status', 'Kein Plan: ' + P.status, 'warn'], ['Grund', P.why, '']); }
+var tab = [];
+if (P.status === 'ok') {
+    var sm = P.sum, rsx = P.res, ml = P.model, sl0 = P.slots;
+    var tw = sm.thermWin, pw = sm.pvWin;
+    var win = function (w, unit, d) { return w ? hhmm(sl0[w.i].t) + ' – ' + hhmm(sl0[w.i].t + 3 * H) + ' · Ø ' + f(w.v, d, unit) : '–'; };
+    var dayB = sm.bedarf, shiftK = sm.up, sav = sm.costB - sm.costP, savPot = sm.costB - sm.costPot;
+    rows = [
+        ['Status', 'Shadow · berechnet ' + hhmm(P.t) + (P.enough ? '' : ' · kaum Heizbedarf, es wird nichts verschoben'), P.enough ? 'ok' : ''],
+        ['Wärmebedarf nächste 24 h', f(dayB, 1, 'kWh') + ' · Ø ' + f(dayB / 24, 2, 'kW') + ' (Bedarf ' + (ml.uaLearned ? 'gelernt aus ' + ml.uaDays + ' Tagen' : 'Standardwert') + ' ' + f(ml.ua * 1000, 0, 'W/K') + ')', ''],
+        ['Verschobene Wärme', f(shiftK, 2, 'kWh') + ' vorgezogen · Ersparnis Modell ' + f(sav, 0, 'ct') + (dayB > 0 ? ' (' + f(100 * sav / Math.max(1, sm.costB), 1, '%') + ')' : '') + ' · ohne Komfortgrenzen ' + f(savPot, 0, 'ct'), ''],
+        ['Reserve Gebäude', 'nach hinten ' + f(rsx.down, 1, 'kWh') + ' · nach vorn ' + f(rsx.up, 1, 'kWh') + ' · ' + rsx.state + ((rsx.critDown && (rsx.state === 'alle im Band' || rsx.state === 'Raum unter Minimum' || rsx.state === 'Raum über Maximum')) ? ' (eng: ' + rsx.critDown + ')' : '') + (rsx.missing.length ? ' · ohne Daten: ' + rsx.missing.join(', ') : '') + (rsx.stale.length ? ' · ältere Werte mit Abschlag: ' + rsx.stale.join(', ') : ''), rsx.state === 'alle im Band' ? 'ok' : 'warn'],
+        ['Thermisch günstigstes Fenster', win(tw, 'ct/kWh', 1) + ' (Tagesmittel ' + f(P.cbar, 1, 'ct') + ')', ''],
+        ['PV-günstigstes Fenster', pw ? win(pw, 'W', 0) : 'keine PV-Prognose', ''],
+        ['Batterie', ok(PI.soc) ? f(PI.soc, 0, '%') + ' (' + (PI.socSrc || '–') + ')' : '–', ''],
+        ['Vertrauen Temperatur', P.conf.at.map(function (a) { return '+' + a.h + ' h ' + Math.round(a.c * 100) + ' %'; }).join(' · '), ''],
+        ['Vertrauen PV', P.conf.pv.map(function (a) { return '+' + a.h + ' h ' + Math.round(a.c * 100) + ' %'; }).join(' · '), ''],
+        ['Gewicht gemessen / Standard', 'Temperatur ' + P.conf.at.map(function (a) { return Math.round(a.w * 100); }).join('/') + ' % · PV ' + P.conf.pv.map(function (a) { return Math.round(a.w * 100); }).join('/') + ' %', ''],
+        ['COP-Modell', 'η ' + f(ml.eta, 2) + ' vom Carnot-Wert (' + (ml.etaMin >= 60 ? 'gemessen ' + Math.round(ml.etaW * 100) + ' %, ' + ml.etaMin + ' min' : 'Standardwert') + ') · Heizgrenze ' + f(ml.tbal, 0, '°C'), ''],
+        ['Auflösung der Quellen', 'Temperatur 3 h · PV ' + (sm.pvRes ? f(sm.pvRes, 0, 'min') : '–') + ' · Preis 15 min', '']
+    ];
+    // Tabelle: 24 h in Stundenbloecken ab dem aktuellen Slot
+    for (var b = 0; b < 24; b++) {
+        var g = sl0.slice(b * 4, b * 4 + 4), n = g.length, mean = function (k) { var s = 0, cnt = 0; g.forEach(function (x) { if (x[k] !== null && x[k] !== undefined) { s += x[k]; cnt++; } }); return cnt ? s / cnt : null; };
+        var sB = 0, sP = 0, rk = 0; g.forEach(function (x) { sB += x.b; sP += x.p; if (x.risk > rk) { rk = x.risk; } });
+        var mh = sB >= 0.05 ? sP / sB : null, recH = (!P.enough || mh === null) ? 0 : (mh >= 1 + pn('recTol', 0.1) ? 1 : (mh <= 1 - pn('recTol', 0.1) ? -1 : 0));
+        var offH = mean('off'), qh = g[0].quiet;
+        tab.push({z: hhmm(g[0].t), b: f(sB, 2), p: f(sP, 2), cop: f(mean('cop'), 1), h: f(mean('rh'), 0, '%') + ' · ' + f(mean('dew'), 1, '°C'), pr: f(mean('price') * 100, 1), k: f(mean('cost'), 1), pv: mean('pv') === null ? '–' : f(mean('pv'), 0),
+                  d: rk >= 0.05 ? Math.round(rk * 100) + ' %' : '–', v: Math.round(mean('cA') * 100) + ' %', a: Math.round(mean('att')),
+                  r: recH === 1 ? 'VORZIEHEN' : (recH === -1 ? 'VERSCHIEBEN' : 'NORMAL'), cls: recH === 1 ? 'up' : (recH === -1 ? 'down' : ''),
+                  o: recH === 0 || offH === null ? '–' : (offH > 0 ? '+' : '') + f(offH, 1, 'K'), q: qh});
+    }
+}
+out[0] = {payload: {rows: rows, plan: tab}};
+global.set('OPT_plan', {ts: now, s0: P.s0, status: P.status, reserve: P.res || null, slots: P.slots ? P.slots.map(function (x) { return [x.t, x.rec, x.b, x.p, x.cost, x.cA]; }) : null});
+flow.set('plan', pl);
+return out;
+"""
+
 
 EVAL_JS = r"""
 // Einmal pro Minute: Werte zusammenfuehren, bewerten, anzeigen und protokollieren. KEIN Eingriff in die Regelung.
@@ -1388,6 +1793,11 @@ for _order, (gid, gname, gwidth) in enumerate(GROUPS, 1):
     upsert({"id": gid, "type": "ui_group", "name": gname, "tab": UI_TAB, "order": _order, "disp": True,
             "width": gwidth, "collapse": False, "className": ""})
 
+# The heat plan gets its own dashboard page: the dashboard's masonry layout places cards of mixed widths (6/12/18) on top of each other.
+UI_TAB_PLAN = "opt_ui_tab_plan"
+upsert({"id": UI_TAB_PLAN, "type": "ui_tab", "name": "Wärmefahrplan", "icon": "schedule", "order": 12.6, "disabled": False, "hidden": False})
+upsert({"id": "opt_g_plan", "type": "ui_group", "name": "Wärmefahrplan (Shadow)", "tab": UI_TAB_PLAN, "order": 1, "disp": True, "width": 18, "collapse": False, "className": ""})
+
 # The dashboard measures "automatic" card heights only once, before the first data arrives, so such cards stay collapsed.
 # Every card therefore starts with a static height and fits itself to its content (marked .optfit): it sets the card size
 # attribute and lets the dashboard lay out the cards again. Hidden cards (other tab) are skipped; on any error the card
@@ -1447,6 +1857,29 @@ upsert({"id": "opt_t_qstats", "type": "ui_template", "z": TAB, "group": "opt_g_q
         "format": QSTATS + FIT_JS.replace("__ID__", "opt_t_qstats"), "storeOutMessages": True, "fwdInMessages": False, "resendOnRefresh": True,
         "templateScope": "local", "className": "", "x": 1260, "y": 320, "wires": [[]]})
 upsert(template("opt_t_wp", "opt_g_wp", 6, 260))
+PLAN_TPL = """<style>
+.optp{font-size:14px;line-height:1.4}
+.optp .sum{display:grid;grid-template-columns:max-content 1fr;gap:3px 16px;margin:2px 0 14px}
+.optp .sum .k{color:#666}
+.optp .sum .v{font-weight:bold}
+.optp .warn{color:#c62828}
+.optp .ok{color:#2e7d32}
+.optp table{width:100%;border-collapse:collapse;font-size:13px}
+.optp th{text-align:right;font-weight:normal;color:#666;padding:4px 6px;border-bottom:1px solid #ccc;font-size:12px;white-space:nowrap}
+.optp td{padding:4px 6px;border-bottom:1px solid #eee;text-align:right;white-space:nowrap}
+.optp th:first-child,.optp td:first-child{text-align:left}
+.optp tr.up td.r{color:#2e7d32;font-weight:bold}
+.optp tr.down td.r{color:#e65100;font-weight:bold}
+</style>
+<div class="optp optfit">
+<div class="sum"><span ng-repeat-start="r in msg.payload.rows track by $index" class="k">{{r[0]}}</span><span ng-repeat-end class="v" ng-class="r[2]">{{r[1]}}</span></div>
+<div style="overflow-x:auto"><table>
+<tr><th>Ab</th><th>Bedarf → Plan kWh</th><th>COP</th><th>Feuchte · Taupunkt</th><th>Preis ct/kWh</th><th>Kosten ct/kWh Wärme</th><th>PV W</th><th>Defrost</th><th>Vertrauen</th><th>Attraktivität</th><th>Empfehlung</th><th>Offset</th><th>Quiet</th></tr>
+<tr ng-repeat="r in msg.payload.plan track by $index" ng-class="r.cls"><td>{{r.z}}</td><td>{{r.b}} → {{r.p}}</td><td>{{r.cop}}</td><td>{{r.h}}</td><td>{{r.pr}}</td><td>{{r.k}}</td><td>{{r.pv}}</td><td>{{r.d}}</td><td>{{r.v}}</td><td>{{r.a}}</td><td class="r">{{r.r}}</td><td>{{r.o}}</td><td>{{r.q}}</td></tr>
+</table></div></div>"""
+upsert({"id": "opt_t_plan", "type": "ui_template", "z": TAB, "group": "opt_g_plan", "name": "Wärmefahrplan", "order": 1, "width": 0, "height": 21,
+        "format": PLAN_TPL + FIT_JS.replace("__ID__", "opt_t_plan"), "storeOutMessages": True, "fwdInMessages": False, "resendOnRefresh": True,
+        "templateScope": "local", "className": "", "x": 1260, "y": 440, "wires": [[]]})
 
 
 def room_input(field):
@@ -1646,6 +2079,11 @@ upsert(fn("opt_en_in", "Energiewerte lesen (nur lesen)", EN_IN_JS, 0, [], 440, 1
 upsert(inject("opt_i_en", "jede Minute", 60, 30, ["opt_energy"], 140, 1540))
 upsert(fn("opt_energy", "Energie & Preise auswerten", ENERGY_JS, 5, [["opt_t_en"], ["opt_f_en"], ["opt_f_fc"], ["opt_ui_vrmstatus"], ["opt_t_fq"]], 440, 1540, FS))
 for _fid, _name, _y in (("opt_f_en", "Energie-Protokoll", 1500), ("opt_f_fc", "Prognose-Schnappschüsse", 1580)):
+    upsert({"id": _fid, "type": "file", "z": TAB, "name": _name, "filename": "filename", "filenameType": "msg", "appendNewline": False,
+            "createDir": True, "overwriteFile": "false", "encoding": "utf8", "x": 760, "y": _y, "wires": [[]]})
+upsert(inject("opt_i_plan", "jede Minute", 60, 45, ["opt_plan"], 140, 1800))
+upsert(fn("opt_plan", "Wärmefahrplan berechnen (Shadow)", PLAN_JS, 5, [["opt_t_plan"], ["opt_f_pact"], ["opt_f_peval"], ["opt_f_psnap"], []], 440, 1800, FS))
+for _fid, _name, _y in (("opt_f_pact", "Plan: Ist-Werte je Slot", 1780), ("opt_f_peval", "Plan: Vergleich Prognose / Ist", 1840), ("opt_f_psnap", "Plan: Schnappschüsse", 1900)):
     upsert({"id": _fid, "type": "file", "z": TAB, "name": _name, "filename": "filename", "filenameType": "msg", "appendNewline": False,
             "createDir": True, "overwriteFile": "false", "encoding": "utf8", "x": 760, "y": _y, "wires": [[]]})
 upsert(inject("opt_i_vrm", "VRM-Prognose abrufen", 1800, 40, ["opt_vrm_req"], 140, 1660))

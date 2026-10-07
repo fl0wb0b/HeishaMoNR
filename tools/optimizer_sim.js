@@ -117,7 +117,7 @@ envv.OWM_API_KEY = 'KEY123'; envv.OWM_LAT = '50.1'; envv.OWM_LON = '8.6';
 run('opt_owm_req', {});
 const reqs = sent.filter(s => s.id === 'opt_owm_req').map(s => s.m);
 check('mit Schluessel: 2 Anfragen (current, forecast)', reqs.length === 2 && reqs[0].topic === 'current' && reqs[1].topic === 'forecast', reqs.map(r => r.topic).join(','));
-check('URL enthaelt Standort, Metrik und cnt=8 (24 h Prognose)', reqs[1].url.includes('lat=50.1') && reqs[1].url.includes('units=metric') && reqs[1].url.includes('cnt=8'), reqs[1].url.replace('KEY123', '***'));
+check('URL enthaelt Standort, Metrik und cnt=12 (36 h Prognose)', reqs[1].url.includes('lat=50.1') && reqs[1].url.includes('units=metric') && reqs[1].url.includes('cnt=12'), reqs[1].url.replace('KEY123', '***'));
 const t0 = NOW / 1000;
 run('opt_owm_parse', {topic: 'current', statusCode: 200, payload: {main: {temp: 2.0, humidity: 90, pressure: 1012}, clouds: {all: 80}, wind: {speed: 3}, weather: [{description: 'Nieselregen'}]}});
 run('opt_owm_parse', {topic: 'forecast', statusCode: 200, payload: {list: [
@@ -952,6 +952,238 @@ const fl = JSON.parse(fs.readFileSync(flowsFile, 'utf8'));
 check('Sicherheit: Venus nur abonniert (System und Batterie 278), evcc nur 3 Abonnements, weiterhin kein MQTT-Ausgang im Tab', fl.filter(n => n.z === 'opt_tab' && n.type === 'mqtt in' && /^opt_mqtt_en/.test(n.id)).map(n => n.broker + ':' + n.topic).join() === 'opt_broker_venus:N/+/system/0/#,opt_broker_nas:evcc/site/+,opt_broker_nas:evcc/site/forecast/+,opt_broker_nas:evcc/site/battery/soc,opt_broker_venus:N/+/battery/278/Soc' && fl.filter(n => n.z === 'opt_tab' && n.type === 'mqtt out').length === 0, '');
 check('Sicherheit: VRM-Zugangsdaten nur ueber das Formular, Datei 0600 (Code nutzt mode 0o600)', /mode: 0o600/.test(fl.find(n => n.id === 'opt_vrm_save').func) && /chmodSync\(file, 0o600\)/.test(fl.find(n => n.id === 'opt_vrm_save').func), '');
 })();
+
+// ===================================================================================================================
+console.log('\n--- Waermefahrplan (Shadow): Verteilung, Komfortgrenzen, Prognosevertrauen, Schnappschuesse');
+(() => {
+const HH = 3600000, T0 = new RealDate(2026, 10, 12, 0, 0, 0).getTime();                       // 12.11.2026 Mitternacht (Ortszeit)
+const lc = t => new RealDate(t);
+function tariffSl(from, hours) { const o = []; for (let t = Math.floor(from / 900000) * 900000 - 2 * HH; t < from + hours * HH; t += 900000) { const m = lc(t).getHours() * 60 + lc(t).getMinutes(); o.push([t, t + 900000, m < 300 ? 0.21 : 0.31]); } return o; }
+const sunAt = (t, w) => { const h = (t - new RealDate(t).setHours(0, 0, 0, 0)) / HH; return h < 8 || h > 16 ? 0 : w * Math.sin(Math.PI * (h - 8) / 8); };
+let O = {};
+function pfeed() {
+  const base = O.atBase === undefined ? 3 : O.atBase, drift = (O.issueDrift || 0) * (NOW - T0) / HH;
+  const pts = []; for (let k = 0; k <= 13; k++) { const t = NOW + k * 3 * HH, h = (t - new RealDate(t).setHours(0, 0, 0, 0)) / HH; pts.push([t, base + 3 * Math.sin((h - 9) / 24 * 2 * Math.PI) + drift, O.rh === undefined ? 85 : O.rh, 50]); }
+  gstore.OPT_weather = O.noWeather ? {status: 'Fehler', ts: NOW - 5 * HH} : {status: 'OK', ts: NOW, f_ts: NOW, fpts: pts};
+  const pv = []; for (let t = Math.floor(NOW / HH) * HH - 2 * HH; t < NOW + 40 * HH; t += HH) { pv.push([t, Math.round(sunAt(t + HH / 2, O.pvPeak === undefined ? 3000 : O.pvPeak)), HH]); }
+  gstore.OPT_plan_in = O.noPrice ? {ts: NOW - HH} : {ts: NOW, price: tariffSl(NOW, 40), priceSrc: 'VRM-Tarif', pv, pvSrc: 'VRM', pvNow: O.pvNow === undefined ? 500 : O.pvNow, soc: 60, socSrc: 'Venus', liveOk: true};
+  const rm = O.rooms || {ki_oben: 23, ki_unten: 23, schlaf: 20};
+  gstore.OPT_rooms = {}; Object.keys(rm).forEach(id => { if (rm[id] !== null) { gstore.OPT_rooms[id] = {name: id, ema: rm[id], last: rm[id], ts: O.staleRooms ? NOW - 5 * HH : NOW, trend: (O.trend || {})[id] || 0}; } });
+  if (O.hp) { gstore.OPT_hp = {Heat_Power_Production_Extra: {v: O.hp, ts: NOW}}; }
+  gstore.TOP14_Outside_Temp = O.atNow === undefined ? base : O.atNow;
+}
+function pworld(o) {
+  O = o || {};
+  [fstore, files, gstore, envv].forEach(x => Object.keys(x).forEach(k => delete x[k]));
+  NOW = T0;
+  Object.assign(gstore, {Z1_Heat_Curve_Outside_Low_Temp: -13, Z1_Heat_Curve_Outside_High_Temp: 11, Z1_Heat_Curve_Target_Low_Temp: 38, Z1_Heat_Curve_Target_High_Temp: 29, compressor_frequency: 0, TOP26_Defrosting_State: 0, TOP20_ThreeWay_Valve_State: 0});
+  if (O.running) { Object.assign(gstore, {compressor_frequency: 40, TOP16_Heat_Energy_Consumption: 600}); }
+  run('opt_defaults', {});
+  if (O.wide) { gstore.OPT_cfg.rooms.forEach(r => { r.min = 18; r.max = 26; }); }
+  if (O.band) { gstore.OPT_cfg.rooms.forEach(r => { r.min = O.band[0]; r.max = O.band[1]; }); }
+  if (O.cfg) { Object.assign(gstore.OPT_cfg.plan, O.cfg); }
+  if (O.fq) { fstore.enFq = O.fq; }
+  if (O.qs) { fstore.qs = O.qs; }
+  if (O.distrib) { gstore.OPT_state = {ts: NOW, deficit: true, distrib: true}; }
+}
+function step(minutes, hook) {
+  let o = null; const all = [];
+  for (let m = 0; m < minutes; m++) { NOW += 60000; pfeed(); if (hook) { hook(m); } o = run('opt_plan', {}); all.push(o); }
+  return all;
+}
+const planNow = () => fstore.plan.plan;
+const cumDev = P => { let d = 0; return P.slots.slice(0, 104).map(x => (d += x.p - x.b)); };
+const sumF = (P, k, n) => P.slots.slice(0, n || 104).reduce((a, x) => a + x[k], 0);
+
+// ---- 1) Optimierung gegen Brute-Force (exakt, mit Reserve-Grenzen, Summe bleibt erhalten, Strafe je verschobener Einheit)
+const dpSrc = /function planDP[\s\S]*?\n}\n/.exec(F['opt_plan'])[0];
+const planDP = new Function('ok', dpSrc + '; return planDP;')(v => v !== null && v !== undefined && isFinite(v));
+let seed = 12345; const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+let dpOk = true, dpDetail = '', nInst = 0;
+for (let it = 0; it < 250 && dpOk; it++) {
+  const n = 4 + Math.floor(rnd() * 3), b = [], c = [];
+  for (let i = 0; i < n; i++) { b.push(Math.floor(rnd() * 6)); c.push(Math.round((1 + rnd() * 9) * 100) / 100); }
+  const rd = Math.floor(rnd() * 5), ru = Math.floor(rnd() * 5), lam = rnd() < 0.3 ? 0.001 : rnd() * 0.5, mMin = 0.4, mMax = 1.6, cap = rnd() < 0.3 ? 4 : undefined;
+  const p = planDP(b, c, lam, rd, ru, mMin, mMax, cap);
+  const opts = b.map(x => { let lo = Math.ceil(mMin * x - 1e-9), hi = Math.floor(mMax * x + 1e-9); if (cap !== undefined) { hi = Math.min(hi, cap); } return [Math.min(lo, x), Math.max(hi, x)]; });
+  const obj = q => q.reduce((a, v, i) => a + c[i] * v + lam * Math.abs(v - b[i]), 0);
+  let best = Infinity; (function rec(i, d, cur) { if (i === n) { if (d === 0 && obj(cur) < best) { best = obj(cur); } return; } for (let v = opts[i][0]; v <= opts[i][1]; v++) { const nd = d + v - b[i]; if (nd < -rd || nd > ru) { continue; } rec(i + 1, nd, cur.concat(v)); } })(0, 0, []);
+  let d = 0, feas = true; p.forEach((v, i) => { d += v - b[i]; if (d < -rd || d > ru || v < opts[i][0] || v > opts[i][1]) { feas = false; } });
+  if (!feas || d !== 0 || Math.abs(obj(p) - best) > 1e-7) { dpOk = false; dpDetail = 'b=' + b + ' c=' + c + ' rd=' + rd + ' ru=' + ru + ' lam=' + lam + ' p=' + p + ' obj ' + obj(p) + ' best ' + best + ' feas ' + feas; }
+  nInst++;
+}
+check('Optimierung: in 250 Zufallsfaellen exakt das Brute-Force-Optimum (Reserve-Grenzen, Summe erhalten, Normalverlauf immer erlaubt)', dpOk && nInst === 250, dpDetail);
+check('Optimierung: ohne Reserve bleibt der Normalverlauf', JSON.stringify(planDP([3, 0, 5, 2], [9, 1, 1, 9], 0.1, 0, 0, 0.4, 1.6)) === '[3,0,5,2]', '');
+
+// ---- 2) Plan an einem kalten Tag mit grosser Reserve: guenstige Nachtstunden bekommen mehr, teure weniger, Summe bleibt, Reserve wird nie ueberschritten
+pworld({wide: true});
+let r = step(2), P = planNow();
+check('Plan: 104 Slots (26 h), Status ok, Zeitraster 15 min', P.status === 'ok' && P.slots.length === 104 && P.slots[1].t - P.slots[0].t === 900000 && P.slots[0].t === T0, P.status + ' ' + P.why);
+check('Plan: Wärmebedarf aus Außentemperatur (Heizgrenze 15 °C, Standard-Gebäudewert) plausibel (30-70 kWh/Tag bei ca. 3 °C)', sumF(P, 'b', 96) > 30 && sumF(P, 'b', 96) < 70, sumF(P, 'b', 96).toFixed(1));
+check('Plan: Summe der geplanten Wärme = Summe des Normalverlaufs (nichts wird erfunden)', Math.abs(sumF(P, 'p') - sumF(P, 'b')) < 1e-9, sumF(P, 'p') + ' vs ' + sumF(P, 'b'));
+const cd = cumDev(P), rsv = P.res;
+check('Plan: kumulierte Abweichung bleibt in jedem Slot innerhalb der Gebäudereserve (nach hinten ' + rsv.down.toFixed(1) + ' / nach vorn ' + rsv.up.toFixed(1) + ' kWh)', cd.every(d => d >= -rsv.down - 1e-9 && d <= rsv.up + 1e-9) && Math.abs(cd[103]) < 1e-9, Math.min(...cd).toFixed(2) + ' ' + Math.max(...cd).toFixed(2));
+const night = P.slots.slice(0, 20), day = P.slots.slice(24, 90);
+check('Plan: Nacht-Niedertarif (00-05 Uhr) wird vorgezogen, Tageszeit verschoben (guenstige Stunden mehr Anteil)', night.filter(x => x.rec === 1).length >= 10 && day.filter(x => x.rec === -1).length >= 10 && night.every(x => x.rec !== -1), night.map(x => x.rec).join('') + ' | ' + day.map(x => x.rec).join(''));
+check('Plan: jede Empfehlung passt zum Verhaeltnis Plan/Normal (+-10 %)', P.slots.every(x => x.m === null || (x.rec === 1) === (x.m >= 1.1 - 1e-9) && (x.rec === -1) === (x.m <= 0.9 + 1e-9)), '');
+const ro = r[1][0].payload;
+check('Anzeige: 24 Stundenzeilen mit allen Spalten, Summenzeilen vorhanden', ro.plan.length === 24 && ['z', 'b', 'p', 'cop', 'h', 'pr', 'k', 'pv', 'd', 'v', 'a', 'r', 'o', 'q'].every(k => ro.plan[0][k] !== undefined) && ro.rows.some(x => x[0] === 'Wärmebedarf nächste 24 h') && ro.rows.some(x => x[0] === 'Thermisch günstigstes Fenster') && ro.rows.some(x => x[0] === 'PV-günstigstes Fenster'), JSON.stringify(ro.plan[0]));
+const rowsT = Object.fromEntries(ro.rows.map(x => [x[0], x[1]]));
+check('Fenster: thermisch guenstigstes Fenster liegt im Niedertarif (Beginn bis 02:00), PV-Fenster mittags', /^0[0-2]:\d\d – 0[3-5]:\d\d/.test(rowsT['Thermisch günstigstes Fenster']) && /^(09|1[0-3]):\d\d – /.test(rowsT['PV-günstigstes Fenster']), rowsT['Thermisch günstigstes Fenster'] + ' | ' + rowsT['PV-günstigstes Fenster']);
+check('Kosten nachvollziehbar: je Slot Preis/COP + Defrost-Strafe + Unsicherheits-Strafe = Kosten; Reserve je Slot = Gesamtreserve +- kumulierte Abweichung', P.slots.every(x => Math.abs(x.cost - (x.base + x.dPen + x.uPen)) < 1e-9 && Math.abs(x.base - x.price * 100 / x.cop) < 1e-9 && Math.abs(x.resBack - (P.res.down + cumDev(P)[P.slots.indexOf(x)])) < 1e-9 && Math.abs(x.resFwd - (P.res.up - cumDev(P)[P.slots.indexOf(x)])) < 1e-9), '');
+check('Taupunkt je Slot plausibel (unter der Lufttemperatur bei 85 % Feuchte, ca. 2 K darunter)', P.slots.every(x => x.dew < x.at && x.at - x.dew < 6), P.slots[0].at.toFixed(1) + ' / ' + P.slots[0].dew.toFixed(1));
+check('Anzeige: Auflösung der Quellen bleibt bekannt (Temperatur 3 h, PV 60 min, Preis 15 min)', rowsT['Auflösung der Quellen'] === 'Temperatur 3 h · PV 60 min · Preis 15 min', rowsT['Auflösung der Quellen']);
+check('Anzeige: Ersparnis nur als Modell, PV-Fenster und Batterie getrennt (keine gemeinsame Entscheidung)', /Ersparnis Modell/.test(rowsT['Verschobene Wärme']) && rowsT['Batterie'] === '60 % (Venus)' && !/Batterie/.test(rowsT['PV-günstigstes Fenster']), rowsT['Verschobene Wärme']);
+
+// ---- 3) Komfortband ist harte Grenze
+pworld({wide: true, rooms: {ki_oben: 22.0, ki_unten: 23, schlaf: 20}, band: [22.5, 23.5]}); step(2); P = planNow();
+check('Komfort: Raum unter Minimum -> nichts nach hinten verschieben (kumulierte Abweichung nie negativ), Zustand benannt', P.res.state === 'Raum unter Minimum' && P.res.down === 0 && cumDev(P).every(d => d >= -1e-9), P.res.state + ' ' + Math.min(...cumDev(P)).toFixed(2));
+pworld({wide: true, rooms: {ki_oben: 26.5, ki_unten: 23, schlaf: 20}, band: [18, 26]}); step(2); P = planNow();
+check('Komfort: Raum ueber Maximum -> kein Vorheizen (kumulierte Abweichung nie positiv)', P.res.state === 'Raum über Maximum' && P.res.up === 0 && cumDev(P).every(d => d <= 1e-9), P.res.state + ' ' + Math.max(...cumDev(P)).toFixed(2));
+pworld({wide: true, rooms: {ki_oben: 21.5, ki_unten: 27, schlaf: 20}, band: [22.5, 26]}); step(2); P = planNow();
+check('Komfort: ein Raum zu kalt UND einer zu warm = Waermeverteilungskonflikt, eigener Zustand, es wird nichts verschoben (nicht weggerechnet)', P.res.state === 'Wärmeverteilungskonflikt' && P.slots.every(x => x.p === x.b && x.rec === 0), P.res.state);
+pworld({wide: true, distrib: true}); step(2); P = planNow();
+check('Komfort: Konflikt aus der Raumlogik (OPT_state.distrib) sperrt ebenfalls jedes Verschieben', P.res.state === 'Wärmeverteilungskonflikt' && P.slots.every(x => x.p === x.b), P.res.state);
+pworld({wide: true, staleRooms: true}); step(2); P = planNow();
+check('Komfort: veraltete Raumdaten -> Reserve 0, Normalverlauf', P.res.state === 'keine Raumdaten' && P.slots.every(x => x.p === x.b), P.res.state);
+pworld({wide: true, rooms: {ki_oben: 23, ki_unten: null, schlaf: 20}}); step(2); P = planNow();
+check('Komfort: fehlt ein aktiver Raum -> Reserve 0 (vorsichtig)', P.res.state === 'Raumdaten unvollständig' && P.slots.every(x => x.p === x.b), P.res.state);
+pworld({band: [22.5, 23.5], rooms: {ki_oben: 23, ki_unten: 23, schlaf: 23}}); step(2); const fresh = planNow().res.down;
+pworld({band: [22.5, 23.5], rooms: {ki_oben: 23, ki_unten: 23, schlaf: 23}});
+const feedFresh = pfeed;
+pfeed = function () { feedFresh(); gstore.OPT_rooms.ki_unten.ts = NOW - 100 * 60000; };
+step(2); P = planNow();
+check('Seltene Sensoren: ein Raumwert, der aelter als das Limit der Raumlogik (90 min), aber unter 4 h ist, zaehlt mit Abschlag 0,1 K/h (100 min -> 0,17 K), die Reserve schrumpft und der Raum wird genannt', P.res.state === 'alle im Band' && P.res.down < fresh && Math.abs(P.res.down - 3 * (0.5 - 0.1 * 100 / 60 - 0.3)) < 1e-9 && P.res.stale.length === 1 && /Kinderzimmer unten 100 min/.test(P.res.stale[0]) && P.res.missing.length === 0, JSON.stringify(P.res) + ' vs frisch ' + fresh);
+pworld({band: [22.5, 23.5], rooms: {ki_oben: 23, ki_unten: 23, schlaf: 23}});
+pfeed = function () { feedFresh(); gstore.OPT_rooms.ki_unten.ts = NOW - 300 * 60000; };
+step(2); P = planNow();
+check('Seltene Sensoren: aelter als 4 h -> Raumdaten unvollstaendig, Reserve 0, fehlender Raum wird genannt', P.res.state === 'Raumdaten unvollständig' && P.res.down === 0 && P.res.missing[0] === 'Kinderzimmer unten' && P.slots.every(x => x.p === x.b), JSON.stringify(P.res));
+pfeed = feedFresh;
+pworld({band: [22.5, 23.5], rooms: {ki_oben: 23, ki_unten: 23, schlaf: 23}}); step(2); P = planNow();
+check('Komfort: enges Band (1 K) -> kleine Reserve (3 kWh/K x (0,5 K - 0,3 K Sicherheitsabstand) = 0,6 kWh), Verschiebung hoechstens so gross', Math.abs(P.res.down - 0.6) < 1e-9 && cumDev(P).every(d => Math.abs(d) <= 0.6 + 1e-9), P.res.down.toFixed(2) + ' ' + Math.max(...cumDev(P).map(Math.abs)).toFixed(2));
+pworld({band: [22.5, 23.5], rooms: {ki_oben: 23, ki_unten: 23, schlaf: 23}, trend: {ki_oben: -0.3}}); step(2); P = planNow();
+check('Komfort: kuehlt ein Raum ab (-0,3 K/h), schrumpft die Reserve nach hinten (Trend ueber 2 h eingerechnet)', P.res.down === 0, P.res.down.toFixed(2));
+
+// ---- 4) Prognosevertrauen je Horizont
+pworld({wide: true}); step(2); P = planNow();
+const prior = P.conf.at.map(a => a.c.toFixed(2)).join(','), priorPv = P.conf.pv.map(a => a.c.toFixed(2)).join(',');
+check('Vertrauen: ohne Messungen konservative Standardwerte (Temperatur 0,95/0,90/0,80/0,65/0,50, PV 0,85/0,75/0,60/0,45/0,35)', prior === '0.95,0.90,0.80,0.65,0.50' && priorPv === '0.85,0.75,0.60,0.45,0.35', prior + ' | ' + priorPv);
+pworld({wide: true, fq: {at: {24: {n: 20, bias: 0, abs: 100}}, pv: {}}}); step(2); P = planNow();
+check('Vertrauen: 20 schlechte Messungen (Fehler 5 K) aendern +24 h nur wenig (Gewicht 20/(20+168) = 11 %): 0,50 -> ca. 0,47, nicht 0,2', Math.abs(P.conf.at[4].c - 0.468) < 0.005 && Math.abs(P.conf.at[4].w - 20 / 188) < 1e-9, P.conf.at[4].c.toFixed(3));
+pworld({wide: true, fq: {at: {24: {n: 2000, bias: 0, abs: 10000}}, pv: {}}}); step(2); P = planNow();
+check('Vertrauen: nach sehr vielen schlechten Messungen (n = 2000) folgt es der Messung (nahe 0,2), andere Horizonte unveraendert', P.conf.at[4].c < 0.25 && P.conf.at[0].c === 0.95, P.conf.at[4].c.toFixed(3));
+pworld({wide: true, fq: {at: {}, pv: {6: {n: 40, fc: 40 * 1500, act: 40 * 1000, abs: 40 * 800}}}}); step(2); P = planNow();
+check('Vertrauen PV: relativer Fehler 80 % ueber 40 Stunden -> Standardwert 0,60 wandert langsam (Gewicht 40/140)', P.conf.pv[2].c < 0.60 && P.conf.pv[2].c > 0.45 && Math.abs(P.conf.pv[2].w - 40 / 140) < 1e-9, P.conf.pv[2].c.toFixed(3));
+pworld({wide: true}); step(2); P = planNow();
+const far = P.slots[88], near = P.slots[2], refAt = P.sum.atRef;
+check('Vertrauen: weit entfernte Slots werden zum Tagesmittel gezogen (schlechte Prognose hat weniger Einfluss), nahe kaum', Math.abs(far.at - refAt) <= Math.abs(far.atRaw - refAt) * (far.cA + 0.001) + 1e-9 && far.cA < near.cA && near.cA > 0.9, far.cA.toFixed(2) + ' / ' + near.cA.toFixed(2));
+
+// ---- 5) Warmer Tag: kein Heizbedarf -> nichts zu verteilen, aber Status und Preisfenster bleiben
+pworld({wide: true, atBase: 18}); r = step(2); P = planNow();
+check('Warmer Tag: kaum Heizbedarf -> alle Slots NORMAL, Plan gleich Normalverlauf, Hinweis in der Anzeige', P.status === 'ok' && P.enough === false && P.slots.every(x => x.rec === 0 && x.p === x.b) && /kaum Heizbedarf/.test(r[1][0].payload.rows[0][1]), r[1][0].payload.rows[0][1]);
+
+// ---- 6) COP-Modell und Defrost-Risiko
+pworld({wide: true}); step(2); P = planNow();
+check('COP: Standardwert 45 % vom Carnot-Wert (ohne Messdaten), plausibel 2,5-5 bei 3 °C und Soll-VL ca. 35 °C', Math.abs(P.model.eta - 0.45) < 1e-9 && P.slots[0].cop > 2.5 && P.slots[0].cop < 5, P.model.eta + ' ' + P.slots[0].cop.toFixed(2));
+const mkQs = (n) => ({kf: {'3|2': {n, starts: 1, defrosts: 0, runMin: n, dMin: 0, s: {cop: [n * 4.2, n], vl: [n * 31, n], at: [n * 5, n], pth: [n * 3000, n]}}}});
+pworld({wide: true, qs: mkQs(600)}); step(2); P = planNow();
+check('COP: gemessener Carnot-Anteil (4,2 bei 5 °C / 31 °C = 0,467) wirkt langsam: 600 min -> halb/halb = 0,458', Math.abs(P.model.eta - 0.4583) < 0.002 && Math.abs(P.model.etaW - 0.5) < 1e-9, P.model.eta.toFixed(4));
+pworld({wide: true, qs: mkQs(60)}); step(2); P = planNow();
+check('COP: nur 60 gemessene Minuten veraendern das Modell kaum (Gewicht 9 %)', Math.abs(P.model.eta - 0.45) < 0.003, P.model.eta.toFixed(4));
+pworld({wide: true, atBase: 2}); step(2); P = planNow();
+const worst = Math.max(...P.slots.slice(0, 96).map(x => x.risk));
+pworld({wide: true, atBase: 14, rh: 90}); step(2); const warmP = planNow();
+pworld({wide: true, atBase: -12, rh: 60}); step(2); const coldP = planNow();
+check('Defrost-Risiko: hoch um 0-3 °C und feucht, bei 14 °C Null, bei -12 °C trockener Luft gering', worst >= 0.89 && Math.max(...warmP.slots.map(x => x.risk)) < 0.05 && Math.max(...coldP.slots.map(x => x.risk)) < 0.45, worst.toFixed(2) + ' / ' + Math.max(...warmP.slots.map(x => x.risk)).toFixed(2) + ' / ' + Math.max(...coldP.slots.map(x => x.risk)).toFixed(2));
+pworld({wide: true, atBase: 2}); step(2); P = planNow();
+check('Quiet-Hinweis: im 1-3-°C-Fenster Stufe 0 (Erfahrungsregel des Betreibers), sonst keine erfundene Stufe ohne Messdaten', P.slots.some(x => x.at >= 1 && x.at <= 3 && /^Stufe 0 \(1–3 °C\)$/.test(x.quiet)) && P.slots.filter(x => x.at < 1 || x.at > 3).every(x => x.quiet === '–'), P.slots.slice(0, 4).map(x => x.quiet).join('|'));
+pworld({wide: true, atBase: 6, qs: mkQs(600)}); step(2); P = planNow();
+check('Quiet-Hinweis: mit gemessener Leistung (Stufe 3, 3 kW bei 3-7 °C) wird die Stufe als gemessen genannt, wo die Leistung reicht', P.slots.some(x => /^Stufe 3 \(gemessen\)$/.test(x.quiet)) && P.slots.filter(x => x.at >= 7).every(x => x.quiet === '–'), P.slots.map(x => x.quiet).filter((v, i, a) => a.indexOf(v) === i).join('|'));
+
+// ---- 7) Status ohne Daten: kein Plan, keine erfundenen Werte; sobald die Daten da sind, geht es weiter
+pworld({wide: true, noWeather: true}); r = step(1); P = planNow();
+check('Ohne Wetterprognose: Status "keine Wetterprognose", keine Tabelle, kein Schnappschuss', P.status === 'keine Wetterprognose' && r[0][0].payload.plan.length === 0 && !r[0][3] && /Kein Plan/.test(r[0][0].payload.rows[0][1]), P.status);
+O.noWeather = false; r = step(1); P = planNow();
+check('Wetter kommt: der Plan wird sofort (nicht erst im naechsten Slot) berechnet', P.status === 'ok', P.status);
+pworld({wide: true, noPrice: true}); step(1); P = planNow();
+check('Ohne frische Preise: Status "keine Preise"', P.status === 'keine Preise', P.status);
+pworld({wide: true}); delete gstore.Z1_Heat_Curve_Target_Low_Temp; step(1); P = planNow();
+check('Ohne Heizkurve: Status "keine Heizkurve"', P.status === 'keine Heizkurve', P.status);
+
+// ---- 8) Lernen des Waermebedarfs aus Tagesdaten (Heizgradstunden gegen gelieferte Waerme), langsam
+pworld({wide: true, atBase: 5, running: true, hp: 2500, atNow: 5});
+O.hp = 2500; step(1440 + 5);
+let P8 = planNow();
+check('Lernen: nach einem Tag (240 Kh, 60 kWh gelieferte Waerme) wird der Bedarf nur teilweise uebernommen: (0,22 x 300 + 60) / (300 + 240) = 0,233 kW/K', fstore.plan.learn.days.length === 1 && Math.abs(P8.model.ua - 0.2333) < 0.004 && P8.model.uaLearned, JSON.stringify(fstore.plan.learn.days) + ' ua ' + P8.model.ua.toFixed(4));
+check('Lernen: Tageswerte werden gesichert (plan-state.json), ein warmer Tag (zu wenig Heizgradstunden) zaehlt nicht', files['/data/optimizer/plan-state.json'] && JSON.parse(files['/data/optimizer/plan-state.json'].data).learn.days.length === 1, '');
+const lastPlanFile = JSON.parse(files['/data/optimizer/plan-state.json'].data);
+check('Neustart: Lernwerte und Schnappschuesse werden aus der Datei geladen, die laufende Stunde bekommt keinen zweiten Schnappschuss', (() => { const keep = JSON.stringify(lastPlanFile.learn), nS = lastPlanFile.snaps.length; Object.keys(fstore).forEach(k => delete fstore[k]); const rr = step(2); return JSON.stringify(fstore.plan.learn) === keep && fstore.plan.snaps.length >= 1 && fstore.plan.snaps.length <= nS + 1 && !rr.some(o => o[3] && new RealDate(NOW).getMinutes() > 3); })(), '');
+
+// ---- 9) Schnappschuesse und Vergleich: nur Wissen zum Planungszeitpunkt (kein Look-ahead), Vorhersage jede Stunde leicht anders, damit Vermischen auffaellt
+pworld({wide: true, issueDrift: 0.05, atNow: undefined}); 
+const snaps = {}, evRows = [], actRows = [], evHeads = [];
+const mkHook = () => (m) => { gstore.TOP14_Outside_Temp = 3 + 3 * Math.sin(((NOW - T0) / HH - 9) / 24 * 2 * Math.PI) + 0.05 * (NOW - T0) / HH; };
+const outsAll = step(27 * 60 + 5, mkHook());
+outsAll.forEach(o => {
+  if (o[3]) { const j = JSON.parse(o[3].payload); snaps[j.t0] = j; }
+  if (o[1]) { actRows.push(o[1].payload); }
+  if (o[2]) { evRows.push(o[2].payload); }
+});
+const snapKeys = Object.keys(snaps).map(Number).sort((a, b) => a - b);
+check('Schnappschuss: genau einer je Stunde (' + snapKeys.length + ' in 27 h), mit Spaltenkopf, Auflösung der Quellen und Modellparametern', snapKeys.length >= 27 && snapKeys.length <= 29 && snaps[snapKeys[0]].cols.includes('conf_at') && snaps[snapKeys[0]].meta.res.price_min === 15 && snaps[snapKeys[0]].meta.model.eta > 0, snapKeys.length);
+const cols = snaps[snapKeys[0]].cols, ci = n => cols.indexOf(n);
+const distinct = new Set(snapKeys.map(k => { const sn = snaps[k], i = sn.slots.findIndex(x => x[0] * 1000 === T0 + 26 * HH); return i >= 0 ? sn.slots[i][ci('at')] : null; }).filter(v => v !== null));
+check('Schnappschuesse enthalten je Planungszeitpunkt eine eigene Prognose fuer denselben Zielzeitpunkt (Test ist aussagekraeftig)', distinct.size >= 3, [...distinct].join(','));
+const csvAll = evRows.join('').split('\n').filter(l => l && !l.startsWith('slot_start')), head = evRows[0].split('\n')[0].split(',');
+check('Vergleich: Kopfzeile einmal je Datei, jede Zeile hat so viele Spalten wie die Kopfzeile', evRows.filter(x => x.startsWith('slot_start,')).length === 1 && csvAll.every(l => l.split(',').length === head.length), head.length);
+const colE = n => head.indexOf(n);
+const byLead = {}; csvAll.forEach(l => { const v = l.split(','); (byLead[v[colE('vorlauf_soll_h')]] = byLead[v[colE('vorlauf_soll_h')]] || []).push(v); });
+check('Vergleich: Zeilen fuer Vorlauf 0/1/3/6/12/24 h vorhanden (nach 24 h auch +24 h)', ['0', '1', '3', '6', '12', '24'].every(L => (byLead[L] || []).length > 0), Object.keys(byLead).map(k => k + ':' + byLead[k].length).join(' '));
+let lookOk = true, lookDetail = '', nChk = 0;
+csvAll.forEach(l => {
+  const v = l.split(','), L = Number(v[colE('vorlauf_soll_h')]); if (L < 1) { return; }
+  const slotMs = new RealDate(v[0].replace(' ', 'T') + ':00').getTime();
+  const t0 = Math.round((slotMs - L * HH) / HH) * HH, sn = snaps[t0]; if (!sn) { lookOk = false; lookDetail = 'kein Schnappschuss ' + L; return; }
+  const i = sn.slots.findIndex(x => x[0] * 1000 === slotMs); if (i < 0) { lookOk = false; lookDetail = 'Slot fehlt'; return; }
+  const sl = sn.slots[i], plausible = Math.abs(v[colE('prog_aussen')] - sl[ci('at')]) < 0.006 && Math.abs(v[colE('prog_cop')] - sl[ci('cop')]) < 0.006 && Math.abs(v[colE('prog_preis')] - sl[ci('price')]) < 0.00006 && Math.abs(v[colE('plan_waerme_kwh')] - sl[ci('plan')]) < 0.0006 && Math.abs(v[colE('prog_bedarf_kwh')] - sl[ci('bedarf')]) < 0.0006;
+  const lead = Number(v[colE('vorlauf_ist_h')]);
+  if (!plausible || lead < L - 0.55 || lead > L + 0.55) { lookOk = false; lookDetail = l.slice(0, 120); }
+  nChk++;
+});
+check('Look-ahead-Schutz: jede Vergleichszeile enthaelt exakt die Werte des damaligen Schnappschusses (Vorlauf stimmt auf +-30 min), keine spaeter aktualisierte Prognose (' + nChk + ' Zeilen geprueft)', lookOk && nChk > 100, lookDetail);
+const ia = actRows.join('').split('\n').filter(l => l && !l.startsWith('slot_start')), headA = actRows[0].split('\n')[0].split(',');
+const lastA = ia[ia.length - 1].split(','), colA = n => headA.indexOf(n);
+check('Ist-Protokoll: je abgeschlossenem 15-Minuten-Slot eine Zeile mit Aussen, PV, Preis, COP, Waerme, Strom, Abtauungen, Warmwasser, Raeumen', ia.length >= 27 * 4 - 2 && ['ist_aussen', 'ist_pv_w', 'ist_preis', 'ist_cop', 'ist_waerme_kwh', 'ist_strom_kwh', 'ist_raum_ki_oben', 'ist_raum_schlaf', 'ist_soc'].every(n => colA(n) >= 0) && ia.every(l => l.split(',').length === headA.length) && Number(lastA[colA('ist_preis')]) > 0.2 && Number(lastA[colA('ist_raum_schlaf')]) === 20, ia.length + ' ' + headA.join('|'));
+check('Vergleich: tatsaechliche Werte stehen neben der Prognose (Aussentemperatur, Raeume, Preis)', (() => { const v = csvAll[csvAll.length - 1].split(','); return Math.abs(Number(v[colE('ist_aussen')]) - (3 + 3 * Math.sin(((new RealDate(v[0].replace(' ', 'T') + ':00').getTime() + 450000 - T0) / HH - 9) / 24 * 2 * Math.PI) + 0.05 * (new RealDate(v[0].replace(' ', 'T') + ':00').getTime() - T0) / HH)) < 0.3 && Number(v[colE('ist_raum_ki_oben')]) === 23; })(), csvAll[csvAll.length - 1]);
+const keepSnap = JSON.stringify(snaps[snapKeys[2]]);
+O.issueDrift = 3; step(120, mkHook());
+check('Schnappschuesse bleiben historisch: spaetere Prognose-Aenderungen veraendern gespeicherte Plaene nicht', (fstore.plan.snaps.find(x => x.t0 === snapKeys[snapKeys.length - 1]) || {}).t0 === snapKeys[snapKeys.length - 1] && JSON.stringify(snaps[snapKeys[2]]) === keepSnap, '');
+
+// ---- 9b) Gesamtweg mit der echten Energiefunktion: Venus + VRM-Tarif + VRM-PV-Prognose -> Plan
+pworld({wide: true});
+const venI = (pth, v) => run('opt_en_in', {topic: 'N/c0619ab371ca/system/0/' + pth, payload: {value: v}});
+const vrmRec9 = []; for (let t = Math.floor(NOW / HH) * HH - HH; t < NOW + 47 * HH; t += HH) { vrmRec9.push([t, Math.round(sunAt(t + HH / 2, 4000))]); }
+let eo9, po9;
+for (let m = 0; m < 3; m++) {
+  NOW += 60000; pfeed(); delete gstore.OPT_plan_in;
+  venI('Dc/Pv/Power', 800); venI('Ac/Consumption/L1/Power', 400); venI('Ac/Grid/L1/Power', 100); venI('Dc/Battery/Power', 0); run('opt_en_in', {topic: 'N/c0619ab371ca/battery/278/Soc', payload: {value: 77}});
+  run('opt_vrm_parse', {statusCode: 200, payload: {success: true, records: {solar_yield_forecast: vrmRec9, vrm_consumption_fc: vrmRec9.map(x => [x[0], 500])}, totals: {}}});
+  eo9 = run('opt_energy', {}); po9 = run('opt_plan', {});
+}
+const P9 = planNow(), PIx = gstore.OPT_plan_in;
+check('Gesamtweg: die Energiefunktion liefert dem Plan Preise (VRM-Tarif), PV-Prognose (VRM, stuendlich), SoC und Live-PV', PIx.priceSrc === 'VRM-Tarif' && PIx.pvSrc === 'VRM' && PIx.soc === 77 && PIx.pvNow === 800 && PIx.price.length > 100 && PIx.pv[0][2] === HH, JSON.stringify({s: PIx.priceSrc, p: PIx.pvSrc, soc: PIx.soc, n: PIx.price && PIx.price.length}));
+check('Gesamtweg: Plan ok mit Tarifpreisen 21 / 31 ct und PV-Prognose in den Slots (Aufloesung 60 min bekannt)', P9.status === 'ok' && P9.slots.some(x => x.price === 0.21) && P9.slots.some(x => x.price === 0.31) && P9.slots.some(x => x.pv > 2000) && P9.sum.pvRes === 60, P9.status + ' ' + (P9.why || ''));
+check('Gesamtweg: Batterie-SoC wird angezeigt, aber nichts daraus entschieden', po9[0].payload.rows.find(x => x[0] === 'Batterie')[1] === '77 % (Venus)', JSON.stringify(po9[0].payload.rows.find(x => x[0] === 'Batterie')));
+
+// ---- 10) Sicherheit: nur Anzeige und Protokoll
+const flp = JSON.parse(fs.readFileSync(flowsFile, 'utf8'));
+const pn_ = flp.find(n => n.id === 'opt_plan');
+check('Sicherheit: der Plan hat nur Ausgaenge zur Anzeige und zu Protokolldateien, kein MQTT, nichts zur Waermepumpe', pn_.wires.flat().every(id => ['opt_t_plan', 'opt_f_pact', 'opt_f_peval', 'opt_f_psnap'].includes(id)) && !flp.some(n => n.z === 'opt_tab' && n.type === 'mqtt out') && !/SetQuietMode|SetOperationMode|node\.send/.test(pn_.func), pn_.wires.flat().join());
+const nonOptPlan = Object.keys(gstore).filter(k => !k.startsWith('OPT_') && JSON.stringify(gstore[k]) !== JSON.stringify(({Z1_Heat_Curve_Outside_Low_Temp: -13, Z1_Heat_Curve_Outside_High_Temp: 11, Z1_Heat_Curve_Target_Low_Temp: 38, Z1_Heat_Curve_Target_High_Temp: 29, compressor_frequency: 0, TOP26_Defrosting_State: 0, TOP20_ThreeWay_Valve_State: 0})[k]) && k !== 'TOP14_Outside_Temp');
+check('Sicherheit: der Plan schreibt nur OPT_*-Werte (Heizkurve, Quiet und Warmwasser bleiben unberuehrt)', nonOptPlan.length === 0, nonOptPlan.join());
+check('Dateien: Ist, Vergleich, Schnappschuesse und Zustand unter /data/optimizer, Plan-Zustand ohne Zugangsdaten', !/token|appid|key/i.test(files['/data/optimizer/plan-state.json'].data), Object.keys(files).filter(k => /plan/.test(k)).join());
+})();
+
 
 console.log('\nERGEBNIS:', assertFails === 0 ? 'alle Pruefungen bestanden' : assertFails + ' Pruefung(en) fehlgeschlagen');
 process.exit(assertFails ? 1 : 0);
