@@ -22,12 +22,11 @@ const fsMock = {
 };
 const sent = [];
 function makeCtx(store) { return { get: k => store[k], set: (k, v) => { store[k] = v; } }; }
+const compiled = {};
 function run(id, msg) {
-  const out = [];
+  if (!compiled[id]) { compiled[id] = vm.runInNewContext(`(function(msg,global,flow,context,env,node,fs,Date,Buffer){${F[id]}\n})`, {}); }
   const node = { send: m => sent.push({id, m}), warn: () => {}, error: () => {}, status: () => {} };
-  const sandbox = { fs: fsMock, msg, global: makeCtx(gstore), flow: makeCtx(fstore), context: makeCtx({}), env: { get: k => envv[k] }, node, Date: FakeDate, Buffer, Math, JSON, Number, String, Object, Array, isFinite };
-  const code = `(function(msg,global,flow,context,env,node){${F[id]}\n})`;
-  return vm.runInNewContext(code, sandbox)(msg, sandbox.global, sandbox.flow, sandbox.context, sandbox.env, node);
+  return compiled[id](msg, makeCtx(gstore), makeCtx(fstore), makeCtx({}), { get: k => envv[k] }, node, fsMock, FakeDate, Buffer);
 }
 const set = (k, v) => { gstore[k] = v; };
 // Panasonic-Werte (wie live)
@@ -118,7 +117,7 @@ envv.OWM_API_KEY = 'KEY123'; envv.OWM_LAT = '50.1'; envv.OWM_LON = '8.6';
 run('opt_owm_req', {});
 const reqs = sent.filter(s => s.id === 'opt_owm_req').map(s => s.m);
 check('mit Schluessel: 2 Anfragen (current, forecast)', reqs.length === 2 && reqs[0].topic === 'current' && reqs[1].topic === 'forecast', reqs.map(r => r.topic).join(','));
-check('URL enthaelt Standort, Metrik und cnt=4', reqs[1].url.includes('lat=50.1') && reqs[1].url.includes('units=metric') && reqs[1].url.includes('cnt=4'), reqs[1].url.replace('KEY123', '***'));
+check('URL enthaelt Standort, Metrik und cnt=8 (24 h Prognose)', reqs[1].url.includes('lat=50.1') && reqs[1].url.includes('units=metric') && reqs[1].url.includes('cnt=8'), reqs[1].url.replace('KEY123', '***'));
 const t0 = NOW / 1000;
 run('opt_owm_parse', {topic: 'current', statusCode: 200, payload: {main: {temp: 2.0, humidity: 90, pressure: 1012}, clouds: {all: 80}, wind: {speed: 3}, weather: [{description: 'Nieselregen'}]}});
 run('opt_owm_parse', {topic: 'forecast', statusCode: 200, payload: {list: [
@@ -270,7 +269,7 @@ setv('room:ki_oben:min', 22.0); setv('room:ki_oben:weight', 1.5); setv('room:ki_
 // Aufbau der Seite: eine Raumkarte, die Eingaben gehen an opt_set; keine Einzelfelder mehr
 const flowsAll = JSON.parse(fs.readFileSync(flowsFile, 'utf8')), nodeBy = {}; flowsAll.forEach(n => { nodeBy[n.id] = n; });
 const card = nodeBy['opt_t_rooms'], html = card.format;
-check('Raumkarte: eigene Gruppe (breit), volle Gruppenbreite, feste Starthoehe, Eingaben gehen an opt_set', card.type === 'ui_template' && card.group === 'opt_g_rooms' && nodeBy['opt_g_rooms'].width === 12 && card.width === 0 && card.height === 12 && card.templateScope === 'local' && JSON.stringify(card.wires) === '[["opt_set"]]', JSON.stringify(card.wires));
+check('Raumkarte: eigene Gruppe (breit), volle Gruppenbreite, feste Starthoehe, Eingaben gehen an opt_set', card.type === 'ui_template' && card.group === 'opt_g_rooms' && nodeBy['opt_g_rooms'].width === 12 && card.width === 0 && card.height === 15 && card.templateScope === 'local' && JSON.stringify(card.wires) === '[["opt_set"]]', JSON.stringify(card.wires));
 check('Karten: volle Gruppenbreite, feste Starthoehe und Einpass-Skript mit der eigenen Kennung', ['opt_t_rooms', 'opt_t_wx', 'opt_t_wp', 'opt_t_opt'].every(id => nodeBy[id].width === 0 && nodeBy[id].height > 0 && nodeBy[id].format.includes("var id = '" + id + "'") && nodeBy[id].format.includes('class="optfit"') + nodeBy[id].format.includes('optr optfit') === 1), ['opt_t_rooms', 'opt_t_wx', 'opt_t_wp', 'opt_t_opt'].map(id => nodeBy[id].height).join('/'));
 check('Eingabefelder der Karte haben dieselben Grenzen wie die Pruefung', html.includes('min="10" max="30" step="0.5"') && html.includes('min="12" max="35" step="0.5"') && html.includes('min="0.1" max="5" step="0.1"') && html.includes('min="5" max="720" step="5"'), '');
 const tag = (re) => (html.match(re) || []).length;
@@ -357,6 +356,267 @@ check('danach nach Neustart wieder kein doppelter Kopf (letzte Kopfzeile der Dat
 gstore.OPT_cfg.rooms.pop();
 gstore.TOP26_Defrosting_State = 1; fstore.evHead = undefined; NOW += 60000; o = run('opt_eval', {}); gstore.TOP26_Defrosting_State = 0;
 check('Ereignisdatei: Kopfzeile nach Neustart nicht doppelt', o[5] && o[5].filename === evPath && !o[5].payload.startsWith('zeit,') && o[5].payload.includes('defrost,'), o[5] && o[5].payload.trim());
+
+
+(function () {
+// =====================================================================================================================
+// Phase 2 (Shadow): berechnete Aussentemperatur und Vorschlag fuer die Heizkurve. Es wird nichts angewendet.
+// =====================================================================================================================
+const T0 = Date.UTC(2026, 9, 7, 6, 0, 0);                 // auf 5 Minuten ausgerichtet
+const BASE = () => ({TOP14_Outside_Temp: 5, TOP42_Z1_Water_Target_Temp: 29, SHIFT_Final: 0, TOP5_Main_Inlet_Temp: 27, TOP6_Main_Outlet_Temp: 28,
+  compressor_frequency: 17, TOP26_Defrosting_State: 0, TOP20_ThreeWay_Valve_State: 0, TOP16_Heat_Energy_Consumption: 369, COP_HEAT: 5.4, TOP0_Heatpump_State: 1,
+  Starts_Today: 3, F_SS: {state: 0, correction_value: 0}, F_CCC: {z1: {SP_DIRECT_virt: 0}}, F_RTC: {z1: {state: 0, correction_value: 0}},
+  TOP4_Operating_Mode_State: 0, MQTT: {block_active: 0}, NightReductionWaterTemp: {state: 0, correction: 0},
+  Z1_Heat_Curve_Outside_Low_Temp: -13, Z1_Heat_Curve_Outside_High_Temp: 11, Z1_Heat_Curve_Target_Low_Temp: 29, Z1_Heat_Curve_Target_High_Temp: 38});
+let tickMin = 0;
+function resetWorld() {
+  tickMin = 0;
+  [fstore, files, gstore, envv].forEach(o => Object.keys(o).forEach(k => delete o[k]));
+  Object.assign(gstore, BASE());
+  NOW = T0; sent.length = 0;
+  run('opt_defaults', {});
+}
+// Minuten vorspulen: jede Minute Messwerte setzen (at(m) = Panasonic-Aussentemperatur) und opt_eval laufen lassen
+function runMinutes(n, at, hook) {
+  let o;
+  for (let i = 0; i < n; i++) {
+    NOW += 60000;
+    if (at) { gstore.TOP14_Outside_Temp = at(NOW); }
+    if (hook) { hook(i); }
+    o = run('opt_eval', {});
+  }
+  return o;
+}
+const rowCalc = (o, label) => (o[7].payload.rows.find(r => r[0] === label) || [])[1];
+const fcPayload = (t0, temps) => ({list: temps.map((v, i) => ({dt: t0 / 1000 + (i + 1) * 10800, main: {temp: v, humidity: 70}, clouds: {all: 10}}))});
+const weatherNow = (temp, fcTemps) => {          // frisches Wetter + Prognose (Mock der OpenWeatherMap-Antworten)
+  run('opt_owm_parse', {topic: 'current', statusCode: 200, payload: {main: {temp, humidity: 70, pressure: 1010}, clouds: {all: 10}, wind: {speed: 2}, weather: [{description: 'klar'}]}});
+  if (fcTemps) { run('opt_owm_parse', {topic: 'forecast', statusCode: 200, payload: fcPayload(NOW, fcTemps)}); }
+};
+const near = (a, b, tol) => a !== null && a !== undefined && Math.abs(a - b) <= tol;
+const num = x => parseFloat(String(x).replace(',', '.'));
+
+console.log('\n--- Phase 2: berechnete Aussentemperatur (Shadow)');
+resetWorld();
+let o = runMinutes(15, () => 10);
+check('1-h-Mittel braucht genug Messwerte: nach 15 min noch "–", Berechnung = aktueller Wert', rowCalc(o, 'Mittel letzte Stunde') === '–' && rowCalc(o, 'Berechnete Außentemperatur').startsWith('10,0 °C (nur aktuell)'), rowCalc(o, 'Berechnete Außentemperatur'));
+resetWorld();
+o = runMinutes(90, t => (t - T0) / 60000 < 45 ? 10 : 12);                       // Sprung nach 45 min
+check('1-h-Mittel ueber die letzte Stunde (10 -> 12 nach 45 min, erwartet ~11,4-11,5)', near(num(rowCalc(o, 'Mittel letzte Stunde')), 11.46, 0.2), rowCalc(o, 'Mittel letzte Stunde'));
+check('24-h-Mittel sammelt noch (nur 1,5 h Historie)', rowCalc(o, 'Mittel letzte 24 h').startsWith('sammelt'), rowCalc(o, 'Mittel letzte 24 h'));
+
+resetWorld();
+const dayAT = t => 10 + 5 * Math.sin(2 * Math.PI * (t - T0) / 86400000);
+o = runMinutes(7 * 60, dayAT);
+check('24-h-Mittel erscheint ab 6 h Historie, mit Angabe der Stunden', /^[\d,.\-]+ °C \(7 h\)$/.test(rowCalc(o, 'Mittel letzte 24 h')), rowCalc(o, 'Mittel letzte 24 h'));
+o = runMinutes(30 * 60 - 7 * 60, dayAT);                                          // insgesamt 30 h: aeltere Staepel fallen heraus
+const rowsAt30 = o[7].payload.rows;
+check('24-h-Mittel ueber einen vollen Tagesgang ~10,0 (Historie auf 24 h begrenzt)', near(num(rowCalc(o, 'Mittel letzte 24 h')), 10, 0.15) && !/\(\d+ h\)/.test(rowCalc(o, 'Mittel letzte 24 h')), rowCalc(o, 'Mittel letzte 24 h'));
+check('Historie waechst nicht unbegrenzt (max. 24 h + 1 Stapel = 289)', fstore.atBins.length <= 290 && fstore.atBins.length >= 287, fstore.atBins.length);
+
+console.log('--- Gewichtung, Prognose, Heizkurve');
+resetWorld();
+runMinutes(25 * 60, () => 6); NOW += 0;
+o = runMinutes(61, () => 10, i => { if (i % 30 === 0) { weatherNow(10, [2, 2, 2, 2, 2, 2, 2, 2]); } });
+const m1 = num(rowCalc(o, 'Mittel letzte Stunde')), m24 = num(rowCalc(o, 'Mittel letzte 24 h')), fc = num(rowCalc(o, 'Prognose Ø nächste 24 h'));
+const expCalc = 0.5 * m1 + 0.25 * m24 + 0.25 * fc;
+check('Prognose Ø 24 h wird aus 8 Punkten gebildet (hier konstant 2 °C, am Anfang 10 °C aktuell)', fc > 1.9 && fc < 4.6, fc);
+check('Berechnet = 50 % 1-h-Mittel + 25 % 24-h-Mittel + 25 % Prognose', near(num(rowCalc(o, 'Berechnete Außentemperatur')), expCalc, 0.06) && rowCalc(o, 'Berechnete Außentemperatur').includes('(1 h + 24 h + Prognose)'), rowCalc(o, 'Berechnete Außentemperatur') + ' erwartet ' + expCalc.toFixed(2));
+check('Gewichtung wird angezeigt', rowCalc(o, 'Gewichtung') === '50 / 25 / 25 %', rowCalc(o, 'Gewichtung'));
+// ohne frische Wetterdaten: Gewichte der uebrigen Anteile werden normiert
+NOW += 3 * 3600000; Object.keys(gstore.OPT_weather).forEach(k => { if (k === 'ts') { gstore.OPT_weather.ts = NOW - 2 * 3600000; } });
+o = runMinutes(61, () => 10);
+const expNo = (0.5 * num(rowCalc(o, 'Mittel letzte Stunde')) + 0.25 * num(rowCalc(o, 'Mittel letzte 24 h'))) / 0.75;
+check('ohne Prognose: Anteile 1 h und 24 h werden auf 100 % normiert', near(num(rowCalc(o, 'Berechnete Außentemperatur')), expNo, 0.06) && rowCalc(o, 'Berechnete Außentemperatur').includes('(1 h + 24 h)') && rowCalc(o, 'Prognose Ø nächste 24 h') === '–', rowCalc(o, 'Berechnete Außentemperatur'));
+// nur 12 h Prognose (cnt=4) wird nicht als 24-h-Mittel verwendet
+resetWorld(); weatherNow(5, [5, 5, 5, 5]);
+check('Prognose, die nur 12 h abdeckt, ergibt kein 24-h-Mittel', gstore.OPT_weather.f24 === null && gstore.OPT_weather.f3 !== null, String(gstore.OPT_weather.f24));
+weatherNow(5, [5, 5, 5, 5, 5, 5, 5, 5]);
+check('Prognose ueber 24 h: Mittel gebildet, Punkte fuer spaetere Phasen gespeichert', gstore.OPT_weather.f24 === 5 && gstore.OPT_weather.fpts.length >= 8, gstore.OPT_weather.f24 + ' / ' + gstore.OPT_weather.fpts.length);
+// Heizkurve: 29 C ab 11 C, 38 C bis -13 C, dazwischen linear
+resetWorld(); gstore.OPT_cfg.calcAT.wNow = 0; gstore.OPT_cfg.calcAT.wHist = 0; gstore.OPT_cfg.calcAT.wFc = 1;
+o = runMinutes(61, () => 0, i => { if (i === 0) { weatherNow(0, [-2, -2, -2, -2, -2, -2, -2, -2]); } });
+check('Heizkurve bei 0 °C = 33,1 und bei berechnet ~-2 °C = 33,9: aequivalente Verschiebung ~+0,7', near(num(rowCalc(o, 'Soll-Vorlauf, aktuelle AT')), 33.1, 0.06) && num(rowCalc(o, 'Äquivalente Verschiebung')) > 0.5 && num(rowCalc(o, 'Äquivalente Verschiebung')) < 0.9, rowCalc(o, 'Soll-Vorlauf, aktuelle AT') + ' / ' + rowCalc(o, 'Soll-Vorlauf, berechnete AT') + ' / ' + rowCalc(o, 'Äquivalente Verschiebung'));
+resetWorld(); gstore.OPT_cfg.calcAT.wNow = 0.5; gstore.OPT_cfg.calcAT.wHist = 0; gstore.OPT_cfg.calcAT.wFc = 0.5;
+o = runMinutes(61, () => 19, i => { if (i === 0) { weatherNow(19, [15, 15, 15, 15, 15, 15, 15, 15]); } });
+check('oberhalb 11 °C ist die Kurve flach: Verschiebung 0 K trotz anderer berechneter AT', rowCalc(o, 'Soll-Vorlauf, aktuelle AT') === '29,0 °C' && rowCalc(o, 'Soll-Vorlauf, berechnete AT') === '29,0 °C' && rowCalc(o, 'Äquivalente Verschiebung') === '0,0 K', rowCalc(o, 'Äquivalente Verschiebung'));
+resetWorld(); delete gstore.Z1_Heat_Curve_Target_High_Temp;
+o = runMinutes(61, () => 0);
+check('ohne Kurvenwerte der Waermepumpe: "–" statt Fehler', rowCalc(o, 'Äquivalente Verschiebung') === '–', rowCalc(o, 'Äquivalente Verschiebung'));
+// Neustart: die Historie wird aus der Datei geladen
+resetWorld(); runMinutes(7 * 60, () => 8);
+check('Historie wird alle 10 min in eine Datei gesichert', !!files['/data/optimizer/at-history.json'] && JSON.parse(files['/data/optimizer/at-history.json'].data).bins.length >= 30, files['/data/optimizer/at-history.json'] ? 'ja' : 'nein');
+Object.keys(fstore).forEach(k => delete fstore[k]);                              // simulierter Neustart
+o = runMinutes(1, () => 8);
+check('nach Neustart: Historie ist sofort da (Mittel 24 h mit 7 h Datenbestand), nichts geht verloren', /\(7 h\)$/.test(rowCalc(o, 'Mittel letzte 24 h')) && fstore.atBins.length >= 80, rowCalc(o, 'Mittel letzte 24 h'));
+const csvCalc = (() => { NOW += 6 * 60000; const oo = run('opt_eval', {}); return oo[4]; })();
+check('Protokoll enthaelt die neuen Spalten (aussen_berechnet, kurve_soll_*, verschiebung_aequivalent ...)', csvCalc && ['aussen_1h', 'aussen_24h', 'aussen_historie_h', 'prog_24h_mittel', 'aussen_berechnet', 'kurve_soll_aktuell', 'kurve_soll_berechnet', 'verschiebung_aequivalent', 'korrektur_vorschlag', 'regelung_grund'].every(c => csvCalc.payload.split('\n')[0].includes(c) || !csvCalc.payload.startsWith('zeit,')), '');
+check('Shadow: es werden nur OPT_*-Werte geschrieben, die Korrektur bleibt 0', Object.keys(gstore).filter(k => !k.startsWith('OPT_')).every(k => JSON.stringify(gstore[k]) === JSON.stringify(BASE()[k]) || k === 'TOP14_Outside_Temp') && gstore.OPT_shift_applied === 0, String(gstore.OPT_shift_applied));
+
+// =====================================================================================================================
+// Raumlogik (Vorschlag): die vier Regeln, Sperren, Haltezeit
+// =====================================================================================================================
+console.log('\n--- Raumlogik: Vorschlag fuer die Heizkurve (Regeln 1-4)');
+const ROOMSET = (ki_oben, ki_unten, schlaf, trend) => ({ki_oben: [ki_oben, trend || 0], ki_unten: [ki_unten, trend || 0], schlaf: [schlaf, trend || 0]});
+let ROOMNOW = null;
+function setRooms(vals) { ROOMNOW = vals; }
+function tick(n, hook) {                                   // jede Minute: Raumwerte frisch setzen, auswerten
+  let out;
+  for (let i = 0; i < n; i++) {
+    NOW += 60000;
+    gstore.OPT_rooms = {};
+    Object.keys(ROOMNOW).forEach(id => { if (ROOMNOW[id]) { gstore.OPT_rooms[id] = {name: NAMES[id], ema: ROOMNOW[id][0], last: ROOMNOW[id][0], ts: NOW, trend: ROOMNOW[id][1]}; } });
+    if (hook) { hook(tickMin); }
+    tickMin++;
+    out = run('opt_eval', {});
+  }
+  return out;
+}
+const ctlOf = out => out[1].payload.ctl;
+const cur = () => fstore.ctl && fstore.ctl.cur;
+const quiet = () => { gstore.compressor_frequency = 17; };
+
+// Regel 1: Raum unter Minimum -> langsam +1 K (erst nach Wartezeit), Fuehrungsraum = groesstes Defizit
+resetWorld(); setRooms(ROOMSET(23.0, 21.9, 20.0));
+let oo = tick(40);
+check('Regel 1: Raum 0,6 K unter Minimum, nach 40 min noch keine Aenderung (langsam, beobachtet)', cur() === 0 && ctlOf(oo).why.includes('beobachte') && ctlOf(oo).lead === 'Kinderzimmer unten', ctlOf(oo).why);
+oo = tick(25);
+check('Regel 1: nach 65 min Wartezeit Vorschlag +1 K, Fuehrungsraum Kinderzimmer unten', cur() === 1 && ctlOf(oo).why.startsWith('Heizbedarf: Kinderzimmer unten') && ctlOf(oo).lead === 'Kinderzimmer unten', ctlOf(oo).why);
+check('Shadow: angewendet bleibt 0, Zeitstempel ist frisch', gstore.OPT_shift_applied === 0 && gstore.OPT_shift_ts === NOW, gstore.OPT_shift_applied);
+// Fuehrungsraum = groesstes Defizit (gewichtet)
+resetWorld(); setRooms(ROOMSET(23.0, 22.0, 18.0)); oo = tick(5);
+check('Regel 1: Fuehrungsraum ist der mit dem groessten Defizit (Schlafzimmer 1,0 K vor Kinderzimmer 0,5 K)', ctlOf(oo).lead === 'Schlafzimmer', ctlOf(oo).lead);
+// Haltezeit: nach +1 erst nach 45 min wieder zurueck
+setRooms(ROOMSET(23.0, 23.1, 20.0)); fstore.ctl.cur = 1; fstore.ctl.since = NOW; const sinceT = NOW;
+oo = tick(40);
+check('Haltezeit: 40 min nach der Aenderung bleibt +1 K, obwohl alle im Band', cur() === 1 && ctlOf(oo).next.startsWith('frühestens in'), ctlOf(oo).next);
+oo = tick(10);
+check('nach 50 min (> 45) wurde die Korrektur zurueckgenommen, fruehestens nach 45 min Haltezeit', cur() === 0 && fstore.ctl.since - sinceT >= 45 * 60000 && fstore.ctl.since - sinceT < 47 * 60000, Math.round((fstore.ctl.since - sinceT) / 60000) + ' min');
+
+// Regel 1: nie absenken, wenn ein gueltiger Raum unter Minimum ist (auch nicht in der Haltezeit)
+resetWorld(); setRooms(ROOMSET(23.0, 22.3, 20.0));
+fstore.ctl = {cur: -1, since: NOW, lastStart: 0, lastDefrostEnd: 0, lastDhwEnd: 0, freqOn: true, defrost: false, dhw: false, wasOn: false, coldSince: 0, warmSince: 0, inBandSince: 0, backoffUntil: 0};
+oo = tick(1);
+check('Regel 1: Raum unter Minimum -> Absenkung sofort zurueck (auch innerhalb der Haltezeit), danach Pause', cur() === 0 && fstore.ctl.backoffUntil > NOW && ctlOf(oo).why.includes('Absenkung zurücknehmen'), ctlOf(oo).why);
+
+// Regel 2: kein Raum unter Minimum, Raum ueber Maximum -> zunaechst -1 K
+resetWorld(); setRooms(ROOMSET(24.0, 23.0, 20.0));
+oo = tick(20);
+check('Regel 2: Raum 0,5 K ueber Maximum, nach 20 min noch Beobachtung', cur() === 0 && ctlOf(oo).why.includes('beobachte'), ctlOf(oo).why);
+oo = tick(15);
+check('Regel 2: nach 35 min Vorschlag -1 K, Fuehrungsraum Kinderzimmer oben', cur() === -1 && ctlOf(oo).lead === 'Kinderzimmer oben', ctlOf(oo).why);
+resetWorld(); setRooms({ki_oben: [24.0, 0], ki_unten: [23.0, 0], schlaf: null}); oo = tick(60);
+check('Regel 2: fehlen Daten eines aktiven Raums, wird nicht abgesenkt', cur() === 0 && ctlOf(oo).why.includes('Daten unvollständig'), ctlOf(oo).why);
+resetWorld(); setRooms({ki_oben: [24.0, -0.6], ki_unten: [23.0, 0], schlaf: [20.0, 0]}); oo = tick(60);
+check('Regel 2: faellt der warme Raum so schnell (-0,6 K/h), dass er in 1 h im Band waere, wird nicht abgesenkt', cur() === 0, ctlOf(oo).why);
+
+// Regel 3: alle im Band -> niedrigste Heizkurve suchen (-1 K testen), vorsichtig
+resetWorld(); setRooms(ROOMSET(23.0, 23.0, 20.0));
+oo = tick(100);
+check('Regel 3: alle im Band, Test erst nach stabiler Zeit (nach 100 min noch nicht)', cur() === 0 && ctlOf(oo).why.includes('Test in'), ctlOf(oo).why);
+oo = tick(25);
+check('Regel 3: nach 125 min stabil im Band: vorsichtig -1 K getestet (niedrigste Heizkurve wird gesucht)', cur() === -1 && ctlOf(oo).why.includes('niedrigste Heizkurve'), ctlOf(oo).why);
+// Test scheitert: ein Raum kommt dem Minimum zu nah -> zurueck auf 0, danach Pause
+setRooms(ROOMSET(23.0, 22.6, 20.0)); oo = tick(50);
+check('Regel 3: Raum nahe am Minimum (0,1 K) -> nach der Haltezeit zurueck auf 0 und Test pausiert', cur() === 0 && fstore.ctl.backoffUntil > NOW + 5 * 3600000, ctlOf(oo).why);
+setRooms(ROOMSET(23.0, 23.0, 20.0)); oo = tick(200);
+check('danach kein neuer Test waehrend der Pause (6 h)', cur() === 0 && ctlOf(oo).why.includes('pausiert'), ctlOf(oo).why);
+resetWorld(); setRooms(ROOMSET(23.0, 22.8, 20.0)); oo = tick(200);
+check('Regel 3: Raum nur 0,3 K ueber Minimum -> kein Test (Abstand zu klein)', cur() === 0 && ctlOf(oo).why.includes('Abstand zum Minimum zu klein'), ctlOf(oo).why);
+resetWorld(); gstore.OPT_cfg.control.probe = false; setRooms(ROOMSET(23.0, 23.0, 20.0)); oo = tick(200);
+check('Absenkung testen kann ausgeschaltet werden', cur() === 0 && ctlOf(oo).why.includes('Absenkung testen aus'), ctlOf(oo).why);
+resetWorld(); setRooms(ROOMSET(23.0, 23.0, 20.0, -0.3)); oo = tick(200);
+check('Regel 3: faellt ein Raum merklich (-0,3 K/h), kein Test', cur() === 0, ctlOf(oo).why);
+
+// Regel 4: gleichzeitig deutlich zu kalt UND zu warm -> Waermeverteilungsproblem, Heizkurve bleibt
+resetWorld(); setRooms(ROOMSET(24.2, 21.5, 20.0)); oo = tick(200);
+check('Regel 4: kalter und warmer Raum gleichzeitig: Waermeverteilungsproblem markiert, keine Aenderung', cur() === 0 && ctlOf(oo).distrib === true && ctlOf(oo).why.startsWith('Wärmeverteilungsproblem') && oo[3].payload.rows.find(r => r[0] === 'Vorschlag Räume')[2] === 'warn', ctlOf(oo).why);
+check('Regel 4: kein Mittelwert - Fuehrungsraum bleibt der kalte Raum', ctlOf(oo).lead === 'Kinderzimmer unten', ctlOf(oo).lead);
+fstore.ctl.cur = 1; fstore.ctl.since = NOW - 3600000; oo = tick(1);
+check('Regel 4: bei aktivem +1 K wird zurueckgenommen, wenn dadurch ein Raum deutlich zu warm wird', cur() === 0, ctlOf(oo).why);
+// nur leicht ueber Maximum (unter der Schwelle) ist noch kein Konflikt -> kalter Raum darf +1 bekommen
+resetWorld(); setRooms(ROOMSET(23.6, 21.9, 20.0)); oo = tick(70);
+check('Leicht ueber Maximum (0,1 K, unter der Schwelle) ist kein Konflikt: kalter Raum fuehrt, +1 K', cur() === 1 && ctlOf(oo).distrib === false, ctlOf(oo).why);
+
+// Sperren: in diesen Zustaenden aendert sich nichts, danach geht es weiter
+console.log('--- Sperren der Korrektur');
+const lockCases = [
+  ['Abtauen', i => { gstore.TOP26_Defrosting_State = (i >= 55 && i < 66) ? 1 : 0; }, 'Abtauen', 14],
+  ['Warmwasser', i => { gstore.TOP20_ThreeWay_Valve_State = (i >= 55 && i < 66) ? 1 : 0; }, 'Warmwasser', 14],
+  ['Verdichterstart', i => { gstore.compressor_frequency = i < 60 ? 0 : 17; }, 'Verdichterstart', 12],
+  ['Sanftanlauf', i => { gstore.F_SS = (i >= 55 && i < 66) ? {state: 1, correction_value: -1} : {state: 1, correction_value: 0}; }, 'Sanftanlauf', 1],
+  ['Nachtabsenkung', i => { gstore.NightReductionWaterTemp = (i >= 55 && i < 66) ? {state: 1, correction: -2} : {state: 1, correction: 0}; }, 'Nachtabsenkung', 1],
+  ['Raumregelung (bestehend) aktiv', i => { gstore.F_RTC = {z1: {state: (i >= 55 && i < 66) ? 1 : 0, correction_value: 0}}; }, 'Raumregelung', 1],
+  ['MQTT gesperrt', i => { gstore.MQTT = {block_active: (i >= 55 && i < 66) ? 1 : 0}; }, 'MQTT', 1],
+  ['Wärmepumpe aus', i => { gstore.TOP0_Heatpump_State = (i >= 55 && i < 66) ? 0 : 1; }, 'Wärmepumpe aus', 1],
+  ['Betriebsart Kuehlen', i => { gstore.TOP4_Operating_Mode_State = (i >= 55 && i < 66) ? 1 : 0; }, 'Betriebsart', 1]];
+lockCases.forEach(([name, hook, txt, extra]) => {
+  resetWorld(); setRooms(ROOMSET(23.0, 21.9, 20.0));
+  let lockedNote = '', before;
+  tick(58, hook); // Minute 1..58: Bedingung fuer +1 ist ab Minute 61 (Wartezeit 60 min) erfuellt
+  oo = tick(8, hook);                                      // Minute 59..66: gesperrt
+  before = cur(); lockedNote = ctlOf(oo).next;
+  check('Sperre ' + name + ': Wartezeit abgelaufen, aber keine Aenderung solange gesperrt', before === 0 && ctlOf(oo).next.startsWith('gesperrt: ') && ctlOf(oo).next.includes(txt.split(' ')[0]), lockedNote);
+  oo = tick(30 + extra, hook);
+  check('Sperre ' + name + ': nach der Sperre kommt der Vorschlag +1 K', cur() === 1, ctlOf(oo).why + ' | ' + ctlOf(oo).next);
+});
+
+// Anwenden (nur wenn eingeschaltet): in dieser Version nicht ueber die Oberflaeche erreichbar, Logik ist aber geprueft
+resetWorld(); gstore.OPT_cfg.control.enabled = true; setRooms(ROOMSET(23.0, 21.9, 20.0)); oo = tick(70);
+check('eingeschaltet (nur per Konfiguration): +1 K wird als OPT_shift_applied bereitgestellt', cur() === 1 && gstore.OPT_shift_applied === 1 && ctlOf(oo).status.startsWith('Regelung aktiv · Korrektur +1 K'), String(gstore.OPT_shift_applied) + ' ' + ctlOf(oo).status);
+gstore.F_RTC = {z1: {state: 1, correction_value: 0}}; oo = tick(1);
+check('bestehende Raumregelung an: Korrektur wird nie zusaetzlich angewendet (0)', gstore.OPT_shift_applied === 0, String(gstore.OPT_shift_applied));
+gstore.F_RTC = {z1: {state: 0, correction_value: 0}}; gstore.OPT_cfg.control.enabled = false; oo = tick(1);
+check('ausgeschaltet: Korrektur sofort 0', gstore.OPT_shift_applied === 0 && ctlOf(oo).status.startsWith('Regelung aus'), String(gstore.OPT_shift_applied));
+// Fehler in der Regelung: neutral (0), Anzeige laeuft weiter
+resetWorld(); gstore.OPT_cfg.control.enabled = true; setRooms(ROOMSET(23.0, 21.9, 20.0)); tick(70);
+gstore.MQTT = {get block_active() { throw new Error('boom'); }};
+let threw = false; try { oo = tick(1); } catch (e) { threw = true; }
+check('Fehler in der Regelung: Korrektur wird 0, Auswertung und Anzeige laufen weiter', !threw && gstore.OPT_shift_applied === 0 && oo[1].payload.ctl.why.startsWith('Fehler: boom') && oo[0] && oo[7], threw ? 'Ausnahme' : oo[1].payload.ctl.why);
+
+// Zufallspruefung der Sicherheitsregeln (feste Zufallsfolge)
+console.log('--- Zufallspruefung der Sicherheitsregeln (3 x 5 Tage)');
+let seed = 12345; const rand = () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; };
+let fuzzFail = [], changes = 0, maxRun = 0;
+for (let round = 0; round < 3; round++) {
+  resetWorld(); gstore.OPT_cfg.control.enabled = round !== 0;                       // Runde 0: Shadow, sonst eingeschaltet
+  const st = {ki_oben: 23.0, ki_unten: 23.0, schlaf: 20.0}; let lastCur = 0, lastChange = -1e12, prevApplied = 0;
+  let defrostUntil = 0, dhwUntil = 0, freqOffUntil = 0;
+  for (let m = 0; m < 5 * 1440; m++) {
+    NOW += 60000;
+    // Raumtemperaturen: langsame Zufallsbewegung, gelegentlich Spruenge
+    Object.keys(st).forEach(id => { st[id] += (rand() - 0.5) * 0.04 + (rand() < 0.002 ? (rand() - 0.5) * 1.5 : 0); const lo = id === 'schlaf' ? 17.5 : 21, hi = id === 'schlaf' ? 22.5 : 25; st[id] = Math.min(hi, Math.max(lo, st[id])); });
+    gstore.OPT_rooms = {};
+    Object.keys(st).forEach(id => { if (rand() > 0.02) { gstore.OPT_rooms[id] = {name: NAMES[id], ema: Math.round(st[id] * 10) / 10, last: st[id], ts: NOW, trend: Math.round((rand() - 0.5) * 6) / 10}; } });
+    // Waermepumpe: Verdichter 35/25 min, Abtauen, Warmwasser, Sanftanlauf, Sperrzustaende zufaellig
+    if (m % 60 === 0) { freqOffUntil = rand() < 0.5 ? m + 25 : 0; }
+    if (rand() < 0.003) { defrostUntil = m + 8; } if (rand() < 0.001) { dhwUntil = m + 25; }
+    gstore.compressor_frequency = m < freqOffUntil ? 0 : 17; gstore.TOP26_Defrosting_State = m < defrostUntil ? 1 : 0; gstore.TOP20_ThreeWay_Valve_State = m < dhwUntil ? 1 : 0;
+    gstore.F_SS = rand() < 0.002 ? {state: 1, correction_value: -1} : {state: 0, correction_value: 0};
+    gstore.F_RTC = {z1: {state: 0, correction_value: 0}};
+    gstore.MQTT = {block_active: rand() < 0.001 ? 1 : 0};
+    const lockedNow = gstore.TOP26_Defrosting_State === 1 || gstore.TOP20_ThreeWay_Valve_State === 1 || gstore.MQTT.block_active === 1 || gstore.F_SS.correction_value !== 0;
+    const o2 = run('opt_eval', {});
+    const c = fstore.ctl.cur, ap = gstore.OPT_shift_applied;
+    const valid = Object.keys(gstore.OPT_rooms).map(id => ({id, ema: gstore.OPT_rooms[id].ema, min: id === 'schlaf' ? 19 : 22.5, max: id === 'schlaf' ? 21 : 23.5}));
+    if (Math.abs(c) > 1 || Math.abs(ap) > 1) { fuzzFail.push('Betrag > 1 bei ' + m); }
+    if (round === 0 && ap !== 0) { fuzzFail.push('Shadow wendet an bei ' + m); }
+    if (ap !== (round === 0 ? 0 : c)) { fuzzFail.push('angewendet ' + ap + ' != Vorschlag ' + c + ' bei ' + m); }
+    if (c !== lastCur) {
+      changes++;
+      if (Math.abs(c - lastCur) !== 1) { fuzzFail.push('Sprung groesser als 1 K bei ' + m); }
+      if (lockedNow) { fuzzFail.push('Aenderung waehrend einer Sperre bei ' + m); }
+      const revoke = lastCur < 0 && c === 0 && valid.some(v => v.ema < v.min);
+      if (!revoke && NOW - lastChange < 45 * 60000 - 1) { fuzzFail.push('Haltezeit verletzt bei ' + m + ' (' + Math.round((NOW - lastChange) / 60000) + ' min)'); }
+      if (c < 0 && (valid.some(v => v.ema < v.min) || valid.length < 3)) { fuzzFail.push('Absenkung bei Raum unter Minimum oder fehlenden Daten bei ' + m); }
+      lastChange = NOW; lastCur = c;
+    }
+    if (c < 0 && lastCur < 0 && valid.some(v => v.ema < v.min) && !lockedNow && NOW - lastChange > 2 * 60000) { fuzzFail.push('Absenkung bleibt trotz Raum unter Minimum bei ' + m); }
+  }
+}
+check('Zufallspruefung: Betrag <= 1 K, Schritte von 1 K, Haltezeit, keine Aenderung bei Sperren, nie absenken bei Raum unter Minimum/fehlenden Daten, Shadow wirkungslos', fuzzFail.length === 0, fuzzFail.slice(0, 4).join(' | ') + ' (' + changes + ' Aenderungen)');
+console.log('   Aenderungen in 3 x 5 Tagen:', changes);
+})();
 
 console.log('\nERGEBNIS:', assertFails === 0 ? 'alle Pruefungen bestanden' : assertFails + ' Pruefung(en) fehlgeschlagen');
 process.exit(assertFails ? 1 : 0);

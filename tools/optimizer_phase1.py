@@ -103,13 +103,19 @@ ROOM_FIELDS = [
 ]
 LIMITS = {f: [lo, hi] for f, lo, hi, _step, _tip in ROOM_FIELDS}
 MIN_BAND_K = 0.5
+# Room logic for the correction of the heating curve (-1/0/+1 K). Shadow only for now: a proposal is computed, shown and
+# logged (korrektur_vorschlag); nothing is applied (enabled stays false, and the sum function is not patched).
+CONTROL = {"enabled": False, "probe": True, "startK": 0.3, "releaseK": 0.3, "holdMin": 45, "riseDwellMin": 60, "lowerDwellMin": 30,
+           "probeStableMin": 120, "probeMarginK": 0.4, "guardK": 0.15, "probeBackoffMin": 360,
+           "startLockMin": 15, "afterDefrostMin": 10, "afterDhwMin": 10}
 
 
 def js(code):
     """Fill the shared constants into a JS block."""
     return (code.replace("__ROOMS__", json.dumps(ROOMS, ensure_ascii=False))
                 .replace("__LIMITS__", json.dumps(LIMITS))
-                .replace("__MINBAND__", str(MIN_BAND_K)))
+                .replace("__MINBAND__", str(MIN_BAND_K))
+                .replace("__CTL__", json.dumps(CONTROL)))
 
 
 # ---------------------------------------------------------------- defaults / configuration
@@ -119,6 +125,8 @@ DEFAULTS_JS = r"""
 var ROOM_FIELDS = ['active', 'min', 'max', 'weight', 'maxAgeMin'];
 var d = {
     rooms: __ROOMS__,
+    control: __CTL__,
+    calcAT: {wNow: 0.5, wHist: 0.25, wFc: 0.25, minHistH: 6},
     sensor:  {maxAgeMin: 90, min: 10, max: 35, maxJumpK: 2, emaTauMin: 30, trendWindowMin: 120, trendMinSpanMin: 30, trendMinSamples: 3},
     weather: {intervalMin: 10, maxAgeMin: 60},
     log:     {intervalMin: 5}
@@ -252,7 +260,7 @@ return null;
 """
 
 OWM_REQ_JS = r"""
-// OpenWeatherMap abrufen (Free-Tarif: aktuelles Wetter + 3-Stunden-Vorhersage). Ohne Schluessel/Standort passiert nichts.
+// OpenWeatherMap abrufen (Free-Tarif: aktuelles Wetter + 3-Stunden-Vorhersage fuer 24 h). Ohne Schluessel/Standort passiert nichts.
 // Schluessel + Standort: bevorzugt aus der geschuetzten Datei (Eingabe im Dashboard unter SYSTEM > EINSTELLUNGEN),
 // ersatzweise aus den Tab-Umgebungsvariablen OWM_API_KEY / OWM_LAT / OWM_LON. Der Schluessel wird NIE in einer
 // Variable oder Meldung abgelegt, die ueber die Admin-API lesbar waere.
@@ -276,7 +284,7 @@ global.set('OPT_weather', W);
 var base = 'https://api.openweathermap.org/data/2.5/';
 var q = '?lat=' + encodeURIComponent(lat) + '&lon=' + encodeURIComponent(lon) + '&units=metric&lang=de&appid=' + encodeURIComponent(key);
 node.send({topic: 'current',  url: base + 'weather' + q});
-node.send({topic: 'forecast', url: base + 'forecast' + q + '&cnt=4'});
+node.send({topic: 'forecast', url: base + 'forecast' + q + '&cnt=8'});
 return null;
 """
 
@@ -322,6 +330,13 @@ if (msg.topic === 'forecast' && Array.isArray(p.list) && p.list.length) {
     }
     W.f1 = at(1, 'v'); W.f3 = at(3, 'v'); W.f6 = at(6, 'v');
     W.f3_rh = at(3, 'h'); W.f_ts = now;
+    // Mittel der naechsten 24 h (stuendlich interpoliert) - nur wenn die Prognose mindestens 20 h abdeckt; Punkte fuer spaetere Phasen
+    var lastPt = pts[pts.length - 1], sum24 = 0, cnt24 = 0;
+    if (lastPt && lastPt.t >= now + 20 * 3600000) {
+        for (var hh = 0; hh <= 24; hh++) { var vv = at(hh, 'v'); if (vv !== null) { sum24 += vv; cnt24++; } }
+    }
+    W.f24 = cnt24 ? r1(sum24 / cnt24) : null;
+    W.fpts = pts.filter(function (q) { return q.t > now - 3600000; }).map(function (q) { return [q.t, q.v, q.h, q.c]; });
 }
 global.set('OPT_weather', W);
 return null;
@@ -467,6 +482,62 @@ var rowsWx = [
     ['Regelwert Außentemperatur', f(tp, 1, '°C') + ' (Panasonic)', '']
 ];
 
+// ---------- Berechnete Aussentemperatur (Lambda-artig, NUR Anzeige und Protokoll): Panasonic 1-h-Mittel + 24-h-Historie + Prognose 24 h
+// -> Heizkurve der Waermepumpe an dieser Stelle -> aequivalente Verschiebung. Greift nicht in die Regelung ein (Shadow).
+var AT_MIN = 60000, AT_BIN = 5 * AT_MIN;
+var atCfg = cfg.calcAT || {};
+var atHist = flow.get('atBins');
+if (!Array.isArray(atHist)) {                                  // nach einem Neustart die gespeicherte Historie laden
+    try { var atFile = JSON.parse(fs.readFileSync('/data/optimizer/at-history.json', 'utf8')); atHist = Array.isArray(atFile.bins) ? atFile.bins : []; } catch (e) { atHist = []; }
+}
+if (tp !== null) {                                             // 5-Minuten-Stapel: [Beginn, Summe, Anzahl]
+    var atBt = Math.floor(now / AT_BIN) * AT_BIN, atLast = atHist.length ? atHist[atHist.length - 1] : null;
+    if (atLast && atLast[0] === atBt) { atLast[1] += tp; atLast[2] += 1; } else if (!atLast || atBt > atLast[0]) { atHist.push([atBt, tp, 1]); }
+}
+while (atHist.length && atHist[0][0] < now - 24 * 60 * AT_MIN - AT_BIN) { atHist.shift(); }
+flow.set('atBins', atHist);
+var atSaved = flow.get('atSaved');
+if (!atSaved || now - atSaved >= 10 * AT_MIN) {                // alle 10 min sichern (ueberlebt einen Neustart)
+    try { fs.mkdirSync('/data/optimizer', {recursive: true}); fs.writeFileSync('/data/optimizer/at-history.json', JSON.stringify({bins: atHist})); flow.set('atSaved', now); } catch (e) { /* kein Zugriff */ }
+}
+function atMean(fromTs) {
+    var s = 0, n = 0;
+    atHist.forEach(function (b) { if (b[0] + AT_BIN > fromTs) { s += b[1]; n += b[2]; } });
+    return n ? {m: s / n, n: n} : null;
+}
+var atM1 = atMean(now - 60 * AT_MIN), atM24 = atMean(now - 24 * 60 * AT_MIN);
+var atSpanH = atHist.length ? (now - atHist[0][0]) / (60 * AT_MIN) : 0;                  // so viel Historie gibt es
+var at1h = (atM1 && atM1.n >= 20) ? atM1.m : null;                                       // mindestens 20 Messwerte in der letzten Stunde
+var at24h = (atM24 && atSpanH >= (isFinite(atCfg.minHistH) ? Number(atCfg.minHistH) : 6)) ? atM24.m : null;
+var atFc24 = (wOk && W.f24 !== undefined && W.f24 !== null) ? W.f24 : null;             // Prognose-Mittel der naechsten 24 h (braucht frische Wetterdaten)
+var atW = [[at1h, isFinite(atCfg.wNow) ? Number(atCfg.wNow) : 0.5], [at24h, isFinite(atCfg.wHist) ? Number(atCfg.wHist) : 0.25], [atFc24, isFinite(atCfg.wFc) ? Number(atCfg.wFc) : 0.25]];
+var atUse = atW.filter(function (p) { return p[0] !== null && p[1] > 0; });
+var atSum = atUse.reduce(function (a, p) { return a + p[1]; }, 0);
+var atCalc = (at1h !== null && atSum > 0) ? atUse.reduce(function (a, p) { return a + p[0] * p[1]; }, 0) / atSum : tp;   // ohne 1-h-Mittel: aktueller Wert
+var atBasis = at1h === null ? 'nur aktuell' : [at1h !== null ? '1 h' : '', at24h !== null ? '24 h' : '', atFc24 !== null ? 'Prognose' : ''].filter(Boolean).join(' + ');
+// Heizkurve der Waermepumpe (Zone 1): zwei Eckpunkte, dazwischen linear
+var cvLo = num(G('Z1_Heat_Curve_Outside_Low_Temp')), cvHi = num(G('Z1_Heat_Curve_Outside_High_Temp')), cvTl = num(G('Z1_Heat_Curve_Target_Low_Temp')), cvTh = num(G('Z1_Heat_Curve_Target_High_Temp'));
+function curve(t) {
+    if (t === null || cvLo === null || cvHi === null || cvTl === null || cvTh === null || cvHi <= cvLo) { return null; }
+    if (t <= cvLo) { return cvTh; }
+    if (t >= cvHi) { return cvTl; }
+    return cvTh + (cvTl - cvTh) * (t - cvLo) / (cvHi - cvLo);
+}
+var sollNow = curve(tp), sollCalc = curve(atCalc);
+var shiftEq = (sollNow !== null && sollCalc !== null) ? sollCalc - sollNow : null;       // Verschiebung, die die berechnete Aussentemperatur ergaebe
+var rowsCalc = [
+    ['Außen Panasonic (aktuell)', f(tp, 1, '°C'), ''],
+    ['Mittel letzte Stunde', f(at1h, 1, '°C'), ''],
+    ['Mittel letzte 24 h', at24h !== null ? f(at24h, 1, '°C') + (atSpanH < 23.5 ? ' (' + f(atSpanH, 0) + ' h)' : '') : 'sammelt (' + f(atSpanH, 1) + ' h)', ''],
+    ['Prognose Ø nächste 24 h', atFc24 !== null ? f(atFc24, 1, '°C') : '–', ''],
+    ['Gewichtung', atW.map(function (p) { return Math.round(p[1] * 100); }).join(' / ') + ' %', ''],
+    ['Berechnete Außentemperatur', f(atCalc, 1, '°C') + ' (' + atBasis + ')', 'ok'],
+    ['Soll-Vorlauf, aktuelle AT', f(sollNow, 1, '°C'), ''],
+    ['Soll-Vorlauf, berechnete AT', f(sollCalc, 1, '°C'), ''],
+    ['Äquivalente Verschiebung', shiftEq !== null ? sg(shiftEq, 1, 'K') : '–', ''],
+    ['Modus', 'nur Anzeige, greift nicht ein', '']
+];
+
 // ---------- Waermepumpe
 var freq = num(G('compressor_frequency')) || 0, valve = num(G('TOP20_ThreeWay_Valve_State')), defrost = num(G('TOP26_Defrosting_State')) === 1;
 var ss = G('F_SS'), ssOn = ss && ss.state === 1;
@@ -488,7 +559,129 @@ var rowsWp = [
     ['Starts heute', f(num(G('Starts_Today')), 0), '']
 ];
 
-// ---------- Optimierung (Phase 1: nur Beobachtung)
+// ---------- Phase 2: Korrektur der Heizkurve (-1 / 0 / +1 K). Greift nur ueber OPT_shift_applied in die Summenfunktion ein, und nur wenn
+// eingeschaltet. Ausgeschaltet laeuft derselbe Ablauf als Vorschlag mit (Anzeige, Protokoll), ohne Wirkung. Entscheidungsregeln:
+//   1. gueltiger Raum unter seinem Minimum: nie absenken, Fuehrungsraum = groesstes Defizit, ggf. langsame +1-K-Korrektur
+//   2. kein Raum unter Minimum, Raum ueber Maximum: Absenkung erlaubt, zunaechst -1 K
+//   3. alle im Band: niedrigste Heizkurve suchen (0 K oder vorsichtig -1 K testen)
+//   4. gleichzeitig deutlich zu kalt UND zu warm: kein Mittelwert, Waermeverteilungsproblem markieren, Heizkurve nicht aendern
+// Jede Aenderung nur nach Mindesthaltezeit und nie bei Sperren (Abtauen, Warmwasser, Verdichterstart, Sanftanlauf ...).
+var MS_MIN = 60000;
+var ctRes = {on: false, probe: true, cur: 0, want: 0, applied: 0, code: 'Fehler', lead: '', distrib: false, locks: [], holdLeft: 0, since: 0, startK: 0.3, relK: 0.3, holdMin: 45, rtcOn: false};
+try {
+    var ct = cfg.control || {};
+    var ctSt = flow.get('ctl') || {cur: 0, since: 0, lastStart: 0, lastDefrostEnd: 0, lastDhwEnd: 0, freqOn: false, defrost: false, dhw: false, wasOn: false, coldSince: 0, warmSince: 0, inBandSince: 0, backoffUntil: 0};
+    var ctNum = function (v, dflt) { return (v !== undefined && v !== null && v !== '' && isFinite(v)) ? Number(v) : dflt; };
+    var ctOn = ct.enabled === true, ctProbe = ct.probe !== false;
+    var ctStart = ctNum(ct.startK, 0.3), ctRel = ctNum(ct.releaseK, 0.3), ctGuard = ctNum(ct.guardK, 0.15), ctMargin = ctNum(ct.probeMarginK, 0.4);
+    var ctHold = ctNum(ct.holdMin, 45) * MS_MIN, ctRise = ctNum(ct.riseDwellMin, 60) * MS_MIN, ctLower = ctNum(ct.lowerDwellMin, 30) * MS_MIN;
+    var ctStable = ctNum(ct.probeStableMin, 120) * MS_MIN, ctBackoff = ctNum(ct.probeBackoffMin, 360) * MS_MIN;
+    var ctStartLock = ctNum(ct.startLockMin, 15) * MS_MIN, ctDefLock = ctNum(ct.afterDefrostMin, 10) * MS_MIN, ctDhwLock = ctNum(ct.afterDhwMin, 10) * MS_MIN;
+    var dhwNow = valve === 1;
+    // Zustandswechsel der Waermepumpe merken (fuer die Sperren)
+    if (freq > 0 && !ctSt.freqOn) { ctSt.lastStart = now; }
+    if (!defrost && ctSt.defrost) { ctSt.lastDefrostEnd = now; }
+    if (!dhwNow && ctSt.dhw) { ctSt.lastDhwEnd = now; }
+    ctSt.freqOn = freq > 0; ctSt.defrost = defrost; ctSt.dhw = dhwNow;
+    if (ctOn && !ctSt.wasOn) { ctSt.cur = 0; ctSt.since = 0; ctSt.backoffUntil = 0; }          // beim Einschalten neutral beginnen
+    ctSt.wasOn = ctOn;
+    // Sperren: in diesen Zustaenden aendert sich die Korrektur nicht
+    var ctOpm = num(G('TOP4_Operating_Mode_State')), ctNr = G('NightReductionWaterTemp') || {}, ctMq = G('MQTT') || {};
+    var ctRtcOn = !!(rtc && rtc.z1 && rtc.z1.state === 1);
+    var ctLocks = [];
+    if (!pOn) { ctLocks.push('Wärmepumpe aus'); }
+    if (ctOpm === null || [0, 2, 4, 6].indexOf(ctOpm) < 0) { ctLocks.push('Betriebsart'); }
+    if (defrost) { ctLocks.push('Abtauen'); } else if (now - ctSt.lastDefrostEnd < ctDefLock) { ctLocks.push('nach dem Abtauen'); }
+    if (dhwNow) { ctLocks.push('Warmwasser'); } else if (now - ctSt.lastDhwEnd < ctDhwLock) { ctLocks.push('nach Warmwasser'); }
+    if (freq > 0 && now - ctSt.lastStart < ctStartLock) { ctLocks.push('Verdichterstart'); }
+    if (ss && ss.state === 1 && Math.abs(num(ss.correction_value) || 0) > 0) { ctLocks.push('Sanftanlauf'); }
+    if (ctNr.state === 1 && Math.abs(num(ctNr.correction) || 0) > 0) { ctLocks.push('Nachtabsenkung'); }
+    if (ctRtcOn) { ctLocks.push('Raumregelung (bestehend) aktiv'); }
+    if (ctMq.block_active === 1) { ctLocks.push('MQTT gesperrt'); }
+    // Lage der gueltigen Raeume (Abstaende gewichtet, Trend in K/h)
+    var ctAct = rooms.filter(function (x) { return x.active; });
+    var ctAllValid = ctAct.length > 0 && valids.length === ctAct.length;
+    var ci = valids.map(function (x) {
+        var tr = x.trend === null ? 0 : x.trend;
+        return {x: x, tr: tr, mLow: (x.ema - x.min) * x.weight, mHigh: (x.max - x.ema) * x.weight};
+    });
+    var ctBelow = ci.filter(function (i) { return i.mLow < 0; });                                   // unter dem eigenen Minimum
+    var ctAbove = ci.filter(function (i) { return i.mHigh < 0; });                                  // ueber dem eigenen Maximum
+    var ctColdClear = ctBelow.filter(function (i) { return i.mLow <= -ctStart; });                  // deutlich zu kalt
+    var ctWarmClear = ctAbove.filter(function (i) { return i.mHigh <= -ctStart; });                 // deutlich zu warm
+    var ctColdGo = ctColdClear.some(function (i) { return i.x.ema + i.tr < i.x.min; });             // und in 1 h nicht von selbst im Band
+    var ctWarmGo = ctWarmClear.some(function (i) { return i.x.ema + i.tr > i.x.max; });
+    var ctNearLow = ci.some(function (i) { return (i.x.ema + Math.max(i.tr, 0) * 0.5 - i.x.min) * i.x.weight < ctRel; });   // noch nicht sicher im Band
+    var ctGuardLow = ci.some(function (i) { return i.mLow < ctGuard; });                            // zu nah am Minimum fuer eine Absenkung
+    var ctAllIn = ci.length > 0 && !ctBelow.length && !ctAbove.length;
+    var ctPick = function (list, key) { return list.reduce(function (a, b) { return (a === null || b[key] < a[key]) ? b : a; }, null); };
+    var ctLead = ctBelow.length ? ctPick(ctBelow, 'mLow') : (ctAbove.length ? ctPick(ctAbove, 'mHigh') : null);     // Fuehrungsraum
+    var ctDistrib = ctColdClear.length > 0 && ctWarmClear.length > 0;
+    ctSt.coldSince = ctColdGo ? (ctSt.coldSince || now) : 0;                                        // seit wann dauerhaft (Wartezeit fuer langsames Handeln)
+    ctSt.warmSince = (ctWarmGo && !ctBelow.length) ? (ctSt.warmSince || now) : 0;
+    ctSt.inBandSince = ctAllIn ? (ctSt.inBandSince || now) : 0;
+    // Entscheidung
+    var ctWant = ctSt.cur, ctCode = '', ctBypass = false, ctBack = false;
+    var ctMin = function (ms) { return Math.max(1, Math.ceil(ms / MS_MIN)); };
+    if (!ci.length) { ctWant = 0; ctCode = 'keine gültigen Raumdaten'; }
+    else if (ctBelow.length) {                                                                      // Regel 1: Raum unter Minimum -> nie absenken
+        if (ctSt.cur < 0) { ctWant = 0; ctBypass = true; ctBack = true; ctCode = 'Raum unter Minimum: Absenkung zurücknehmen'; }
+        else if (ctDistrib) { ctWant = 0; ctCode = 'Wärmeverteilungsproblem: ' + ctLead.x.name + ' zu kalt, ' + ctPick(ctWarmClear, 'mHigh').x.name + ' zu warm'; }   // Regel 4
+        else if (ctSt.cur > 0) { ctCode = 'Heizbedarf: ' + ctLead.x.name; }
+        else if (ctColdGo && now - ctSt.coldSince >= ctRise) { ctWant = 1; ctCode = 'Heizbedarf: ' + ctLead.x.name; }
+        else if (ctColdGo) { ctCode = 'Heizbedarf: ' + ctLead.x.name + ' (beobachte seit ' + ctMin(now - ctSt.coldSince) + ' min)'; }
+        else { ctCode = ctLead.x.name + ' unter Minimum, aber unter der Schwelle oder erholt sich'; }
+    } else if (ctAbove.length) {                                                                    // Regel 2: kein Raum unter Minimum, Raum ueber Maximum
+        if (ctSt.cur > 0) { ctWant = ctNearLow ? 1 : 0; ctCode = ctNearLow ? 'Heizbedarf besteht noch' : 'Heizbedarf behoben'; }
+        else if (ctSt.cur < 0) {
+            if (ctGuardLow) { ctWant = 0; ctBack = true; ctCode = 'Absenkung beendet: Raum nahe Minimum'; }
+            else { ctCode = 'Überschreitung: ' + ctLead.x.name + ' (-1 K hält)'; }
+        }
+        else if (!ctAllValid) { ctCode = 'Daten unvollständig: keine Absenkung'; }
+        else if (now < ctSt.backoffUntil) { ctCode = 'Absenkung pausiert (' + ctMin(ctSt.backoffUntil - now) + ' min)'; }
+        else if (ctWarmGo && now - ctSt.warmSince >= ctLower) { ctWant = -1; ctCode = 'Überschreitung: ' + ctLead.x.name; }
+        else if (ctWarmGo) { ctCode = 'Überschreitung: ' + ctLead.x.name + ' (beobachte seit ' + ctMin(now - ctSt.warmSince) + ' min)'; }
+        else { ctCode = ctLead.x.name + ' über Maximum, aber unter der Schwelle oder kühlt ab'; }
+    } else {                                                                                        // Regel 3: alle im Band -> niedrigste Heizkurve suchen
+        if (ctSt.cur > 0) { ctWant = ctNearLow ? 1 : 0; ctCode = ctNearLow ? 'Heizbedarf besteht noch' : 'Heizbedarf behoben'; }
+        else if (ctSt.cur < 0) {
+            if (ctGuardLow) { ctWant = 0; ctBack = true; ctCode = 'Absenkung beendet: Raum nahe Minimum'; }
+            else { ctCode = 'niedrigste Heizkurve gefunden (-1 K hält)'; }
+        }
+        else if (!ctProbe) { ctCode = 'alle im Band (Absenkung testen aus)'; }
+        else if (!ctAllValid) { ctCode = 'alle im Band, Daten unvollständig'; }
+        else if (now < ctSt.backoffUntil) { ctCode = 'alle im Band, Test pausiert (' + ctMin(ctSt.backoffUntil - now) + ' min)'; }
+        else if (now - ctSt.inBandSince < ctStable) { ctCode = 'alle im Band, Test in ' + ctMin(ctStable - (now - ctSt.inBandSince)) + ' min'; }
+        else if (!ci.every(function (i) { return i.mLow >= ctMargin && i.tr >= -0.1; })) { ctCode = 'alle im Band, Abstand zum Minimum zu klein oder Raum kühlt ab (kein Test)'; }
+        else { ctWant = -1; ctCode = 'Absenkung testen'; }
+    }
+    if (ctBack) { ctSt.backoffUntil = now + ctBackoff; }                                            // nach einer zurueckgenommenen Absenkung eine Weile nicht erneut
+    // Aenderung: nur nach Mindesthaltezeit (Zuruecknehmen einer Absenkung bei Raum unter Minimum sofort) und nie bei Sperren; immer nur 1 K
+    var ctHoldLeft = Math.max(0, ctSt.since + ctHold - now);
+    if (ctWant !== ctSt.cur && !ctLocks.length && (ctHoldLeft === 0 || ctBypass)) { ctSt.cur = ctWant; ctSt.since = now; ctHoldLeft = ctHold; }
+    var ctApplied = (ctOn && !ctRtcOn) ? ctSt.cur : 0;
+    global.set('OPT_shift_applied', ctApplied);                                                     // wird von der Summenfunktion gelesen (nur wenn frisch)
+    global.set('OPT_shift_ts', now);
+    flow.set('ctl', ctSt);
+    ctRes = {on: ctOn, probe: ctProbe, cur: ctSt.cur, want: ctWant, applied: ctApplied, code: ctCode, lead: ctLead ? ctLead.x.name : '', distrib: ctDistrib,
+             locks: ctLocks, holdLeft: ctHoldLeft, since: ctSt.since, startK: ctStart, relK: ctRel, holdMin: ctHold / MS_MIN, rtcOn: ctRtcOn};
+} catch (e) {
+    node.warn('Regelung (Phase 2): ' + e.message);
+    global.set('OPT_shift_applied', 0);                                                            // bei jedem Fehler neutral
+    global.set('OPT_shift_ts', now);
+    ctRes.code = 'Fehler: ' + e.message;
+}
+var fmtS = function (v) { return (v > 0 ? '+' : '') + v + ' K'; };
+var sgn = function (v) { return (v > 0 ? '+' : '') + v; };
+var hhmm = function (ts) { return ts ? new Date(ts).toLocaleTimeString('de-DE', {hour: '2-digit', minute: '2-digit'}) : '–'; };
+var ctWhy = ctRes.code + (ctRes.want !== ctRes.cur ? (ctRes.locks.length ? ' · wartet: ' + ctRes.locks[0] : ' · wartet auf Haltezeit') : '');
+var ctNext = ctRes.locks.length ? 'gesperrt: ' + ctRes.locks[0] : (ctRes.holdLeft > 0 ? 'frühestens in ' + Math.ceil(ctRes.holdLeft / MS_MIN) + ' min' : 'möglich');
+var ctShift = ctRes.on ? fmtS(ctRes.applied) + (ctRes.applied !== 0 ? ' seit ' + hhmm(ctRes.since) : '') : '0 K · Vorschlag ' + fmtS(ctRes.cur);
+var ctlOut = {enabled: ctRes.on, probe: ctRes.probe, startK: ctRes.startK, releaseK: ctRes.relK, holdMin: ctRes.holdMin,
+              status: ctRes.on ? 'Regelung aktiv · Korrektur ' + ctShift : 'Regelung aus · ' + ctShift,
+              statusCls: ctRes.on ? 'ok' : '', lead: ctRes.lead || '–', why: ctWhy, next: ctNext, distrib: ctRes.distrib};
+
+// ---------- Bewertung
 var reason;
 if (none) { reason = 'keine gültigen Raumdaten'; }
 else if (heat && over) { reason = 'Zielkonflikt: ' + heat.name + ' zu kalt, ' + over.name + ' zu warm'; }
@@ -496,7 +689,7 @@ else if (heat) { reason = heat.name + ' zu kalt (' + f(-heat.dev, 1, 'K') + ' un
 else if (over) { reason = over.name + ' zu warm (' + f(over.dev, 1, 'K') + ' über Maximum)'; }
 else { reason = 'alle gültigen Räume im eigenen Komfortband'; }
 
-var out = [{payload: {rows: rowsWx}}, {payload: {sum: sum, rooms: roomsOut}}, {payload: {rows: rowsWp}}, null, null, null, null];
+var out = [{payload: {rows: rowsWx}}, {payload: {sum: sum, rooms: roomsOut, ctl: ctlOut}}, {payload: {rows: rowsWp}}, null, null, null, null, {payload: {rows: rowsCalc}}];
 
 // ---------- Protokoll (alle log.intervalMin Minuten, CSV) und Ereignisse
 var d = new Date(now), pad = function (n) { return (n < 10 ? '0' : '') + n; };
@@ -525,19 +718,25 @@ if (!lastLog || (now - lastLog) >= cfg.log.intervalMin * 60000) {
     });
     cols = cols.concat(['raeume_gueltig', 'heizbedarf_raum', 'heizbedarf_abw', 'ueberschreitung_raum', 'ueberschreitung_abw', 'spielraum_k', 'spielraum_raum',
                         'soll_vorlauf', 'shift_basis', 'shift_rtc', 'shift_final', 'vorlauf', 'ruecklauf', 'verdichter_hz', 'verdichter_an',
-                        'leistung_w', 'cop', 'defrost', 'warmwasser', 'sanftanlauf', 'zustand', 'starts_heute']);
+                        'leistung_w', 'cop', 'defrost', 'warmwasser', 'sanftanlauf', 'zustand', 'starts_heute',
+                        'regelung_an', 'korrektur_vorschlag', 'korrektur_angewendet', 'fuehrungsraum', 'waermeverteilung', 'regelung_grund', 'regelung_sperre', 'haltezeit_rest_min',
+                        'aussen_1h', 'aussen_24h', 'aussen_historie_h', 'prog_24h_mittel', 'aussen_berechnet', 'kurve_soll_aktuell', 'kurve_soll_berechnet', 'verschiebung_aequivalent']);
     vals = vals.concat([valids.length, heat ? heat.name : '', heat ? c(heat.dev) : '', over ? over.name : '', over ? c(over.dev) : '', tight ? c(tight.m) : '', tight ? tight.room.name : '',
                         c(target), c(shiftBase), c(rtcCorr), c(shiftFinal), c(outl), c(inl), c(freq), freq > 0 ? 1 : 0,
-                        c(pw), c(freq > 0 ? cop : null), defrost ? 1 : 0, valve === 1 ? 1 : 0, ssOn ? 1 : 0, mode, c(num(G('Starts_Today')))]);
+                        c(pw), c(freq > 0 ? cop : null), defrost ? 1 : 0, valve === 1 ? 1 : 0, ssOn ? 1 : 0, mode, c(num(G('Starts_Today'))),
+                        ctRes.on ? 1 : 0, ctRes.cur, ctRes.applied, ctRes.lead, ctRes.distrib ? 1 : 0, String(ctRes.code).replace(/,/g, ';'), ctRes.locks.join(' + ').replace(/,/g, ';'), Math.ceil(ctRes.holdLeft / MS_MIN),
+                        c(at1h), c(at24h), c(atSpanH), c(atFc24), c(atCalc), c(sollNow), c(sollCalc), c(shiftEq)]);
     var logFile = '/data/optimizer/optimizer-v2-' + month + '.csv', headLine = cols.join(',');
     out[4] = {filename: logFile, payload: (headerNeeded('logHead', logFile, headLine) ? headLine + '\n' : '') + vals.join(',') + '\n'};
     flow.set('lastLog', now);
     lastLog = now;
 }
 var rowsOpt = [
-    ['Modus', 'Beobachtung, kein Eingriff', 'ok'],
+    ['Modus', ctRes.on ? 'Regelung aktiv (Heizkurve ±1 K)' : 'Beobachtung (Shadow), kein Eingriff', ctRes.on ? 'ok' : ''],
     ['Bewertung', reason, ''],
-    ['Korrektur', '0 K (nicht aktiv)', ''],
+    ['Korrektur', ctShift, ''],
+    ['Vorschlag Räume', ctWhy, ctRes.distrib ? 'warn' : ''],
+    ['Nächste Änderung', ctNext, ''],
     ['Protokoll', lastLog ? 'letzter Eintrag ' + new Date(lastLog).toLocaleTimeString('de-DE', {hour: '2-digit', minute: '2-digit'}) : 'noch kein Eintrag', '']
 ];
 out[3] = {payload: {rows: rowsOpt}};
@@ -545,6 +744,7 @@ out[3] = {payload: {rows: rowsOpt}};
 // Zustandswechsel als Ereignisse (fuer die spaetere Auswertung)
 var prev = flow.get('prevState') || {};
 var cur = {verdichter: freq > 0 ? 1 : 0, defrost: defrost ? 1 : 0, warmwasser: valve === 1 ? 1 : 0, sanftanlauf: ssOn ? 1 : 0,
+           korrektur_vorschlag: sgn(ctRes.cur), korrektur_angewendet: sgn(ctRes.applied), waermeverteilung: ctRes.distrib ? 1 : 0,
            komfort: none ? 'unbekannt' : ((heat || over) ? [heat ? 'heizbedarf:' + heat.name : '', over ? 'ueberschreitung:' + over.name : ''].filter(Boolean).join('+') : 'ok')};
 var ev = [];
 Object.keys(cur).forEach(function (k) { if (prev[k] !== undefined && prev[k] !== cur[k]) { ev.push(iso + ',' + k + ',' + prev[k] + '->' + cur[k]); } });
@@ -570,7 +770,7 @@ return out;
 upsert({"id": UI_TAB, "type": "ui_tab", "name": "Optimierung", "icon": "tune", "order": 12.5, "disabled": False, "hidden": False})
 # one wide card for the rooms (situation + settings), three slim status cards next to it; templates: width 0 = group width
 GROUPS = [("opt_g_rooms", "Räume und Komfortbänder", 12), ("opt_g_opt", "Optimierung", 6),
-          ("opt_g_wx", "Außen & Wetter", 6), ("opt_g_wp", "Wärmepumpe", 6)]
+          ("opt_g_wx", "Außen & Wetter", 6), ("opt_g_calc", "Berechnete Außentemperatur", 6), ("opt_g_wp", "Wärmepumpe", 6)]
 for _order, (gid, gname, gwidth) in enumerate(GROUPS, 1):
     upsert({"id": gid, "type": "ui_group", "name": gname, "tab": UI_TAB, "order": _order, "disp": True,
             "width": gwidth, "collapse": False, "className": ""})
@@ -616,8 +816,9 @@ def template(i, gid, height, y):
             "x": 1260, "y": y, "wires": [[]]}
 
 
-upsert(template("opt_t_opt", "opt_g_opt", 4, 140))
+upsert(template("opt_t_opt", "opt_g_opt", 6, 140))
 upsert(template("opt_t_wx", "opt_g_wx", 7, 200))
+upsert(template("opt_t_calc", "opt_g_calc", 8, 230))
 upsert(template("opt_t_wp", "opt_g_wp", 6, 260))
 
 
@@ -672,6 +873,14 @@ ROOMS_TPL = """<style>
 <td class="n">__IN_min__</td><td class="n">__IN_max__</td><td class="n">__IN_weight__</td><td class="n">__IN_maxAgeMin__</td></tr>
 </table></div>
 <div class="note">Änderungen gelten, sobald das Feld verlassen wird. Inaktive Räume werden nur angezeigt, nicht bewertet. Die Gewichtung ist ein Faktor für die Abweichung und entscheidet bei mehreren Verstößen, welcher Raum maßgeblich ist.</div>
+<div class="sec">Vorschlag für die Heizkurve (nur Anzeige, greift nicht ein)</div>
+<div class="sum" ng-if="d.ctl">
+<span class="k">Stand</span><span ng-class="d.ctl.statusCls">{{d.ctl.status}}</span>
+<span class="k">Führungsraum</span><span>{{d.ctl.lead}}</span>
+<span class="k">Grund</span><span ng-class="d.ctl.distrib ? 'warn' : ''">{{d.ctl.why}}</span>
+<span class="k">Nächste Änderung</span><span>{{d.ctl.next}}</span>
+</div>
+<div class="note">Regeln: 1. Ein Raum unter seinem Minimum: nie absenken, der Raum mit dem größten Defizit führt, langsam höchstens +1 K. 2. Kein Raum unter Minimum, aber einer über Maximum: Absenkung erlaubt, zunächst -1 K. 3. Alle im Band: niedrigste Heizkurve suchen (0 K oder vorsichtig -1 K testen). 4. Gleichzeitig deutlich zu kalt und zu warm: Wärmeverteilungsproblem, die Heizkurve bleibt unverändert. Jede Änderung nur nach der Mindesthaltezeit und nie bei Abtauen, Warmwasser, Verdichterstart oder Sanftanlauf. Der Vorschlag steht im Protokoll (korrektur_vorschlag).</div>
 </div>
 <script>
 (function (scope) {
@@ -688,7 +897,7 @@ ROOMS_TPL = """<style>
 for _f in ("min", "max", "weight", "maxAgeMin"):
     ROOMS_TPL = ROOMS_TPL.replace("__IN_%s__" % _f, room_input(_f))
 upsert({"id": "opt_t_rooms", "type": "ui_template", "z": TAB, "group": "opt_g_rooms", "name": "Räume", "order": 1,
-        "width": 0, "height": 12, "format": ROOMS_TPL + FIT_JS.replace("__ID__", "opt_t_rooms"), "storeOutMessages": True, "fwdInMessages": False,
+        "width": 0, "height": 15, "format": ROOMS_TPL + FIT_JS.replace("__ID__", "opt_t_rooms"), "storeOutMessages": True, "fwdInMessages": False,
         "resendOnRefresh": True, "templateScope": "local", "className": "", "x": 1260, "y": 320, "wires": [["opt_set"]]})
 
 # ---------------------------------------------------------------- flow nodes
@@ -717,8 +926,8 @@ upsert(fn("opt_owm_parse", "OWM-Antwort auswerten", OWM_PARSE_JS, 1, [[]], 880, 
 
 upsert(comment("opt_c4", "Auswertung jede Minute → Anzeige + Protokoll (CSV in /data/optimizer)", 380, 700))
 upsert(inject("opt_i_tick", "jede Minute", 60, 15, ["opt_eval"], 140, 760))
-upsert(fn("opt_eval", "Auswerten · Anzeigen · Protokollieren", EVAL_JS, 7,
-          [["opt_t_wx"], ["opt_t_rooms"], ["opt_t_wp"], ["opt_t_opt"], ["opt_f_log"], ["opt_f_ev"], ["opt_ui_wxstatus"]], 420, 760, FS))
+upsert(fn("opt_eval", "Auswerten · Anzeigen · Protokollieren", EVAL_JS, 8,
+          [["opt_t_wx"], ["opt_t_rooms"], ["opt_t_wp"], ["opt_t_opt"], ["opt_f_log"], ["opt_f_ev"], ["opt_ui_wxstatus"], ["opt_t_calc"]], 420, 760, FS))
 for fid, name, y in (("opt_f_log", "Protokoll", 700), ("opt_f_ev", "Ereignisse", 780)):
     upsert({"id": fid, "type": "file", "z": TAB, "name": name, "filename": "filename", "filenameType": "msg",
             "appendNewline": False, "createDir": True, "overwriteFile": "false", "encoding": "utf8",
