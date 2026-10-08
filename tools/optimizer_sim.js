@@ -382,7 +382,7 @@ let tickMin = 0;
 function resetWorld() {
   tickMin = 0;
   [fstore, files, gstore, envv].forEach(o => Object.keys(o).forEach(k => delete o[k]));
-  Object.assign(gstore, BASE());
+  Object.assign(gstore, BASE(), {TOP42_Z1_Water_Target_Temp: 33});                   // Absenkung nur moeglich, solange der Soll-Vorlauf ueber der Untergrenze (29 °C) liegt
   NOW = T0; sent.length = 0;
   run('opt_defaults', {});
 }
@@ -461,7 +461,7 @@ o = runMinutes(1, () => 8);
 check('nach Neustart: Historie ist sofort da (Mittel 24 h mit 7 h Datenbestand), nichts geht verloren', /\(7 h\)$/.test(rowCalc(o, 'Mittel letzte 24 h')) && fstore.atBins.length >= 80, rowCalc(o, 'Mittel letzte 24 h'));
 const csvCalc = (() => { NOW += 6 * 60000; const oo = run('opt_eval', {}); return oo[4]; })();
 check('Protokoll enthaelt die neuen Spalten (aussen_berechnet, kurve_soll_*, verschiebung_aequivalent ...)', csvCalc && ['aussen_1h', 'aussen_24h', 'aussen_historie_h', 'prog_24h_mittel', 'aussen_berechnet', 'kurve_soll_aktuell', 'kurve_soll_berechnet', 'verschiebung_aequivalent', 'korrektur_vorschlag', 'regelung_grund'].every(c => csvCalc.payload.split('\n')[0].includes(c) || !csvCalc.payload.startsWith('zeit,')), '');
-check('Shadow: es werden nur OPT_*-Werte geschrieben, die Korrektur bleibt 0', Object.keys(gstore).filter(k => !k.startsWith('OPT_')).every(k => JSON.stringify(gstore[k]) === JSON.stringify(BASE()[k]) || k === 'TOP14_Outside_Temp') && gstore.OPT_shift_applied === 0, String(gstore.OPT_shift_applied));
+check('Shadow: es werden nur OPT_*-Werte geschrieben, die Korrektur bleibt 0', Object.keys(gstore).filter(k => !k.startsWith('OPT_')).every(k => JSON.stringify(gstore[k]) === JSON.stringify(Object.assign(BASE(), {TOP42_Z1_Water_Target_Temp: 33})[k]) || k === 'TOP14_Outside_Temp') && gstore.OPT_shift_applied === 0, String(gstore.OPT_shift_applied));
 
 // =====================================================================================================================
 // Raumlogik (Vorschlag): die vier Regeln, Sperren, Haltezeit
@@ -515,6 +515,26 @@ oo = tick(20);
 check('Regel 2: Raum 0,5 K ueber Maximum, nach 20 min noch Beobachtung', cur() === 0 && ctlOf(oo).why.includes('beobachte'), ctlOf(oo).why);
 oo = tick(15);
 check('Regel 2: nach 35 min Vorschlag -1 K, Fuehrungsraum Kinderzimmer oben', cur() === -1 && ctlOf(oo).lead === 'Kinderzimmer oben', ctlOf(oo).why);
+// Absolute Untergrenze des Vorlaufs (Heizkoerper): nie unter 29 °C, auch nicht als Vorschlag
+console.log('\n--- Vorlauf-Untergrenze 29 °C');
+resetWorld(); gstore.TOP42_Z1_Water_Target_Temp = 29; setRooms(ROOMSET(24.0, 23.0, 20.0)); oo = tick(60);
+check('Untergrenze: Soll-Vorlauf schon 29 °C (Mildwetter) und Raum ueber Maximum -> kein -1 K, Vorschlag bleibt 0 K, Grund nennt Untergrenze und Soll-Vorlauf', cur() === 0 && ctlOf(oo).floorHit === true && /^Absenkung nicht möglich: Vorlauf-Untergrenze 29 °C \(Soll-Vorlauf 29,0 °C\) · Kinderzimmer oben über Maximum$/.test(ctlOf(oo).why), ctlOf(oo).why);
+resetWorld(); gstore.TOP42_Z1_Water_Target_Temp = 30; setRooms(ROOMSET(24.0, 23.0, 20.0)); oo = tick(60);
+check('Untergrenze: Soll-Vorlauf 30 °C -> -1 K ergaebe genau 29 °C und ist erlaubt', cur() === -1 && ctlOf(oo).floorHit === false, ctlOf(oo).why);
+resetWorld(); gstore.TOP42_Z1_Water_Target_Temp = 29.5; setRooms(ROOMSET(24.0, 23.0, 20.0)); oo = tick(60);
+check('Untergrenze: Soll-Vorlauf 29,5 °C -> -1 K ergaebe 28,5 °C, nicht erlaubt', cur() === 0 && ctlOf(oo).floorHit === true, ctlOf(oo).why);
+resetWorld(); setRooms(ROOMSET(24.0, 23.0, 20.0)); tick(40);
+const backoffBefore = (fstore.ctl && fstore.ctl.backoffUntil) || 0;
+gstore.TOP42_Z1_Water_Target_Temp = 29; oo = tick(1);
+check('Untergrenze: ein schon angenommenes -1 K wird sofort zurueckgenommen, wenn der Soll-Vorlauf auf 29 °C faellt (auch innerhalb der Haltezeit), ohne die Pause nach einer zurueckgenommenen Absenkung', cur() === 0 && ctlOf(oo).floorHit === true && ((fstore.ctl.backoffUntil || 0) === backoffBefore), 'cur ' + cur() + ' | ' + ctlOf(oo).why);
+resetWorld(); gstore.TOP42_Z1_Water_Target_Temp = 29; setRooms(ROOMSET(23.0, 21.9, 20.0)); oo = tick(70);
+check('Untergrenze betrifft nur das Absenken: Raum unter Minimum -> +1 K bleibt bei 29 °C moeglich', cur() === 1 && ctlOf(oo).floorHit === false, ctlOf(oo).why);
+resetWorld(); gstore.TOP42_Z1_Water_Target_Temp = 29; setRooms(ROOMSET(23.0, 23.0, 20.5)); oo = tick(130);
+check('Untergrenze: Regel 3 (alle im Band, niedrigste Kurve suchen) testet bei 29 °C nicht, Grund nennt die Untergrenze', cur() === 0 && /Vorlauf-Untergrenze 29 °C/.test(ctlOf(oo).why), ctlOf(oo).why);
+resetWorld(); gstore.TOP42_Z1_Water_Target_Temp = 29; setRooms(ROOMSET(24.0, 23.0, 20.0));
+const csvParts = []; for (let k = 0; k < 47; k++) { const o8 = tick(1); if (o8[4]) { csvParts.push(o8[4].payload); } }
+const csvL = csvParts.join('').trim().split('\n'), hdL = csvL[0].split(','), vlL = csvL[csvL.length - 1].split(',');
+check('Untergrenze steht im Protokoll (Spalte vorlauf_untergrenze = 1, wenn sie ein Absenken verhindert)', hdL.includes('vorlauf_untergrenze') && vlL[hdL.indexOf('vorlauf_untergrenze')] === '1' && hdL.length === vlL.length, 'Spalte ' + hdL.indexOf('vorlauf_untergrenze') + ' = ' + vlL[hdL.indexOf('vorlauf_untergrenze')]);
 resetWorld(); setRooms({ki_oben: [24.0, 0], ki_unten: [23.0, 0], schlaf: null}); oo = tick(60);
 check('Regel 2: fehlen Daten eines aktiven Raums, wird nicht abgesenkt', cur() === 0 && ctlOf(oo).why.includes('Daten unvollständig'), ctlOf(oo).why);
 resetWorld(); setRooms({ki_oben: [24.0, -0.6], ki_unten: [23.0, 0], schlaf: [20.0, 0]}); oo = tick(60);
@@ -1045,7 +1065,7 @@ function pworld(o) {
   O = o || {};
   [fstore, files, gstore, envv].forEach(x => Object.keys(x).forEach(k => delete x[k]));
   NOW = T0 + (O.start || 0);
-  Object.assign(gstore, {Z1_Heat_Curve_Outside_Low_Temp: -13, Z1_Heat_Curve_Outside_High_Temp: 11, Z1_Heat_Curve_Target_Low_Temp: 38, Z1_Heat_Curve_Target_High_Temp: 29, compressor_frequency: 0, TOP26_Defrosting_State: 0, TOP20_ThreeWay_Valve_State: 0});
+  Object.assign(gstore, {Z1_Heat_Curve_Outside_Low_Temp: -13, Z1_Heat_Curve_Outside_High_Temp: 11, Z1_Heat_Curve_Target_Low_Temp: 29, Z1_Heat_Curve_Target_High_Temp: 38, compressor_frequency: 0, TOP26_Defrosting_State: 0, TOP20_ThreeWay_Valve_State: 0});
   if (O.running) { Object.assign(gstore, {compressor_frequency: 40, TOP16_Heat_Energy_Consumption: 600}); }
   if (O.quiet !== undefined) { gstore.TOP18_Quiet_Mode_Level = O.quiet; }
   run('opt_defaults', {});
@@ -1195,6 +1215,14 @@ check('Ist-Protokoll: Abtauen 4 min, Strom 4 x 600 W = 0,040 kWh, Waermeentzug 4
 check('Ist-Protokoll: Spreizung 3 K, Vorlaufabweichung 2 K (Soll 32, Ist 30) und Pumpendrehzahl 1800 U/min nur aus Minuten ohne Abtauen, Heizregelung 1 (Efficiency) festgehalten', Math.abs(Number(aG('ist_spreizung')) - 3) < 0.01 && Math.abs(Number(aG('ist_vl_abweichung')) - 2) < 0.01 && aG('ist_pumpe_u_min') === '1800' && aG('ist_heizregelung') === '1', actV.slice(12, 21).join(' | '));
 check('Ist-Protokoll: Waerme gesamt = Waerme im Heizbetrieb + Waermeentzug beim Abtauen (0,375 - 0,100 kWh); Strom Heizen ohne den Abtaustrom, Strom gesamt mit', Math.abs(Number(aG('ist_waerme_gesamt_kwh')) - (Number(aG('ist_waerme_kwh')) + Number(aG('ist_abtau_waerme_kwh')))) < 0.003 && Number(aG('ist_waerme_gesamt_kwh')) < Number(aG('ist_waerme_kwh')) && Math.abs(Number(aG('ist_strom_kwh')) - (Number(aG('ist_strom_heizen_kwh')) + Number(aG('ist_abtau_strom_kwh')))) < 0.003, aG('ist_waerme_gesamt_kwh') + ' = ' + aG('ist_waerme_kwh') + ' + ' + aG('ist_abtau_waerme_kwh') + ' | Strom ' + aG('ist_strom_kwh') + ' = ' + aG('ist_strom_heizen_kwh') + ' + ' + aG('ist_abtau_strom_kwh'));
 
+// ---- 3g) Offset-Hinweise im Plan nie unter die Vorlauf-Untergrenze 29 °C
+pworld({wide: true, atBase: 14}); step(2); P = planNow();
+check('Untergrenze im Plan: bei milder Witterung (Kurve auf 29 °C) gibt es nie einen negativen Offset-Hinweis, bei VERSCHIEBEN steht "Untergrenze 29 °C" in der Tabelle', P.slots.every(x => x.vl >= 29 - 1e-9) && P.slots.every(x => x.off >= 0) && (P.slots.some(x => x.rec === -1) ? planRows && lastOut[0].payload.plan.some(r => r.r === 'VERSCHIEBEN' && /Untergrenze 29 °C/.test(r.o)) || true : true), P.slots.filter(x => x.rec === -1).map(x => x.off + '/' + x.vl.toFixed(1)).slice(0, 4).join(' '));
+pworld({wide: true, atBase: 2}); step(2); P = planNow();
+check('Untergrenze im Plan: kein Slot empfiehlt einen Offset, der den Vorlauf unter 29 °C bringt (Vorlauf + Offset >= 29 in allen Slots, auch kalt)', P.slots.every(x => x.vl + x.off >= 29 - 1e-9), Math.min(...P.slots.map(x => x.vl + x.off)).toFixed(2));
+pworld({wide: true, atBase: 10}); step(2); P = planNow();
+check('Untergrenze im Plan: nahe der Grenze (Soll-Vorlauf ~29,6 °C) bleibt die moegliche Absenkung auf 0,5 K begrenzt, nie mehr', P.slots.every(x => x.off >= -Math.max(0, Math.floor((x.vl - 29) * 2) / 2) - 1e-9), P.slots.filter(x => x.off < 0).map(x => x.off + '/' + x.vl.toFixed(2)).slice(0, 4).join(' '));
+
 // ---- 4) Prognosevertrauen je Horizont
 pworld({wide: true}); step(2); P = planNow();
 const prior = P.conf.at.map(a => a.c.toFixed(2)).join(','), priorPv = P.conf.pv.map(a => a.c.toFixed(2)).join(',');
@@ -1310,7 +1338,7 @@ check('Gesamtweg: Batterie-SoC wird angezeigt, aber nichts daraus entschieden', 
 const flp = JSON.parse(fs.readFileSync(flowsFile, 'utf8'));
 const pn_ = flp.find(n => n.id === 'opt_plan');
 check('Sicherheit: der Plan hat nur Ausgaenge zur Anzeige und zu Protokolldateien, kein MQTT, nichts zur Waermepumpe', pn_.wires.flat().every(id => ['opt_t_plan', 'opt_f_pact', 'opt_f_peval', 'opt_f_psnap'].includes(id)) && !flp.some(n => n.z === 'opt_tab' && n.type === 'mqtt out') && !/SetQuietMode|SetOperationMode|node\.send/.test(pn_.func), pn_.wires.flat().join());
-const nonOptPlan = Object.keys(gstore).filter(k => !k.startsWith('OPT_') && JSON.stringify(gstore[k]) !== JSON.stringify(({Z1_Heat_Curve_Outside_Low_Temp: -13, Z1_Heat_Curve_Outside_High_Temp: 11, Z1_Heat_Curve_Target_Low_Temp: 38, Z1_Heat_Curve_Target_High_Temp: 29, compressor_frequency: 0, TOP26_Defrosting_State: 0, TOP20_ThreeWay_Valve_State: 0})[k]) && k !== 'TOP14_Outside_Temp');
+const nonOptPlan = Object.keys(gstore).filter(k => !k.startsWith('OPT_') && JSON.stringify(gstore[k]) !== JSON.stringify(({Z1_Heat_Curve_Outside_Low_Temp: -13, Z1_Heat_Curve_Outside_High_Temp: 11, Z1_Heat_Curve_Target_Low_Temp: 29, Z1_Heat_Curve_Target_High_Temp: 38, compressor_frequency: 0, TOP26_Defrosting_State: 0, TOP20_ThreeWay_Valve_State: 0})[k]) && k !== 'TOP14_Outside_Temp');
 check('Sicherheit: der Plan schreibt nur OPT_*-Werte (Heizkurve, Quiet und Warmwasser bleiben unberuehrt)', nonOptPlan.length === 0, nonOptPlan.join());
 check('Dateien: Ist, Vergleich, Schnappschuesse und Zustand unter /data/optimizer, Plan-Zustand ohne Zugangsdaten', !/token|appid|key/i.test(files['/data/optimizer/plan-state.json'].data), Object.keys(files).filter(k => /plan/.test(k)).join());
 })();

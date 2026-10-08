@@ -105,7 +105,7 @@ LIMITS = {f: [lo, hi] for f, lo, hi, _step, _tip in ROOM_FIELDS}
 MIN_BAND_K = 0.5
 # Room logic for the correction of the heating curve (-1/0/+1 K). Shadow only for now: a proposal is computed, shown and
 # logged (korrektur_vorschlag); nothing is applied (enabled stays false, and the sum function is not patched).
-CONTROL = {"enabled": False, "probe": True, "startK": 0.3, "releaseK": 0.3, "holdMin": 45, "riseDwellMin": 60, "lowerDwellMin": 30,
+CONTROL = {"enabled": False, "probe": True, "minVlC": 29, "startK": 0.3, "releaseK": 0.3, "holdMin": 45, "riseDwellMin": 60, "lowerDwellMin": 30,
            "probeStableMin": 120, "probeMarginK": 0.4, "guardK": 0.15, "probeBackoffMin": 360,
            "startLockMin": 15, "afterDefrostMin": 10, "afterDhwMin": 10}
 
@@ -1365,12 +1365,13 @@ function buildPlan() {
         return rT * (0.3 + 0.7 * rH);
     }
     function dewp(t, rh) { var a = 17.62, b = 243.12, g = Math.log(Math.max(rh, 1) / 100) + a * t / (b + t); return b * g / (a - g); }
+    var minVlC = num((cfg.control || {}).minVlC); if (minVlC === null) { minVlC = 29; }
     var qOffLo = num(QC.offAtLow), qOffHi = num(QC.offAtHigh); if (qOffLo === null) { qOffLo = 1; } if (qOffHi === null) { qOffHi = 3; }
     var uaKw = ua, dflLoss = pn('defrostLoss', 0.15), uncP = pn('uncertaintyPremium', 0.05), slots = [], cbarS = 0;
     raw.forEach(function (x, ix) {
         var cA = confAt(cAt, x.L), cP = confAt(cPv, x.L);
         var atE = cA * x.atF + (1 - cA) * atRef, rhE = cA * (x.rhF === null ? rhRef : x.rhF) + (1 - cA) * rhRef;   // je schlechter die Prognose, desto weniger weicht sie vom Tagesmittel ab
-        var vl = curve(atE), cg = carnot(atE, vl), cop = cg === null ? null : clamp(eta * cg, 1.5, 6.5);
+        var vl = Math.max(minVlC, curve(atE)), cg = carnot(atE, vl), cop = cg === null ? null : clamp(eta * cg, 1.5, 6.5);
         if (cop === null) { cop = 3; }
         var bedarf = uaKw * Math.max(0, tbal - atE) * (Q15 / H);                                   // kWh Waerme je Slot
         var risk = defr(atE, rhE), base = x.price * 100 / cop, dPen = base * dflLoss * risk, uPen = base * uncP * (1 - cA);
@@ -1409,6 +1410,11 @@ function buildPlan() {
         x.att = Math.round(clamp(50 + 50 * (cbar - x.cost) / (0.4 * cbar), 0, 100));
         var off = 0;
         if (x.rec !== 0 && m !== null) { off = clamp(Math.round((m - 1) * Math.max(3, x.vl - tRoom) * 2) / 2, -2, 2); }
+        x.offFloor = false;
+        if (off < 0) {                                                                              // nie unter die absolute Vorlauf-Untergrenze (Heizkoerper)
+            var vlRoom = Math.max(0, Math.floor((x.vl - minVlC) * 2) / 2);
+            if (-off > vlRoom) { off = -vlRoom; x.offFloor = true; }
+        }
         x.off = off;
         var needW = x.p / 0.25 * 1000, hint = '–';
         if (x.at >= qOffLo && x.at <= qOffHi) { hint = 'Stufe 0 (' + qOffLo + '–' + qOffHi + ' °C)'; }
@@ -1430,7 +1436,7 @@ function buildPlan() {
     }
     var maxD = null; for (i = 0; i < NDAY; i++) { var dk = slots[i].bedarf / 0.25; if (maxD === null || dk > maxD.kw) { maxD = {kw: dk, t: slots[i].t}; } }
     var elM = 0; for (i = 0; i < NDAY; i++) { elM += slots[i].bedarf / slots[i].cop; }
-    P.maxDemand = maxD; P.elModel = elM; P.vrmHp = (PI.vrmHpKwh === undefined || PI.vrmHpKwh === null) ? null : PI.vrmHpKwh;
+    P.minVlC = minVlC; P.maxDemand = maxD; P.elModel = elM; P.vrmHp = (PI.vrmHpKwh === undefined || PI.vrmHpKwh === null) ? null : PI.vrmHpKwh;
     P.slots = slots; P.cbar = cbar; P.enough = enough; P.eta = eta;
     P.sum = {bedarf: sumB, up: sumUp, costB: costB, costP: costP, costPot: costPot, thermWin: bestT, pvWin: bestP, atRef: atRef, anchor: anchor, pvRes: pvRes, wRes: 180};
     return P;
@@ -1494,7 +1500,7 @@ if (P.status === 'ok') {
         tab.push({z: hhmm(g[0].t), b: f(sB, 2), p: f(sP, 2), cop: f(mean('cop'), 1), h: f(mean('rh'), 0, '%') + ' · ' + f(mean('dew'), 1, '°C'), pr: f(mean('price') * 100, 1), k: f(mean('cost'), 1), pv: mean('pv') === null ? '–' : f(mean('pv'), 0),
                   d: rk >= 0.05 ? Math.round(rk * 100) + ' %' : '–', v: Math.round(mean('cA') * 100) + ' %', a: Math.round(mean('att')),
                   r: recH === 1 ? 'VORZIEHEN' : (recH === -1 ? 'VERSCHIEBEN' : 'NORMAL'), cls: recH === 1 ? 'up' : (recH === -1 ? 'down' : ''),
-                  o: recH === 0 || offH === null ? '–' : (offH > 0 ? '+' : '') + f(offH, 1, 'K'), q: qh});
+                  o: recH === 0 || offH === null ? '–' : (g.some(function (x) { return x.offFloor; }) && offH === 0 ? 'Untergrenze ' + f(P.minVlC, 0, '°C') : (offH > 0 ? '+' : '') + f(offH, 1, 'K')), q: qh});
     }
 }
 out[0] = {payload: {rows: rows, plan: tab}};
@@ -1765,6 +1771,15 @@ try {
         else if (!ci.every(function (i) { return i.mLow >= ctMargin && i.tr >= -0.1; })) { ctCode = 'alle im Band, Abstand zum Minimum zu klein oder Raum kühlt ab (kein Test)'; }
         else { ctWant = -1; ctCode = 'Absenkung testen'; }
     }
+    // Absolute Untergrenze des Vorlaufs (Heizkoerper): eine Absenkung ist nur moeglich, wenn der Soll-Vorlauf danach noch mindestens minVlC betraegt.
+    // Basis ist der aktuelle Soll-Vorlauf ohne unsere eigene Verschiebung (bei Mildwetter liegt die Kurve schon auf der Untergrenze).
+    var ctFloorVl = ctNum(ct.minVlC, 29), ctTgt = num(G('TOP42_Z1_Water_Target_Temp')), ctPrevApplied = num(G('OPT_shift_applied')) || 0;
+    var ctBaseVl = ctTgt !== null ? ctTgt - ctPrevApplied : (sollNow !== null ? sollNow : null), ctFloorHit = false;
+    if (ctWant < 0 && (ctBaseVl === null || ctBaseVl - 1 < ctFloorVl - 1e-9)) {
+        if (ctSt.cur < 0) { ctBypass = true; }                                                      // eine schon angenommene Absenkung sofort zuruecknehmen
+        ctWant = 0; ctFloorHit = true;
+        ctCode = 'Absenkung nicht möglich: Vorlauf-Untergrenze ' + f(ctFloorVl, 0, '°C') + (ctBaseVl !== null ? ' (Soll-Vorlauf ' + f(ctBaseVl, 1, '°C') + ')' : ' (Soll-Vorlauf unbekannt)') + (ctLead ? ' · ' + ctLead.x.name + (ctAbove.length ? ' über Maximum' : '') : '');
+    }
     if (ctBack) { ctSt.backoffUntil = now + ctBackoff; }                                            // nach einer zurueckgenommenen Absenkung eine Weile nicht erneut
     // Aenderung: nur nach Mindesthaltezeit (Zuruecknehmen einer Absenkung bei Raum unter Minimum sofort) und nie bei Sperren; immer nur 1 K
     var ctHoldLeft = Math.max(0, ctSt.since + ctHold - now);
@@ -1775,7 +1790,7 @@ try {
     flow.set('ctl', ctSt);
     var ctWorst = ctBelow.length ? ctPick(ctBelow, 'mLow') : null;                                  // Komfortzustand fuer die Quiet-Empfehlung
     global.set('OPT_state', {ts: now, deficit: ctBelow.length > 0, deficitRoom: ctWorst ? ctWorst.x.name : '', coldTrend: ctWorst ? ctWorst.tr : null, distrib: ctDistrib, valid: valids.length, active: ctAct.length});
-    ctRes = {on: ctOn, probe: ctProbe, cur: ctSt.cur, want: ctWant, applied: ctApplied, code: ctCode, lead: ctLead ? ctLead.x.name : '', distrib: ctDistrib,
+    ctRes = {on: ctOn, probe: ctProbe, cur: ctSt.cur, want: ctWant, floorHit: ctFloorHit, applied: ctApplied, code: ctCode, lead: ctLead ? ctLead.x.name : '', distrib: ctDistrib,
              locks: ctLocks, holdLeft: ctHoldLeft, since: ctSt.since, startK: ctStart, relK: ctRel, holdMin: ctHold / MS_MIN, rtcOn: ctRtcOn};
 } catch (e) {
     node.warn('Regelung (Phase 2): ' + e.message);
@@ -1789,7 +1804,7 @@ var hhmm = function (ts) { return ts ? new Date(ts).toLocaleTimeString('de-DE', 
 var ctWhy = ctRes.code + (ctRes.want !== ctRes.cur ? (ctRes.locks.length ? ' · wartet: ' + ctRes.locks[0] : ' · wartet auf Haltezeit') : '');
 var ctNext = ctRes.locks.length ? 'gesperrt: ' + ctRes.locks[0] : (ctRes.holdLeft > 0 ? 'frühestens in ' + Math.ceil(ctRes.holdLeft / MS_MIN) + ' min' : 'möglich');
 var ctShift = ctRes.on ? fmtS(ctRes.applied) + (ctRes.applied !== 0 ? ' seit ' + hhmm(ctRes.since) : '') : '0 K · Vorschlag ' + fmtS(ctRes.cur);
-var ctlOut = {enabled: ctRes.on, probe: ctRes.probe, startK: ctRes.startK, releaseK: ctRes.relK, holdMin: ctRes.holdMin,
+var ctlOut = {enabled: ctRes.on, probe: ctRes.probe, floorHit: ctRes.floorHit === true, startK: ctRes.startK, releaseK: ctRes.relK, holdMin: ctRes.holdMin,
               status: ctRes.on ? 'Regelung aktiv · Korrektur ' + ctShift : 'Regelung aus · ' + ctShift,
               statusCls: ctRes.on ? 'ok' : '', lead: ctRes.lead || '–', why: ctWhy, next: ctNext, distrib: ctRes.distrib};
 
@@ -1832,12 +1847,12 @@ if (!lastLog || (now - lastLog) >= cfg.log.intervalMin * 60000) {
                         'soll_vorlauf', 'shift_basis', 'shift_rtc', 'shift_final', 'vorlauf', 'ruecklauf', 'verdichter_hz', 'verdichter_an',
                         'leistung_w', 'cop', 'defrost', 'warmwasser', 'sanftanlauf', 'zustand', 'starts_heute',
                         'regelung_an', 'korrektur_vorschlag', 'korrektur_angewendet', 'fuehrungsraum', 'waermeverteilung', 'regelung_grund', 'regelung_sperre', 'haltezeit_rest_min',
-                        'aussen_1h', 'aussen_24h', 'aussen_historie_h', 'prog_24h_mittel', 'aussen_berechnet', 'kurve_soll_aktuell', 'kurve_soll_berechnet', 'verschiebung_aequivalent']);
+                        'aussen_1h', 'aussen_24h', 'aussen_historie_h', 'prog_24h_mittel', 'aussen_berechnet', 'kurve_soll_aktuell', 'kurve_soll_berechnet', 'verschiebung_aequivalent', 'vorlauf_untergrenze']);
     vals = vals.concat([valids.length, heat ? heat.name : '', heat ? c(heat.dev) : '', over ? over.name : '', over ? c(over.dev) : '', tight ? c(tight.m) : '', tight ? tight.room.name : '',
                         c(target), c(shiftBase), c(rtcCorr), c(shiftFinal), c(outl), c(inl), c(freq), freq > 0 ? 1 : 0,
                         c(pw), c(freq > 0 ? cop : null), defrost ? 1 : 0, valve === 1 ? 1 : 0, ssOn ? 1 : 0, mode, c(num(G('Starts_Today'))),
                         ctRes.on ? 1 : 0, ctRes.cur, ctRes.applied, ctRes.lead, ctRes.distrib ? 1 : 0, String(ctRes.code).replace(/,/g, ';'), ctRes.locks.join(' + ').replace(/,/g, ';'), Math.ceil(ctRes.holdLeft / MS_MIN),
-                        c(at1h), c(at24h), c(atSpanH), c(atFc24), c(atCalc), c(sollNow), c(sollCalc), c(shiftEq)]);
+                        c(at1h), c(at24h), c(atSpanH), c(atFc24), c(atCalc), c(sollNow), c(sollCalc), c(shiftEq), ctRes.floorHit ? 1 : 0]);
     var logFile = '/data/optimizer/optimizer-v2-' + month + '.csv', headLine = cols.join(',');
     out[4] = {filename: logFile, payload: (headerNeeded('logHead', logFile, headLine) ? headLine + '\n' : '') + vals.join(',') + '\n'};
     flow.set('lastLog', now);
@@ -2049,7 +2064,7 @@ ROOMS_TPL = """<style>
 <span class="k">Grund</span><span ng-class="d.ctl.distrib ? 'warn' : ''">{{d.ctl.why}}</span>
 <span class="k">Nächste Änderung</span><span>{{d.ctl.next}}</span>
 </div>
-<div class="note">Regeln: 1. Ein Raum unter seinem Minimum: nie absenken, der Raum mit dem größten Defizit führt, langsam höchstens +1 K. 2. Kein Raum unter Minimum, aber einer über Maximum: Absenkung erlaubt, zunächst -1 K. 3. Alle im Band: niedrigste Heizkurve suchen (0 K oder vorsichtig -1 K testen). 4. Gleichzeitig deutlich zu kalt und zu warm: Wärmeverteilungsproblem, die Heizkurve bleibt unverändert. Jede Änderung nur nach der Mindesthaltezeit und nie bei Abtauen, Warmwasser, Verdichterstart oder Sanftanlauf. Der Vorschlag steht im Protokoll (korrektur_vorschlag).</div>
+<div class="note">Regeln: 1. Ein Raum unter seinem Minimum: nie absenken, der Raum mit dem größten Defizit führt, langsam höchstens +1 K. 2. Kein Raum unter Minimum, aber einer über Maximum: Absenkung erlaubt, zunächst -1 K. 3. Alle im Band: niedrigste Heizkurve suchen (0 K oder vorsichtig -1 K testen). 4. Gleichzeitig deutlich zu kalt und zu warm: Wärmeverteilungsproblem, die Heizkurve bleibt unverändert. Der Soll-Vorlauf wird nie unter die Untergrenze von 29 °C gesenkt (Heizkörper). Jede Änderung nur nach der Mindesthaltezeit und nie bei Abtauen, Warmwasser, Verdichterstart oder Sanftanlauf. Der Vorschlag steht im Protokoll (korrektur_vorschlag).</div>
 </div>
 <script>
 (function (scope) {

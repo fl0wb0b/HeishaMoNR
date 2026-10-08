@@ -5,6 +5,11 @@ Stand 2026-10-08. Reines Konzept, **keine Steuerungsänderung**. Oberstes Ziel: 
 
 Aussagen aus Foren und Zusammenfassungen sind hier **Hypothesen**, solange sie nicht an unserer Anlage gemessen sind.
 
+**Randbedingung: Vorlauf-Untergrenze 29 °C (Heizkörper, Vorgabe des Betreibers).** Der Soll-Vorlauf darf nie unter 29 °C sinken. Die Heizkurve liegt ab 11 °C
+Außentemperatur schon auf 29 °C; bei Mildwetter ist jede Absenkung des Vorlaufs damit ausgeschlossen. Das gilt für die Raumlogik (Vorschlag „−1 K“ wird dann
+nicht gemacht, ein angenommenes −1 K sofort zurückgenommen, im Protokoll `vorlauf_untergrenze`), für die Offset-Hinweise im Wärmefahrplan und für jede spätere
+Regelung. Der einzige Hebel bei Überheizung im Mildwetter bleibt dann weniger Laufzeit/Takt (Mindestleistung der Anlage etwa 2,1 kW).
+
 ## 1. Prüfergebnis
 
 | Frage | Ergebnis | Beleg |
@@ -13,6 +18,7 @@ Aussagen aus Foren und Zusammenfassungen sind hier **Hypothesen**, solange sie n
 | Welche Firmware läuft? | HeishaMon **v4.2.2** (13.09.2026, also nach dem PR); v4.2.3 (07.10.2026) ist verfügbar | Seitenkopf der Geräteseite, GitHub-Releases |
 | Aktueller Zustand | `Heating_Control = 0` (Comfort), `Heating_Mode` = Kurve, `Pump_Flowrate_Mode = 0` (DeltaT), `Heat_Delta` 3 K, `Max_Pump_Duty` 254, Quiet-Priorität `1` = **Capacity (Leistung)** | MQTT und `http://192.168.2.170/json`, nur gelesen |
 | Kennt unser Node-RED das schon? | **Nein.** Weder Status noch Befehl noch Dashboard-Schalter (HeishaMoNR 26.5.1 enthält es nicht) | Suche in allen Flows |
+| Bedienung im Dashboard | **Seite Übersicht, Gruppe HEIZREGELUNG** (seit 08.10.): Auswahl Comfort/Efficiency, zeigt den von HeishaMon gemeldeten Stand. Ein Befehl nur auf Auswahl, über den gemeinsamen Befehlsweg (Sperre, Budget, Quelle `Heizregelung-Schalter`), mit Bestätigung nach höchstens 90 s. Nichts wird automatisch geschaltet. Wechsel frühestens nach 5 min, Warnhinweise bei Efficiency unter 5 °C, beim Abtauen, bei Raum unter Minimum oder Vorlauf > 2 K unter Soll. Generator `tools/heating_control_switch.py`, Test `tools/heating_control_test.js` | eigene Flows |
 | Wo kann man es manuell setzen? | HTTP: `http://192.168.2.170/command?SetHeatingControl=0` (oder `=1`); MQTT: `panasonic_heat_pump/commands/SetHeatingControl`; die HeishaMon-Webseite hat dafür **keine** Bedienseite (Menü: Firmware, Reboot, Rules, Settings) | `MQTT-Topics.md`, Geräteseite |
 | Befehl getestet? | **Nein**, absichtlich nicht gesendet | |
 
