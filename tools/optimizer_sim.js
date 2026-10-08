@@ -3,8 +3,8 @@ const vm = require('vm');
 const fs = require('fs');
 // Usage: node tools/optimizer_sim.js "flows (26.5.1 stable).json"
 const flowsFile = process.argv[2] || 'flows (26.5.1 stable).json';
-const F = {};
-JSON.parse(fs.readFileSync(flowsFile, 'utf8')).forEach(n => { if (n.type === 'function' && n.id.startsWith('opt_')) { F[n.id] = n.func; } });
+const F = {}, ALLNODES = JSON.parse(fs.readFileSync(flowsFile, 'utf8'));
+ALLNODES.forEach(n => { if (n.type === 'function' && n.id.startsWith('opt_')) { F[n.id] = n.func; } });
 let NOW = Date.UTC(2026, 9, 7, 6, 0, 0);       // simulierte Uhr
 const RealDate = Date;
 class FakeDate extends RealDate {
@@ -195,7 +195,7 @@ check('Statuszeile fordert zur Eingabe auf', ev4[6].payload.startsWith('Noch kei
 
 // ---------- Komfortband je Raum: massgebliche Raeume nach Abweichung vom EIGENEN Band
 console.log('\n--- Komfortband je Raum');
-const NAMES = {ki_oben: 'Kinderzimmer oben', ki_unten: 'Kinderzimmer unten', schlaf: 'Schlafzimmer'};
+const NAMES = {ki_oben: 'Kinderzimmer oben', ki_unten: 'Kinderzimmer unten', schlaf: 'Schlafzimmer', wohn: 'Wohnzimmer'};
 function scene(vals) {                      // vals: Raum-ID -> [geglaettete Temperatur, Alter in min, Trend K/h]
   gstore.OPT_rooms = {};
   Object.keys(vals).forEach(id => { const v = vals[id]; gstore.OPT_rooms[id] = {name: NAMES[id], ema: v[0], last: v[0], ts: NOW - (v[1] || 0) * 60000, trend: v[2] === undefined ? null : v[2]}; });
@@ -232,8 +232,25 @@ setv('room:ki_unten:weight', 1);
 
 setv('room:schlaf:active', false);
 s = scene({ki_oben: [23.0], ki_unten: [23.0], schlaf: [18.0]});
-check('inaktiver Raum wird ignoriert (kein Heizbedarf trotz 18,0), bleibt aber sichtbar', s.sum.heat === 'keiner' && rowOf(s, 'schlaf').valid.startsWith('nein (inaktiv)') && rowOf(s, 'schlaf').cls === 'mute' && rowOf(s, 'schlaf').on === false && s.sum.valid.startsWith('2 von 2') && s.sum.valid.includes('1 inaktiv'), s.sum.valid);
+check('inaktiver Raum wird ignoriert (kein Heizbedarf trotz 18,0), bleibt aber sichtbar', s.sum.heat === 'keiner' && rowOf(s, 'schlaf').valid.startsWith('nein (inaktiv)') && rowOf(s, 'schlaf').cls === 'mute' && rowOf(s, 'schlaf').on === false && s.sum.valid.startsWith('2 von 2') && s.sum.valid.includes('2 inaktiv'), s.sum.valid)        // Schlafzimmer (hier abgeschaltet) + Wohnzimmer (noch ohne Band, inaktiv);
 setv('room:schlaf:active', true);
+
+// Wohnzimmer (Shelly H&T G3, Venus-Broker): wird von Anfang an gemessen und protokolliert, hat aber keine Stimme in der Raumlogik, bis das Band gesetzt und der Raum aktiviert ist
+{
+  const wr = gstore.OPT_cfg.rooms.find(r => r.id === 'wohn');
+  const mqttMatch = (filter, topic) => { const f = filter.split('/'), tp = topic.split('/'); return f.length === tp.length && f.every((x, i) => x === '+' || x === tp[i]); };
+  const subs = ALLNODES.filter(n => n.type === 'mqtt in' && n.z === 'opt_tab' && n.broker === 'opt_broker_venus' && n.wires.some(w => w.includes('opt_room_in'))).map(n => n.topic);
+  check('Wohnzimmer: Raum ist angelegt (Topic shellies/shelly-ht-wohnzimmer/status/temperature:0), steht inaktiv, wird von einem Abo des Venus-Brokers erreicht',
+        !!wr && wr.active === false && wr.name === 'Wohnzimmer' && wr.topic === 'shellies/shelly-ht-wohnzimmer/status/temperature:0' && subs.some(f => mqttMatch(f, wr.topic)), JSON.stringify(wr));
+  delete gstore.OPT_rooms; run('opt_room_in', {topic: 'shellies/shelly-ht-wohnzimmer/status/temperature:0', payload: JSON.stringify({id: 0, tC: 17.2, tF: 63})});
+  check('Wohnzimmer: Messwert kommt an (Glaettung/Trend laufen), auch solange der Raum inaktiv ist', gstore.OPT_rooms && gstore.OPT_rooms.wohn && gstore.OPT_rooms.wohn.last === 17.2, JSON.stringify(gstore.OPT_rooms && gstore.OPT_rooms.wohn));
+  s = scene({ki_oben: [23.0], ki_unten: [23.0], schlaf: [20.0], wohn: [17.2]});
+  check('Wohnzimmer 17,2 (unter dem Platzhalterband) loest keinen Heizbedarf aus, solange er inaktiv ist; Raum bleibt sichtbar', s.sum.heat === 'keiner' && rowOf(s, 'wohn') && rowOf(s, 'wohn').valid.startsWith('nein (inaktiv)') && rowOf(s, 'wohn').on === false, s.sum.heat);
+  setv('room:wohn:active', true);
+  s = scene({ki_oben: [23.0], ki_unten: [23.0], schlaf: [20.0], wohn: [17.2]});
+  check('Wohnzimmer aktiviert: 17,2 liegt unter dem Band 20-22,5 und wird zum massgeblichen Raum', s.sum.heat.startsWith('Wohnzimmer'), s.sum.heat);
+  setv('room:wohn:active', false);
+}
 
 setv('room:schlaf:maxAgeMin', 30);
 s = scene({ki_oben: [23.0, 45], ki_unten: [23.0, 45], schlaf: [18.0, 45]});
@@ -340,12 +357,12 @@ check('nach Neustart: nicht geaenderte Werte sind Standardwerte (Schlafzimmer ma
 files['/data/optimizer/config.json'] = {data: JSON.stringify({rooms: [{id: 'schlaf', name: 'alt', topic: 'alt/topic'}], comfort: {low: 22, high: 23}, sensor: {maxAgeMin: 60}}), mode: 0o644};
 delete gstore.OPT_cfg; run('opt_defaults', {});
 check('Migration: Schlafzimmer bekommt 19-21, globales Band entfaellt, Raumname/-topic bleiben aus dem Code, Sensor-Limit bleibt',
-      rr('schlaf').min === 19 && rr('schlaf').max === 21 && gstore.OPT_cfg.comfort === undefined && rr('schlaf').topic === 'shellies/shellyht-Schlaf/sensor/temperature' && rr('schlaf').name === 'Schlafzimmer' && gstore.OPT_cfg.sensor.maxAgeMin === 60 && gstore.OPT_cfg.rooms.length === 3, JSON.stringify(rr('schlaf')));
+      rr('schlaf').min === 19 && rr('schlaf').max === 21 && gstore.OPT_cfg.comfort === undefined && rr('schlaf').topic === 'shellies/shellyht-Schlaf/sensor/temperature' && rr('schlaf').name === 'Schlafzimmer' && gstore.OPT_cfg.sensor.maxAgeMin === 60 && gstore.OPT_cfg.rooms.length === 4, JSON.stringify(rr('schlaf')));
 gstore.OPT_cfg = {rooms: [{id: 'ki_oben', name: 'alt', topic: 'alt'}], comfort: {low: 22.5, high: 23.5}, sensor: {maxAgeMin: 90}};      // Speicherstand der Vorversion
 delete files['/data/optimizer/config.json']; run('opt_defaults', {});
-check('Migration: Speicherstand der Vorversion (globales Band, Raeume ohne Baender) wird ergaenzt', rr('ki_oben').min === 22.5 && rr('ki_oben').max === 23.5 && rr('ki_oben').name === 'Kinderzimmer oben' && gstore.OPT_cfg.comfort === undefined && gstore.OPT_cfg.rooms.length === 3, JSON.stringify(rr('ki_oben')));
+check('Migration: Speicherstand der Vorversion (globales Band, Raeume ohne Baender) wird ergaenzt', rr('ki_oben').min === 22.5 && rr('ki_oben').max === 23.5 && rr('ki_oben').name === 'Kinderzimmer oben' && gstore.OPT_cfg.comfort === undefined && gstore.OPT_cfg.rooms.length === 4, JSON.stringify(rr('ki_oben')));
 ['null', 'kaputt{', '[]'].forEach(txt => { files['/data/optimizer/config.json'] = {data: txt, mode: 0o644}; delete gstore.OPT_cfg; let ok = true; try { run('opt_defaults', {}); } catch (e) { ok = false; }
-  check('defekte config.json (' + txt + ') bringt die Standardwerte, kein Absturz', ok && rr('schlaf').min === 19 && gstore.OPT_cfg.rooms.length === 3, ''); });
+  check('defekte config.json (' + txt + ') bringt die Standardwerte, kein Absturz', ok && rr('schlaf').min === 19 && gstore.OPT_cfg.rooms.length === 4, ''); });
 delete files['/data/optimizer/config.json']; delete gstore.OPT_cfg; run('opt_defaults', {});
 
 // ---------- CSV-Kopfzeile ueberlebt Neustarts (kein doppelter Kopf), Spaltenaenderung schreibt neuen Kopf

@@ -92,6 +92,9 @@ ROOMS = [
      "active": True, "min": 22.5, "max": 23.5, "weight": 1, "maxAgeMin": 90},
     {"id": "schlaf", "name": "Schlafzimmer", "topic": "shellies/shellyht-Schlaf/sensor/temperature",
      "active": True, "min": 19, "max": 21, "weight": 1, "maxAgeMin": 90},
+    # new sensor: measured and logged from the start, but inactive (no say in the room logic) until the user sets its band
+    {"id": "wohn", "name": "Wohnzimmer", "topic": "shellies/shelly-ht-wohnzimmer/status/temperature:0",
+     "active": False, "min": 20, "max": 22.5, "weight": 1, "maxAgeMin": 90},
 ]
 # numeric settings per room: (field, lowest, highest, step, tooltip); "active" is a checkbox
 ROOM_FIELDS = [
@@ -2133,7 +2136,7 @@ upsert(fn("opt_defaults", "Standardwerte setzen", js(DEFAULTS_JS), 0, [], 380, 1
 # input from the room card; output 1: red message for a rejected input, output 2: evaluate now (the card shows the valid values again)
 upsert(fn("opt_set", "Einstellung übernehmen und speichern", js(SET_CFG_JS), 2, [["opt_ui_toast"], ["opt_eval"]], 1500, 320, FS))
 
-for i, (t, y) in enumerate((("+/status/temperature:0", 200), ("shellies/+/sensor/temperature", 260))):
+for i, (t, y) in enumerate((("+/status/temperature:0", 200), ("shellies/+/sensor/temperature", 260), ("shellies/+/status/temperature:0", 320))):
     upsert({"id": f"opt_mqtt_{i}", "type": "mqtt in", "z": TAB, "name": "", "topic": t, "qos": "1",
             "datatype": "auto-detect", "broker": BROKER, "nl": False, "rap": True, "rh": 0, "inputs": 0,
             "x": 160, "y": y, "wires": [["opt_room_in"]]})
