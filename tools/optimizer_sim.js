@@ -752,7 +752,17 @@ check('andere Befehle und gleiche Werte erzeugen nichts', hpmsg('commands/SetZ1H
 const flowsQ = JSON.parse(fs.readFileSync(flowsFile, 'utf8'));
 check('Sicherheit: im Optimierer-Tab gibt es keinen MQTT-Ausgang', flowsQ.filter(n => n.z === 'opt_tab' && n.type === 'mqtt out').length === 0, '');
 check('Sicherheit: nur der Waechter kennt "SetQuietMode" (lesend), keine andere Funktion sendet ein Kommando', flowsQ.filter(n => n.id.startsWith('opt_') && n.type === 'function' && /SetQuietMode|commands\//.test(n.func || '')).map(n => n.id).join() === 'opt_hp_in', flowsQ.filter(n => n.id.startsWith('opt_') && n.type === 'function' && /SetQuietMode|commands\//.test(n.func || '')).map(n => n.id).join());
-check('Sicherheit: Abonnements nur auf Anlagenwerte und den Quiet-Befehl, eigener Client im NAS-Broker', flowsQ.filter(n => n.z === 'opt_tab' && n.type === 'mqtt in' && /^opt_mqtt_hp_/.test(n.id)).map(n => n.topic).join() === 'panasonic_heat_pump/main/+,panasonic_heat_pump/extra/+,panasonic_heat_pump/commands/SetQuietMode', '');
+check('Sicherheit: Abonnements nur lesend: Anlagenwerte und genau die Befehle Quiet, Quiet-Prioritaet, Heizregelung, Pumpenmodus, max. Pumpenleistung (nur mitlesen, wer sie schickt); eigener Client im NAS-Broker, kein mqtt out im Tab', flowsQ.filter(n => n.z === 'opt_tab' && n.type === 'mqtt in' && /^opt_mqtt_hp_/.test(n.id)).map(n => n.topic).join() === 'panasonic_heat_pump/main/+,panasonic_heat_pump/extra/+,panasonic_heat_pump/commands/SetQuietMode,panasonic_heat_pump/commands/SetHeatingControl,panasonic_heat_pump/commands/SetPumpFlowrateMode,panasonic_heat_pump/commands/SetMaxPumpDuty,panasonic_heat_pump/commands/SetQuietModePriority' && !flowsQ.some(n => n.z === 'opt_tab' && n.type === 'mqtt out'), '');
+// Heizregelung / Pumpe: Status-Aenderungen und mitgelesene Befehle werden als Ereignis festgehalten (Grundlage fuer den spaeteren Comfort/Efficiency-Vergleich)
+{ world({}); hpmsg('main/Heating_Control', 0); hpmsg('main/Pump_Flowrate_Mode', 0); hpmsg('main/Max_Pump_Duty', 254); hpmsg('main/Heat_Delta', 3);
+  const ev1 = hpmsg('main/Heating_Control', 1), ev2 = hpmsg('main/Pump_Flowrate_Mode', 1), ev3 = hpmsg('main/Max_Pump_Duty', 200), ev4 = hpmsg('main/Heat_Delta', 4), ev0 = hpmsg('main/Heating_Control', 1);
+  gstore.MQTT_Source = 'Test-Quelle'; const c1 = hpmsg('commands/SetHeatingControl', 1), c2 = hpmsg('commands/SetPumpFlowrateMode', 0), c3 = hpmsg('commands/SetOtherThing', 1);
+  check('Heizregelung/Pumpe: Aenderung von Comfort auf Efficiency und der Pumpenparameter wird als Ereignis protokolliert, gleicher Wert nicht doppelt', ev1 && ev1.payload.includes(',heizregelung,0->1') && ev2.payload.includes(',pumpenmodus,0->1') && ev3.payload.includes(',pumpe_maxduty,254->200') && ev4.payload.includes(',spreizung_soll,3->4') && ev0 === null, ev1 && ev1.payload);
+  check('Heizregelung/Pumpe: mitgelesene Befehle (SetHeatingControl, SetPumpFlowrateMode) mit Quelle protokolliert, fremde Befehle ignoriert, nichts wird gesendet', c1.payload.includes(',heizregelung_befehl,Wert 1 (Quelle: Test-Quelle)') && c2.payload.includes('pumpenmodus_befehl') && c3 === null && sent.every(x => !/SetHeatingControl|mqtt/i.test(x.id)), c1 && c1.payload); }
+world({}); world({TOP18_Quiet_Mode_Level: 3}); hpmsg('main/Quiet_Mode_Priority', 1); let qp = qtick(1);
+check('Quiet-Prioritaet: laut Firmware 1 = Capacity (Leistung), 0 = Sound (Lautstaerke); die Anzeige sagte vorher faelschlich Ton fuer 1', rowQ(qp, 'Quiet aktuell').includes('Priorität Leistung') && !rowQ(qp, 'Quiet aktuell').includes('Ton'), rowQ(qp, 'Quiet aktuell'));
+hpmsg('main/Quiet_Mode_Priority', 0); qp = qtick(1);
+check('Quiet-Prioritaet 0 wird als Lautstaerke angezeigt', rowQ(qp, 'Quiet aktuell').includes('Priorität Lautstärke'), rowQ(qp, 'Quiet aktuell'));
 // Auswertung gibt den Komfortzustand weiter und stoesst die Empfehlung an
 world({}); gstore.OPT_cfg.control.enabled = false;
 gstore.OPT_rooms = {ki_unten: {name: 'Kinderzimmer unten', ema: 21.8, last: 21.8, ts: NOW, trend: -0.1}, ki_oben: {name: 'Kinderzimmer oben', ema: 23.0, last: 23.0, ts: NOW, trend: 0}, schlaf: {name: 'Schlafzimmer', ema: 20, last: 20, ts: NOW, trend: 0}};
@@ -799,6 +809,36 @@ const kfm = fstore.qs.kf['3|2'].mx;
 check('Hoechstwerte: im eingeschwungenen Lauf (ab 10 min) wird die hoechste Frequenz (30 Hz) und die hoechste Waermeleistung (14 l/min x 4 K x 69,7 = 3903 W) festgehalten, spaetere kleinere Werte aendern sie nicht', kfm.hz === 30 && Math.abs(kfm.pth - 3903.2) < 1 && mr[7] === '30' && mr[8] === '3903', JSON.stringify(kfm) + ' ' + (mr && mr[7] + '/' + mr[8]));
 collect(11, () => { gstore.compressor_runtime = 33; });
 check('Hoechstwerte werden mit der Statistik gesichert und ueberstehen einen Neustart (quiet-stats.json enthaelt mx, nach dem Laden noch da)', (() => { const fj = files['/data/optimizer/quiet-stats.json']; const j = fj ? JSON.parse(fj.data) : null; const mxf = j && j.kf['3|2'] && j.kf['3|2'].mx; delete fstore.qs; collect(1); const mxr = fstore.qs.kf['3|2'].mx; return !!mxf && mxf.hz === 30 && mxr && mxr.hz === 30 && Math.abs(mxr.pth - 3903.2) < 1; })(), '');
+// ---- Abtauprotokoll (Grundlage fuer Comfort/Efficiency): ein Eintrag je Abtauzyklus mit Dauer, Strom, Waerme, Vorlaufeinbruch, Wiederaufheizzeit
+console.log('\n--- Abtauprotokoll');
+const hpm = (topic, payload) => run('opt_hp_in', {topic: 'panasonic_heat_pump/' + topic, payload: String(payload)});
+const defRows = outs => outs.filter(x => x[4]).map(x => x[4].payload.trim().split('\n'));
+const dfWorld = (over) => { world(Object.assign({TOP14_Outside_Temp: 2, compressor_frequency: 30, compressor_runtime: 40, TOP16_Heat_Energy_Consumption: 600, TOP42_Z1_Water_Target_Temp: 32, TOP6_Main_Outlet_Temp: 32, TOP5_Main_Inlet_Temp: 29, TOP1_Pump_Flow: 12}, over || {})); gstore.OPT_weather = {ts: NOW, rh: 91, dew: 0.7}; hpm('main/Heating_Control', 0); hpm('extra/Heat_Power_Production_Extra', 3000); };
+dfWorld(); let dfAll = collect(3);
+check('Kein Abtauen: kein Eintrag im Abtauprotokoll', defRows(dfAll).length === 0 && dfAll.every(x => x[4] === null || x[4] === undefined), '');
+const vlSeq = [31, 29, 27, 26, 25, 24];                                                              // Einbruch waehrend der 6 Abtau-Minuten
+dfAll = dfAll.concat(collect(6, i => { gstore.TOP26_Defrosting_State = 1; gstore.TOP6_Main_Outlet_Temp = vlSeq[i]; gstore.TOP16_Heat_Energy_Consumption = 400; hpm('extra/Heat_Power_Production_Extra', -1500); }));
+check('Waehrend des Abtauens noch kein Eintrag (erst nach der Erholung)', defRows(dfAll).length === 0, '');
+const recSeq = [25, 26, 27, 31.2];                                                                  // Erholung: Vorlauf wieder bis 1 K unter Soll (32) nach 4 min
+dfAll = dfAll.concat(collect(4, i => { gstore.TOP26_Defrosting_State = 0; gstore.TOP6_Main_Outlet_Temp = recSeq[i]; gstore.TOP16_Heat_Energy_Consumption = 700; hpm('extra/Heat_Power_Production_Extra', 3500); }));
+let dfR = defRows(dfAll), dfH = dfR[0] && dfR[0][0].split(','), dfL = dfR[0] && dfR[0][1].split(',');
+const dfA = n => dfL[dfH.indexOf(n)];
+check('Abtauzyklus: Kopfzeile + eine Zeile, Spaltenzahl stimmt, Dauer 6 min, Wiederaufheizzeit 3 min nach Ende des Abtauens (Vorlauf 31,2 K im 4. Minutenwert danach)', dfR.length === 1 && dfH.length === dfL.length && dfA('dauer_min') === '6' && dfA('wiederaufheiz_min') === '3', dfR[0] && dfR[0].join(' / '));
+check('Abtauzyklus: Aussen 2 °C, Feuchte 91 %, Taupunkt 0,7 °C, Quiet 3, Heizregelung 0, Soll-VL 32', dfA('aussen') === '2' && dfA('feuchte') === '91' && dfA('taupunkt') === '0.7' && dfA('quiet') === '3' && dfA('heizregelung') === '0' && dfA('soll_vl') === '32', dfL.join(','));
+check('Abtauzyklus: Vorlauf 31 -> 24 °C (Einbruch 7 K), Rueckl. min 29; Strom 6 x 400 W = 0,040 kWh; Waerme -0,150 kWh (Waermeentzug aus dem Heizkreis)', dfA('vl_beginn') === '31' && dfA('vl_min') === '24' && Math.abs(Number(dfA('strom_kwh')) - 0.04) < 0.001 && Math.abs(Number(dfA('waerme_kwh')) + 0.15) < 0.001, dfL.slice(8).join(','));
+// Zeitueberschreitung: Vorlauf erholt sich nicht
+dfWorld(); dfAll = collect(2); dfAll = dfAll.concat(collect(3, () => { gstore.TOP26_Defrosting_State = 1; gstore.TOP6_Main_Outlet_Temp = 25; })); dfAll = dfAll.concat(collect(65, () => { gstore.TOP26_Defrosting_State = 0; gstore.TOP6_Main_Outlet_Temp = 28; }));
+dfR = defRows(dfAll); dfL = dfR[0] && dfR[0][dfR[0].length - 1].split(',');
+check('Keine Erholung innerhalb 60 min: Eintrag mit ">60" (genau ein Eintrag)', dfR.length === 1 && dfL[2] === '>60', dfL && dfL.slice(0, 4).join(','));
+// Verdichter geht nach dem Abtauen aus (Anforderung erfuellt)
+dfWorld(); dfAll = collect(2); dfAll = dfAll.concat(collect(3, () => { gstore.TOP26_Defrosting_State = 1; gstore.TOP6_Main_Outlet_Temp = 25; })); dfAll = dfAll.concat(collect(3, () => { gstore.TOP26_Defrosting_State = 0; gstore.TOP6_Main_Outlet_Temp = 27; })); dfAll = dfAll.concat(collect(2, () => { gstore.compressor_frequency = 0; }));
+dfR = defRows(dfAll); dfL = dfR[0] && dfR[0][dfR[0].length - 1].split(',');
+check('Verdichter geht nach dem Abtauen aus, bevor der Vorlauf Soll erreicht: Eintrag "Verdichter aus"', dfR.length === 1 && dfL[2] === 'Verdichter aus', dfL && dfL.slice(0, 4).join(','));
+// zweiter Zyklus unterbricht die Erholung, Abstand zur letzten Abtauung
+dfWorld(); dfAll = collect(2); [0, 1].forEach(k => { dfAll = dfAll.concat(collect(3, () => { gstore.TOP26_Defrosting_State = 1; gstore.TOP6_Main_Outlet_Temp = 25; })); dfAll = dfAll.concat(collect(k === 0 ? 4 : 40, () => { gstore.TOP26_Defrosting_State = 0; gstore.TOP6_Main_Outlet_Temp = k === 0 ? 27 : 31.5; })); });
+dfR = defRows(dfAll); const dfL0 = dfR[0][dfR[0].length - 1].split(','), dfL1 = dfR[1] ? dfR[1][dfR[1].length - 1].split(',') : [];
+check('Zweiter Abtauzyklus waehrend der Erholung: der erste wird als "unterbrochen" abgeschlossen, der zweite eigenstaendig; Abstand zur letzten Abtauung wird festgehalten', dfR.length === 2 && dfL0[2] === 'unterbrochen' && dfL1[2] !== 'unterbrochen' && Number(dfL1[14]) >= 6 && Number(dfL1[14]) <= 9, dfL0.slice(0, 3).join(',') + ' | ' + dfL1.slice(0, 3).join(',') + ' Abstand ' + dfL1[14]);
+check('Abtauprotokoll nur lesend: die Funktion sendet nichts an die Waermepumpe, nur Datei-Ausgabe (Ausgang 5)', JSON.parse(fs.readFileSync(flowsFile, 'utf8')).find(n => n.id === 'opt_quiet').wires[4].join() === 'opt_f_def' && sent.every(x => x.id !== 'opt_quiet' || !x.m || !x.m.topic), '');
 check('Komfortdefizit-Anteil je Kennfeldzeile (hier 100 %)', trow(tab, 3, '3–7 °C')[16] === '100 %', trow(tab, 3, '3–7 °C')[16]);
 world({}); collect(3); gstore.compressor_frequency = 0; collect(2); gstore.compressor_frequency = 20; collect(40);
 check('Starts/h und mittlere Laufzeit je Zeile (2 Starts)', fstore.qs.kf['3|2'].starts === 2 && trow(collect(1)[0][1].payload.stats, 3, '3–7 °C')[11] !== '–', JSON.stringify(fstore.qs.kf['3|2'].starts));
@@ -998,6 +1038,7 @@ function pfeed() {
   const rm = O.rooms || {ki_oben: 23, ki_unten: 23, schlaf: 20};
   gstore.OPT_rooms = {}; Object.keys(rm).forEach(id => { if (rm[id] !== null) { gstore.OPT_rooms[id] = {name: id, ema: rm[id], last: rm[id], ts: O.staleRooms ? NOW - 5 * HH : NOW, trend: (O.trend || {})[id] || 0}; } });
   if (O.hp) { gstore.OPT_hp = {Heat_Power_Production_Extra: {v: O.hp, ts: NOW}}; }
+  if (O.prio !== undefined) { gstore.OPT_hp = Object.assign(gstore.OPT_hp || {}, {Quiet_Mode_Priority: {v: O.prio, ts: NOW}}); }
   gstore.TOP14_Outside_Temp = O.atNow === undefined ? base : O.atNow;
 }
 function pworld(o) {
@@ -1131,6 +1172,28 @@ pworld({wide: true, quiet: 3}); step(2);
 delete fstore.plan.plan.ver; delete fstore.plan.plan.cap; delete fstore.plan.plan.maxDemand; delete fstore.plan.plan.res.missing; delete fstore.plan.plan.res.stale;
 let errUpd = null, ro3; try { ro3 = step(1); } catch (e) { errUpd = e.message; }
 check('Update-Sicherheit: ein Plan einer aelteren Code-Version im Speicher (ohne neue Felder) wirft keinen Fehler, sondern wird sofort neu berechnet', errUpd === null && planNow().ver > 0 && planNow().cap && planNow().maxDemand && Array.isArray(planNow().res.missing) && ro3[0][0].payload.plan.length === 24, errUpd || '');
+
+// ---- 3d) Reserve-Zeile: beide Richtungen nennen ihren begrenzenden Raum mit Abstand (Lage vom 8.10. 09:30: Schlafzimmer kuehlt, Kinderzimmer unten 0,1 K unter Maximum)
+pworld({rooms: {ki_oben: 23.1, ki_unten: 21.9, schlaf: 20.77}, trend: {schlaf: -0.3}, quiet: 3});
+gstore.OPT_cfg.rooms.forEach(r => { if (r.id === 'ki_unten' || r.id === 'schlaf') { r.min = 20; r.max = 22; } });
+step(2); const rowRes = Object.fromEntries(planRows())['Reserve Gebäude'];
+check('Reserve-Zeile nennt je Richtung den begrenzenden Raum und den Abstand: "nach hinten 0,0 kWh (Schlafzimmer: 0,2 K bis Minimum, kuehlt 0,3 K/h) · nach vorn 0,0 kWh (Kinderzimmer unten: 0,1 K bis Maximum) · alle im Band"', rowRes === 'nach hinten 0,0 kWh (Schlafzimmer: 0,2 K bis Minimum, kühlt 0,3 K/h) · nach vorn 0,0 kWh (Kinderzimmer unten: 0,1 K bis Maximum) · alle im Band', rowRes);
+
+// ---- 3e) Quiet-Prioritaet (laut Firmware 0 = Lautstaerke, 1 = Leistung) und Leistungsgrenze
+pworld({wide: true, quiet: 3, prio: 1}); step(2); P = planNow();
+check('Leistungsgrenze: bei Quiet-Prioritaet Leistung (Capacity) gilt der angenommene Deckel 3,3 kW nicht fest, es bleibt die Nennleistung 5 kW und die Quelle sagt es', P.cap.kw === 5 && /^Modell \(Priorität Leistung/.test(P.cap.src), JSON.stringify(P.cap));
+pworld({wide: true, quiet: 3, prio: 0}); step(2); P = planNow();
+check('Leistungsgrenze: bei Prioritaet Lautstaerke (Sound) gilt der Deckel 3,3 kW (Annahme)', P.cap.kw === 3.3 && P.cap.src === 'Annahme', JSON.stringify(P.cap));
+
+// ---- 3f) Ist-Protokoll je Slot mit den Groessen fuer Comfort/Efficiency: Abtauen, Spreizung, Vorlaufabweichung, Pumpe, Heizregelung
+pworld({wide: true, running: true, hp: 2500, atNow: 5});
+Object.assign(gstore, {TOP6_Main_Outlet_Temp: 30, TOP5_Main_Inlet_Temp: 27, TOP42_Z1_Water_Target_Temp: 32, TOP16_Heat_Energy_Consumption: 600, compressor_frequency: 40});
+const rr3 = step(20, m => { gstore.OPT_hp.Pump_Speed = {v: 1800, ts: NOW}; gstore.OPT_hp.Heating_Control = {v: 1, ts: NOW}; gstore.TOP26_Defrosting_State = (m >= 5 && m < 9) ? 1 : 0; gstore.OPT_hp.Heat_Power_Production_Extra = {v: (m >= 5 && m < 9) ? -1500 : 2500, ts: NOW}; });
+const actL = rr3.map(o => o[1]).filter(Boolean)[0].payload.trim().split('\n'), actH = actL[0].split(','), actV = actL[1].split(','), aG = n => actV[actH.indexOf(n)];
+check('Ist-Protokoll: neue Spalten da (Heizregelung, Abtauen, Spreizung, Vorlaufabweichung, Pumpe)', ['ist_waerme_gesamt_kwh', 'ist_strom_heizen_kwh', 'ist_abtau_min', 'ist_abtau_strom_kwh', 'ist_abtau_waerme_kwh', 'ist_spreizung', 'ist_vl_abweichung', 'ist_pumpe_u_min', 'ist_heizregelung'].every(n => actH.includes(n)) && actH.length === actV.length, actH.slice(12, 21).join('|'));
+check('Ist-Protokoll: Abtauen 4 min, Strom 4 x 600 W = 0,040 kWh, Waermeentzug 4 x -1500 W = -0,100 kWh', aG('ist_abtau_min') === '4' && Math.abs(Number(aG('ist_abtau_strom_kwh')) - 0.04) < 0.003 && Math.abs(Number(aG('ist_abtau_waerme_kwh')) + 0.1) < 0.006, aG('ist_abtau_min') + ' | ' + aG('ist_abtau_strom_kwh') + ' | ' + aG('ist_abtau_waerme_kwh'));
+check('Ist-Protokoll: Spreizung 3 K, Vorlaufabweichung 2 K (Soll 32, Ist 30) und Pumpendrehzahl 1800 U/min nur aus Minuten ohne Abtauen, Heizregelung 1 (Efficiency) festgehalten', Math.abs(Number(aG('ist_spreizung')) - 3) < 0.01 && Math.abs(Number(aG('ist_vl_abweichung')) - 2) < 0.01 && aG('ist_pumpe_u_min') === '1800' && aG('ist_heizregelung') === '1', actV.slice(12, 21).join(' | '));
+check('Ist-Protokoll: Waerme gesamt = Waerme im Heizbetrieb + Waermeentzug beim Abtauen (0,375 - 0,100 kWh); Strom Heizen ohne den Abtaustrom, Strom gesamt mit', Math.abs(Number(aG('ist_waerme_gesamt_kwh')) - (Number(aG('ist_waerme_kwh')) + Number(aG('ist_abtau_waerme_kwh')))) < 0.003 && Number(aG('ist_waerme_gesamt_kwh')) < Number(aG('ist_waerme_kwh')) && Math.abs(Number(aG('ist_strom_kwh')) - (Number(aG('ist_strom_heizen_kwh')) + Number(aG('ist_abtau_strom_kwh')))) < 0.003, aG('ist_waerme_gesamt_kwh') + ' = ' + aG('ist_waerme_kwh') + ' + ' + aG('ist_abtau_waerme_kwh') + ' | Strom ' + aG('ist_strom_kwh') + ' = ' + aG('ist_strom_heizen_kwh') + ' + ' + aG('ist_abtau_strom_kwh'));
 
 // ---- 4) Prognosevertrauen je Horizont
 pworld({wide: true}); step(2); P = planNow();
