@@ -97,6 +97,26 @@ Der Wärmefahrplan liefert Bedarf, Reserve, Fenster und Hinweise, er schaltet ni
 * Priorität: Komfort vor Sicherheit (Abtauen/Frost) vor Effizienz vor Preis.
 * Fremdänderungen (HeishaMon-Seite, Regler) werden über die Status-Ereignisse erkannt und beenden einen laufenden Test.
 
+## 6a. Erste Messung Comfort gegen Efficiency (08.10.2026, gleicher Lauf)
+
+Der Betreiber stellte um 10:02 **mitten in einem laufenden Heizlauf** von Comfort auf Efficiency (Außen ~13 °C, Teillast, Quiet 3, Verdichter 16–17 Hz).
+Alles außer dem Modus blieb gleich, deshalb ist der Vergleich ungewöhnlich sauber (aber nur ein Lauf, ~25 min je Modus):
+
+| Größe | Comfort (09:45–10:02) | Efficiency (10:05–10:30) |
+|---|---|---|
+| Verdichter | 16,5 Hz, 1,20 A | 16,6 Hz, 1,20 A (unverändert) |
+| Wärmeleistung | 2058 W | 2055 W (unverändert) |
+| Umwälzpumpe | 1750 U/min (Duty 80), 13,4 l/min | 2500–2900 U/min (Duty ~100), 19–23 l/min |
+| Spreizung ΔT | 2,2 K | 1,2–1,7 K |
+| Gesamt-Strom | 251 W | 286 W (+35 W) |
+| COP (HeishaMon-Werte) | 8,2 | 7,2 (−12 %) |
+
+Lesart: Efficiency regelt **zuerst über die Pumpe** (mehr Durchfluss, kleinere Spreizung) und erhöht den Verdichter nicht. Weil sich der Vorlauf aus Rücklauf + Spreizung ergibt,
+liegt er bei gleicher Heizleistung etwa 1 K tiefer und erreicht den Soll-Vorlauf (29 °C) später oder gar nicht. Die Gesamtleistung enthält die Umwälzpumpe
+(Verdichterstrom gleich, +35 W Gesamt): Das klärt die offene Frage aus Abschnitt 2. Bei dieser leichten Last ist Efficiency demnach **nicht effizienter**,
+sondern kostet etwa 12 % COP. Ob das bei höherer Last oder Frost anders aussieht, ist offen. In beiden Modi bleibt der Verdichter bei Mindestdrehzahl,
+solange der Rücklauf-Sollwert (Soll-Vorlauf − Heat_Delta = 26 °C) nicht erreicht ist.
+
 ## 7. Offene Punkte
 
 * Wirkung und Persistenz von `SetHeatingControl` an dieser Anlage (nur durch einen kontrollierten Test auf Anweisung des Betreibers zu klären).
