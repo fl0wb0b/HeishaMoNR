@@ -100,22 +100,23 @@ Der Wärmefahrplan liefert Bedarf, Reserve, Fenster und Hinweise, er schaltet ni
 ## 6a. Erste Messung Comfort gegen Efficiency (08.10.2026, gleicher Lauf)
 
 Der Betreiber stellte um 10:02 **mitten in einem laufenden Heizlauf** von Comfort auf Efficiency (Außen ~13 °C, Teillast, Quiet 3, Verdichter 16–17 Hz).
-Alles außer dem Modus blieb gleich, deshalb ist der Vergleich ungewöhnlich sauber (aber nur ein Lauf, ~25 min je Modus):
+Der Modus war der einzige bewusst geänderte Faktor; der Lauf selbst heizte aber weiter auf (Rücklauf 22,8 → 26,8 °C). Nur ein Lauf, ~25–40 min je Modus.
 
-| Größe | Comfort (09:45–10:02) | Efficiency (10:05–10:30) |
+| Größe | Comfort (09:45–10:02) | Efficiency (ab 10:05) |
 |---|---|---|
 | Verdichter | 16,5 Hz, 1,20 A | 16,6 Hz, 1,20 A (unverändert) |
 | Wärmeleistung | 2058 W | 2055 W (unverändert) |
-| Umwälzpumpe | 1750 U/min (Duty 80), 13,4 l/min | 2500–2900 U/min (Duty ~100), 19–23 l/min |
-| Spreizung ΔT | 2,2 K | 1,2–1,7 K |
-| Gesamt-Strom | 251 W | 286 W (+35 W) |
-| COP (HeishaMon-Werte) | 8,2 | 7,2 (−12 %) |
+| Umwälzpumpe | 1750 U/min (Duty 80), 13,4 l/min | zuerst 2900 U/min, 23 l/min, danach fallend auf 2050 U/min, 16 l/min |
+| Spreizung ΔT | 2,2 K | zuerst 1,0–1,2 K, danach wieder 1,5–2,0 K |
 
 Lesart: Efficiency regelt **zuerst über die Pumpe** (mehr Durchfluss, kleinere Spreizung) und erhöht den Verdichter nicht. Weil sich der Vorlauf aus Rücklauf + Spreizung ergibt,
-liegt er bei gleicher Heizleistung etwa 1 K tiefer und erreicht den Soll-Vorlauf (29 °C) später oder gar nicht. Die Gesamtleistung enthält die Umwälzpumpe
-(Verdichterstrom gleich, +35 W Gesamt): Das klärt die offene Frage aus Abschnitt 2. Bei dieser leichten Last ist Efficiency demnach **nicht effizienter**,
-sondern kostet etwa 12 % COP. Ob das bei höherer Last oder Frost anders aussieht, ist offen. In beiden Modi bleibt der Verdichter bei Mindestdrehzahl,
-solange der Rücklauf-Sollwert (Soll-Vorlauf − Heat_Delta = 26 °C) nicht erreicht ist.
+liegt er dadurch zunächst etwa 1 K tiefer. Mit sinkendem Durchfluss schließt sich die Lücke wieder (Vorlauf 28,75 °C nach 71 min Laufzeit, Soll 29 °C).
+
+Strom (korrigierte Auswertung): Ein einfacher Vergleich der Mittelwerte (251 W gegen 286 W) ist **durch das Aufheizen verfälscht**, weil die Verdichterleistung mit dem Rücklauf steigt
+(Comfort-Modell aus 166 Minuten bei Mindestdrehzahl: P el = −33 W + 11,8 W/K × Rücklauf). Bereinigt um den Rücklauf bleibt als Mehrleistung bei Efficiency
+**+19 W** bei Pumpendrehzahl ≥ 2700 U/min, **+12 W** bei 2300–2700 und **+6 W** unter 2300 (Streuung des Modells ±12 W). Das spricht dafür, dass die Gesamtleistung die Umwälzpumpe enthält
+(die Mehrleistung folgt der Pumpendrehzahl, der Verdichterstrom ist gleich), ist aber mit ±12 W Streuung nur ein Hinweis, kein Beweis. Die Wirkung auf den COP ist bei dieser Last klein (am Höhepunkt der Pumpe etwa −7 %, später kaum noch);
+eine frühere Fassung dieses Abschnitts nannte +35 W und −12 % und war falsch. Für einen belastbaren Vergleich braucht es mehrere Läufe bei gleicher Außentemperatur und Last.
 
 ## 7. Offene Punkte
 
