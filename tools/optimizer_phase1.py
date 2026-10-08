@@ -92,8 +92,8 @@ ROOMS = [
      "active": True, "min": 22.5, "max": 23.5, "weight": 1, "maxAgeMin": 90},
     {"id": "schlaf", "name": "Schlafzimmer", "topic": "shellies/shellyht-Schlaf/sensor/temperature",
      "active": True, "min": 19, "max": 21, "weight": 1, "maxAgeMin": 90},
-    # new sensor: measured and logged from the start, but inactive (no say in the room logic) until the user sets its band
-    {"id": "wohn", "name": "Wohnzimmer", "topic": "shellies/shelly-ht-wohnzimmer/status/temperature:0",
+    # new sensor (Shelly H&T Gen1, SHHT-1): measured and logged from the start, but inactive (no say in the room logic) until the user sets its band
+    {"id": "wohn", "name": "Wohnzimmer", "topic": "shellies/shelly-ht-wohnzimmer/sensor/temperature",
      "active": False, "min": 20, "max": 22.5, "weight": 1, "maxAgeMin": 90},
 ]
 # numeric settings per room: (field, lowest, highest, step, tooltip); "active" is a checkbox
@@ -2136,7 +2136,7 @@ upsert(fn("opt_defaults", "Standardwerte setzen", js(DEFAULTS_JS), 0, [], 380, 1
 # input from the room card; output 1: red message for a rejected input, output 2: evaluate now (the card shows the valid values again)
 upsert(fn("opt_set", "Einstellung übernehmen und speichern", js(SET_CFG_JS), 2, [["opt_ui_toast"], ["opt_eval"]], 1500, 320, FS))
 
-for i, (t, y) in enumerate((("+/status/temperature:0", 200), ("shellies/+/sensor/temperature", 260), ("shellies/+/status/temperature:0", 320))):
+for i, (t, y) in enumerate((("+/status/temperature:0", 200), ("shellies/+/sensor/temperature", 260))):
     upsert({"id": f"opt_mqtt_{i}", "type": "mqtt in", "z": TAB, "name": "", "topic": t, "qos": "1",
             "datatype": "auto-detect", "broker": BROKER, "nl": False, "rap": True, "rh": 0, "inputs": 0,
             "x": 160, "y": y, "wires": [["opt_room_in"]]})
@@ -2230,7 +2230,7 @@ upsert({"id": "opt_ui_toast", "type": "ui_toast", "z": TAB, "position": "top rig
 upsert(inject("opt_i_owm_load", "Zugangsdaten prüfen", 0, 6, ["opt_owm_load"], 140, 920))
 upsert(fn("opt_owm_load", "Gespeicherten Standort laden", OWM_LOAD_JS, 1, [["opt_ui_form"]], 420, 920, FS))
 # nodes of earlier iterations that no longer exist
-_OLD = ["opt_ui_ctl", "opt_ui_wait", "opt_n_low", "opt_n_high", "opt_n_age", "opt_g_room", "opt_g_roomdetail", "opt_t_room", "opt_t_roomdetail"]
+_OLD = ["opt_mqtt_2", "opt_ui_ctl", "opt_ui_wait", "opt_n_low", "opt_n_high", "opt_n_age", "opt_g_room", "opt_g_roomdetail", "opt_t_room", "opt_t_roomdetail"]
 _OLD += [i for i in B if i.startswith(("opt_w_", "opt_g_cfg_"))]           # per-room inputs and groups of the earlier layout
 for _rid in _OLD:
     if _rid in B:

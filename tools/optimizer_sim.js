@@ -235,14 +235,14 @@ s = scene({ki_oben: [23.0], ki_unten: [23.0], schlaf: [18.0]});
 check('inaktiver Raum wird ignoriert (kein Heizbedarf trotz 18,0), bleibt aber sichtbar', s.sum.heat === 'keiner' && rowOf(s, 'schlaf').valid.startsWith('nein (inaktiv)') && rowOf(s, 'schlaf').cls === 'mute' && rowOf(s, 'schlaf').on === false && s.sum.valid.startsWith('2 von 2') && s.sum.valid.includes('2 inaktiv'), s.sum.valid)        // Schlafzimmer (hier abgeschaltet) + Wohnzimmer (noch ohne Band, inaktiv);
 setv('room:schlaf:active', true);
 
-// Wohnzimmer (Shelly H&T G3, Venus-Broker): wird von Anfang an gemessen und protokolliert, hat aber keine Stimme in der Raumlogik, bis das Band gesetzt und der Raum aktiviert ist
+// Wohnzimmer (Shelly H&T Gen1, Venus-Broker): wird von Anfang an gemessen und protokolliert, hat aber keine Stimme in der Raumlogik, bis das Band gesetzt und der Raum aktiviert ist
 {
   const wr = gstore.OPT_cfg.rooms.find(r => r.id === 'wohn');
   const mqttMatch = (filter, topic) => { const f = filter.split('/'), tp = topic.split('/'); return f.length === tp.length && f.every((x, i) => x === '+' || x === tp[i]); };
   const subs = ALLNODES.filter(n => n.type === 'mqtt in' && n.z === 'opt_tab' && n.broker === 'opt_broker_venus' && n.wires.some(w => w.includes('opt_room_in'))).map(n => n.topic);
-  check('Wohnzimmer: Raum ist angelegt (Topic shellies/shelly-ht-wohnzimmer/status/temperature:0), steht inaktiv, wird von einem Abo des Venus-Brokers erreicht',
-        !!wr && wr.active === false && wr.name === 'Wohnzimmer' && wr.topic === 'shellies/shelly-ht-wohnzimmer/status/temperature:0' && subs.some(f => mqttMatch(f, wr.topic)), JSON.stringify(wr));
-  delete gstore.OPT_rooms; run('opt_room_in', {topic: 'shellies/shelly-ht-wohnzimmer/status/temperature:0', payload: JSON.stringify({id: 0, tC: 17.2, tF: 63})});
+  check('Wohnzimmer: Raum ist angelegt (Topic shellies/shelly-ht-wohnzimmer/sensor/temperature), steht inaktiv, wird von einem Abo des Venus-Brokers erreicht',
+        !!wr && wr.active === false && wr.name === 'Wohnzimmer' && wr.topic === 'shellies/shelly-ht-wohnzimmer/sensor/temperature' && subs.some(f => mqttMatch(f, wr.topic)), JSON.stringify(wr));
+  delete gstore.OPT_rooms; run('opt_room_in', {topic: 'shellies/shelly-ht-wohnzimmer/sensor/temperature', payload: '17.2'});
   check('Wohnzimmer: Messwert kommt an (Glaettung/Trend laufen), auch solange der Raum inaktiv ist', gstore.OPT_rooms && gstore.OPT_rooms.wohn && gstore.OPT_rooms.wohn.last === 17.2, JSON.stringify(gstore.OPT_rooms && gstore.OPT_rooms.wohn));
   s = scene({ki_oben: [23.0], ki_unten: [23.0], schlaf: [20.0], wohn: [17.2]});
   check('Wohnzimmer 17,2 (unter dem Platzhalterband) loest keinen Heizbedarf aus, solange er inaktiv ist; Raum bleibt sichtbar', s.sum.heat === 'keiner' && rowOf(s, 'wohn') && rowOf(s, 'wohn').valid.startsWith('nein (inaktiv)') && rowOf(s, 'wohn').on === false, s.sum.heat);
