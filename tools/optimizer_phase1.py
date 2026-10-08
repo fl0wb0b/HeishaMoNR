@@ -1073,7 +1073,7 @@ var statRow = function (label, bn, s) {
     BANDS.forEach(function (bn, bi) { var s = qs.kfE[lv + '|' + bi]; if (s && (s.n || s.starts)) { tab.push(statRow('Stufe ' + lv + ' (Efficiency)', bn, s)); } });
 });
 
-// ---------- Protokoll: jede Minute bei laufendem Verdichter oder Stufenwechsel, sonst alle 5 min; Statistik alle 10 min sichern
+// ---------- Protokoll: jede Minute (auch im Stillstand, damit Pumpenspuelungen und Neustarts sichtbar sind); Statistik alle 10 min sichern
 var month = new Date(now).getFullYear() + '-' + ('0' + (new Date(now).getMonth() + 1)).slice(-2);
 var out = [{payload: {rows: rows}}, {payload: {stats: tab}}, null, null, dfOut];
 if (qs.testOpen !== null && qs.testOpen !== testOk) {                                  // Testfenster geoeffnet/geschlossen: Ereignis fuer den Betreiber
@@ -1091,7 +1091,7 @@ if (hcEvent) {
     if (!(out[3] && out[3].filename === hFile)) { try { fs.readFileSync(hFile, 'utf8'); } catch (e) { hHead = 'zeit,ereignis,wechsel\n'; } }
     out[3] = {filename: hFile, payload: (out[3] && out[3].filename === hFile ? out[3].payload : hHead) + hIso + ',heizregelung_empfehlung,' + hcEvent + '\n'};
 }
-if (!qs.lastLog || now - qs.lastLog >= (running ? 1 : 5) * MS_MIN - 1000) {
+if (!qs.lastLog || now - qs.lastLog >= MS_MIN - 1000) {
     var d = new Date(now), pad = function (n) { return (n < 10 ? '0' : '') + n; };
     var iso = month + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
     var cols = ['zeit', 'quiet_aktuell', 'quiet_ziel_normal', 'quiet_ziel_prioritaet', 'quiet_naechster_normal', 'quiet_naechster_prioritaet', 'quiet_grund', 'quiet_sperre', 'haltezeit_rest_min', 'soll_vl', 'ist_vl', 'soll_rl', 'ist_rl', 'rl_fehler', 'rl_fehler_gegl',

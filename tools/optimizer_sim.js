@@ -764,7 +764,7 @@ check('Protokoll: bei laufendem Verdichter jede Minute, Kopfzeile nur einmal, Sp
 check('Protokoll: alle geforderten Entscheidungsgroessen sind Spalten', ['quiet_aktuell', 'quiet_ziel_normal', 'quiet_ziel_prioritaet', 'quiet_grund', 'quiet_sperre', 'soll_vl', 'ist_vl', 'soll_rl', 'ist_rl', 'rl_fehler', 'spreizung_ist', 'spreizung_ziel', 'verdichter_hz', 'leistung_el_w', 'leistung_th_berechnet_w', 'cop_momentan', 'flow_l_min', 'pumpe_duty', 'pumpe_speed', 'fan1', 'fan2', 'verdichter_laufzeit_min', 'raum_defizit', 'raum_trend', 'defrost', 'warmwasser', 'softstart', 'quiet_prioritaet', 'aussen', 'quiet_aussen_regel'].every(c => hdr.includes(c)), '');
 check('Protokoll: Werte der ersten Zeile (Quiet 3, Ziel 1, VL 28,5, RL 24,3, Fehler 1,7)', l1[hdr.indexOf('quiet_aktuell')] === '3' && l1[hdr.indexOf('quiet_ziel_prioritaet')] === '1' && l1[hdr.indexOf('ist_vl')] === '28.5' && l1[hdr.indexOf('ist_rl')] === '24.3' && l1[hdr.indexOf('rl_fehler')] === '1.7', l1.slice(1, 4).join(','));
 world({TOP5_Main_Inlet_Temp: 24.3, compressor_frequency: 0}); outs = []; collect(10);
-check('Protokoll: bei stehendem Verdichter alle 5 Minuten', outs.filter(x => x[2]).length >= 2 && outs.filter(x => x[2]).length <= 3, String(outs.filter(x => x[2]).length));
+check('Protokoll: auch bei stehendem Verdichter jede Minute (Pumpenspuelungen und Neustart sichtbar)', outs.filter(x => x[2]).length >= 9 && outs.filter(x => x[2]).length <= 10, String(outs.filter(x => x[2]).length));
 
 // Waechter: HeishaMon-Werte lesen, Quiet-Befehle und Stufenwechsel protokollieren
 console.log('--- Waechter fuer Quiet-Befehle und Stufenwechsel (nur lesen)');
