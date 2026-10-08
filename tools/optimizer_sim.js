@@ -483,6 +483,7 @@ function tick(n, hook) {                                   // jede Minute: Raumw
   return out;
 }
 const ctlOf = out => out[1].payload.ctl;
+const hpmsgE = (topic, payload) => run('opt_hp_in', {topic: 'panasonic_heat_pump/' + topic, payload: String(payload)});
 const cur = () => fstore.ctl && fstore.ctl.cur;
 const quiet = () => { gstore.compressor_frequency = 17; };
 
@@ -535,6 +536,20 @@ resetWorld(); gstore.TOP42_Z1_Water_Target_Temp = 29; setRooms(ROOMSET(24.0, 23.
 const csvParts = []; for (let k = 0; k < 47; k++) { const o8 = tick(1); if (o8[4]) { csvParts.push(o8[4].payload); } }
 const csvL = csvParts.join('').trim().split('\n'), hdL = csvL[0].split(','), vlL = csvL[csvL.length - 1].split(',');
 check('Untergrenze steht im Protokoll (Spalte vorlauf_untergrenze = 1, wenn sie ein Absenken verhindert)', hdL.includes('vorlauf_untergrenze') && vlL[hdL.indexOf('vorlauf_untergrenze')] === '1' && hdL.length === vlL.length, 'Spalte ' + hdL.indexOf('vorlauf_untergrenze') + ' = ' + vlL[hdL.indexOf('vorlauf_untergrenze')]);
+// ---- Heizregelung (Comfort/Efficiency) im Haupt-Protokoll und in der Waermepumpen-Karte
+console.log('\n--- Heizregelung im Protokoll');
+resetWorld(); setRooms(ROOMSET(23.0, 23.0, 20.5));
+hpmsgE('main/Heating_Control', 0); NOW += 60000; hpmsgE('main/Heating_Control', 1);                                          // Wechsel Comfort -> Efficiency
+const hcParts = []; for (let k = 0; k < 8; k++) { const o9 = tick(1); if (o9[4]) { hcParts.push(o9[4].payload); } gstore.OPT_hp = gstore.OPT_hp; }
+const o9 = tick(1), rowHc = o9[2].payload.rows.find(r => r[0] === 'Heizregelung');
+check('Waermepumpen-Karte: Zeile "Heizregelung" nennt Efficiency und seit wann (Wechsel mit Uhrzeit), Warnfarbe bei Efficiency', rowHc && /^Efficiency · seit \d\d:\d\d$/.test(rowHc[1]) && rowHc[2] === 'warn', rowHc && rowHc.join(' | '));
+const hcCsv = hcParts.join('').trim().split('\n'), hcH = hcCsv[0].split(','), hcV = hcCsv[hcCsv.length - 1].split(',');
+check('Haupt-Protokoll (alle 5 min): Spalte heizregelung = 1 bei Efficiency (damit sich jede Zeile spaeter Comfort/Efficiency zuordnen laesst)', hcH.includes('heizregelung') && hcV[hcH.indexOf('heizregelung')] === '1' && hcH.length === hcV.length, 'Spalte ' + hcH.indexOf('heizregelung') + ' = ' + hcV[hcH.indexOf('heizregelung')]);
+resetWorld(); setRooms(ROOMSET(23.0, 23.0, 20.5)); hpmsgE('main/Heating_Control', 0); const o0 = tick(1), row0 = o0[2].payload.rows.find(r => r[0] === 'Heizregelung');
+check('Karte bei Comfort: "Comfort · seit Beobachtung hh:mm" (Beginn nur seit Start bekannt), keine Warnfarbe', /^Comfort · seit Beobachtung \d\d:\d\d$/.test(row0[1]) && row0[2] === '', row0.join(' | '));
+resetWorld(); setRooms(ROOMSET(23.0, 23.0, 20.5)); const oN = tick(1), rowN = oN[2].payload.rows.find(r => r[0] === 'Heizregelung');
+check('Karte ohne Meldung der Waermepumpe: Strich', rowN[1] === '–', rowN.join(' | '));
+
 resetWorld(); setRooms({ki_oben: [24.0, 0], ki_unten: [23.0, 0], schlaf: null}); oo = tick(60);
 check('Regel 2: fehlen Daten eines aktiven Raums, wird nicht abgesenkt', cur() === 0 && ctlOf(oo).why.includes('Daten unvollständig'), ctlOf(oo).why);
 resetWorld(); setRooms({ki_oben: [24.0, -0.6], ki_unten: [23.0, 0], schlaf: [20.0, 0]}); oo = tick(60);
@@ -783,6 +798,42 @@ world({}); world({TOP18_Quiet_Mode_Level: 3}); hpmsg('main/Quiet_Mode_Priority',
 check('Quiet-Prioritaet: laut Firmware 1 = Capacity (Leistung), 0 = Sound (Lautstaerke); die Anzeige sagte vorher faelschlich Ton fuer 1', rowQ(qp, 'Quiet aktuell').includes('Priorität Leistung') && !rowQ(qp, 'Quiet aktuell').includes('Ton'), rowQ(qp, 'Quiet aktuell'));
 hpmsg('main/Quiet_Mode_Priority', 0); qp = qtick(1);
 check('Quiet-Prioritaet 0 wird als Lautstaerke angezeigt', rowQ(qp, 'Quiet aktuell').includes('Priorität Lautstärke'), rowQ(qp, 'Quiet aktuell'));
+
+// ---- Heizregelung: Empfehlung (nur Anzeige), getrennte Statistik, Ereignisse
+console.log('\n--- Heizregelung: Empfehlung und Statistik');
+const qrow = (o, label) => (o[0].payload.rows.find(r => r[0] === label) || []);
+const run1 = (n, hook) => { const evs = []; let o; for (let i = 0; i < n; i++) { NOW += 60000; if (hook) { hook(i); } o = run('opt_quiet', {}); if (o[3]) { evs.push(o[3].payload); } } return {o, evs}; };
+world({TOP14_Outside_Temp: 12}); hpmsg('main/Heating_Control', 0); let rr = run1(2);
+check('Comfort: Zeile "Heizregelung" zeigt nur "Comfort", keine Empfehlung', qrow(rr.o, 'Heizregelung')[1] === 'Comfort' && qrow(rr.o, 'Heizregelung')[2] === '', JSON.stringify(qrow(rr.o, 'Heizregelung')));
+world({TOP14_Outside_Temp: 12}); hpmsg('main/Heating_Control', 1); rr = run1(2);
+check('Efficiency bei 12 °C ohne Abtauen, Vorlauf nahe Soll, Raeume ok: "Efficiency · keine Warnung" (gruen), keine Warnung als Ereignis', qrow(rr.o, 'Heizregelung')[1] === 'Efficiency · keine Warnung' && qrow(rr.o, 'Heizregelung')[2] === 'ok' && rr.evs.length === 0, JSON.stringify(qrow(rr.o, 'Heizregelung')));
+rr = run1(1, () => { gstore.TOP14_Outside_Temp = 3.2; });
+check('Efficiency bei 3,2 °C: Warnung "Comfort empfohlen: Außentemperatur 3,2 °C" (rot), Ereignis "ok->Comfort empfohlen (...)" einmal festgehalten', qrow(rr.o, 'Heizregelung')[1] === 'Efficiency · Comfort empfohlen: Außentemperatur 3,2 °C' && qrow(rr.o, 'Heizregelung')[2] === 'warn' && rr.evs.length === 1 && /,heizregelung_empfehlung,ok->Comfort empfohlen \(Außentemperatur 3\.2 °C\)/.test(rr.evs[0]) && gstore.OPT_hc_reco.warn === true, qrow(rr.o, 'Heizregelung')[1] + ' | ' + rr.evs.join('').trim());
+rr = run1(3, () => { gstore.TOP14_Outside_Temp = 3.2; });
+check('Dieselbe Warnung wird nicht wiederholt protokolliert', rr.evs.length === 0, '');
+rr = run1(1, () => { gstore.TOP14_Outside_Temp = 12; });
+check('Bedingungen wieder gut: Warnung verschwindet, Ereignis "Comfort empfohlen->keine Warnung"', qrow(rr.o, 'Heizregelung')[1] === 'Efficiency · keine Warnung' && rr.evs.length === 1 && /Comfort empfohlen->keine Warnung/.test(rr.evs[0]), rr.evs.join('').trim());
+world({TOP14_Outside_Temp: 12}); hpmsg('main/Heating_Control', 1); gstore.OPT_weather = {status: 'OK', ts: NOW, f6: 2}; rr = run1(1, () => { gstore.OPT_weather.ts = NOW; });
+check('Prognose in 6 h unter 3 °C (aktuell 12 °C): Warnung nennt die Prognose', /Comfort empfohlen: Prognose in 6 h 2,0 °C/.test(qrow(rr.o, 'Heizregelung')[1]), qrow(rr.o, 'Heizregelung')[1]);
+world({TOP14_Outside_Temp: 12}); hpmsg('main/Heating_Control', 1); run1(1); fstore.qs.lastDefrostStart = NOW - 2 * 3600000; rr = run1(1);
+check('Abtauen vor 2 h: Warnung "Abtauen vor 2,0 h"; nach 6 h kein Grund mehr', /Abtauen vor 2,0 h/.test(qrow(rr.o, 'Heizregelung')[1]) && (() => { fstore.qs.lastDefrostStart = NOW - 7 * 3600000; return !/Abtauen/.test(qrow(run1(1).o, 'Heizregelung')[1]); })(), qrow(rr.o, 'Heizregelung')[1]);
+world({TOP14_Outside_Temp: 12, TOP42_Z1_Water_Target_Temp: 32, TOP6_Main_Outlet_Temp: 29.5}); hpmsg('main/Heating_Control', 1); rr = run1(15);
+check('Vorlauf 2,5 K unter Soll, aber erst 15 min: noch keine Warnung (Schwelle 20 min)', rr.o && qrow(rr.o, 'Heizregelung')[1] === 'Efficiency · keine Warnung', qrow(rr.o, 'Heizregelung')[1]);
+rr = run1(8);
+check('Vorlauf seit 20+ min mehr als 2 K unter Soll: Warnung "Vorlauf seit 2x min mehr als 2 K unter Soll"', /Comfort empfohlen: Vorlauf seit \d+ min mehr als 2 K unter Soll/.test(qrow(rr.o, 'Heizregelung')[1]), qrow(rr.o, 'Heizregelung')[1]);
+rr = run1(2, () => { gstore.TOP6_Main_Outlet_Temp = 31.5; });
+check('Vorlauf wieder nahe Soll (< 1 K Abweichung): Warnung weg', qrow(rr.o, 'Heizregelung')[1] === 'Efficiency · keine Warnung', qrow(rr.o, 'Heizregelung')[1]);
+world({TOP14_Outside_Temp: 12}); hpmsg('main/Heating_Control', 1); gstore.OPT_state = {ts: NOW, deficit: true, deficitRoom: 'Kinderzimmer unten'}; rr = run1(1, () => { gstore.OPT_state.ts = NOW; });
+check('Raum unter Minimum: Warnung nennt den Raum', /Raum unter Minimum: Kinderzimmer unten/.test(qrow(rr.o, 'Heizregelung')[1]), qrow(rr.o, 'Heizregelung')[1]);
+check('Empfehlung schaltet nichts: kein Befehl, nur OPT_*-Werte und Ereignisdatei', sent.every(x => !/Heating|Command|mqtt/i.test(x.id + JSON.stringify(x.m || ''))) && !JSON.parse(fs.readFileSync(flowsFile, 'utf8')).some(n => n.z === 'opt_tab' && n.type === 'mqtt out'), '');
+// getrennte Statistik
+world({TOP14_Outside_Temp: 5, compressor_frequency: 20, compressor_runtime: 40}); hpmsg('main/Heating_Control', 0); run1(5);
+hpmsg('main/Heating_Control', 1); rr = run1(5); const kfC = fstore.qs.kf['3|2'], kfE = fstore.qs.kfE['3|2'];
+check('Kennfeld getrennt: die ersten 5 Laufminuten zaehlen bei Comfort, die naechsten 5 bei Efficiency (nicht vermischt)', kfC && kfE && kfC.n === 5 && kfE.n === 5, (kfC && kfC.n) + ' / ' + (kfE && kfE.n));
+const tabE = rr.o[1].payload.stats;
+check('Tabelle: Efficiency-Messwerte stehen als eigene Zeile "Stufe 3 (Efficiency)" unter denen von Comfort, Comfort-Zeile unveraendert', tabE.some(r => r[0] === 'Stufe 3 (Efficiency)' && r[1] === '3–7 °C' && r[2] === '5') && tabE.some(r => r[0] === 'Stufe 3' && r[1] === '3–7 °C' && r[2] === '5'), tabE.filter(r => r[1] !== 'keine Daten').map(r => r[0] + ':' + r[2]).join(' '));
+run1(11);
+check('Efficiency-Kennfeld wird gesichert und ueberlebt einen Neustart (quiet-stats.json enthaelt kfE)', (() => { const fj = files['/data/optimizer/quiet-stats.json']; const j = fj ? JSON.parse(fj.data) : null; const had = !!j && !!j.kfE && !!j.kfE['3|2']; delete fstore.qs; run1(1); return had && fstore.qs.kfE['3|2'].n >= 5; })(), '');
 // Auswertung gibt den Komfortzustand weiter und stoesst die Empfehlung an
 world({}); gstore.OPT_cfg.control.enabled = false;
 gstore.OPT_rooms = {ki_unten: {name: 'Kinderzimmer unten', ema: 21.8, last: 21.8, ts: NOW, trend: -0.1}, ki_oben: {name: 'Kinderzimmer oben', ema: 23.0, last: 23.0, ts: NOW, trend: 0}, schlaf: {name: 'Schlafzimmer', ema: 20, last: 20, ts: NOW, trend: 0}};

@@ -1,10 +1,9 @@
 // Pruefung der Korrektur "COP 0 bei Stillstand" (tools/cop_idle_fix.py): Betrieb unveraendert, Stillstand meldet 0.
 // Usage: python3 tools/cop_idle_fix.py <kopie.json> && node tools/cop_idle_test.js <kopie.json>   (ohne Argument: die Repo-Flowdatei, vorher gepatcht)
-const fs = require('fs'), vm = require('vm'), cp = require('child_process');
+const fs = require('fs'), vm = require('vm');
 const file = process.argv[2] || 'flows (26.5.1 stable).json';
 const flows = JSON.parse(fs.readFileSync(file, 'utf8')), node0 = flows.find(n => n.id === 'f4e55b938e645737');
-const ORIG = cp.execSync('git show HEAD:"flows (26.5.1 stable).json"', {maxBuffer: 1 << 28, cwd: require('path').join(__dirname, '..')}).toString();      // Original aus dem Repo, unabhaengig vom Aufrufordner
-const orig = JSON.parse(ORIG).find(n => n.id === 'f4e55b938e645737').func;
+const orig = fs.readFileSync(require('path').join(__dirname, 'fixtures', 'cop_calculated_original.js'), 'utf8');      // unveraenderte Originalfunktion (vor dem Patch), fest im Repo
 const compile = f => vm.runInNewContext('(function(msg,global,node){' + f + '\n})', {Number, isFinite, parseFloat, isNaN});
 const runF = (fn, st) => {
   const g = Object.assign({}, st), sends = [], sets = [];

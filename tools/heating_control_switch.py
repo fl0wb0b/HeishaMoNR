@@ -7,6 +7,7 @@
 * Refuses to send when the real state is unknown, the MQTT block is active, the daily budget is used up, a command is still pending or the
   last change is less than 5 minutes ago. Warns (does not forbid) for Efficiency in unfavourable conditions.
 * The selection always shows the state reported by HeishaMon (main/Heating_Control); a command is confirmed or reported as unconfirmed after 90 s.
+* Shows the optimizer's recommendation (display only, global OPT_hc_reco) in the group and raises one notice when a new warning appears.
 
 Usage: python3 tools/heating_control_switch.py "<flows.json>"
 """
@@ -56,7 +57,7 @@ var now = Date.now(), NAMES = ['Comfort', 'Efficiency'];
 var pend = flow.get('hcPending');
 function hhmm(t) { return new Date(t).toLocaleTimeString('de-DE', {hour: '2-digit', minute: '2-digit'}); }
 function toast(text, color) { return {topic: 'Heizregelung', payload: text, highlight: color || ''}; }
-var out = [null, null, null];                                                          // [Auswahl, Textzeile, Meldung]
+var out = [null, null, null, null];                                                    // [Auswahl, Textzeile, Meldung, Empfehlung]
 if (msg.topic === 'tick') {
     if (pend && now - pend.ts > 90000) {
         flow.set('hcPending', null);
@@ -64,6 +65,12 @@ if (msg.topic === 'tick') {
         out[2] = toast('Heizregelung: Keine Bestätigung der Wärmepumpe nach 90 s' + ((c0 === 0 || c0 === 1) ? ' (Stand weiter ' + NAMES[c0] + ')' : '') + '. Der Befehl wurde vielleicht nicht angenommen.', 'red');
         if (c0 === 0 || c0 === 1) { out[0] = {payload: String(c0)}; }
     }
+    // Empfehlung des Optimizers (nur Anzeige): bei Efficiency prueft er Aussentemperatur, Abtauen, Vorlauf und Raeume; eine neue Warnung gibt einmal eine Meldung
+    var rc = global.get('OPT_hc_reco'), fresh = !!(rc && now - rc.ts < 5 * 60000), rtxt = fresh ? rc.text : '–';
+    if (flow.get('hcRecoTxt') !== rtxt) { flow.set('hcRecoTxt', rtxt); out[3] = {payload: rtxt}; }
+    var isWarn = fresh && rc.warn === true;
+    if (isWarn && flow.get('hcRecoWarn') !== true && now - (flow.get('hcRecoToastTs') || 0) > 60 * 60000 && !out[2]) { out[2] = toast(rc.text + '. Es wird nichts automatisch umgeschaltet.', 'orange'); flow.set('hcRecoToastTs', now); }
+    flow.set('hcRecoWarn', isWarn);
     return out;
 }
 var v = Number(msg.payload);
@@ -94,10 +101,12 @@ def nodes():
          "broker": BROKER, "nl": False, "rap": True, "rh": 0, "inputs": 0, "x": 200, "y": y0 + 80, "wires": [["hc_state"]]},
         {"id": "hc_tick", "type": "inject", "z": TAB, "name": "alle 15 s", "props": [{"p": "payload"}, {"p": "topic", "vt": "str"}], "repeat": "15", "crontab": "", "once": True, "onceDelay": "10",
          "topic": "tick", "payload": "", "payloadType": "date", "x": 190, "y": y0 + 130, "wires": [["hc_state"]]},
-        {"id": "hc_state", "type": "function", "z": TAB, "name": "Heizregelung Zustand", "func": STATE_JS, "outputs": 3, "timeout": 0, "noerr": 0, "initialize": "", "finalize": "", "libs": [],
-         "x": 430, "y": y0 + 100, "wires": [["hc_sel"], ["hc_txt"], ["hc_toast"]]},
+        {"id": "hc_state", "type": "function", "z": TAB, "name": "Heizregelung Zustand", "func": STATE_JS, "outputs": 4, "timeout": 0, "noerr": 0, "initialize": "", "finalize": "", "libs": [],
+         "x": 430, "y": y0 + 100, "wires": [["hc_sel"], ["hc_txt"], ["hc_toast"], ["hc_reco_txt"]]},
         {"id": "hc_txt", "type": "ui_text", "z": TAB, "group": GROUP, "order": 2, "width": 0, "height": 0, "name": "", "label": "Stand", "format": "{{msg.payload}}", "layout": "row-spread",
          "className": "", "x": 670, "y": y0 + 90, "wires": []},
+        {"id": "hc_reco_txt", "type": "ui_text", "z": TAB, "group": GROUP, "order": 3, "width": 0, "height": 0, "name": "", "label": "Empfehlung", "format": "{{msg.payload}}", "layout": "col-center",
+         "className": "", "x": 670, "y": y0 + 115, "wires": []},
         {"id": "hc_toast", "type": "ui_toast", "z": TAB, "position": "top right", "displayTime": "10", "highlight": "", "sendall": True, "outputs": 0, "ok": "OK", "cancel": "", "raw": False,
          "className": "", "topic": "", "name": "Heizregelung", "x": 670, "y": y0 + 140, "wires": []},
     ]

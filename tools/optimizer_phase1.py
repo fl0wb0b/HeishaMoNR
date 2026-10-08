@@ -807,6 +807,7 @@ if (name === 'Quiet_Mode_Level' && prev && prev.v !== val) {          // die Stu
 if ((name === 'Quiet_Mode_Schedule' || name === 'Quiet_Mode_Priority') && prev && prev.v !== val) { res = event(name === 'Quiet_Mode_Schedule' ? 'quiet_zeitplan' : 'quiet_prioritaet', prev.v + '->' + val); }
 var CHG = {Heating_Control: 'heizregelung', Pump_Flowrate_Mode: 'pumpenmodus', Max_Pump_Duty: 'pumpe_maxduty', Heat_Delta: 'spreizung_soll'};   // Aenderung von aussen (Anlage, Fernbedienung, HeishaMon-Seite) erkennen
 if (CHG[name] && prev && prev.v !== val) { var srcC = hp._lastCmdAny && now - hp._lastCmdAny.ts < 15000; res = event(CHG[name], prev.v + '->' + val); }
+if (name === 'Heating_Control' && (!prev || prev.v !== val)) { hp._hcSince = {ts: now, first: !prev}; }          // seit wann gilt der Modus (first: nur seit Beobachtungsbeginn bekannt)
 global.set('OPT_hp', hp);
 return res;
 """
@@ -857,20 +858,23 @@ if (!qs) {
           lastMin: 0, lastSave: 0, lastLog: 0, runStart: 0, runs: [], kf: {}, inWin: false, testOpen: null};
     try {
         var sj = JSON.parse(fs.readFileSync('/data/optimizer/quiet-stats.json', 'utf8'));
+        if (sj && sj.kfE) { qs.kfE = sj.kfE; }
         if (sj && sj.kf) { qs.kf = sj.kf; qs.level = sj.level; qs.levelSince = sj.since || now; qs.runs = sj.runs || []; }
     } catch (e) { /* noch keine Datei */ }
 }
-if (!qs.kf) { qs.kf = {}; }                                                                  // Zustand einer frueheren Version (ohne Kennfeld) uebernehmen
+if (!qs.kf) { qs.kf = {}; }
+if (!qs.kfE) { qs.kfE = {}; }                                                                // Kennfeld bei Efficiency (getrennt, Comfort bleibt unvermischt)                                                                  // Zustand einer frueheren Version (ohne Kennfeld) uebernehmen
 if (qs.inWin === undefined) { qs.inWin = false; }
 if (qs.testOpen === undefined) { qs.testOpen = null; }
 if (qNow !== null && qs.level !== qNow) { qs.level = qNow; qs.levelSince = now; }        // Stufe geaendert (von wem auch immer) oder erste Beobachtung
 // Kennfeld: je Quiet-Stufe UND Aussentemperaturbereich (damit z. B. Stufe 3 bei 8 C von Stufe 3 bei -5 C getrennt bleibt)
 var BANDS = ['< 0 °C', '0–3 °C', '3–7 °C', '7–12 °C', '> 12 °C'];
 var band = at === null ? null : (at < 0 ? 0 : (at < 3 ? 1 : (at < 7 ? 2 : (at < 12 ? 3 : 4))));
+var hcMode = (HP.Heating_Control && typeof HP.Heating_Control.v === 'number') ? HP.Heating_Control.v : null;       // 0 Comfort, 1 Efficiency
 var stat = function (lv) {
     if (band === null) { return {n: 0, starts: 0, defrosts: 0, runMin: 0, dMin: 0, s: {}}; }          // ohne Aussentemperatur nichts zuordnen
-    var k = lv + '|' + band;
-    return qs.kf[k] = qs.kf[k] || {n: 0, starts: 0, defrosts: 0, runMin: 0, dMin: 0, s: {}};
+    var k = lv + '|' + band, store = hcMode === 1 ? qs.kfE : qs.kf;
+    return store[k] = store[k] || {n: 0, starts: 0, defrosts: 0, runMin: 0, dMin: 0, s: {}};
 };
 var FIELDS = ['hz', 'pel', 'pth', 'cop', 'vl', 'rl', 'svl', 'srl', 'dt', 'flow', 'at', 'fan'];
 // Wechsel erkennen: Verdichterstart/-ende, Abtauen, Warmwasser
@@ -1004,6 +1008,26 @@ var srcs = ['HeishaMoNR-Quiet-Logik ' + ((ss.state === 1 && ss.QM_state === 1) ?
 var prio = HP.Quiet_Mode_Priority ? HP.Quiet_Mode_Priority.v : null;
 var lastCmd = HP._lastCmd;
 
+// ---------- Heizregelung (Comfort / Efficiency): reine Warn-Empfehlung, schaltet NICHTS. Bei Efficiency wird fortlaufend geprueft, ob die Bedingungen noch passen
+// (Erfahrung von Betreibern: Efficiency regelt bei Frost, haeufigem Abtauen und hoher Last zu zurueckhaltend und bleibt knapp unter dem Sollvorlauf haengen).
+var hcReco = {text: hcMode === 0 ? 'Comfort' : '–', cls: '', mode: hcMode, warn: false, why: []};
+if (hcMode === 1) {
+    var hcWhy = [], Wh = G('OPT_weather') || {}, hcF6 = (Wh.ts && now - Wh.ts < 2 * 3600000) ? num(Wh.f6) : null;
+    if (at !== null && at < 5) { hcWhy.push('Außentemperatur ' + f(at, 1, '°C')); }
+    else if (hcF6 !== null && hcF6 < 3) { hcWhy.push('Prognose in 6 h ' + f(hcF6, 1, '°C')); }
+    if (qs.lastDefrostStart && now - qs.lastDefrostStart < 6 * 3600000) { hcWhy.push('Abtauen vor ' + dur(now - qs.lastDefrostStart)); }
+    var hcDev = (running && !defrost && solVL !== null && istVL !== null) ? solVL - istVL : null;
+    if (hcDev !== null && hcDev > 2) { if (!qs.vlBadSince) { qs.vlBadSince = now; } } else if (hcDev === null || hcDev <= 1) { qs.vlBadSince = 0; }
+    if (qs.vlBadSince && now - qs.vlBadSince >= 20 * MS_MIN) { hcWhy.push('Vorlauf seit ' + dur(now - qs.vlBadSince) + ' mehr als 2 K unter Soll'); }
+    if (sFresh && S.deficit) { hcWhy.push('Raum unter Minimum: ' + (S.deficitRoom || '?')); }
+    hcReco = {text: hcWhy.length ? 'Efficiency · Comfort empfohlen: ' + hcWhy.join(' · ') : 'Efficiency · keine Warnung', cls: hcWhy.length ? 'warn' : 'ok', mode: 1, warn: hcWhy.length > 0, why: hcWhy};
+} else { qs.vlBadSince = 0; }
+global.set('OPT_hc_reco', {ts: now, mode: hcMode, warn: hcReco.warn, text: hcReco.text});
+var hcEvent = null;                                                                                   // Wechsel der Empfehlung als Ereignis festhalten
+var hcKey = hcMode === 1 ? (hcReco.warn ? 'warn' : 'ok') : 'aus';
+if (qs.hcKey !== undefined && qs.hcKey !== hcKey && hcMode === 1) { hcEvent = hcKey === 'warn' ? 'ok->Comfort empfohlen (' + hcReco.why.join(' + ').replace(/(\d),(\d)/g, '$1.$2').replace(/,/g, ';') + ')' : 'Comfort empfohlen->keine Warnung'; }
+qs.hcKey = hcKey;
+
 var rows = [
     ['Soll-VL (Heizkurve)', f(solVL, 1, '°C'), ''],
     ['Ist-VL', f(istVL, 1, '°C'), ''],
@@ -1024,22 +1048,29 @@ var rows = [
     ['Nächster Schritt Priorität', nextTxtP, ''],
     ['Grund', why.filter(Boolean).join(' · '), ''],
     ['Sperrgrund', lockTxt, ''],
+    ['Heizregelung', hcReco.text, hcReco.cls],
     ['Kontrolltest Quiet 3 → 2 (nur von Hand)', testOk ? 'Bedingungen erfüllt, jetzt möglich' : 'nicht möglich: ' + tr.join(' · '), testOk ? 'ok' : ''],
     ['Quellen der Stufe', srcs.join(' · ') + (lastCmd ? ' · letzter Befehl ' + hhmm(lastCmd.ts) : ' · kein Befehl beobachtet'), '']
 ];
 var tab = [];
+var statRow = function (label, bn, s) {
+    var m = function (k, d) { var a = s.s[k]; return a && a[1] ? f(a[0] / a[1], d) : '–'; };
+    var mxv = function (k) { return s.mx && ok(s.mx[k]) ? f(s.mx[k], 0) : '–'; };
+    return [label, bn, f(s.n, 0), m('hz', 0), m('fan', 0), m('pel', 0), m('pth', 0), mxv('hz'), mxv('pth'), m('cop', 1), m('vl', 1) + ' / ' + m('rl', 1) + ' / ' + m('dt', 1),
+            m('svl', 1) + ' / ' + m('srl', 1), m('flow', 1), s.n ? f(s.starts / (s.n / 60), 2) : '–', s.starts ? f(s.runMin / s.starts, 0) : '–', f(s.defrosts, 0), s.n ? f(100 * s.dMin / s.n, 0) + ' %' : '–'];
+};
 [0, 1, 2, 3].forEach(function (lv) {
     var any = false;
     BANDS.forEach(function (bn, bi) {
         var s = qs.kf[lv + '|' + bi];
         if (!s || !(s.n || s.starts)) { return; }
         any = true;
-        var m = function (k, d) { var a = s.s[k]; return a && a[1] ? f(a[0] / a[1], d) : '–'; };
-        var mxv = function (k) { return s.mx && ok(s.mx[k]) ? f(s.mx[k], 0) : '–'; };
-        tab.push(['Stufe ' + lv, bn, f(s.n, 0), m('hz', 0), m('fan', 0), m('pel', 0), m('pth', 0), mxv('hz'), mxv('pth'), m('cop', 1), m('vl', 1) + ' / ' + m('rl', 1) + ' / ' + m('dt', 1),
-                  m('svl', 1) + ' / ' + m('srl', 1), m('flow', 1), s.n ? f(s.starts / (s.n / 60), 2) : '–', s.starts ? f(s.runMin / s.starts, 0) : '–', f(s.defrosts, 0), s.n ? f(100 * s.dMin / s.n, 0) + ' %' : '–']);
+        tab.push(statRow('Stufe ' + lv, bn, s));
     });
     if (!any) { tab.push(['Stufe ' + lv, 'keine Daten', '–', '–', '–', '–', '–', '–', '–', '–', '–', '–', '–', '–', '–', '–', '–']); }
+});
+[0, 1, 2, 3].forEach(function (lv) {                                                               // Messwerte bei Efficiency stehen getrennt darunter
+    BANDS.forEach(function (bn, bi) { var s = qs.kfE[lv + '|' + bi]; if (s && (s.n || s.starts)) { tab.push(statRow('Stufe ' + lv + ' (Efficiency)', bn, s)); } });
 });
 
 // ---------- Protokoll: jede Minute bei laufendem Verdichter oder Stufenwechsel, sonst alle 5 min; Statistik alle 10 min sichern
@@ -1053,6 +1084,13 @@ if (qs.testOpen !== null && qs.testOpen !== testOk) {                           
     out[3] = {filename: evFile, payload: evHead + evIso + ',testfenster_quiet_3_2,' + (testOk ? 'geoeffnet' : 'geschlossen (' + tr.join(' + ').replace(/,/g, ';') + ')') + '\n'};
 }
 qs.testOpen = testOk;
+if (hcEvent) {
+    var hd0 = new Date(now), hp0 = function (x) { return (x < 10 ? '0' : '') + x; };
+    var hIso = hd0.getFullYear() + '-' + hp0(hd0.getMonth() + 1) + '-' + hp0(hd0.getDate()) + ' ' + hp0(hd0.getHours()) + ':' + hp0(hd0.getMinutes()) + ':' + hp0(hd0.getSeconds());
+    var hFile = '/data/optimizer/quiet-events-' + hIso.slice(0, 7) + '.csv', hHead = '';
+    if (!(out[3] && out[3].filename === hFile)) { try { fs.readFileSync(hFile, 'utf8'); } catch (e) { hHead = 'zeit,ereignis,wechsel\n'; } }
+    out[3] = {filename: hFile, payload: (out[3] && out[3].filename === hFile ? out[3].payload : hHead) + hIso + ',heizregelung_empfehlung,' + hcEvent + '\n'};
+}
 if (!qs.lastLog || now - qs.lastLog >= (running ? 1 : 5) * MS_MIN - 1000) {
     var d = new Date(now), pad = function (n) { return (n < 10 ? '0' : '') + n; };
     var iso = month + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
@@ -1076,7 +1114,7 @@ if (!qs.lastLog || now - qs.lastLog >= (running ? 1 : 5) * MS_MIN - 1000) {
     qs.lastLog = now;
 }
 if (!qs.lastSave || now - qs.lastSave >= 10 * MS_MIN) {
-    try { fs.mkdirSync('/data/optimizer', {recursive: true}); fs.writeFileSync('/data/optimizer/quiet-stats.json', JSON.stringify({kf: qs.kf, level: qs.level, since: qs.levelSince, runs: qs.runs})); qs.lastSave = now; } catch (e) { /* kein Zugriff */ }
+    try { fs.mkdirSync('/data/optimizer', {recursive: true}); fs.writeFileSync('/data/optimizer/quiet-stats.json', JSON.stringify({kf: qs.kf, kfE: qs.kfE, level: qs.level, since: qs.levelSince, runs: qs.runs})); qs.lastSave = now; } catch (e) { /* kein Zugriff */ }
 }
 flow.set('qs', qs);
 return out;
@@ -1663,8 +1701,11 @@ var shiftBase = null, ccc = G('F_CCC'); if (ccc && ccc.z1) { shiftBase = num(ccc
 var rtc = G('F_RTC'), rtcCorr = (rtc && rtc.z1) ? num(rtc.z1.correction_value) : null;
 var shiftFinal = num(G('SHIFT_Final')), target = num(G('TOP42_Z1_Water_Target_Temp'));
 var inl = num(G('TOP5_Main_Inlet_Temp')), outl = num(G('TOP6_Main_Outlet_Temp')), pw = num(G('TOP16_Heat_Energy_Consumption')), cop = num(G('COP_HEAT'));
+var HPe = G('OPT_hp') || {}, hcV = (HPe.Heating_Control && typeof HPe.Heating_Control.v === 'number') ? HPe.Heating_Control.v : null;
+var hcHm = function (ts) { return new Date(ts).toLocaleTimeString('de-DE', {hour: '2-digit', minute: '2-digit'}); };
 var rowsWp = [
     ['Betriebszustand', mode + (ssOn ? ' · Sanftanlauf' : ''), ''],
+    ['Heizregelung', hcV === null ? '–' : (hcV === 1 ? 'Efficiency' : 'Comfort') + (HPe._hcSince ? ' · ' + (HPe._hcSince.first ? 'seit Beobachtung ' : 'seit ') + hcHm(HPe._hcSince.ts) : ''), hcV === 1 ? 'warn' : ''],
     ['Soll-Vorlauf (Heizkurve)', f(target, 0, '°C'), ''],
     ['Verschiebung manuell', f(shiftBase, 0, 'K'), ''],
     ['Korrektur Raumregelung', f(rtcCorr, 0, 'K'), ''],
@@ -1847,12 +1888,12 @@ if (!lastLog || (now - lastLog) >= cfg.log.intervalMin * 60000) {
                         'soll_vorlauf', 'shift_basis', 'shift_rtc', 'shift_final', 'vorlauf', 'ruecklauf', 'verdichter_hz', 'verdichter_an',
                         'leistung_w', 'cop', 'defrost', 'warmwasser', 'sanftanlauf', 'zustand', 'starts_heute',
                         'regelung_an', 'korrektur_vorschlag', 'korrektur_angewendet', 'fuehrungsraum', 'waermeverteilung', 'regelung_grund', 'regelung_sperre', 'haltezeit_rest_min',
-                        'aussen_1h', 'aussen_24h', 'aussen_historie_h', 'prog_24h_mittel', 'aussen_berechnet', 'kurve_soll_aktuell', 'kurve_soll_berechnet', 'verschiebung_aequivalent', 'vorlauf_untergrenze']);
+                        'aussen_1h', 'aussen_24h', 'aussen_historie_h', 'prog_24h_mittel', 'aussen_berechnet', 'kurve_soll_aktuell', 'kurve_soll_berechnet', 'verschiebung_aequivalent', 'vorlauf_untergrenze', 'heizregelung']);
     vals = vals.concat([valids.length, heat ? heat.name : '', heat ? c(heat.dev) : '', over ? over.name : '', over ? c(over.dev) : '', tight ? c(tight.m) : '', tight ? tight.room.name : '',
                         c(target), c(shiftBase), c(rtcCorr), c(shiftFinal), c(outl), c(inl), c(freq), freq > 0 ? 1 : 0,
                         c(pw), c(freq > 0 ? cop : null), defrost ? 1 : 0, valve === 1 ? 1 : 0, ssOn ? 1 : 0, mode, c(num(G('Starts_Today'))),
                         ctRes.on ? 1 : 0, ctRes.cur, ctRes.applied, ctRes.lead, ctRes.distrib ? 1 : 0, String(ctRes.code).replace(/,/g, ';'), ctRes.locks.join(' + ').replace(/,/g, ';'), Math.ceil(ctRes.holdLeft / MS_MIN),
-                        c(at1h), c(at24h), c(atSpanH), c(atFc24), c(atCalc), c(sollNow), c(sollCalc), c(shiftEq), ctRes.floorHit ? 1 : 0]);
+                        c(at1h), c(at24h), c(atSpanH), c(atFc24), c(atCalc), c(sollNow), c(sollCalc), c(shiftEq), ctRes.floorHit ? 1 : 0, hcV === null ? '' : hcV]);
     var logFile = '/data/optimizer/optimizer-v2-' + month + '.csv', headLine = cols.join(',');
     out[4] = {filename: logFile, payload: (headerNeeded('logHead', logFile, headLine) ? headLine + '\n' : '') + vals.join(',') + '\n'};
     flow.set('lastLog', now);
