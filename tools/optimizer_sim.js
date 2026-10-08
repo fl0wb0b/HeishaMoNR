@@ -894,9 +894,12 @@ let expKwh = 0; ts.forEach(([t, w]) => { const o = Math.min(t * 1000 + 900000, N
 check('PV-Prognose (evcc, vorlaeufig): Energie der naechsten 24 h stimmt, Spitze ~8000 W', Math.abs(kwh - expKwh) < 0.15 && erow(e, 'PV-Prognose nächste 24 h').includes('Spitze 8000 W') && erow(e, 'Daten PV-Prognose').startsWith('evcc (vorläufig)'), erow(e, 'PV-Prognose nächste 24 h') + ' erwartet ' + expKwh.toFixed(1));
 // VRM
 const vrmRec = []; for (let t = NOWE / 1000 - 3600; t < NOWE / 1000 + 47 * 3600; t += 3600) { vrmRec.push([t * 1000, 1000]); }                  // konstant 1000 Wh je Stunde, Zeit in ms
-const consRec = vrmRec.map(x => [x[0], 500]);
-run('opt_vrm_parse', {statusCode: 200, payload: {success: true, records: {solar_yield_forecast: vrmRec, vrm_consumption_fc: consRec}, totals: {}}}); e = run('opt_energy', {});
+const consRec = vrmRec.map(x => [x[0], 500]), hpRec = vrmRec.map(x => [x[0], 200]);
+run('opt_vrm_parse', {statusCode: 200, payload: {success: true, records: {solar_yield_forecast: vrmRec, vrm_consumption_fc: consRec, vrm_consum_hp_fc: hpRec}, totals: {}}}); e = run('opt_energy', {});
 check('VRM-Verbrauchsprognose: 500 Wh/h -> 12,0 kWh in 24 h', erow(e, 'Verbrauch nächste 24 h') === '12,0 kWh', erow(e, 'Verbrauch nächste 24 h'));
+check('VRM-Waermepumpenprognose: 200 Wh/h -> 4,80 kWh in 24 h (Feld vrm_consum_hp_fc, gibt es erst seit dem Venus-Geraet)', erow(e, 'Wärmepumpe nächste 24 h (VRM-Prognose)') === '4,80 kWh' && gstore.OPT_plan_in.vrmHpKwh > 4.79 && gstore.OPT_plan_in.vrmHpKwh < 4.81, erow(e, 'Wärmepumpe nächste 24 h (VRM-Prognose)'));
+ewld(); { const recNoHp = vrmRec.map(x => [x[0], 1000]); run('opt_vrm_parse', {statusCode: 200, payload: {success: true, records: {solar_yield_forecast: recNoHp, vrm_consumption_fc: consRec, vrm_consum_hp_fc: false}, totals: {}}}); const en0 = run('opt_energy', {}); check('VRM ohne Waermepumpenprognose (Feld false, wie bis 7.10.): Zeile zeigt "nicht geliefert", nichts bricht', erow(en0, 'Wärmepumpe nächste 24 h (VRM-Prognose)') === 'nicht geliefert' && gstore.OPT_plan_in.vrmHpKwh === null, erow(en0, 'Wärmepumpe nächste 24 h (VRM-Prognose)')); }
+run('opt_vrm_parse', {statusCode: 200, payload: {success: true, records: {solar_yield_forecast: vrmRec, vrm_consumption_fc: consRec, vrm_consum_hp_fc: hpRec}, totals: {}}}); e = run('opt_energy', {});
 check('PV-Prognose VRM bevorzugt: 1000 Wh/h -> 24,0 kWh, Zeit in ms korrekt umgerechnet, Quelle "VRM"', erow(e, 'PV-Prognose nächste 24 h').startsWith('24,0 kWh') && erow(e, 'Daten PV-Prognose').startsWith('VRM') && erow(e, 'VRM-Abruf').startsWith('OK'), erow(e, 'PV-Prognose nächste 24 h') + ' | ' + erow(e, 'Daten PV-Prognose'));
 NOW += 5 * 3600000; ven('Dc/Pv/Power', 1); e = run('opt_energy', {});
 check('VRM aelter als 4 h: Rueckfall auf die evcc-Prognose (vorlaeufig)', erow(e, 'Daten PV-Prognose').startsWith('evcc (vorläufig)') || erow(e, 'Daten PV-Prognose').startsWith('keine'), erow(e, 'Daten PV-Prognose'));
@@ -917,6 +920,8 @@ sv = run('opt_vrm_save', {payload: {vrm_token: TOK, vrm_id: '123456'}});
 check('gueltige Eingabe: gespeichert mit Modus 0600, Tokenfeld geleert, sofortiger Abruf, Status ohne Token', files['/data/optimizer/vrm.json'].mode === 0o600 && sv[0].payload.vrm_token === '' && sv[0].payload.vrm_id === '123456' && sv[2].payload === 'jetzt' && !sv[3].payload.includes(TOK) && sv[3].payload.includes('36 Zeichen'), sv[3].payload);
 const rq = run('opt_vrm_req', {});
 check('Anfrage: richtige URL (Installation, type=forecast, Stundenwerte, 48 h), Token nur im Header', rq.url.startsWith('https://vrmapi.victronenergy.com/v2/installations/123456/stats?type=forecast&interval=hours&start=') && !rq.url.includes(TOK) && rq.headers['x-authorization'] === 'Token ' + TOK, rq.url.slice(0, 90));
+const nowKeep = NOW; NOW = NOWE + 49 * 60000 + 7000; const rq49 = run('opt_vrm_req', {}); NOW = nowKeep;          // Abruf um 10:49:07
+check('Anfrage beginnt und endet auf einer vollen Stunde, auch bei einem Abruf um 10:49:07, damit die VRM-Stundenwerte nicht um die Abrufminute verschoben sind (vorher :49)', (() => { const m = /start=(\d+)&end=(\d+)/.exec(rq49.url); return !!m && Number(m[1]) % 3600 === 0 && Number(m[2]) % 3600 === 0 && Number(m[2]) - Number(m[1]) === 49 * 3600; })(), rq49.url.slice(-40));
 sv = run('opt_vrm_save', {payload: {vrm_token: '', vrm_id: '654321'}});
 check('leeres Tokenfeld behaelt den gespeicherten Token, ID wird geaendert', JSON.parse(files['/data/optimizer/vrm.json'].data).token === TOK && JSON.parse(files['/data/optimizer/vrm.json'].data).id === '654321', '');
 e = run('opt_energy', {}); const dumpV = JSON.stringify(gstore) + JSON.stringify(fstore) + JSON.stringify(e) + JSON.stringify(sv);
@@ -1114,6 +1119,18 @@ check('Leistungsgrenze: reicht der Deckel im Frost nicht (Bedarf ueber 90 % der 
 check('Leistungsgrenze: der Plan empfiehlt nie mehr Waerme, als die Grenze liefern kann (ausser der ohnehin noetige Normalverlauf)', P.slots.slice(0, 96).every(x => x.p <= Math.max(x.b, P.cap.kw * 0.25 + 0.05 + 1e-9)), Math.max(...P.slots.map(x => x.p)).toFixed(2));
 pworld({wide: true, quiet: 1}); step(2); P = planNow();
 check('Leistungsgrenze: fuer Stufen ohne Annahme (hier Stufe 1) gilt die Nennleistung', P.cap.kw === 5 && P.cap.src === 'Modell' && P.cap.level === 1, JSON.stringify(P.cap));
+
+// ---- 3c) Strom der Waermepumpe: Modell (Waermebedarf / COP) neben der VRM-Prognose; Update-Sicherheit
+pworld({wide: true, quiet: 3}); step(2); P = planNow(); gstore.OPT_plan_in.vrmHpKwh = 0.03;
+let rowEl = Object.fromEntries(planRows())['Strom Wärmepumpe nächste 24 h'];
+check('Plan: Zeile "Strom Wärmepumpe" nennt Modellwert (Bedarf / COP) und VRM-Prognose nebeneinander', /^\d+,\d kWh \(Modell: Wärmebedarf ÷ COP\) · VRM-Prognose (nicht geliefert|\d+,\d\d kWh)$/.test(rowEl) && Math.abs(P.elModel - P.slots.slice(0, 96).reduce((a, x) => a + x.bedarf / x.cop, 0)) < 1e-9, rowEl);
+pfeed = (f0 => () => { f0(); gstore.OPT_plan_in.vrmHpKwh = 0.03; })(pfeed); pworld({wide: true, quiet: 3}); pfeed = (f1 => () => { f1(); gstore.OPT_plan_in.vrmHpKwh = 0.03; })(pfeed);
+step(2); rowEl = Object.fromEntries(planRows())['Strom Wärmepumpe nächste 24 h']; P = planNow();
+check('Plan: mit VRM-Wert 0,03 kWh steht dieser neben dem Modell, beides im Schnappschuss-Kopf (meta) fuer die spaetere Auswertung', /VRM-Prognose 0,03 kWh$/.test(rowEl) && P.vrmHp === 0.03, rowEl);
+pworld({wide: true, quiet: 3}); step(2);
+delete fstore.plan.plan.ver; delete fstore.plan.plan.cap; delete fstore.plan.plan.maxDemand; delete fstore.plan.plan.res.missing; delete fstore.plan.plan.res.stale;
+let errUpd = null, ro3; try { ro3 = step(1); } catch (e) { errUpd = e.message; }
+check('Update-Sicherheit: ein Plan einer aelteren Code-Version im Speicher (ohne neue Felder) wirft keinen Fehler, sondern wird sofort neu berechnet', errUpd === null && planNow().ver > 0 && planNow().cap && planNow().maxDemand && Array.isArray(planNow().res.missing) && ro3[0][0].payload.plan.length === 24, errUpd || '');
 
 // ---- 4) Prognosevertrauen je Horizont
 pworld({wide: true}); step(2); P = planNow();

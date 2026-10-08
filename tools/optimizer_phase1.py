@@ -546,7 +546,7 @@ function kwh24(arr) {                                                 // VRM-Stu
     return cn ? sm / 1000 : null;
 }
 var vrmFresh = vrmAge !== null && vrmAge <= (isFinite(E.vrmMaxAgeH) ? Number(E.vrmMaxAgeH) : 4) * H;
-var consK = vrmFresh ? kwh24(vrm.cons) : null;
+var consK = vrmFresh ? kwh24(vrm.cons) : null, hpK = vrmFresh ? kwh24(vrm.hp) : null;
 var pvCov = pvSeries.length ? Math.max(0, (pvSeries[pvSeries.length - 1].t + pvSeries[pvSeries.length - 1].dt - now) / H) : null;
 var pvKwh24 = null, pvPeak = null, pvPeakAt = null, kToday = null, kTomorrow = null;
 if (pvSeries.length) {
@@ -575,6 +575,7 @@ var rows = [
     ['Günstigster Slot / 3 h', pMinAt ? hhmm(pMinAt) + ' (' + f(pMin * 100, 1, 'ct') + ') / ab ' + (p3At ? hhmm(p3At) + ' (Ø ' + f(p3 * 100, 1, 'ct') + ')' : '–') : '–', ''],
     ['PV-Prognose nächste 24 h', pvKwh24 !== null ? f(pvKwh24, 1, 'kWh') + ' · Spitze ' + f(pvPeak, 0, 'W') + ' um ' + hhmm(pvPeakAt) : '–', ''],
     ['Verbrauch nächste 24 h (VRM-Prognose)', consK !== null ? f(consK, 1, 'kWh') : '–', ''],
+    ['Wärmepumpe nächste 24 h (VRM-Prognose)', hpK !== null ? f(hpK, 2, 'kWh') : 'nicht geliefert', ''],
     ['PV-Prognose heute / morgen', kToday !== null ? f(kToday, 1) + ' / ' + f(kTomorrow, 1, 'kWh') : '–', ''],
     ['Daten Venus (live)', liveOk ? 'ok · Alter ' + ageTxt(liveAge) : 'veraltet · ' + ageTxt(liveAge), warnS(liveOk)],
     ['Daten Strompreise', pSlots ? pSrc + ' · ' + (priceOk ? 'ok' : 'zu kurz') + ' · reichen ' + f(priceCov, 0, 'h') + ' voraus' : 'keine Daten', warnS(priceOk)],
@@ -591,9 +592,9 @@ var iso = month + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d
 var lastLog = flow.get('enLog');
 if (!lastLog || now - lastLog >= 5 * MS_MIN - 1000) {
     var cols = ['zeit', 'pv_w', 'haus_w', 'netz_w', 'batterie_w', 'batterie_soc', 'preis_netz', 'preis_einspeisung', 'preis_min_24h', 'preis_mittel_24h', 'preis_max_24h', 'preis_guenstigster_slot',
-                'pv_prog_24h_kwh', 'pv_prog_spitze_w', 'pv_prog_heute_kwh', 'pv_prog_morgen_kwh', 'pv_prog_quelle', 'venus_ok', 'venus_alter_min', 'soc_alter_min', 'preise_reichen_h', 'pv_prognose_reicht_h', 'vrm_status', 'soc_quelle', 'preis_quelle', 'preis_netz_evcc', 'preis_einspeisung_evcc', 'vrm_verbrauch_24h_kwh'];
+                'pv_prog_24h_kwh', 'pv_prog_spitze_w', 'pv_prog_heute_kwh', 'pv_prog_morgen_kwh', 'pv_prog_quelle', 'venus_ok', 'venus_alter_min', 'soc_alter_min', 'preise_reichen_h', 'pv_prognose_reicht_h', 'vrm_status', 'soc_quelle', 'preis_quelle', 'preis_netz_evcc', 'preis_einspeisung_evcc', 'vrm_verbrauch_24h_kwh', 'vrm_wp_24h_kwh'];
     var vals = [iso, c(pv), c(home), c(grid), c(batP), c(soc), c(pCur), c(pFeed), c(pMin), c(pAvg), c(pMax), pMinAt ? hhmm(pMinAt) : '',
-                c(pvKwh24), c(pvPeak), c(kToday), c(kTomorrow), pvSrc, liveOk ? 1 : 0, liveAge === null ? '' : c(liveAge / MS_MIN), socAge === null ? '' : c(socAge / MS_MIN), c(priceCov), c(pvCov), String(vrm.status || '').replace(/,/g, ';'), socSrc, pSrc, c(eCur), c(eFeed), c(consK)];
+                c(pvKwh24), c(pvPeak), c(kToday), c(kTomorrow), pvSrc, liveOk ? 1 : 0, liveAge === null ? '' : c(liveAge / MS_MIN), socAge === null ? '' : c(socAge / MS_MIN), c(priceCov), c(pvCov), String(vrm.status || '').replace(/,/g, ';'), socSrc, pSrc, c(eCur), c(eFeed), c(consK), c(hpK)];
     var file = '/data/optimizer/energy-' + month + '.csv', head = cols.join(','), needHead = true;
     if (flow.get('enHead') === month + '|' + head) { needHead = false; }
     else {
@@ -610,7 +611,8 @@ if (!lastSnap || now - lastSnap >= H - 1000) {
                 owm: (W.fpts && W.f_ts && now - W.f_ts < 2 * H) ? W.fpts : null,
                 price: pSlots ? pSlots.filter(function (s) { return s.e > now - 900000 && s.s < upto; }).map(function (s) { return [Math.round(s.s / 1000), s.p]; }) : null,
                 pv: pvSeries.length ? pvSeries.filter(function (s) { return s.t + s.dt > now && s.t < upto; }).map(function (s) { return [Math.round(s.t / 1000), Math.round(s.w), s.dt / 1000]; }) : null, pvSrc: pvSrc,
-                cons: vrmFresh && vrm.cons ? vrm.cons.filter(function (x) { return x[0] * 1000 + H > now && x[0] * 1000 < upto; }).map(function (x) { return [x[0], Math.round(x[1])]; }) : null};
+                cons: vrmFresh && vrm.cons ? vrm.cons.filter(function (x) { return x[0] * 1000 + H > now && x[0] * 1000 < upto; }).map(function (x) { return [x[0], Math.round(x[1])]; }) : null,
+                hp: vrmFresh && vrm.hp ? vrm.hp.filter(function (x) { return x[0] * 1000 + H > now && x[0] * 1000 < upto; }).map(function (x) { return [x[0], Math.round(x[1] * 10) / 10]; }) : null};
     out[2] = {filename: '/data/optimizer/forecast-' + month + '.jsonl', payload: JSON.stringify(snap) + '\n'};
     flow.set('enSnap', now);
     var sn0 = flow.get('enSnaps') || jload('/data/optimizer/forecast-recent.json', []);       // kompakte Kopie der letzten 30 Stunden fuer die Pruefung
@@ -675,7 +677,7 @@ fqRows.push(['Gesammelt', fqHist.length + ' Stunden Ist-Werte · ' + fqSn.length
 out[4] = {payload: {rows: fqRows}};
 global.set('OPT_plan_in', {ts: now, price: pSlots ? pSlots.filter(function (s) { return s.e > now - 2 * H && s.s < now + 40 * H; }).map(function (s) { return [s.s, s.e, s.p]; }) : null, priceSrc: pSrc,
     pv: pvSeries.length ? pvSeries.filter(function (s) { return s.t + s.dt > now - 2 * H && s.t < now + 40 * H; }).map(function (s) { return [s.t, Math.round(s.w), s.dt]; }) : null, pvSrc: pvSrc,
-    pvNow: pv, soc: soc, socSrc: socSrc, liveOk: liveOk, grid: grid, batP: batP});
+    pvNow: pv, soc: soc, socSrc: socSrc, liveOk: liveOk, grid: grid, batP: batP, vrmHpKwh: hpK});
 function G0(k) { return global.get(k); }
 function num0(v) { v = Number(v); return (v === null || v === undefined || !isFinite(v)) ? null : v; }
 function jload(file, dflt) { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { return dflt; } }
@@ -696,7 +698,7 @@ if (!j || !j.token || !j.id) {
     return null;
 }
 flow.set('vrmInfo', {hasToken: true, tokenLen: String(j.token).length, id: j.id});
-var nowS = Math.floor(Date.now() / 1000);
+var nowS = Math.floor(Date.now() / 3600000) * 3600;                    // volle Stunde: VRM legt die Stundenwerte ab "start" an
 return {topic: 'vrm', headers: {'x-authorization': 'Token ' + j.token},
         url: 'https://vrmapi.victronenergy.com/v2/installations/' + encodeURIComponent(j.id) + '/stats?type=forecast&interval=hours&start=' + (nowS - 3600) + '&end=' + (nowS + 48 * 3600)};
 """
@@ -718,14 +720,14 @@ function norm(arr) {                                               // [[Zeit, We
     arr.forEach(function (x) { if (Array.isArray(x)) { var t = Number(x[0]), v = Number(x[1]); if (isFinite(t) && isFinite(v) && v >= 0) { o.push([t > 1e11 ? Math.round(t / 1000) : t, v]); } } });
     return o;
 }
-var pv = norm(rec.solar_yield_forecast);
+var pv = norm(rec.solar_yield_forecast);                           // vrm_consum_hp_fc (Waermepumpe) gibt es erst, wenn VRM das Geraet kennt
 if (!pv.length) {                                                  // sonst Wechselrichter- und Laderegler-Anteil addieren
     var a = norm(rec.vrm_pv_inverter_yield_fc), b = norm(rec.vrm_pv_charger_yield_fc), map = {};
     a.concat(b).forEach(function (x) { map[x[0]] = (map[x[0]] || 0) + x[1]; });
     pv = Object.keys(map).map(Number).sort(function (x, y) { return x - y; }).map(function (t) { return [t, map[t]]; });
 }
 if (!pv.length) { V.keys = Object.keys(rec).slice(0, 12); return fail('keine PV-Prognose in der Antwort (Felder: ' + V.keys.join(', ') + ')'); }
-V.pv = pv; V.cons = norm(rec.vrm_consumption_fc); V.keys = Object.keys(rec).slice(0, 12); V.ts = Date.now(); V.status = 'OK';
+V.pv = pv; V.cons = norm(rec.vrm_consumption_fc); V.hp = norm(rec.vrm_consum_hp_fc); V.keys = Object.keys(rec).slice(0, 12); V.ts = Date.now(); V.status = 'OK';
 global.set('OPT_en', en);
 return null;
 """
@@ -1047,6 +1049,7 @@ PLAN_JS = r"""// Waermefahrplan (Shadow): 15-Minuten-Plan fuer die naechsten 24 
 var cfg = global.get('OPT_cfg');
 if (!cfg) { return null; }
 var PC = cfg.plan || {}, QC = cfg.quiet || {};
+var PLAN_VER = 5;                                                                                // bei jeder Aenderung der Plan-Felder erhoehen: aeltere Plaene im Speicher werden dann sofort neu gerechnet
 var now = Date.now(), MS_MIN = 60000, Q15 = 900000, H = 3600000, N = 104, NDAY = 96;       // 104 Slots = 26 h (24 h Anzeige + Reserve fuer den Vergleich nach +24 h)
 var G = function (k) { return global.get(k); };
 function num(v) { if (v === null || v === undefined || v === '') { return null; } v = Number(v); return isFinite(v) ? v : null; }
@@ -1196,7 +1199,7 @@ if (running && !dhw && !defrost && pth !== null) { pl.day.q += pth * dtH / 1000;
 
 // ---------- Plan berechnen: einmal pro 15-Minuten-Slot, bis er gelingt jede Minute
 function buildPlan() {
-    var P = {s0: s0, t: now, status: 'ok', why: '', slots: null};
+    var P = {s0: s0, t: now, ver: PLAN_VER, status: 'ok', why: '', slots: null};
     // Wetter-Prognose (OWM, 3-Stunden-Punkte)
     var W = G('OPT_weather') || {};
     var pts = (Array.isArray(W.fpts) ? W.fpts : []).filter(function (p) { return ok(p[0]) && ok(p[1]); }).sort(function (x, y) { return x[0] - y[0]; });
@@ -1372,13 +1375,14 @@ function buildPlan() {
         if (np === W3 && (bestP === null || sp / W3 > bestP.v)) { bestP = {i: i, v: sp / W3}; }
     }
     var maxD = null; for (i = 0; i < NDAY; i++) { var dk = slots[i].bedarf / 0.25; if (maxD === null || dk > maxD.kw) { maxD = {kw: dk, t: slots[i].t}; } }
-    P.maxDemand = maxD;
+    var elM = 0; for (i = 0; i < NDAY; i++) { elM += slots[i].bedarf / slots[i].cop; }
+    P.maxDemand = maxD; P.elModel = elM; P.vrmHp = (PI.vrmHpKwh === undefined || PI.vrmHpKwh === null) ? null : PI.vrmHpKwh;
     P.slots = slots; P.cbar = cbar; P.enough = enough; P.eta = eta;
     P.sum = {bedarf: sumB, up: sumUp, costB: costB, costP: costP, costPot: costPot, thermWin: bestT, pvWin: bestP, atRef: atRef, anchor: anchor, pvRes: pvRes, wRes: 180};
     return P;
 }
 
-if (!pl.plan || pl.planSlot !== s0 || pl.plan.status !== 'ok') {
+if (!pl.plan || pl.planSlot !== s0 || pl.plan.status !== 'ok' || pl.plan.ver !== PLAN_VER) {
     pl.plan = buildPlan(); pl.planSlot = s0;
 }
 var P = pl.plan;
@@ -1391,7 +1395,7 @@ if (P.status === 'ok' && P.slots && pl.snapHour !== hourNow) {
         return [x.t, Math.round(x.at * 100) / 100, Math.round(x.rh), Math.round(x.cop * 100) / 100, x.price, x.pv === null ? null : Math.round(x.pv), Math.round(x.b * 1000) / 1000, Math.round(x.p * 1000) / 1000, Math.round(x.risk * 100) / 100,
                 Math.round(x.cA * 100) / 100, Math.round(x.cP * 100) / 100, x.att, x.rec, Math.round(x.cost * 100) / 100, x.off, x.quiet, Math.round(x.pPot * 1000) / 1000, Math.round(x.dew * 10) / 10, Math.round(x.base * 100) / 100, Math.round(x.dPen * 100) / 100, Math.round(x.uPen * 100) / 100,
                 Math.round(x.resBack * 1000) / 1000, Math.round(x.resFwd * 1000) / 1000];
-    }), meta: {plan_slots: 96, cap: P.cap, model: P.model, res: {at_min: 180, rh_min: 180, pv_min: P.sum.pvRes, price_min: 15}, reserve: {state: P.res.state, down: P.res.down, up: P.res.up, stale: P.res.stale, missing: P.res.missing}, conf_at: P.conf.at.map(function (a) { return [a.h, Math.round(a.c * 100) / 100, a.n]; }),
+    }), meta: {plan_slots: 96, cap: P.cap, el_model_24h_kwh: Math.round(P.elModel * 100) / 100, vrm_hp_24h_kwh: P.vrmHp, model: P.model, res: {at_min: 180, rh_min: 180, pv_min: P.sum.pvRes, price_min: 15}, reserve: {state: P.res.state, down: P.res.down, up: P.res.up, stale: P.res.stale, missing: P.res.missing}, conf_at: P.conf.at.map(function (a) { return [a.h, Math.round(a.c * 100) / 100, a.n]; }),
             conf_pv: P.conf.pv.map(function (a) { return [a.h, Math.round(a.c * 100) / 100, a.n]; })}};
     pl.snaps = (pl.snaps || []).filter(function (x) { return x.t0 > now - pn('snapKeepH', 27) * H; });
     pl.snaps.push(snap); pl.snapHour = hourNow;
@@ -1416,6 +1420,7 @@ if (P.status === 'ok') {
         ['Wärmebedarf nächste 24 h', f(dayB, 1, 'kWh') + ' · Ø ' + f(dayB / 24, 2, 'kW') + ' (Bedarf ' + (ml.uaLearned ? 'gelernt aus ' + ml.uaDays + ' Tagen' : 'Standardwert') + ' ' + f(ml.ua * 1000, 0, 'W/K') + ')', ''],
         ['Verschobene Wärme', f(shiftK, 2, 'kWh') + ' vorgezogen · Ersparnis Modell ' + f(sav, 0, 'ct') + (dayB > 0 ? ' (' + f(100 * sav / Math.max(1, sm.costB), 1, '%') + ')' : '') + ' · ohne Komfortgrenzen ' + f(savPot, 0, 'ct'), ''],
         ['Leistungsgrenze' + (P.cap.level !== null ? ' (Quiet ' + P.cap.level + ')' : ''), f(P.cap.kw, 1, 'kW') + ' (' + P.cap.src + (P.cap.obs !== null ? ' · höchster Dauerwert ' + f(P.cap.obs, 1, 'kW') : '') + ') · höchster Bedarf ' + f(P.maxDemand.kw, 1, 'kW') + ' um ' + hhmm(P.maxDemand.t) + ' · reicht bis ca. ' + f(ml.tbal - P.cap.kw / ml.ua, 0, '°C') + ' Außen', P.maxDemand.kw > P.cap.kw * 0.9 ? 'warn' : ''],
+        ['Strom Wärmepumpe nächste 24 h', f(P.elModel, 1, 'kWh') + ' (Modell: Wärmebedarf ÷ COP) · VRM-Prognose ' + (P.vrmHp !== null ? f(P.vrmHp, 2, 'kWh') : 'nicht geliefert'), ''],
         ['Reserve Gebäude', 'nach hinten ' + f(rsx.down, 1, 'kWh') + ' · nach vorn ' + f(rsx.up, 1, 'kWh') + ' · ' + rsx.state + ((rsx.critDown && (rsx.state === 'alle im Band' || rsx.state === 'Raum unter Minimum' || rsx.state === 'Raum über Maximum')) ? ' (eng: ' + rsx.critDown + ')' : '') + (rsx.missing.length ? ' · ohne Daten: ' + rsx.missing.join(', ') : '') + (rsx.stale.length ? ' · ältere Werte mit Abschlag: ' + rsx.stale.join(', ') : ''), rsx.state === 'alle im Band' ? 'ok' : 'warn'],
         ['Thermisch günstigstes Fenster', win(tw, 'ct/kWh', 1) + ' (Tagesmittel ' + f(P.cbar, 1, 'ct') + ')', ''],
         ['PV-günstigstes Fenster', pw ? win(pw, 'W', 0) : 'keine PV-Prognose', ''],
