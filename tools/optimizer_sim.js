@@ -986,6 +986,25 @@ check('Waechter: nach "Takt durch Wechsel" ist das automatische Schalten gesperr
 // 7) Verdichter steht: keine Pruefung; Waechter sendet nie etwas
 ewWorld({compressor_frequency: 0}); ew = collect(2);
 check('Waechter: bei stehendem Verdichter nur Hinweis "Wächter prüft im Betrieb"', /Verdichter steht/.test(ewRow(ew[1])[1]), ewRow(ew[1])[1]);
+// ---- Ereignisliste in der Quiet-Karte
+{
+  const evFile = '/data/optimizer/quiet-events-2026-10.csv', keep = files[evFile];
+  const lines = ['zeit,ereignis,wechsel'];
+  for (let k = 0; k < 14; k++) { lines.push('2026-10-0' + (1 + (k % 8)) + ' 1' + (k % 10) + ':0' + (k % 6) + ':00,sollvorlauf_erreicht,nach ' + (50 + k) + ' min · Heizregelung 1'); }
+  lines.push('2026-10-08 22:54:17,quiet_stufe,3->0 (per Befehl; Quelle: GUI)', '2026-10-08 23:06:42,heizregelung_empfehlung,ok->Comfort empfohlen (Außentemperatur 4.0 °C)', '2026-10-09 00:20:42,testfenster_quiet_3_2,geoeffnet',
+             '2026-10-09 03:17:23,lauf_ende,Lauf 599 min · Sollvorlauf erreicht nach 58 min · Heizregelung 1 · Quiet 3', '2026-10-09 04:48:23,eskalation_schatten,gesperrt: Raum seit 60 min unter Minimum → Heizregelung Efficiency → Comfort [Startphase]');
+  ewWorld({compressor_frequency: 0}); files[evFile] = {data: lines.join('\n') + '\n', mode: 0o644};
+  const eo = collect(1)[0], evs = eo[0].payload.events;
+  check('Ereignisliste: hoechstens 10 Eintraege, neueste zuerst, nur Waechter/Befehle/Stufen/Laeufe (kein Empfehlungs-Flackern, keine Testfenster)', evs.length === 10 && evs[0][1] === 'Wächter (Schatten)' && evs[1][1] === 'Lauf zu Ende' && evs[2][1] === 'Quiet-Stufe' && evs.every(e => e[1] !== undefined && !/Empfehlung|Testfenster|quiet_3_2/.test(e.join(' '))), JSON.stringify(evs.slice(0, 4)));
+  check('Ereignisliste: Zeit als "TT.MM. HH:MM", Text unveraendert, Waechter-Eintrag rot markiert, Sollvorlauf gruen', evs[0][0] === '09.10. 04:48' && /^gesperrt: Raum seit 60 min/.test(evs[0][2]) && evs[0][3] === 'warn' && evs[1][0] === '09.10. 03:17' && evs.filter(e => e[1] === 'Sollvorlauf erreicht').every(e => e[3] === 'ok'), JSON.stringify(evs[0]) + JSON.stringify(evs[1]));
+  ewWorld(); files[evFile] = {data: 'zeit,ereignis,wechsel\n', mode: 0o644}; const ew3 = collect(90, i => { gstore.compressor_runtime = 1 + i; gstore.TOP6_Main_Outlet_Temp = i < 60 ? 28 : 31.5; }), ev3 = ew3.map(o => o[0].payload.events).filter(e => e.length).pop() || [];
+  check('Ereignisliste: Ereignis dieser Minute (Sollvorlauf erreicht) steht schon in der Karte, obwohl es noch nicht in der Datei steht', ev3.length === 1 && ev3[0][1] === 'Sollvorlauf erreicht' && /^nach 6[01] min/.test(ev3[0][2]), JSON.stringify(ev3));
+  if (keep) { files[evFile] = keep; } else { delete files[evFile]; }
+  ewWorld({compressor_frequency: 0}); delete files[evFile]; const eo2 = collect(1)[0];
+  check('Ereignisliste: ohne Ereignisdatei leere Liste, kein Absturz, Zeilen bleiben', Array.isArray(eo2[0].payload.events) && eo2[0].payload.events.length === 0 && eo2[0].payload.rows.length > 10, '');
+  const qtpl = JSON.parse(fs.readFileSync(flowsFile, 'utf8')).find(n => n.id === 'opt_t_quiet').format;
+  check('Karte: Vorlage zeigt Zeilen und darunter "Letzte Ereignisse" (nur wenn welche da sind), bleibt in der Hoehenanpassung (optfit)', qtpl.includes('msg.payload.rows') && qtpl.includes('msg.payload.events') && qtpl.includes('Letzte Ereignisse') && (qtpl.match(/class="optfit"/g) || []).length === 1 && qtpl.includes('optfit'), '');
+}
 check('Waechter nur lesend: in allen Szenarien wurde kein Befehl an die Waermepumpe gesendet', sent.length === sentBefore || sent.slice(sentBefore).every(x => x.id !== 'opt_quiet' || !x.m || !x.m.topic), String(sent.length - sentBefore));
 check('Abtauprotokoll nur lesend: die Funktion sendet nichts an die Waermepumpe, nur Datei-Ausgabe (Ausgang 5)', JSON.parse(fs.readFileSync(flowsFile, 'utf8')).find(n => n.id === 'opt_quiet').wires[4].join() === 'opt_f_def' && sent.every(x => x.id !== 'opt_quiet' || !x.m || !x.m.topic), '');
 check('Komfortdefizit-Anteil je Kennfeldzeile (hier 100 %)', trow(tab, 3, '3–7 °C')[16] === '100 %', trow(tab, 3, '3–7 °C')[16]);

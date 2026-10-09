@@ -1159,7 +1159,23 @@ var statRow = function (label, bn, s) {
 
 // ---------- Protokoll: jede Minute (auch im Stillstand, damit Pumpenspuelungen und Neustarts sichtbar sind); Statistik alle 10 min sichern
 var month = new Date(now).getFullYear() + '-' + ('0' + (new Date(now).getMonth() + 1)).slice(-2);
-var out = [{payload: {rows: rows}}, {payload: {stats: tab}}, null, null, dfOut];
+// ---------- Ereignisliste fuer die Karte: die letzten relevanten Eintraege aus quiet-events (neueste zuerst), dazu die Ereignisse dieser Minute (stehen noch nicht in der Datei)
+var EVSHOW = {sollvorlauf_erreicht: ['Sollvorlauf erreicht', 'ok'], lauf_ende: ['Lauf zu Ende', ''], eskalation_schatten: ['Wächter (Schatten)', 'warn'], takt_nach_wechsel: ['Takt nach Wechsel', 'warn'],
+              heizregelung_befehl: ['Heizregelung-Befehl', ''], quiet_befehl: ['Quiet-Befehl', ''], quiet_stufe: ['Quiet-Stufe', ''], pumpenmodus_befehl: ['Pumpenmodus-Befehl', ''], quiet_prioritaet_befehl: ['Quiet-Priorität-Befehl', '']};
+var evList = [];
+function evTime(z) { return z.slice(8, 10) + '.' + z.slice(5, 7) + '. ' + z.slice(11, 16); }
+try {
+    String(fs.readFileSync('/data/optimizer/quiet-events-' + month + '.csv', 'utf8')).split('\n').slice(-600).forEach(function (l) {
+        var i1 = l.indexOf(','), i2 = i1 < 0 ? -1 : l.indexOf(',', i1 + 1);
+        if (i2 < 0 || l.indexOf('zeit,') === 0) { return; }
+        var wh = l.slice(i1 + 1, i2);
+        if (EVSHOW[wh]) { evList.push([evTime(l.slice(0, i1)), EVSHOW[wh][0], l.slice(i2 + 1), EVSHOW[wh][1]]); }
+    });
+} catch (e) { /* noch keine Ereignisdatei */ }
+var isoNow = month + '-' + ('0' + new Date(now).getDate()).slice(-2) + ' ' + ('0' + new Date(now).getHours()).slice(-2) + ':' + ('0' + new Date(now).getMinutes()).slice(-2);
+escEvents.forEach(function (e) { if (EVSHOW[e[0]]) { evList.push([evTime(isoNow), EVSHOW[e[0]][0], String(e[1]).replace(/,/g, ';'), EVSHOW[e[0]][1]]); } });
+evList = evList.slice(-10).reverse();
+var out = [{payload: {rows: rows, events: evList}}, {payload: {stats: tab}}, null, null, dfOut];
 if (qs.testOpen !== null && qs.testOpen !== testOk) {                                  // Testfenster geoeffnet/geschlossen: Ereignis fuer den Betreiber
     var evd = new Date(now), evp = function (x) { return (x < 10 ? '0' : '') + x; };
     var evIso = evd.getFullYear() + '-' + evp(evd.getMonth() + 1) + '-' + evp(evd.getDate()) + ' ' + evp(evd.getHours()) + ':' + evp(evd.getMinutes()) + ':' + evp(evd.getSeconds());
@@ -2110,7 +2126,12 @@ def template(i, gid, height, y):
 upsert(template("opt_t_opt", "opt_g_opt", 6, 140))
 upsert(template("opt_t_wx", "opt_g_wx", 7, 200))
 upsert(template("opt_t_calc", "opt_g_calc", 8, 230))
-upsert(template("opt_t_quiet", "opt_g_quiet", 22, 290))
+_qt = template("opt_t_quiet", "opt_g_quiet", 22, 290)
+_qt["format"] = (TABLE.replace('</table></div>', '</table>'
+                 '<div class="opt" ng-if="msg.payload.events && msg.payload.events.length" style="margin-top:10px"><div class="l" style="padding:3px 4px;font-size:12px">Letzte Ereignisse</div>'
+                 '<div ng-repeat="e in msg.payload.events track by $index" style="padding:3px 4px;border-top:1px solid #eee"><span class="l">{{e[0]}}</span> '
+                 '<span ng-class="e[3]" style="font-weight:bold">{{e[1]}}</span><div class="l" style="white-space:normal;word-break:break-word">{{e[2]}}</div></div></div></div>') + FIT_JS.replace("__ID__", "opt_t_quiet"))
+upsert(_qt)
 upsert(template("opt_t_en", "opt_g_en", 14, 350))
 upsert(template("opt_t_fq", "opt_g_fq", 12, 400))
 QSTATS = """<style>.optq{width:100%;border-collapse:collapse;font-size:13px}
