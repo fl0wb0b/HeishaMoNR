@@ -817,6 +817,50 @@ global.set('OPT_hp', hp);
 return res;
 """
 
+KZ_IN_JS = r"""
+// Kinderzimmer oben (NUR LESEN): Zustand von Radiator-Relais (Shelly 1 Mini, shelly-radiator) und Heizluefter (Shelly Plug S, elektrisch) vom Venus/Shelly-Broker.
+// Die Regelung selbst liegt im Tab Dashboard; dieser Tab schreibt nichts an die Geraete. Ergebnis: global OPT_kz, Aenderungen als Ereignis in quiet-events.
+var kz = global.get('OPT_kz') || {};
+kz.rad = kz.rad || {}; kz.fan = kz.fan || {};
+var now = Date.now(), t = String(msg.topic || ''), raw = msg.payload;
+var d = new Date(now), pad = function (x) { return (x < 10 ? '0' : '') + x; };
+var iso = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+var file = '/data/optimizer/quiet-events-' + iso.slice(0, 7) + '.csv';
+function event(what, change) {
+    var head = '';
+    try { fs.readFileSync(file, 'utf8'); } catch (e) { head = 'zeit,ereignis,wechsel\n'; }
+    return {filename: file, payload: head + iso + ',' + what + ',' + String(change).replace(/,/g, ';') + '\n'};
+}
+function bool(v) { v = String(v).trim().toLowerCase(); return (v === 'on' || v === 'true' || v === '1') ? true : ((v === 'off' || v === 'false' || v === '0') ? false : null); }
+function txt(b) { return b ? 'an' : 'aus'; }
+var res = null;
+if (t === 'shelly-radiator/events/rpc') {                                                      // Gen3: NotifyStatus mit switch:0.output nur bei Aenderung (sonst Zaehler)
+    var p = raw;
+    if (Buffer.isBuffer(p)) { p = p.toString(); }
+    if (typeof p === 'string') { try { p = JSON.parse(p); } catch (e) { p = null; } }
+    var sw = p && p.params && p.params['switch:0'];
+    if (sw && typeof sw.output === 'boolean') {
+        var prevR = kz.rad.on;
+        kz.rad.on = sw.output; kz.rad.ts = now; kz.rad.src = sw.source || '';
+        if (typeof prevR === 'boolean' && prevR !== sw.output) { res = event('kz_radiator', txt(prevR) + '->' + txt(sw.output) + (sw.source ? ' (Quelle: ' + sw.source + ')' : '')); }
+    }
+} else if (t === 'shelly-radiator/online') {
+    var oR = bool(raw);
+    if (oR !== null) { var pO = kz.rad.online; kz.rad.online = oR; kz.rad.onlineTs = now; if (typeof pO === 'boolean' && pO !== oR) { res = event('kz_radiator_online', (pO ? 'online' : 'offline') + '->' + (oR ? 'online' : 'offline')); } }
+} else if (t === 'shellies/shellyplug-s-heiz/relay/0') {
+    var f0 = bool(raw);
+    if (f0 !== null) { var pF = kz.fan.on; kz.fan.on = f0; kz.fan.ts = now; if (typeof pF === 'boolean' && pF !== f0) { res = event('kz_heizluefter', txt(pF) + '->' + txt(f0)); } }
+} else if (t === 'shellies/shellyplug-s-heiz/relay/0/power') {
+    var w = Number(raw);
+    if (isFinite(w)) { kz.fan.w = w; kz.fan.wTs = now; }
+} else if (t === 'shellies/shellyplug-s-heiz/online') {
+    var oF = bool(raw);
+    if (oF !== null) { var pOF = kz.fan.online; kz.fan.online = oF; kz.fan.onlineTs = now; if (typeof pOF === 'boolean' && pOF !== oF) { res = event('kz_heizluefter_online', (pOF ? 'online' : 'offline') + '->' + (oF ? 'online' : 'offline')); } }
+}
+global.set('OPT_kz', kz);
+return res;
+"""
+
 QUIET_JS = r"""
 // Phase 4 (Shadow): Quiet-Empfehlung als grober Leistungsdeckel. Schreibt NICHTS an die Waermepumpe (kein MQTT-Ausgang in diesem Tab).
 // Heizkurve (Temperaturniveau) und Quiet (Leistungsdeckel) bleiben getrennte Groessen; Pumpendrehzahl wird nur beobachtet.
@@ -855,6 +899,10 @@ var defrost = num(G('TOP26_Defrosting_State')) === 1, dhw = num(G('TOP20_ThreeWa
 var ss = G('F_SS') || {}, ssRamp = ss.state === 1 && Math.abs(num(ss.correction_value) || 0) > 0;
 var at = num(G('TOP14_Outside_Temp')), fan1 = num(G('TOP62_Fan1_Motor_Speed'));
 var S = G('OPT_state') || {}, sFresh = S.ts && now - S.ts < 5 * MS_MIN;
+// Kinderzimmer oben (eigene Regelung im Tab Dashboard, hier nur mitgelesen): Radiator-Relais (Shelly 1 Mini) und Heizluefter (Shelly Plug S, elektrisch)
+var KZ = G('OPT_kz') || {}, KZR = KZ.rad || {}, KZF = KZ.fan || {};
+var kzRad = typeof KZR.on === 'boolean' ? (KZR.on ? 1 : 0) : '', kzFanOn = typeof KZF.on === 'boolean' ? (KZF.on ? 1 : 0) : '', kzFanW = typeof KZF.w === 'number' ? KZF.w : null;
+var kzFanOnline = typeof KZF.online === 'boolean' ? (KZF.online ? 1 : 0) : '';
 
 // ---------- Zustand (ueberlebt Neustarts per Datei)
 var qs = flow.get('qs');
@@ -1170,6 +1218,7 @@ var rows = [
     ['Leistung thermisch', pth !== null ? f(pth, 0, 'W') + (pthHs !== null ? ' (HeishaMon)' : ' (berechnet)') : '–', ''],
     ['COP', copNow !== null ? f(copNow, 1) : '–', ''],
     ['Flow · Pumpe (nur Beobachtung)', f(flw, 1, 'l/min') + ' · ' + (HP.Pump_Duty ? f(HP.Pump_Duty.v, 0) : '–') + ' / ' + (HP.Pump_Speed ? f(HP.Pump_Speed.v, 0, 'U/min') : '–'), ''],
+    ['Kinderzimmer oben', 'Radiator ' + (kzRad === '' ? '–' : (kzRad ? 'an' : 'aus')) + ' · Heizlüfter ' + (kzFanOnline === 0 ? 'offline' : (kzFanOn === '' ? '–' : (kzFanOn ? 'an' + (kzFanW !== null ? ' (' + f(kzFanW, 0, 'W') + ')' : '') : 'aus'))), ''],
     ['Taktung', 'heute ' + f(startsToday, 0) + ' Starts · Ø Lauf 24 h ' + (meanRun !== null ? f(meanRun, 0, 'min') : '–') + ' (' + runs24.length + ')', cycleBad ? 'warn' : ''],
     ['Quiet aktuell', qNow !== null ? 'Stufe ' + qNow + ' seit ' + dur(now - qs.levelSince) + (prio !== null ? ' · Priorität ' + (prio === 1 ? 'Leistung' : 'Lautstärke') : '') : '–', ''],
     ['Quiet normal (Shadow)', targetNormal !== null ? 'Stufe ' + targetNormal : '–', ''],
@@ -1241,6 +1290,25 @@ if (hcEvent) {
     if (!(out[3] && out[3].filename === hFile)) { try { fs.readFileSync(hFile, 'utf8'); } catch (e) { hHead = 'zeit,ereignis,wechsel\n'; } }
     out[3] = {filename: hFile, payload: (out[3] && out[3].filename === hFile ? out[3].payload : hHead) + hIso + ',heizregelung_empfehlung,' + hcEvent + '\n'};
 }
+// Schaltpunkte und Sollspruenge (Grundlage, um Ein-/Ausschaltregel der Anlage aus den Daten zu pruefen, ohne einzugreifen)
+var pumpRpmNow = hpv('Pump_Speed'), relNow = (istVL !== null && solVL !== null) ? istVL - solVL : null;
+var zustandNow = running ? 'lauf' : (pumpRpmNow === null ? '' : (pumpRpmNow >= 1000 ? 'pause' : 'heizgrenze'));       // pause: Thermo-Aus mit laufender Pumpe; heizgrenze: Pumpe steht (Spuelung mit 4300 U/min zaehlt kurz als pause)
+var shiftHpNow = num(G('TOP27_Z1_Heat_Request_Temp'));
+function fdot(v, d) { return ok(v) ? Number(v).toFixed(d) : '?'; }                         // Ereignisse sind CSV: Punkt als Dezimaltrenner, keine Kommas
+function sdot(v, d) { return ok(v) ? (v > 0 ? '+' : '') + Number(v).toFixed(d) : '?'; }
+if (hpFresh) {
+    if (qs.swInit) {
+        if (running && !qs.swRun) { escEvents.push(['verdichter_start', 'Pause ' + (qs.swStop ? Math.round((now - qs.swStop) / MS_MIN) : '?') + ' min · Vorlauf ' + sdot(qs.swRel, 2) + ' K zum Soll ' + fdot(qs.swSoll, 0) + ' °C · Außen ' + fdot(at, 0) + ' °C · Pumpe ' + fdot(qs.swPump, 0) + ' U/min']); qs.swStart = now; }
+        if (!running && qs.swRun) { escEvents.push(['verdichter_stopp', 'Lauf ' + (qs.swStart ? Math.round((now - qs.swStart) / MS_MIN) : '?') + ' min · Vorlauf ' + sdot(qs.swRel, 2) + ' K zum Soll ' + fdot(qs.swSoll, 0) + ' °C · Außen ' + fdot(at, 0) + ' °C']); qs.swStop = now; }
+        if (solVL !== null && qs.swSoll !== null && qs.swSoll !== undefined && solVL !== qs.swSoll) {
+            escEvents.push(['sollsprung', (running ? 'Lauf' : (zustandNow === 'heizgrenze' ? 'Heizgrenze' : 'Pause')) + ' ' + fdot(qs.swSoll, 0) + '->' + fdot(solVL, 0) + ' °C · Vorlauf ' + fdot(istVL, 2) + ' (' + sdot(relNow, 2) + ' K zum neuen Soll) · Außen ' + fdot(at, 0) + ' °C · Anlagenverschiebung ' + fdot(shiftHpNow, 0) + ' K']);
+        }
+    }
+    qs.swInit = true; qs.swRun = running;
+    if (relNow !== null) { qs.swRel = relNow; }
+    if (solVL !== null) { qs.swSoll = solVL; }
+    qs.swPump = pumpRpmNow;
+}
 if (escEvents.length) {
     var ed0 = new Date(now), ep0 = function (x) { return (x < 10 ? '0' : '') + x; };
     var eIso = ed0.getFullYear() + '-' + ep0(ed0.getMonth() + 1) + '-' + ep0(ed0.getDate()) + ' ' + ep0(ed0.getHours()) + ':' + ep0(ed0.getMinutes()) + ':' + ep0(ed0.getSeconds());
@@ -1257,14 +1325,16 @@ if (!qs.lastLog || now - qs.lastLog >= MS_MIN - 1000) {
                 'pumpe_max_duty', 'fan1', 'fan2', 'verdichter_strom', 'aussen', 'verdichter_laufzeit_min', 'letzte_laufzeit_min', 'starts_heute', 'lauf_mittel_24h_min', 'defrost', 'warmwasser', 'softstart',
                 'raum_defizit', 'raum_defizit_name', 'raum_trend', 'waermeverteilung', 'quiet_prioritaet', 'taktung_kritisch', 'quiet_aussen_regel', 'test_moeglich', 'heizregelung', 'pumpenmodus',
                 'heizstab_intern', 'heizstab_extern', 'heizstab_raum_frei', 'heizstab_stunden', 'heizstab_start_delta', 'heizstab_verzoegerung_min',
-                'waechter_zustand', 'waechter_ausloeser', 'waechter_sperre', 'zeit_bis_soll_min', 'lauf_min', 'vl_minus_soll'];
+                'waechter_zustand', 'waechter_ausloeser', 'waechter_sperre', 'zeit_bis_soll_min', 'lauf_min', 'vl_minus_soll',
+                'zustand', 'shift_anlage', 'kz_radiator_an', 'kz_heizluefter_an', 'kz_heizluefter_w', 'kz_heizluefter_online'];
     var hv = function (n) { return HP[n] && typeof HP[n].v === 'number' ? HP[n].v : null; };
     var vals2 = [iso, qNow, targetNormal, target, next, nextP, why.filter(Boolean).join(' | ').replace(/,/g, ';'), locks.join(' + ').replace(/,/g, ';'), Math.ceil(holdLeft / MS_MIN), c(solVL), c(istVL), c(solRL), c(istRL), c(rlErr), c(qs.errS),
                  c(spread), c(zDelta), c(freq), c(pel), c(pthHs), c(pthCalc), c(copNow), c(flw), c(hv('Pump_Duty')), c(hv('Pump_Speed')), c(hv('Max_Pump_Duty')), c(fan1), c(hv('Fan2_Motor_Speed')),
                  c(hv('Compressor_Current')), c(at), c(rt), c(rtLast), c(startsToday), c(meanRun), defrost ? 1 : 0, dhw ? 1 : 0, ssRamp ? 1 : 0,
                  sFresh ? (S.deficit ? 1 : 0) : '', sFresh ? String(S.deficitRoom || '').replace(/,/g, ';') : '', sFresh ? c(S.coldTrend) : '', sFresh ? (S.distrib ? 1 : 0) : '', prio === null ? '' : prio, cycleBad ? 1 : 0, atWin ? 1 : 0, testOk ? 1 : 0, c(hv('Heating_Control')), c(hv('Pump_Flowrate_Mode')),
                  c(hv('Internal_Heater_State')), c(hv('External_Heater_State')), c(hv('Room_Heater_State')), c(hv('Room_Heater_Operations_Hours')), c(hv('Heater_Start_Delta')), c(hv('Heater_Delay_Time')),
-                 escKey, escWhyTxt.replace(/,/g, ';'), escGateTxt.replace(/,/g, ';'), (ES.reached !== null && !ES.late) ? c(ES.reached) : '', escRunMin !== null ? c(Math.round(escRunMin)) : '', c(escDev)];
+                 escKey, escWhyTxt.replace(/,/g, ';'), escGateTxt.replace(/,/g, ';'), (ES.reached !== null && !ES.late) ? c(ES.reached) : '', escRunMin !== null ? c(Math.round(escRunMin)) : '', c(escDev),
+                 zustandNow, c(shiftHpNow), kzRad, kzFanOn, c(kzFanW), kzFanOnline];
     var file = '/data/optimizer/quiet-' + month + '.csv', head = cols.join(',');
     var needHead = true;
     if (flow.get('qHead') === month + '|' + head) { needHead = false; }
@@ -2826,6 +2896,11 @@ for _i, _t in enumerate(("panasonic_heat_pump/main/+", "panasonic_heat_pump/extr
             "broker": "opt_broker_nas", "nl": False, "rap": True, "rh": 0, "inputs": 0, "x": 160, "y": 1120 + 60 * _i, "wires": [["opt_hp_in"]]})
 upsert(fn("opt_hp_in", "Anlagenwerte lesen (nur lesen)", HP_IN_JS, 1, [["opt_f_qev"]], 440, 1180, FS))
 upsert(fn("opt_quiet", "Quiet-Empfehlung (Shadow)", QUIET_JS, 5, [["opt_t_quiet"], ["opt_t_qstats"], ["opt_f_quiet"], ["opt_f_qev"], ["opt_f_def"]], 700, 1060, FS))
+# Kinderzimmer oben: Radiator-Relais und Heizluefter nur mitlesen (Venus/Shelly-Broker); die Regelung dazu liegt im Tab Dashboard
+for _i, _t in enumerate(("shelly-radiator/events/rpc", "shelly-radiator/online", "shellies/shellyplug-s-heiz/relay/0", "shellies/shellyplug-s-heiz/relay/0/power", "shellies/shellyplug-s-heiz/online")):
+    upsert({"id": f"opt_mqtt_kz_{_i}", "type": "mqtt in", "z": TAB, "name": "", "topic": _t, "qos": "0", "datatype": "auto-detect",
+            "broker": "opt_broker_venus", "nl": False, "rap": True, "rh": 0, "inputs": 0, "x": 160, "y": 1400 + 60 * _i, "wires": [["opt_kz_in"]]})
+upsert(fn("opt_kz_in", "Kinderzimmer-Zustände lesen (nur lesen)", KZ_IN_JS, 1, [["opt_f_qev"]], 440, 1500, FS))
 for _fid, _name, _y in (("opt_f_qev", "Quiet-Ereignisse", 1180), ("opt_f_quiet", "Quiet-Protokoll", 1060), ("opt_f_def", "Abtau-Protokoll", 1120)):
     upsert({"id": _fid, "type": "file", "z": TAB, "name": _name, "filename": "filename", "filenameType": "msg", "appendNewline": False,
             "createDir": True, "overwriteFile": "false", "encoding": "utf8", "x": 960, "y": _y, "wires": [[]]})

@@ -1881,5 +1881,79 @@ check('Dateien: Ist, Vergleich, Schnappschuesse und Zustand unter /data/optimize
 })();
 
 
+// =====================================================================================================================
+// Kinderzimmer oben (Radiator-Relais, Heizluefter) nur mitlesen; Schaltpunkte und Sollspruenge als Ereignisse; neue Protokollspalten
+// =====================================================================================================================
+(function () {
+console.log('\n--- Kinderzimmer-Zustaende (nur lesen), Schaltpunkte, Sollspruenge');
+const T0 = Date.UTC(2026, 9, 9, 8, 0, 0);
+const BASEK = () => ({TOP42_Z1_Water_Target_Temp: 30, TOP23_Heat_Delta: 3, TOP6_Main_Outlet_Temp: 31, TOP5_Main_Inlet_Temp: 29, compressor_frequency: 17, TOP16_Heat_Energy_Consumption: 300,
+  TOP1_Pump_Flow: 13, TOP18_Quiet_Mode_Level: 3, compressor_runtime: 40, compressor_last_runtime: 39, Starts_Today: 3, TOP14_Outside_Temp: 9, TOP62_Fan1_Motor_Speed: 400, COP_HEAT: 5.4,
+  TOP26_Defrosting_State: 0, TOP20_ThreeWay_Valve_State: 0, TOP27_Z1_Heat_Request_Temp: 0, F_SS: {state: 0, correction_value: 0, QM_state: 0, QM_active_level: 3}, MQTT: {block_active: 0, allow_scheduler: 0}, F_SOLAR: {state: 0}});
+function world(over) { [fstore, files, gstore, envv].forEach(o => Object.keys(o).forEach(k => delete o[k])); Object.assign(gstore, BASEK(), over || {}); NOW = T0; sent.length = 0; run('opt_defaults', {}); }
+const kz = (topic, payload) => run('opt_kz_in', {topic, payload});
+const hp = (topic, payload) => run('opt_hp_in', {topic: 'panasonic_heat_pump/' + topic, payload: String(payload)});
+const flowsK = JSON.parse(fs.readFileSync(flowsFile, 'utf8'));
+// ---- Abos und Sicherheit
+const subs = flowsK.filter(n => n.z === 'opt_tab' && n.type === 'mqtt in' && /^opt_mqtt_kz_/.test(n.id));
+check('Kinderzimmer: genau fuenf lesende Abos auf dem Venus/Shelly-Broker (Radiator-Ereignisse und online, Heizluefter relay/0, Leistung, online), alle nur an opt_kz_in', subs.map(n => n.topic).join() === 'shelly-radiator/events/rpc,shelly-radiator/online,shellies/shellyplug-s-heiz/relay/0,shellies/shellyplug-s-heiz/relay/0/power,shellies/shellyplug-s-heiz/online' && subs.every(n => n.broker === 'opt_broker_venus' && JSON.stringify(n.wires) === '[["opt_kz_in"]]'), subs.map(n => n.topic).join());
+const kzn = flowsK.find(n => n.id === 'opt_kz_in');
+check('Sicherheit: opt_kz_in ruft nirgends node.send auf, hat nur den Ausgang zur Ereignisdatei, und im Tab gibt es weiterhin keinen mqtt-out-, link- oder http-in-Knoten', !/node\.send\s*\(/.test(kzn.func) && JSON.stringify(kzn.wires) === '[["opt_f_qev"]]' && flowsK.filter(n => n.z === 'opt_tab').every(n => !['mqtt out', 'link out', 'link in', 'link call', 'http in', 'http response'].includes(n.type)), JSON.stringify(kzn.wires));
+// ---- Radiator (Shelly 1 Mini Gen3): NotifyStatus
+world();
+let r = kz('shelly-radiator/events/rpc', {src: 'shelly1minig3-x', dst: 'shelly-radiator/events', method: 'NotifyStatus', params: {ts: 1791571080, 'switch:0': {counts: {on_time: 116250, switch_on: 66}}}});
+check('Radiator: ein Ereignis nur mit Zaehlern (ohne output) aendert nichts und erzeugt nichts', r === null && (!gstore.OPT_kz || gstore.OPT_kz.rad.on === undefined), JSON.stringify(gstore.OPT_kz));
+r = kz('shelly-radiator/events/rpc', Buffer.from(JSON.stringify({params: {'switch:0': {output: true, source: 'MQTT'}}})));
+check('Radiator: erster Zustand (an, als Buffer) wird gemerkt, ohne Ereignis (kein Vorwert)', r === null && gstore.OPT_kz.rad.on === true && gstore.OPT_kz.rad.src === 'MQTT', JSON.stringify(gstore.OPT_kz.rad));
+r = kz('shelly-radiator/events/rpc', JSON.stringify({params: {'switch:0': {output: false, source: 'MQTT'}}}));
+check('Radiator: Wechsel an -> aus wird mit Zeit und Quelle protokolliert (quiet-events)', r && /^\/data\/optimizer\/quiet-events-2026-10\.csv$/.test(r.filename) && /,kz_radiator,an->aus \(Quelle: MQTT\)\n$/.test(r.payload) && r.payload.startsWith('zeit,ereignis,wechsel\n'), r && r.payload);
+check('Radiator: gleicher Zustand nochmal -> kein Ereignis', kz('shelly-radiator/events/rpc', {params: {'switch:0': {output: false}}}) === null, '');
+// ---- Heizluefter (Shelly Plug S, Gen1): retained, oft offline
+r = kz('shellies/shellyplug-s-heiz/online', 'false');
+check('Heizluefter: der gespeicherte Wert "online false" (Stecker offline) wird erkannt und ohne Vorwert nicht als Wechsel gemeldet', r === null && gstore.OPT_kz.fan.online === false, JSON.stringify(gstore.OPT_kz.fan));
+kz('shellies/shellyplug-s-heiz/relay/0', 'off'); kz('shellies/shellyplug-s-heiz/relay/0/power', '0.00');
+r = kz('shellies/shellyplug-s-heiz/relay/0', 'on');
+check('Heizluefter: Wechsel aus -> an wird protokolliert, Leistung wird als Zahl gemerkt', r && /,kz_heizluefter,aus->an\n$/.test(r.payload) && (kz('shellies/shellyplug-s-heiz/relay/0/power', '1850.5'), gstore.OPT_kz.fan.w === 1850.5), r && r.payload);
+r = kz('shellies/shellyplug-s-heiz/online', 'true');
+check('Heizluefter: wieder online wird protokolliert', r && /,kz_heizluefter_online,offline->online\n$/.test(r.payload), r && r.payload);
+check('Heizluefter/Radiator: unbekannte Themen und Muell veraendern nichts', kz('shellies/shellyplug-s-heiz/temperature', '28.9') === null && kz('shellies/shellyplug-s-heiz/relay/0', 'kaputt') === null && kz('shellies/shellyplug-s-heiz/relay/0/power', 'abc') === null && gstore.OPT_kz.fan.w === 1850.5 && gstore.OPT_kz.fan.on === true, '');
+
+// ---- Protokoll-Spalten, Zustand, Schaltpunkte, Sollspruenge
+world(); hp('main/Compressor_Freq', 17); hp('main/Pump_Speed', 2650);
+kz('shelly-radiator/events/rpc', {params: {'switch:0': {output: true}}}); kz('shellies/shellyplug-s-heiz/relay/0', 'off'); kz('shellies/shellyplug-s-heiz/relay/0/power', '0'); kz('shellies/shellyplug-s-heiz/online', 'false');
+const outs = [], evs = [];
+const tick = (n, hook) => { let o; for (let i = 0; i < n; i++) { NOW += 60000; if (hook) { hook(i); } o = run('opt_quiet', {}); outs.push(o); if (o[3]) { evs.push(o[3].payload); } } return o; };
+const hpState = (hz, rpm) => { gstore.compressor_frequency = hz; hp('main/Compressor_Freq', hz); hp('main/Pump_Speed', rpm); };
+tick(2);
+let csv = outs.filter(x => x[2]).map(x => x[2].payload).join(''), H = csv.split('\n')[0].split(','), L = csv.split('\n').filter(l => l && !l.startsWith('zeit,')).pop().split(',');
+const col = (n) => L[H.indexOf(n)];
+check('Protokoll: sechs neue Spalten ganz hinten (zustand, shift_anlage, kz_radiator_an, kz_heizluefter_an, kz_heizluefter_w, kz_heizluefter_online), Spaltenzahl stimmt, Zeilen haben genauso viele Werte', H.slice(-7).join() === 'vl_minus_soll,zustand,shift_anlage,kz_radiator_an,kz_heizluefter_an,kz_heizluefter_w,kz_heizluefter_online' && L.length === H.length, H.slice(-7).join());
+check('Protokoll: Lauf -> zustand "lauf", Radiator an (1), Heizluefter aus (0), 0 W, Stecker offline (0), Anlagenverschiebung 0', col('zustand') === 'lauf' && col('kz_radiator_an') === '1' && col('kz_heizluefter_an') === '0' && col('kz_heizluefter_w') === '0' && col('kz_heizluefter_online') === '0' && col('shift_anlage') === '0', [col('zustand'), col('kz_radiator_an'), col('kz_heizluefter_an'), col('kz_heizluefter_w'), col('kz_heizluefter_online'), col('shift_anlage')].join('/'));
+// Stopp bei Vorlauf +3,25 K ueber dem Soll
+gstore.TOP6_Main_Outlet_Temp = 33.25; tick(1); hpState(0, 1750); tick(1);
+check('Schaltpunkt: beim Verdichterstopp wird Dauer, Vorlauf-Abstand zum Soll (+3,25 K), Soll und Aussentemperatur festgehalten (verdichter_stopp)', evs.some(e => /,verdichter_stopp,Lauf [\d?]+ min · Vorlauf \+3\.25 K zum Soll 30 °C · Außen 9 °C/.test(e)), evs.join('|').slice(-250));
+L = outs.filter(x => x[2]).map(x => x[2].payload).join('').split('\n').filter(l => l && !l.startsWith('zeit,')).pop().split(',');
+check('Protokoll: Verdichter aus, Pumpe 1750 U/min -> zustand "pause"; Pumpe 0 -> "heizgrenze"; ohne Pumpenwert -> leer', col('zustand') === 'pause' && (hpState(0, 0), tick(1), outs.filter(x => x[2]).map(x => x[2].payload).join('').split('\n').filter(l => l && !l.startsWith('zeit,')).pop().split(',')[H.indexOf('zustand')] === 'heizgrenze'), col('zustand'));
+// Pause, Sollsprung im Stillstand, dann Start bei Soll -3 K
+hpState(0, 1750); gstore.TOP6_Main_Outlet_Temp = 28.5; tick(5);
+gstore.TOP42_Z1_Water_Target_Temp = 29; tick(1);
+check('Sollsprung im Stillstand wird festgehalten: Zustand, alt -> neu, Vorlauf, Abstand zum neuen Soll, Aussentemperatur, Anlagenverschiebung', evs.some(e => /,sollsprung,Pause 30->29 °C · Vorlauf 28\.50 \(-0\.50 K zum neuen Soll\) · Außen 9 °C · Anlagenverschiebung 0 K/.test(e)), evs.filter(e => /sollsprung/.test(e)).join('|').slice(-250));
+gstore.TOP6_Main_Outlet_Temp = 26; tick(3); hpState(17, 2650); gstore.TOP6_Main_Outlet_Temp = 26.6; tick(1);
+check('Schaltpunkt: beim Verdichterstart wird die Pause, der letzte Vorlauf-Abstand (-3,00 K) und die Pumpendrehzahl festgehalten (verdichter_start)', evs.some(e => /,verdichter_start,Pause \d+ min · Vorlauf -3\.00 K zum Soll 29 °C · Außen 9 °C · Pumpe 1750 U\/min/.test(e)), evs.filter(e => /verdichter_start/.test(e)).join('|').slice(-250));
+gstore.TOP42_Z1_Water_Target_Temp = 30; tick(1);
+check('Sollsprung im Lauf wird als "Lauf" markiert', evs.some(e => /,sollsprung,Lauf 29->30 °C/.test(e)), evs.filter(e => /sollsprung/.test(e)).join('|').slice(-200));
+// Karte
+const card = tick(1)[0].payload.rows.find(rw => rw[0] === 'Kinderzimmer oben');
+check('Karte "Leistung & Quiet": neue Zeile "Kinderzimmer oben" zeigt Radiator und Heizluefter; "offline" ist normal (der Heizluefter wird nur im Uebergang Sommer/Herbst genutzt) und bekommt keine Warnfarbe', card && /Radiator an · Heizlüfter offline/.test(card[1]) && card[2] === '', JSON.stringify(card));
+kz('shellies/shellyplug-s-heiz/online', 'true'); kz('shellies/shellyplug-s-heiz/relay/0', 'on'); kz('shellies/shellyplug-s-heiz/relay/0/power', '1820');
+const card2 = tick(1)[0].payload.rows.find(rw => rw[0] === 'Kinderzimmer oben');
+check('Karte: online und an zeigt die Leistung', card2 && /Heizlüfter an \(1\.?820 W\)/.test(card2[1]) && card2[2] === '', JSON.stringify(card2));
+// ohne Kinderzimmer-Daten (Neustart) bleibt alles leer und es gibt keinen Absturz
+world(); hp('main/Compressor_Freq', 17); const n0 = outs.length; tick(2); const mine = outs.slice(n0);
+const csv0 = mine.filter(x => x[2]).map(x => x[2].payload).join(''), L0 = csv0.split('\n').filter(l => l && !l.startsWith('zeit,')).pop().split(','), H0 = csv0.split('\n')[0].split(',');
+check('ohne Kinderzimmer-Werte (frischer Start): vier Spalten leer, Karte zeigt Striche, kein Absturz', ['kz_radiator_an', 'kz_heizluefter_an', 'kz_heizluefter_w', 'kz_heizluefter_online'].every(n => L0[H0.indexOf(n)] === '') && /Radiator – · Heizlüfter –/.test((mine[mine.length - 1][0].payload.rows.find(rw => rw[0] === 'Kinderzimmer oben') || [])[1]), '');
+})();
+
+
 console.log('\nERGEBNIS:', assertFails === 0 ? 'alle Pruefungen bestanden' : assertFails + ' Pruefung(en) fehlgeschlagen');
 process.exit(assertFails ? 1 : 0);
