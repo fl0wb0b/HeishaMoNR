@@ -131,6 +131,14 @@ check('Taupunkt (2 °C, 90 %) ~ 0,5 °C', Math.abs(W.dew - 0.5) < 0.4, W.dew);
 check('Prognose +1 h interpoliert (2->5 ueber 2 h = 3,5)', Math.abs(W.f1 - 3.5) < 0.11, W.f1);
 check('Prognose +3 h interpoliert (5->8 ueber 3 h bei +1 h = 5,0+1,0=6,0)', Math.abs(W.f3 - 6.0) < 0.11, W.f3);
 check('Prognose +6 h (8->3 ueber 3 h bei +1 h = 6,3)', Math.abs(W.f6 - 6.3) < 0.11, W.f6);
+run('opt_owm_parse', {topic: 'forecast', statusCode: 200, payload: {list: [
+  {dt: t0 + 2 * 3600, main: {temp: 5.0, humidity: 80}, clouds: {all: 60}, wind: {speed: 4.2, gust: 9}}, {dt: t0 + 5 * 3600, main: {temp: 8.0, humidity: 70}, clouds: {all: 40}},
+  {dt: t0 + 8 * 3600, main: {temp: 3.0, humidity: 85}, clouds: {all: 20}, wind: {speed: 0}}, {dt: t0 + 11 * 3600, main: {temp: 1.0, humidity: 90}, clouds: {all: 10}, wind: {}}]}});
+{
+  const fp = gstore.OPT_weather.fpts;
+  check('Fahrplan v2 (S1): Prognosepunkte tragen den Wind als 5. Element (aktueller Punkt 3 m/s, 4,2 m/s, fehlend = null, 0 = 0, Boeen werden nicht gespeichert); Index 1 bis 3 wie vorher', fp.length === 5 && fp.every(p => p.length === 5) && fp[0][4] === 3 && fp[1][4] === 4.2 && fp[2][4] === null && fp[3][4] === 0 && fp[4][4] === null && fp[1][1] === 5 && fp[1][2] === 80 && fp[1][3] === 60 && !fp.some(p => p.includes(9)), JSON.stringify(fp));
+  check('Fahrplan v2 (S1): +1/+3/+6 h bleiben unveraendert (3,5 / 6,0 / 6,3)', Math.abs(gstore.OPT_weather.f1 - 3.5) < 0.11 && Math.abs(gstore.OPT_weather.f3 - 6.0) < 0.11 && Math.abs(gstore.OPT_weather.f6 - 6.3) < 0.11, [gstore.OPT_weather.f1, gstore.OPT_weather.f3, gstore.OPT_weather.f6].join('/'));
+}
 // Anzeige
 NOW += 60000; let ev2 = run('opt_eval', {}); const wx = ev2[0].payload.rows;
 console.log(wx.map(x => x.join(': ')).join('\n'));
@@ -386,6 +394,17 @@ check('danach nach Neustart wieder kein doppelter Kopf (letzte Kopfzeile der Dat
 gstore.OPT_cfg.rooms.pop();
 gstore.TOP26_Defrosting_State = 1; fstore.evHead = undefined; NOW += 60000; o = run('opt_eval', {}); gstore.TOP26_Defrosting_State = 0;
 check('Ereignisdatei: Kopfzeile nach Neustart nicht doppelt', o[5] && o[5].filename === evPath && !o[5].payload.startsWith('zeit,') && o[5].payload.includes('defrost,'), o[5] && o[5].payload.trim());
+// Fahrplan v2 (S1): optimizer-v2 bekommt hinten Wind, PV, Regelwert T_outside und eigenen Fuehler
+{
+  const keepW = gstore.OPT_weather, keepP = gstore.OPT_plan_in;
+  gstore.T_outside = 6.5; gstore.T_outside_custom = 5.5;
+  delete fstore.logHead; delete fstore.lastLog; NOW += 6 * 60000; gstore.OPT_weather = {status: 'OK', ts: NOW, temp: 8, rh: 80, dew: 4, clouds: 50, wind: 3.2, f_ts: NOW}; gstore.OPT_plan_in = {ts: NOW, pvNow: 1500}; const ov = run('opt_eval', {});
+  const ln = ov[4].payload.split('\n').filter(Boolean), hv2 = ln[0].split(','), dv = ln[1].split(',');
+  check('optimizer-v2: vier neue Spalten ganz hinten (wetter_wind_ms, pv_w, aussen_t_outside, t_outside_custom) mit Punkt als Dezimaltrenner, Spaltenzahl stimmt', hv2.slice(-4).join() === 'wetter_wind_ms,pv_w,aussen_t_outside,t_outside_custom' && dv.length === hv2.length && dv.slice(-4).join() === '3.2,1500,6.5,5.5' && hv2[hv2.length - 5] === 'heizregelung', hv2.slice(-6).join() + ' / ' + dv.slice(-6).join());
+  delete gstore.T_outside_custom; delete gstore.OPT_plan_in; delete fstore.lastLog; NOW += 6 * 60000; gstore.OPT_weather.ts = NOW; const ov2 = run('opt_eval', {}), dv2 = ov2[4].payload.split('\n').filter(Boolean).pop().split(',');
+  check('optimizer-v2: ohne eigenen Fuehler und ohne frische PV bleiben die Felder leer, kein Absturz', dv2.slice(-4).join() === '3.2,,6.5,', dv2.slice(-4).join());
+  gstore.OPT_weather = keepW; gstore.OPT_plan_in = keepP; delete gstore.T_outside;
+}
 
 
 (function () {
@@ -1271,8 +1290,9 @@ const sunAt = (t, w) => { const h = (t - new RealDate(t).setHours(0, 0, 0, 0)) /
 let O = {};
 function pfeed() {
   const base = O.atBase === undefined ? 3 : O.atBase, drift = (O.issueDrift || 0) * (NOW - T0) / HH;
-  const pts = []; for (let k = 0; k <= 13; k++) { const t = NOW + k * 3 * HH, h = (t - new RealDate(t).setHours(0, 0, 0, 0)) / HH; pts.push([t, base + 3 * Math.sin((h - 9) / 24 * 2 * Math.PI) + drift, O.rh === undefined ? 85 : O.rh, 50]); }
+  const pts = []; for (let k = 0; k <= 13; k++) { const t = NOW + k * 3 * HH, h = (t - new RealDate(t).setHours(0, 0, 0, 0)) / HH; pts.push([t, base + 3 * Math.sin((h - 9) / 24 * 2 * Math.PI) + drift, O.rh === undefined ? 85 : O.rh, 50].concat(O.windF === undefined ? [] : [O.windF])); }
   gstore.OPT_weather = O.noWeather ? {status: 'Fehler', ts: NOW - 5 * HH} : {status: 'OK', ts: NOW, f_ts: NOW, fpts: pts};
+  if (!O.noWeather) { ['windNow', 'cloudsNow', 'owmTemp'].forEach(k => { if (O[k] !== undefined) { gstore.OPT_weather[{windNow: 'wind', cloudsNow: 'clouds', owmTemp: 'temp'}[k]] = O[k]; } }); }
   const pv = []; for (let t = Math.floor(NOW / HH) * HH - 2 * HH; t < NOW + 40 * HH; t += HH) { pv.push([t, Math.round(sunAt(t + HH / 2, O.pvPeak === undefined ? 3000 : O.pvPeak)), HH]); }
   gstore.OPT_plan_in = O.noPrice ? {ts: NOW - HH} : {ts: NOW, price: tariffSl(NOW, 40), priceSrc: 'VRM-Tarif', pv, pvSrc: 'VRM', pvNow: O.pvNow === undefined ? 500 : O.pvNow, soc: 60, socSrc: 'Venus', liveOk: true};
   const rm = O.rooms || {ki_oben: 23, ki_unten: 23, schlaf: 20};
@@ -1567,6 +1587,50 @@ check('Sicherheit: der Plan hat nur Ausgaenge zur Anzeige und zu Protokolldateie
 const nonOptPlan = Object.keys(gstore).filter(k => !k.startsWith('OPT_') && JSON.stringify(gstore[k]) !== JSON.stringify(({Z1_Heat_Curve_Outside_Low_Temp: -13, Z1_Heat_Curve_Outside_High_Temp: 11, Z1_Heat_Curve_Target_Low_Temp: 29, Z1_Heat_Curve_Target_High_Temp: 38, compressor_frequency: 0, TOP26_Defrosting_State: 0, TOP20_ThreeWay_Valve_State: 0})[k]) && k !== 'TOP14_Outside_Temp');
 check('Sicherheit: der Plan schreibt nur OPT_*-Werte (Heizkurve, Quiet und Warmwasser bleiben unberuehrt)', nonOptPlan.length === 0, nonOptPlan.join());
 check('Dateien: Ist, Vergleich, Schnappschuesse und Zustand unter /data/optimizer, Plan-Zustand ohne Zugangsdaten', !/token|appid|key/i.test(files['/data/optimizer/plan-state.json'].data), Object.keys(files).filter(k => /plan/.test(k)).join());
+// ---- S1) Fahrplan v2: Wind und Zusatzwerte erfassen (ohne Wirkung auf den Plan)
+{
+  const OLDSNAP = ['t', 'at', 'rh', 'cop', 'price', 'pv', 'bedarf', 'plan', 'defrost', 'conf_at', 'conf_pv', 'att', 'rec', 'kosten', 'offset', 'quiet', 'plan_pot', 'taupunkt', 'kosten_basis', 'strafe_defrost', 'strafe_unsicher', 'reserve_hinten', 'reserve_vorn'];
+  pworld({wide: true, windF: 5.5, windNow: 4.5, cloudsNow: 80, owmTemp: 7, atNow: 6}); gstore.T_outside = 6.5; gstore.T_outside_custom = 5.5;
+  const hdrs = [], lines = []; let evOut = [];
+  const outs1 = step(26); outs1.forEach(o => { if (o[1]) { hdrs.push(o[1].payload.split('\n')[0]); lines.push(o[1].payload); } if (o[2]) { evOut.push(o[2].payload); } });
+  const snap1 = fstore.plan.snaps[fstore.plan.snaps.length - 1], P1 = planNow();
+  check('Plan-Schnappschuss: Spalten wind und wolken stehen hinter den alten 23 (Reihenfolge unveraendert), Werte aus der Wetterprognose (5,5 m/s, 50 %)', JSON.stringify(snap1.cols.slice(0, 23)) === JSON.stringify(OLDSNAP) && snap1.cols[23] === 'wind' && snap1.cols[24] === 'wolken' && snap1.slots.every(r => r.length === 25 && r[23] === 5.5 && r[24] === 50), snap1.cols.slice(21).join() + ' / ' + JSON.stringify(snap1.slots[0].slice(21)));
+  check('Plan: Bedarf, Kosten und Empfehlungen sind von Wind/Bewoelkung unabhaengig (Wind 5,5 gegen ohne Wind ergibt dieselben Slots)', (() => { pworld({wide: true, windNow: 4.5, cloudsNow: 80, owmTemp: 7, atNow: 6}); gstore.T_outside = 6.5; gstore.T_outside_custom = 5.5; step(26); const Pn = planNow(); return P1.slots.every((x, i) => x.b === Pn.slots[i].b && x.p === Pn.slots[i].p && x.cost === Pn.slots[i].cost && x.rec === Pn.slots[i].rec && x.bedarf === Pn.slots[i].bedarf); })(), '');
+  const hdr = hdrs[0] ? hdrs[0].split(',') : [], row = lines[0] ? lines[0].split('\n')[1].split(',') : [];
+  check('plan-actuals: fuenf neue Spalten ganz hinten (nach den Raumspalten), Kopfzeile und Zeile gleich lang, Zahlen mit Punkt (Wind 4.5, Bewoelkung 80, OWM 7, Regelwert 6.5, eigener Fuehler 5.5)', hdr.slice(-5).join() === 'ist_wind_ms,ist_bewoelkung_pct,ist_aussen_owm,ist_aussen_regel,ist_t_custom' && hdr[hdr.length - 6].startsWith('ist_raum_') && row.length === hdr.length && row.slice(-5).join() === '4.5,80,7,6.5,5.5', hdr.slice(-7).join() + ' / ' + row.slice(-7).join());
+  check('plan-eval: Kopfzeile = Vergleichsspalten + Ist-Spalten + prog_wind_ms, prog_bewoelkung_pct; Zeile gleich lang, Prognosewert 5.5 m/s und 50 % aus dem Schnappschuss', (() => { if (!evOut.length) { return false; } const l = evOut[evOut.length - 1].split('\n').filter(Boolean), h = (l.length > 1 ? l[0] : '').split(','), r = l[l.length - 1].split(','); return h.slice(-2).join() === 'prog_wind_ms,prog_bewoelkung_pct' && h.length === r.length && r.slice(-2).join() === '5.5,50' && h[h.length - 3] === 'ist_t_custom'; })(), evOut.length ? evOut[evOut.length - 1].slice(0, 120) : 'keine Eval-Ausgabe');
+  // alte Spaltenkopf-Datei: genau eine neue Kopfzeile
+  pworld({wide: true, windF: 5.5, windNow: 4.5}); const oldHead = hdrs[0].split(',').slice(0, -5).join(','); files['/data/optimizer/plan-actuals-2026-11.csv'] = {data: oldHead + '\nalt\n', mode: 0o644};
+  const o2 = step(40).filter(o => o[1]).map(o => o[1].payload);
+  check('plan-actuals: bei vorhandener Datei mit alter Kopfzeile genau eine neue Kopfzeile (danach nicht mehr)', o2.length >= 2 && o2[0].startsWith('slot_start,') && o2.slice(1).every(x => !x.startsWith('slot_start,')), o2.map(x => x.startsWith('slot_start,')).join());
+  // alter Schnappschuss ohne die neuen Spalten: plan-eval liest ihn ohne Fehler, Felder bleiben leer
+  pworld({wide: true, windF: 5.5}); step(26); fstore.plan.snaps.forEach(sn => { sn.cols = sn.cols.slice(0, 23); sn.slots = sn.slots.map(r => r.slice(0, 23)); });
+  const o3 = step(20).filter(o => o[2]).map(o => o[2].payload), l3 = o3.length ? o3[o3.length - 1].split('\n').filter(Boolean) : [], r3 = l3.length ? l3[l3.length - 1].split(',') : [];
+  check('plan-eval: aelterer Schnappschuss ohne Wind-Spalten (23 Spalten) -> Felder prog_wind_ms/prog_bewoelkung_pct leer, kein Fehler', o3.length > 0 && r3.slice(-2).join() === ',', r3.slice(-3).join('|'));
+  // Veraltete Wetterwerte und PV zaehlen nicht
+  pworld({wide: true, windNow: 4.5, cloudsNow: 80, owmTemp: 7, atNow: 6, noPrice: true}); const o4 = step(26, () => { gstore.OPT_weather.ts = NOW - 61 * 60000; }).filter(o => o[1]).map(o => o[1].payload), r4 = o4.length ? o4[0].split('\n').filter(Boolean).pop().split(',') : [];
+  check('veraltete Wetterwerte (> weather.maxAgeMin) und nicht frische PV: Wind, Bewoelkung, OWM-Temperatur bleiben leer, PV der Tagessumme wird nicht erhoeht', o4.length > 0 && r4.slice(-5, -2).join() === ',,' && fstore.plan.day.s === 0 && fstore.plan.day.sN === 0 && fstore.plan.day.wN === 0, r4.slice(-5).join('|') + ' s=' + fstore.plan.day.s);
+  // Tagesaggregat ueber einen vollen Tag: kh 240 (10 K x 24 h), PV 2000 W x 24 h = 48 kWh, Wind 4 m/s: wk 960, OWM 7 °C: khW 192, wkW 768
+  pworld({wide: true, atBase: 5, running: true, hp: 2500, atNow: 5, pvNow: 2000, windNow: 4, owmTemp: 7}); O.hp = 2500; step(1440 + 5);
+  const dayE = fstore.plan.learn.days[0];
+  check('Tagesaggregat: Eintrag mit 13 Werten [d0, hdd, q, n, s, wk, khW, wkW, dtr, sN, wN, owN, wwN]; ein voller Tag ergibt kh ~240, PV ~48 kWh, wk ~960, khW ~192, wkW ~768, dtr 0 (konstante Raeume)', fstore.plan.learn.days.length === 1 && dayE.length === 13 && Math.abs(dayE[1] - 240) < 1 && Math.abs(dayE[4] - 48) < 0.3 && Math.abs(dayE[5] - 960) < 4 && Math.abs(dayE[6] - 192) < 1 && Math.abs(dayE[7] - 768) < 3 && dayE[8] === 0 && dayE[9] >= 1430 && dayE[10] >= 1430 && dayE[11] >= 1430 && dayE[12] >= 1430, JSON.stringify(dayE));
+  check('Tagesaggregat: die ersten vier Werte [d0, hdd, q, n] bleiben wie bisher (Plan-UA liest nur diese)', Math.abs(planNow().model.ua - 0.2333) < 0.004 && fstore.plan.learn.days[0][2] > 59 && fstore.plan.learn.days[0][2] < 61, 'ua ' + planNow().model.ua.toFixed(4));
+  const fileLearn = JSON.parse(files['/data/optimizer/plan-state.json'].data).learn.days[0];
+  check('plan-state.json: der 13er-Eintrag wird gesichert und ueberlebt einen Neustart (UA unveraendert)', fileLearn.length === 13 && (() => { const keep = JSON.stringify(fileLearn); delete fstore.plan; step(1); return JSON.stringify(fstore.plan.learn.days[0]) === keep && Math.abs(planNow().model.ua - 0.2333) < 0.004; })(), JSON.stringify(fileLearn));
+  // Deploy ohne Neustart: Zustand eines aelteren Stands (ohne neue Zaehler, Plan-Version 7, Tag mit 4er-Eintrag) -> kein NaN, Plan neu gerechnet, Tag schliesst mit null fuer die neuen Summen
+  pworld({wide: true, atBase: 5, running: true, hp: 2500, atNow: 5, pvNow: 2000, windNow: 4, owmTemp: 7}); O.hp = 2500; step(5);
+  ['windS', 'windN', 'clS', 'clN', 'owS', 'owN', 'toS', 'toN', 'tcS', 'tcN'].forEach(k => { delete fstore.plan.acc[k]; });
+  ['s', 'sN', 'wk', 'wN', 'khW', 'owN', 'wkW', 'wwN', 'r0', 'rl'].forEach(k => { delete fstore.plan.day[k]; }); fstore.plan.day.n = 700; fstore.plan.day.hdd = 116; fstore.plan.plan.ver = 7; fstore.plan.learn.days = [[1, 100, 25, 1440]];
+  step(3);
+  check('Deploy-Sicherheit: Zustand ohne neue Zaehler und Plan-Version 7 -> keine NaN in den Zaehlern, Plan wird neu gerechnet (Version 8), alter 4er-Eintrag bleibt unveraendert', ['windS', 'windN', 'owS', 'toS', 'tcS'].every(k => Number.isFinite(fstore.plan.acc[k])) && Number.isFinite(fstore.plan.day.s) && Number.isFinite(fstore.plan.day.wk) && planNow().ver === 8 && JSON.stringify(fstore.plan.learn.days[0]) === JSON.stringify([1, 100, 25, 1440]), JSON.stringify({ver: planNow().ver, acc: fstore.plan.acc.windS, day: fstore.plan.day.s}));
+  step(1440 - 8);
+  const dayD = fstore.plan.learn.days[1];
+  check('Deploy-Sicherheit: ein Tag, der vor dem Deploy begann (nur ein Teil der Minuten mit neuen Summen), schliesst mit null fuer s/wk/khW/wkW, hdd/q/n bleiben gueltig', fstore.plan.learn.days.length === 2 && dayD.length === 13 && dayD[4] === null && dayD[5] === null && dayD[6] === null && dayD[7] === null && dayD[1] > 100 && dayD[3] >= 1200, JSON.stringify(dayD));
+  // Sicherheit: Ausgaenge unveraendert
+  const planNode = JSON.parse(fs.readFileSync(flowsFile, 'utf8')).find(n => n.id === 'opt_plan');
+  check('Sicherheit (Flow-Datei): opt_plan hat dieselben 5 Ausgaenge (Karte, Ist, Vergleich, Schnappschuss, frei), kein node.send im Code', JSON.stringify(planNode.wires) === JSON.stringify([['opt_t_plan'], ['opt_f_pact'], ['opt_f_peval'], ['opt_f_psnap'], []]) && !/node\.send\s*\(/.test(planNode.func), JSON.stringify(planNode.wires));
+}
+
 // ---- S0) Referenzlauf: Plan, Kosten, Empfehlungen, Schnappschuss und Anzeige muessen sich mit den neuen Koeffizienten 0 BIT-IDENTISCH zum Stand vor Fahrplan v2 verhalten
 //      Erzeugen (nur mit dem alten Code!): PLAN_REF=write node tools/optimizer_sim.js ...   danach vergleicht jeder Lauf gegen tools/fixtures/plan_ref_v7.json
 {

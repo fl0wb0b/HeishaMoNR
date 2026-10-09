@@ -358,8 +358,8 @@ if (msg.topic === 'forecast' && Array.isArray(p.list) && p.list.length) {
     // +1/+3/+6 h per linearer Interpolation. Der Startpunkt "jetzt" ist der letzte aktuelle Wert (falls frisch);
     // kommt die Prognose vor der Aktuell-Antwort an, beginnt die Kurve am ersten Prognosepunkt.
     var fresh = (W.temp !== undefined && W.ts && (now - W.ts) < 30 * 60000);
-    var pts = (fresh ? [{t: now, v: W.temp, h: W.rh, c: W.clouds}] : []).concat(p.list.map(function (e) {
-        return {t: e.dt * 1000, v: e.main.temp, h: e.main.humidity, c: e.clouds ? e.clouds.all : null};
+    var pts = (fresh ? [{t: now, v: W.temp, h: W.rh, c: W.clouds, w: typeof W.wind === 'number' ? W.wind : null}] : []).concat(p.list.map(function (e) {
+        return {t: e.dt * 1000, v: e.main.temp, h: e.main.humidity, c: e.clouds ? e.clouds.all : null, w: (e.wind && typeof e.wind.speed === 'number') ? e.wind.speed : null};
     }));
     function r1(x) { return Math.round(x * 10) / 10; }
     function at(hours, key) {
@@ -381,7 +381,7 @@ if (msg.topic === 'forecast' && Array.isArray(p.list) && p.list.length) {
         for (var hh = 0; hh <= 24; hh++) { var vv = at(hh, 'v'); if (vv !== null) { sum24 += vv; cnt24++; } }
     }
     W.f24 = cnt24 ? r1(sum24 / cnt24) : null;
-    W.fpts = pts.filter(function (q) { return q.t > now - 3600000; }).map(function (q) { return [q.t, q.v, q.h, q.c]; });
+    W.fpts = pts.filter(function (q) { return q.t > now - 3600000; }).map(function (q) { return [q.t, q.v, q.h, q.c, q.w === undefined ? null : q.w]; });       // 5. Element: Wind in m/s (Prognosepunkt), null wenn unbekannt
 }
 global.set('OPT_weather', W);
 return null;
@@ -1286,7 +1286,7 @@ PLAN_JS = r"""// Waermefahrplan (Shadow): 15-Minuten-Plan fuer die naechsten 24 
 var cfg = global.get('OPT_cfg');
 if (!cfg) { return null; }
 var PC = cfg.plan || {}, QC = cfg.quiet || {};
-var PLAN_VER = 7;                                                                                // bei jeder Aenderung der Plan-Felder erhoehen: aeltere Plaene im Speicher werden dann sofort neu gerechnet
+var PLAN_VER = 8;                                                                                // bei jeder Aenderung der Plan-Felder erhoehen: aeltere Plaene im Speicher werden dann sofort neu gerechnet
 var now = Date.now(), MS_MIN = 60000, Q15 = 900000, H = 3600000, N = 104, NDAY = 96;       // 104 Slots = 26 h (24 h Anzeige + Reserve fuer den Vergleich nach +24 h)
 var G = function (k) { var v; try { v = global.get(k, 'file'); } catch (e) { v = undefined; } return v !== undefined ? v : global.get(k); };       // HeishaMoNR legt Anlagenwerte im Speicher "file" ab (ohne Einrichtung faellt das auf den Standardspeicher zurueck)
 function num(v) { if (v === null || v === undefined || v === '') { return null; } v = Number(v); return isFinite(v) ? v : null; }
@@ -1360,11 +1360,15 @@ var ROOMS = cfg.rooms || [];
 // ---------- Ist-Werte je 15-Minuten-Slot (Grundlage fuer den spaeteren Vergleich) und je Tag (Lernen des Waermebedarfs)
 var s0 = Math.floor(now / Q15) * Q15, dtH = pl.lastTs ? Math.min(now - pl.lastTs, 3 * MS_MIN) / H : 0;
 pl.lastTs = now;
-function newAcc(t) { return {s: t, n: 0, atS: 0, atN: 0, pvS: 0, pvN: 0, thH: 0, elH: 0, thA: 0, elA: 0, dhwMin: 0, runMin: 0, defrosts: 0, hzS: 0, hzN: 0, defMin: 0, defEl: 0, defTh: 0, spS: 0, spN: 0, vdS: 0, vdN: 0, puS: 0, puN: 0, hc: null}; }
+function newAcc(t) { return {windS: 0, windN: 0, clS: 0, clN: 0, owS: 0, owN: 0, toS: 0, toN: 0, tcS: 0, tcN: 0, s: t, n: 0, atS: 0, atN: 0, pvS: 0, pvN: 0, thH: 0, elH: 0, thA: 0, elA: 0, dhwMin: 0, runMin: 0, defrosts: 0, hzS: 0, hzN: 0, defMin: 0, defEl: 0, defTh: 0, spS: 0, spN: 0, vdS: 0, vdN: 0, puS: 0, puN: 0, hc: null}; }
+function fillAcc(a) { ['windS', 'windN', 'clS', 'clN', 'owS', 'owN', 'toS', 'toN', 'tcS', 'tcN'].forEach(function (k) { if (a[k] === undefined) { a[k] = 0; } }); return a; }       // Zustand aus einem aelteren Stand (Deploy ohne Neustart) um neue Zaehler ergaenzen
+function fillDay(d) { ['s', 'sN', 'wk', 'wN', 'khW', 'owN', 'wkW', 'wwN'].forEach(function (k) { if (d[k] === undefined) { d[k] = 0; } }); if (!d.r0) { d.r0 = {}; } if (!d.rl) { d.rl = {}; } return d; }
 function priceAt(slots, t) { if (!Array.isArray(slots)) { return null; } for (var i = 0; i < slots.length; i++) { if (slots[i][0] <= t && slots[i][1] > t) { return slots[i][2]; } } return null; }
 var roomIds = ROOMS.map(function (r) { return r.id; });
 var ACT_COLS = ['ist_aussen', 'ist_pv_w', 'ist_preis', 'ist_cop', 'ist_waerme_kwh', 'ist_strom_kwh', 'ist_abtauungen', 'ist_ww_min', 'ist_verdichter_min', 'ist_hz', 'ist_quiet_stufe', 'ist_soc', 'ist_waerme_gesamt_kwh', 'ist_strom_heizen_kwh', 'ist_abtau_min', 'ist_abtau_strom_kwh', 'ist_abtau_waerme_kwh', 'ist_spreizung', 'ist_vl_abweichung', 'ist_pumpe_u_min', 'ist_heizregelung']
-    .concat(roomIds.map(function (id) { return 'ist_raum_' + id; }));
+    .concat(roomIds.map(function (id) { return 'ist_raum_' + id; }))
+    .concat(['ist_wind_ms', 'ist_bewoelkung_pct', 'ist_aussen_owm', 'ist_aussen_regel', 'ist_t_custom']);       // Fahrplan v2: Wind, Bewoelkung, OWM-Temperatur, Regelwert T_outside, eigener Fuehler (nur anhaengen)
+var EV_COLS2 = ['prog_wind_ms', 'prog_bewoelkung_pct'];                                          // Vergleichsspalten hinter den Ist-Werten (nur anhaengen)
 function csvOut(file, head, lines) {                                                           // Kopfzeile einmal je Datei (und bei geaenderten Spalten neu)
     var needHead = true, key = file + '|' + head;
     pl.heads = pl.heads || {};
@@ -1385,10 +1389,11 @@ if (pl.acc && pl.acc.s !== s0) {                                                
     var a = pl.acc;
     if (a.n >= 8) {
         var actual = {at: a.atN ? a.atS / a.atN : null, pv: a.pvN ? a.pvS / a.pvN : null, price: priceAt(PI.price, a.s), cop: a.elH > 0.005 ? a.thH / a.elH : null,
-                      th: a.thH, el: a.elA, defr: a.defrosts, dhw: a.dhwMin, run: a.runMin, hz: a.hzN ? a.hzS / a.hzN : null, q: a.q === undefined ? null : a.q, soc: a.soc === undefined ? null : a.soc, rooms: a.rooms || {},
+                      th: a.thH, el: a.elA, defr: a.defrosts, dhw: a.dhwMin, run: a.runMin, hz: a.hzN ? a.hzS / a.hzN : null, q: a.q === undefined ? null : a.q, soc: a.soc === undefined ? null : a.soc, rooms: a.rooms || {}, wind: a.windN ? a.windS / a.windN : null, cl: a.clN ? a.clS / a.clN : null, owm: a.owN ? a.owS / a.owN : null, to: a.toN ? a.toS / a.toN : null, tc: a.tcN ? a.tcS / a.tcN : null,
                       thA: a.thA, elH: a.elH, defMin: a.defMin, defEl: a.defEl, defTh: a.defTh, spread: a.spN ? a.spS / a.spN : null, vlDev: a.vdN ? a.vdS / a.vdN : null, pump: a.puN ? a.puS / a.puN : null, hc: a.hc};
         var aVals = [actual.at, actual.pv, actual.price, actual.cop, actual.th, actual.el, actual.defr, actual.dhw, actual.run, actual.hz, actual.q, actual.soc, actual.thA, actual.elH, actual.defMin, actual.defEl, actual.defTh, actual.spread, actual.vlDev, actual.pump, actual.hc].map(function (v, i) { return c(v, i === 0 || i === 9 ? 2 : 3); })
-            .concat(roomIds.map(function (id) { return c(actual.rooms[id], 2); }));
+            .concat(roomIds.map(function (id) { return c(actual.rooms[id], 2); }))
+            .concat([c(actual.wind, 2), c(actual.cl, 0), c(actual.owm, 2), c(actual.to, 2), c(actual.tc, 2)]);
         var mo = monthOf(a.s);
         out[1] = csvOut('/data/optimizer/plan-actuals-' + mo + '.csv', 'slot_start,' + ACT_COLS.join(','), [stamp(a.s) + ',' + aVals.join(',')]);
         // Vergleich: was wurde damals (vor ca. 0/1/3/6/12/24 h) prognostiziert und empfohlen, was ist tatsaechlich passiert
@@ -1404,17 +1409,25 @@ if (pl.acc && pl.acc.s !== s0) {                                                
             var g = function (name) { return sl[K.indexOf(name)]; };
             var recT = {1: 'VORZIEHEN', 0: 'NORMAL', '-1': 'VERSCHIEBEN'}[g('rec')];
             evLines.push([stamp(a.s), L, c((a.s - sn.t) / H, 2), stamp(sn.t), c(g('at'), 2), c(g('rh'), 0), c(g('cop'), 2), c(g('price'), 4), c(g('pv'), 0), c(g('bedarf'), 3), c(g('plan'), 3), c(g('kosten'), 2), c(g('defrost'), 2), c(g('taupunkt'), 1), c(g('kosten_basis'), 2), c(g('strafe_defrost'), 2), c(g('strafe_unsicher'), 2), c(g('reserve_hinten'), 3), c(g('reserve_vorn'), 3),
-                          c(g('conf_at'), 2), c(g('conf_pv'), 2), c(g('att'), 0), recT, c(g('offset'), 1), String(g('quiet')).replace(/,/g, ';')].concat(aVals).join(','));
+                          c(g('conf_at'), 2), c(g('conf_pv'), 2), c(g('att'), 0), recT, c(g('offset'), 1), String(g('quiet')).replace(/,/g, ';')].concat(aVals).concat([c(g('wind'), 1), c(g('wolken'), 0)]).join(','));
         });
-        if (evLines.length) { out[2] = csvOut('/data/optimizer/plan-eval-' + mo + '.csv', 'slot_start,' + EV_COLS.join(',') + ',' + ACT_COLS.join(','), evLines); }
+        if (evLines.length) { out[2] = csvOut('/data/optimizer/plan-eval-' + mo + '.csv', 'slot_start,' + EV_COLS.join(',') + ',' + ACT_COLS.join(',') + ',' + EV_COLS2.join(','), evLines); }
     }
     pl.acc = null;
 }
 if (!pl.acc) { pl.acc = newAcc(s0); }
-var acc = pl.acc;
+var acc = fillAcc(pl.acc);
 acc.n++;
 if (atNow !== null) { acc.atS += atNow; acc.atN++; }
 if (piFresh && ok(PI.pvNow)) { acc.pvS += PI.pvNow; acc.pvN++; }
+var Wx = G('OPT_weather') || {}, wFresh = !!(Wx.ts && now - Wx.ts <= (num(cfg.weather && cfg.weather.maxAgeMin) || 60) * MS_MIN);       // Wetterwerte nur, solange sie frisch sind
+var windNow = (wFresh && ok(Wx.wind)) ? Wx.wind : null, clNow = (wFresh && ok(Wx.clouds)) ? Wx.clouds : null, owNow = (wFresh && ok(Wx.temp)) ? Wx.temp : null;
+var toNow = num(G('T_outside')), tcNow = num(G('T_outside_custom'));                              // Regelwert der Waermepumpe und eigener Fuehler (falls gesetzt)
+if (windNow !== null) { acc.windS += windNow; acc.windN++; }
+if (clNow !== null) { acc.clS += clNow; acc.clN++; }
+if (owNow !== null) { acc.owS += owNow; acc.owN++; }
+if (toNow !== null) { acc.toS += toNow; acc.toN++; }
+if (tcNow !== null) { acc.tcS += tcNow; acc.tcN++; }
 if (running) { acc.runMin++; acc.hzS += freq; acc.hzN++; }
 var thW = (running && pth !== null) ? pth : 0, elW = (running && pel !== null) ? pel : 0;
 if (defrost) { var thRawA = hpv('Heat_Power_Production_Extra'); thW = (thRawA !== null && thRawA > -30000 && thRawA < 30000) ? thRawA : 0; }       // Abtauen: echter Waermeentzug (negativ), nicht aus Restwaerme gerechnet
@@ -1439,14 +1452,25 @@ acc.rooms = {}; ROOMS.forEach(function (rc) { var r = Rr[rc.id]; if (r && r.ts &
 // Tagessumme fuer das Lernen: Heizgradstunden gegen gelieferte Waerme (ohne Warmwasser und Abtauen)
 var d0 = dayStart(now);
 if (pl.day && pl.day.d0 !== d0) {
-    if (pl.day.n >= 1200) { pl.learn.days.push([pl.day.d0, Math.round(pl.day.hdd * 100) / 100, Math.round(pl.day.q * 1000) / 1000, pl.day.n]); }
+    if (pl.day.n >= 1200) {                                                                    // Eintrag: [d0, hdd, q, n] wie bisher, dahinter (nur anhaengen) s, wk, khW, wkW, dtr, sN, wN, owN, wwN; Zaehler unter 90 % der Minuten -> null
+        var dd = fillDay(pl.day), part = function (v, cnt, dg) { return cnt >= 0.9 * dd.n ? Math.round(v * dg) / dg : null; }, dtrL = [];
+        Object.keys(dd.r0).forEach(function (id) { if (ok(dd.rl[id])) { dtrL.push(dd.rl[id] - dd.r0[id]); } });
+        pl.learn.days.push([dd.d0, Math.round(dd.hdd * 100) / 100, Math.round(dd.q * 1000) / 1000, dd.n,
+                            part(dd.s, dd.sN, 1000), part(dd.wk, dd.wN, 100), part(dd.khW, dd.owN, 100), part(dd.wkW, dd.wwN, 100), dtrL.length ? Math.round(dtrL.reduce(function (x, y) { return x + y; }, 0) / dtrL.length * 1000) / 1000 : null, dd.sN, dd.wN, dd.owN, dd.wwN]);
+    }
     while (pl.learn.days.length > pn('learnDays', 21)) { pl.learn.days.shift(); }
     pl.day = null; pl.lastSave = 0;
 }
 if (!pl.day) { pl.day = {d0: d0, hdd: 0, q: 0, n: 0}; }
+fillDay(pl.day);
 pl.day.n++;
 if (atNow !== null) { pl.day.hdd += Math.max(0, pn('tbalC', 15) - atNow) / 60; }
 if (running && !dhw && !defrost && pth !== null) { pl.day.q += pth * dtH / 1000; }
+if (piFresh && ok(PI.pvNow)) { pl.day.s += PI.pvNow * dtH / 1000; pl.day.sN++; }                  // PV-Energie des Tages [kWh] (Sonnenmass, solange die Daten frisch sind)
+if (owNow !== null && atNow !== null) { pl.day.khW += Math.max(0, pn('tbalC', 15) - owNow) / 60; pl.day.owN++; }                      // Heizgradstunden aus der OWM-Temperatur (regional)
+if (windNow !== null && atNow !== null) { pl.day.wk += Math.max(0, pn('tbalC', 15) - atNow) * windNow / 60; pl.day.wN++; }          // Wind x Heizgradstunden (Fuehler)
+if (windNow !== null && owNow !== null) { pl.day.wkW += Math.max(0, pn('tbalC', 15) - owNow) * windNow / 60; pl.day.wwN++; }      // Wind x Heizgradstunden (OWM)
+ROOMS.forEach(function (rc) { var r = Rr[rc.id]; if (r && r.ts && now - r.ts < (rc.maxAgeMin || 90) * MS_MIN && ok(r.ema)) { if (pl.day.r0[rc.id] === undefined) { pl.day.r0[rc.id] = r.ema; } pl.day.rl[rc.id] = r.ema; } });
 
 // ---------- Plan berechnen: einmal pro 15-Minuten-Slot, bis er gelingt jede Minute
 function buildPlan() {
@@ -1552,7 +1576,7 @@ function buildPlan() {
         var t = s0 + i * Q15, ctr = t + Q15 / 2, L = Math.max(0, (ctr - now) / H);
         var atF = wAt(ctr, 1), rhF = wAt(ctr, 2), price = priceAt(pr, t);
         if (atF === null || price === null) { P.status = price === null ? 'keine Preise' : 'keine Wetterprognose'; P.why = 'Für ' + hhmm(t) + ' fehlen Daten.'; return P; }
-        raw.push({t: t, L: L, atF: atF + anchor * Math.exp(-L / tauA), rhF: rhF, price: price, pv: pvMean(t, t + Q15)});
+        raw.push({t: t, L: L, atF: atF + anchor * Math.exp(-L / tauA), rhF: rhF, price: price, pv: pvMean(t, t + Q15), windF: wAt(ctr, 4), clF: wAt(ctr, 3)});
     }
     var m24 = 0, r24 = 0, rn = 0, p24 = 0;
     for (i = 0; i < NDAY; i++) { m24 += raw[i].atF; if (raw[i].rhF !== null) { r24 += raw[i].rhF; rn++; } }
@@ -1573,7 +1597,7 @@ function buildPlan() {
         if (cop === null) { cop = 3; }
         var bedarf = uaKw * Math.max(0, tbal - atE) * (Q15 / H);                                   // kWh Waerme je Slot
         var risk = defr(atE, rhE), base = x.price * 100 / cop, dPen = base * dflLoss * risk, uPen = base * uncP * (1 - cA);
-        slots.push({t: x.t, L: x.L, at: atE, atRaw: x.atF, rh: rhE, dew: dewp(atE, rhE), vl: vl, cop: cop, price: x.price, pv: x.pv, bedarf: bedarf, risk: risk, cA: cA, cP: cP, base: base, dPen: dPen, uPen: uPen, cost: base + dPen + uPen});
+        slots.push({t: x.t, L: x.L, at: atE, atRaw: x.atF, rh: rhE, dew: dewp(atE, rhE), vl: vl, cop: cop, price: x.price, pv: x.pv, wind: x.windF, cl: x.clF, bedarf: bedarf, risk: risk, cA: cA, cP: cP, base: base, dPen: dPen, uPen: uPen, cost: base + dPen + uPen});
         if (ix < NDAY) { cbarS += (base + dPen + uPen); }
     });
     // Leistungsgrenze der Anlage: Nennleistung (5-kW-Modell) und, wenn eine Quiet-Stufe gesetzt ist, deren Deckel. Fuer Stufe 3 gilt eine Annahme (Forenangabe ca. 3-3,5 kW,
@@ -1654,13 +1678,14 @@ if (!pl.plan || pl.planSlot !== s0 || pl.plan.status !== 'ok' || pl.plan.ver !==
 var P = pl.plan;
 
 // ---------- Schnappschuss: je Stunde ein Plan mit allen Eingaengen (bleibt unveraendert, wird nur fuer den spaeteren Vergleich gelesen)
-var SNAP_COLS = ['t', 'at', 'rh', 'cop', 'price', 'pv', 'bedarf', 'plan', 'defrost', 'conf_at', 'conf_pv', 'att', 'rec', 'kosten', 'offset', 'quiet', 'plan_pot', 'taupunkt', 'kosten_basis', 'strafe_defrost', 'strafe_unsicher', 'reserve_hinten', 'reserve_vorn'];
+var SNAP_COLS = ['t', 'at', 'rh', 'cop', 'price', 'pv', 'bedarf', 'plan', 'defrost', 'conf_at', 'conf_pv', 'att', 'rec', 'kosten', 'offset', 'quiet', 'plan_pot', 'taupunkt', 'kosten_basis', 'strafe_defrost', 'strafe_unsicher', 'reserve_hinten', 'reserve_vorn', 'wind', 'wolken'];
 var hourNow = Math.floor(now / H) * H;
 if (P.status === 'ok' && P.slots && pl.snapHour !== hourNow) {
     var snap = {t0: hourNow, s0: P.s0, t: now, status: 'ok', cols: SNAP_COLS, slots: P.slots.map(function (x) {
         return [x.t, Math.round(x.at * 100) / 100, Math.round(x.rh), Math.round(x.cop * 100) / 100, x.price, x.pv === null ? null : Math.round(x.pv), Math.round(x.b * 1000) / 1000, Math.round(x.p * 1000) / 1000, Math.round(x.risk * 100) / 100,
                 Math.round(x.cA * 100) / 100, Math.round(x.cP * 100) / 100, x.att, x.rec, Math.round(x.cost * 100) / 100, x.off, x.quiet, Math.round(x.pPot * 1000) / 1000, Math.round(x.dew * 10) / 10, Math.round(x.base * 100) / 100, Math.round(x.dPen * 100) / 100, Math.round(x.uPen * 100) / 100,
-                Math.round(x.resBack * 1000) / 1000, Math.round(x.resFwd * 1000) / 1000];
+                Math.round(x.resBack * 1000) / 1000, Math.round(x.resFwd * 1000) / 1000,
+                ok(x.wind) ? Math.round(x.wind * 10) / 10 : null, ok(x.cl) ? Math.round(x.cl) : null];
     }), meta: {plan_slots: 96, cap: P.cap, sav_ct: {preis: Math.round(P.sum.savPrice * 100) / 100, cop: Math.round(P.sum.savCop * 100) / 100, abtau: Math.round(P.sum.savDef * 100) / 100, unsicher: Math.round(P.sum.savUnc * 100) / 100, monetaer: Math.round(P.sum.savMon * 100) / 100, summe: Math.round((P.sum.costB - P.sum.costP) * 100) / 100, cop0: Math.round(P.sum.cop0 * 100) / 100}, el_model_24h_kwh: Math.round(P.elModel * 100) / 100, vrm_hp_24h_kwh: P.vrmHp, model: P.model, res: {at_min: 180, rh_min: 180, pv_min: P.sum.pvRes, price_min: 15}, reserve: {state: P.res.state, down: P.res.down, up: P.res.up, stale: P.res.stale, missing: P.res.missing}, conf_at: P.conf.at.map(function (a) { return [a.h, Math.round(a.c * 100) / 100, a.n]; }),
             conf_pv: P.conf.pv.map(function (a) { return [a.h, Math.round(a.c * 100) / 100, a.n]; })}};
     pl.snaps = (pl.snaps || []).filter(function (x) { return x.t0 > now - pn('snapKeepH', 27) * H; });
@@ -2057,12 +2082,14 @@ if (!lastLog || (now - lastLog) >= cfg.log.intervalMin * 60000) {
                         'soll_vorlauf', 'shift_basis', 'shift_rtc', 'shift_final', 'vorlauf', 'ruecklauf', 'verdichter_hz', 'verdichter_an',
                         'leistung_w', 'cop', 'defrost', 'warmwasser', 'sanftanlauf', 'zustand', 'starts_heute',
                         'regelung_an', 'korrektur_vorschlag', 'korrektur_angewendet', 'fuehrungsraum', 'waermeverteilung', 'regelung_grund', 'regelung_sperre', 'haltezeit_rest_min',
-                        'aussen_1h', 'aussen_24h', 'aussen_historie_h', 'prog_24h_mittel', 'aussen_berechnet', 'kurve_soll_aktuell', 'kurve_soll_berechnet', 'verschiebung_aequivalent', 'vorlauf_untergrenze', 'heizregelung']);
+                        'aussen_1h', 'aussen_24h', 'aussen_historie_h', 'prog_24h_mittel', 'aussen_berechnet', 'kurve_soll_aktuell', 'kurve_soll_berechnet', 'verschiebung_aequivalent', 'vorlauf_untergrenze', 'heizregelung',
+                        'wetter_wind_ms', 'pv_w', 'aussen_t_outside', 't_outside_custom']);
     vals = vals.concat([valids.length, heat ? heat.name : '', heat ? c(heat.dev) : '', over ? over.name : '', over ? c(over.dev) : '', tight ? c(tight.m) : '', tight ? tight.room.name : '',
                         c(target), c(shiftBase), c(rtcCorr), c(shiftFinal), c(outl), c(inl), c(freq), freq > 0 ? 1 : 0,
                         c(pw), c(freq > 0 ? cop : null), defrost ? 1 : 0, valve === 1 ? 1 : 0, ssOn ? 1 : 0, mode, c(num(G('Starts_Today'))),
                         ctRes.on ? 1 : 0, ctRes.cur, ctRes.applied, ctRes.lead, ctRes.distrib ? 1 : 0, String(ctRes.code).replace(/,/g, ';'), ctRes.locks.join(' + ').replace(/,/g, ';'), Math.ceil(ctRes.holdLeft / MS_MIN),
-                        c(at1h), c(at24h), c(atSpanH), c(atFc24), c(atCalc), c(sollNow), c(sollCalc), c(shiftEq), ctRes.floorHit ? 1 : 0, hcV === null ? '' : hcV]);
+                        c(at1h), c(at24h), c(atSpanH), c(atFc24), c(atCalc), c(sollNow), c(sollCalc), c(shiftEq), ctRes.floorHit ? 1 : 0, hcV === null ? '' : hcV,
+                        c(wOk ? W.wind : null), c((G('OPT_plan_in') || {}).ts && now - G('OPT_plan_in').ts < 5 * MS_MIN ? G('OPT_plan_in').pvNow : null), c(num(G('T_outside'))), c(num(G('T_outside_custom')))]);
     var logFile = '/data/optimizer/optimizer-v2-' + month + '.csv', headLine = cols.join(',');
     out[4] = {filename: logFile, payload: (headerNeeded('logHead', logFile, headLine) ? headLine + '\n' : '') + vals.join(',') + '\n'};
     flow.set('lastLog', now);
