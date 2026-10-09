@@ -1634,8 +1634,8 @@ check('Dateien: Ist, Vergleich, Schnappschuesse und Zustand unter /data/optimize
 // ---- S2) Fahrplan v2: Rueckrechnung und Regression (nur berechnen und anzeigen)
 {
   const pureSrc = /\/\/ == REIN-BEGIN ==[\s\S]*?\/\/ == REIN-END ==/.exec(F['opt_plan'])[0];
-  const PU = new Function(pureSrc + '; return {parseCsv, daysFromRows, dayFromArr, gauss, prepRows, ridgeFit, looMae, ratioUa, looRatio, gateCheck, fitModel, predict, d0Of};')();
-  const O0 = {ua0: 0.22, sUA: 0.10, sW: 0.01, sS: 0.10, useW: false, useS: false};
+  const PU = new Function(pureSrc + '\n; return {parseCsv, daysFromRows, dayFromArr, gauss, prepRows, ridgeFit, ridgeCore, looMae, ratioUa, looRatio, gateCheck, fitModel, predict, d0Of};')();
+  const O0 = {ua0: 0.22, sUA: 0.10, sW: 0.01, sS: 0.10, useW: false, useS: false, robust: false};
   const mkO = p => Object.assign({}, O0, p || {});
   // Handwert und Plan-Schaetzer
   const r1 = [{y: 30, x1: 100, x2: 0, x3: 0}];
@@ -1679,6 +1679,10 @@ check('Dateien: Ist, Vergleich, Schnappschuesse und Zustand unter /data/optimize
     const sr = (y) => Math.max(1, 0.1 * y), ua = (rs) => { const ym = rs.reduce((a, r) => a + r.y, 0) / rs.length, r2 = sr(ym) ** 2; return Math.min(0.44, Math.max(0.11, (rs.reduce((a, r) => a + r.x1 * r.y / r2, 0) + 0.22 / 0.01) / (rs.reduce((a, r) => a + r.x1 * r.x1 / r2, 0) + 1 / 0.01))); };
     let e = 0; rows.forEach((r, i) => { const rest = rows.filter((x, j) => j !== i); e += Math.abs(r.y - ua(rest) * r.x1); });
     check('Regression, Leave-one-day-out: 3 Tage nur UA stimmt mit der Handrechnung ueberein (1e-9); der Plan-Schaetzer-Fehler ebenso (looRatio)', Math.abs(PU.looMae(rows, mkO()) - e / 3) < 1e-9 && PU.looRatio(rows, 0.22, 300) > 0, (PU.looMae(rows, mkO())).toFixed(6) + ' vs ' + (e / 3).toFixed(6)); }
+  // Ausreisser: ein Tag mit +50 % Waerme wird herausgenommen
+  { const R = mkRnd(31), rows = []; for (let i = 0; i < 16; i++) { const kh = 60 + R.r() * 120; rows.push({y: 0.25 * kh * (1 + 0.02 * R.g()), x1: kh, x2: 0, x3: 0}); }
+    rows[7].x1 = 170; rows[7].y = 0.25 * 170 * 1.6; const fr = PU.ridgeFit(rows, mkO({robust: true})), fn = PU.ridgeFit(rows, mkO({robust: false}));
+    check('Regression, Ausreisser: ein Tag mit +60 % Waerme (> 3 sigma) wird einmalig herausgenommen (removed 1), UA bleibt innerhalb ±5 % des wahren Wertes, ohne die Robustheit weicht er staerker ab', fr.removed === 1 && Math.abs(fr.ua / 0.25 - 1) < 0.05 && Math.abs(fn.ua / 0.25 - 1) > Math.abs(fr.ua / 0.25 - 1), 'robust ' + fr.ua.toFixed(4) + ' / ohne ' + fn.ua.toFixed(4)); }
   // Gate
   { const mkRows = (n) => Array.from({length: n}, (_, i) => ({y: 30, x1: 120, x2: 0, x3: i % 2 ? 80 : 20})), fit = {ua: 0.25, bw: 0, bs: 0.1};
     const g10 = PU.gateCheck(10, mkRows(10), 10, 8.5, fit, {minDays: 10}), g9 = PU.gateCheck(9, mkRows(9), 10, 8.5, fit, {minDays: 10}), gN = PU.gateCheck(10, mkRows(10), 10, 9.5, fit, {minDays: 10}), gP = PU.gateCheck(10, mkRows(10), 10, 8.5, {ua: 0.25, bw: 0, bs: 0.6}, {minDays: 10}), gF = PU.gateCheck(10, Array.from({length: 10}, () => ({y: 30, x1: 120, x2: 0, x3: 50})), 10, 8.5, fit, {minDays: 10});
@@ -1699,7 +1703,7 @@ check('Dateien: Ist, Vergleich, Schnappschuesse und Zustand unter /data/optimize
     const live = PU.dayFromArr(fstore.plan.learn.days[0]), bf = PU.daysFromRows(PU.parseCsv(txtL), 15).find(d => d.d0 === live.d0);
     check('Rueckrechnung gegen live: derselbe Tag aus den geschriebenen plan-actuals-Zeilen zurueckgerechnet ergibt kh ±1 %, q ±0,5 %, PV ±1 %, wk ±1 %, khW ±1 % gegenueber den live gesammelten Werten', !!bf && Math.abs(bf.kh / live.kh - 1) < 0.01 && Math.abs(bf.q / live.q - 1) < 0.005 && Math.abs(bf.s / live.s - 1) < 0.01 && Math.abs(bf.wk / live.wk - 1) < 0.01 && Math.abs(bf.khW / live.khW - 1) < 0.01, JSON.stringify({live, bf}).slice(0, 300));
     const dayMsgs = all.map(o => [].concat(o[1] || [])).reduce((a, b) => a.concat(b), []).filter(m => /plan-days-/.test(m.filename));
-    check('Tagesblatt: beim Tageswechsel eine Zeile in plan-days-2026-11.csv mit Kopfzeile (12 Spalten), Datum und Werten mit Punkt', dayMsgs.length === 1 && dayMsgs[0].filename === '/data/optimizer/plan-days-2026-11.csv' && dayMsgs[0].payload.split('\n')[0].split(',').length === 12 && dayMsgs[0].payload.split('\n')[1].split(',').length === 12 && /^2026-11-12,/.test(dayMsgs[0].payload.split('\n')[1]) && !/\d,\d{3}\b/.test(dayMsgs[0].payload.split('\n')[1].slice(11)) , dayMsgs.map(m => m.payload).join('|').slice(0, 220)); }
+    check('Tagesblatt: beim Tageswechsel eine Zeile in plan-days-2026-11.csv mit Kopfzeile (12 Spalten), Datum und Werten mit Punkt', dayMsgs.length === 1 && dayMsgs[0].filename === '/data/optimizer/plan-days-2026-11.csv' && dayMsgs[0].payload.split('\n')[0].split(',').length === 12 && dayMsgs[0].payload.split('\n')[1].split(',').length === 12 && /^2026-11-12,/.test(dayMsgs[0].payload.split('\n')[1]) && /,\d+\.\d+/.test(dayMsgs[0].payload.split('\n')[1]), dayMsgs.map(m => m.payload).join('|').slice(0, 220)); }
   // Anzeige und Berechnung ueber step(): 4 Tage vorgeben
   { const day = (k, kh, q, s, wk) => [Date.UTC(2026, 10, 1 + k, 0, 0), kh, q, 1440, s, wk, kh * 0.9, wk * 0.9, 0.1, 1440, wk === null ? 0 : 1440, 1440, wk === null ? 0 : 1440];
     pworld({wide: true}); step(2); fstore.plan.bf = {days: []}; fstore.plan.learn.days = []; delete fstore.plan.learn.coef; step(1);
@@ -1710,7 +1714,7 @@ check('Dateien: Ist, Vergleich, Schnappschuesse und Zustand unter /data/optimize
     const R = mkRnd(9); fstore.plan.learn.days = [0, 1, 2, 3, 4].map(k => { const kh = 80 + R.r() * 100, S = 10 + R.r() * 60; return day(k, kh, 0.25 * kh - 0.05 * S, S, null); }); step(1);
     const cf = fstore.plan.learn.coef;
     check('Anzeige "Gebäudemodell": 5 Tage -> Kandidat mit UA, Sonne, "Wind n 0 Tage", Fehler Plan/Kandidat; aktiv bleibt false, Gate nicht ok; Berechnung nur bei geaenderten Eingaben (Zeitstempel bleibt)', /^UA \d+ W\/K · Sonne \d,\d{3} · Wind n 0 Tage · Kandidat · 5 Tage · Fehler Plan [\d,]+ \/ Kandidat [\d,]+ kWh$/.test(rowG()) && cf.aktiv === false && cf.gate.ok === false && cf.n === 5 && (() => { const ts0 = cf.ts; step(3); return fstore.plan.learn.coef.ts === ts0; })(), rowG());
-    const keepCoef = JSON.stringify(fstore.plan.learn.coef); delete fstore.plan; step(1);
+    step(2); const keepCoef = JSON.stringify(fstore.plan.learn.coef); delete fstore.plan; step(1);
     check('Neustart: Koeffizienten und Zeitstempel kommen aus plan-state.json zurueck und werden nicht neu gerechnet', JSON.stringify(fstore.plan.learn.coef) === keepCoef, '');
     check('Plan unveraendert: mit berechnetem Kandidaten (aktiv false) bleiben UA und Bedarf des Plans beim bisherigen Schaetzer', Math.abs(planNow().model.ua - ((0.22 * 300 + fstore.plan.learn.days.filter(d => d[1] >= 30).reduce((a, d) => a + d[2], 0)) / (300 + fstore.plan.learn.days.filter(d => d[1] >= 30).reduce((a, d) => a + d[1], 0)))) < 1e-9, planNow().model.ua.toFixed(5));
     // robust: leere/NaN-Eingaben

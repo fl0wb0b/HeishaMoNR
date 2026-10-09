@@ -1402,7 +1402,7 @@ function prepRows(days, o) {                                                    
     });
     return {rows: rows, nW: nW};
 }
-function ridgeFit(rows, o) {                                                                         // y = UA*x1 + bw*x2 - bs*x3, Ridge mit Prior (ua0, 0, 0), Grenzen: UA in [lo, hi], bw/bs >= 0; exakt ueber alle Faelle (aktive Grenzen)
+function ridgeCore(rows, o) {                                                                        // y = UA*x1 + bw*x2 - bs*x3, Ridge mit Prior (ua0, 0, 0), Grenzen: UA in [lo, hi], bw/bs >= 0; exakt ueber alle Faelle (aktive Grenzen)
     var n = rows.length, ua0 = o.ua0, sig = [o.sUA, o.sW, o.sS], b0 = [ua0, 0, 0];
     if (!n) { return {ua: ua0, bw: 0, bs: 0, J: 0, n: 0}; }
     var ym = rows.reduce(function (a, r) { return a + r.y; }, 0) / n, sr = Math.max(1.0, 0.10 * ym), r2 = sr * sr;
@@ -1439,6 +1439,14 @@ function ridgeFit(rows, o) {                                                    
     return best;
 }
 function predict(fit, r) { return fit.ua * r.x1 + fit.bw * r.x2 - fit.bs * r.x3; }
+function ridgeFit(rows, o) {                                                                         // robust: Tage mit Rest > 3 sigma (sigma = max(1 kWh, 10 % vom Mittel)) werden einmalig herausgenommen, dann neu gerechnet
+    var f = ridgeCore(rows, o);
+    if (o.robust === false || rows.length < 5) { return f; }
+    var ym = rows.reduce(function (a2, r) { return a2 + r.y; }, 0) / rows.length, sr = Math.max(1.0, 0.10 * ym);
+    var keep = rows.filter(function (r) { return Math.abs(r.y - predict(f, r)) <= 3 * sr; });
+    if (keep.length === rows.length || keep.length < 4) { return f; }
+    var g = ridgeCore(keep, o); g.removed = rows.length - keep.length; return g;
+}
 function looMae(rows, o) {                                                                           // Leave-one-day-out: mittlerer absoluter Tagesfehler [kWh]
     if (rows.length < 3) { return null; }
     var s = 0;
@@ -1654,7 +1662,7 @@ if (!pl.learn.coef || pl.learn.coef.sig !== mSig) {
     try {
         var fm = fitModel(mDays, {ua0: pn('uaKwPerK', 0.22), h0: pn('uaPriorKh', 300), sUA: 0.10, sW: 0.01, sS: 0.10, minDays: pn('coefMinDays', 10), minWindDays: 7, storeC: [0, 3, 6, 10]});
         fm.sig = mSig; fm.ts = now; fm.aktiv = false;                                              // in S2 wirkt nichts auf den Plan
-        pl.learn.coef = fm;
+        pl.learn.coef = fm; pl.lastSave = 0;                                                      // neue Koeffizienten sofort sichern (ueberstehen so einen Neustart ohne Neuberechnung)
     } catch (e) { pl.learn.coef = {n: 0, sig: mSig, ts: now, aktiv: false, error: String(e && e.message || e)}; }
 }
 
