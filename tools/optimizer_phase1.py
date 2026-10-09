@@ -65,6 +65,7 @@ upsert({"id": BROKER, "type": "mqtt-broker", "name": "MQTT (Venus) Optimizer", "
 
 
 UI_CHART_JS = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui_chart.js"), encoding="utf-8").read()      # SVG-Diagramme der Oberflaeche (reine Funktionen, in der Sim getestet)
+DT_CORE_JS = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "delaytest_core.js"), encoding="utf-8").read()     # Kern des Verzoegerungstests (reine Funktion, in der Sim getestet)
 FS = [{"var": "fs", "module": "fs"}]       # core module, allowed on this instance (functionExternalModules: true)
 
 
@@ -122,6 +123,13 @@ QUIET = {"testAtRange": 2.0, "thrHigh": 3.0, "thrMid": 1.5, "thrLow": 0.5, "hyst
          "offAtLow": 1, "offAtHigh": 3, "offAtHyst": 0.5}
 
 
+# Verzoegerungstest (Schalt-Pruefstand, tools/delaytest_core.js): Einmal-Test "+1 K Heizkurvenverschiebung", ob Ausschalten/Einschalten des Verdichters
+# hinausgezoegert bzw. ausgeloest wird. Nur wirksam mit dem Patch tools/delaytest_patch.py UND wenn der Nutzer den Test in der Oberflaeche scharf schaltet.
+DELAYTEST = {"atMin": 7.5, "atMax": 11.5, "fromH": 9, "toH": 19, "maxPerDay": 1, "cooldownMin": 120, "afterMin": 15, "minRunMin": 45, "minStopMin": 20,
+             "ausLow": 2.0, "ausHigh": 2.75, "einLow": -2.75, "einHigh": -2.25, "einNat": -3.0, "einTimer": 7, "einSlopeMin": 0.03, "einSlopeMax": 0.12, "vlMax": 36, "vlOverMax": 4.75, "roomOverK": 1.0, "dwellMin": 2,
+             "confirmMin": 6, "maxMinAus": 90, "maxMinEin": 40, "nachMin": 6, "armTtlH": 14}
+
+
 # Heat plan (shadow only): every number here is a conservative DEFAULT, not a measured value; measured data moves them only slowly.
 PLAN = {"tbalC": 15, "uaKwPerK": 0.22, "uaPriorKh": 300, "learnDays": 21, "learnMinHdd": 30,
         "etaPrior": 0.45, "etaPriorMin": 600, "evapApproachK": 6, "condApproachK": 2,
@@ -139,7 +147,8 @@ def js(code):
                 .replace("__MINBAND__", str(MIN_BAND_K))
                 .replace("__CTL__", json.dumps(CONTROL))
                 .replace("__QUIET__", json.dumps(QUIET, ensure_ascii=False))
-                .replace("__PLAN__", json.dumps(PLAN, ensure_ascii=False)))
+                .replace("__PLAN__", json.dumps(PLAN, ensure_ascii=False))
+                .replace("__DELAYTEST__", json.dumps(DELAYTEST, ensure_ascii=False)))
 
 
 # ---------------------------------------------------------------- defaults / configuration
@@ -152,6 +161,7 @@ var d = {
     control: __CTL__,
     quiet: __QUIET__,
     plan: __PLAN__,
+    delaytest: __DELAYTEST__,
     energy: {vrmMaxAgeH: 4, evccMaxAgeH: 6, batteryInstance: 278,
              tariff: {buy: [['00:00', '05:00', 0.21], ['05:00', '24:00', 0.31]], sell: 0.06, source: 'VRM Dynamic ESS (fester HT/NT-Tarif)'},       // Kaufpreis EUR/kWh je Zeitfenster, Verkaufspreis
              battery: {capacityKwh: 43, maxChargeKw: 12, maxDischargeKw: 12, costEurKwh: 0.01}, grid: {importKw: 32, exportKw: 32}},          // Werte aus VRM Dynamic ESS (fuer spaetere Phasen)
@@ -185,9 +195,9 @@ if (!saved || typeof saved !== 'object') { saved = {}; }
 var cur = global.get('OPT_cfg') || {};
 // plan und energy sind Modellparameter, keine Eingaben der Oberflaeche: sie entstehen immer aus den aktuellen Standardwerten plus config.json.
 // Die im Speicher gehaltene Konfiguration (noch von einer aelteren Version) darf sie nicht ueberschreiben, sonst wirken verbesserte Standardwerte erst nach einem Neustart.
-var fresh = {plan: JSON.parse(JSON.stringify(d.plan)), energy: JSON.parse(JSON.stringify(d.energy))};
+var fresh = {plan: JSON.parse(JSON.stringify(d.plan)), energy: JSON.parse(JSON.stringify(d.energy)), delaytest: JSON.parse(JSON.stringify(d.delaytest))};
 var cfg = merge(merge(d, saved), cur);
-['plan', 'energy'].forEach(function (g) { cfg[g] = merge(fresh[g], saved[g]); });
+['plan', 'energy', 'delaytest'].forEach(function (g) { cfg[g] = merge(fresh[g], saved[g]); });
 mergeRooms(cfg.rooms, saved.rooms);
 mergeRooms(cfg.rooms, cur.rooms);
 delete cfg.comfort;                          // fruehere globale Komfortband-Einstellung: ersetzt durch je Raum eigene Baender
@@ -2462,6 +2472,81 @@ out[6] = {payload: owmTxt};
 return out;
 """
 
+
+DT_WRAP_JS = r"""
+// ---------- Huelle: Anlagenwerte lesen, Kern aufrufen, Verschiebung bereitstellen, protokollieren
+// Der Pruefstand schreibt NUR die Werte OPT_test_shift und OPT_test_ts (Speicher). Sie wirken ausschliesslich ueber den Patch der Summenfunktion
+// (tools/delaytest_patch.py), der sie nur annimmt, wenn der Zeitstempel hoechstens 150 s alt ist und den Betrag auf 1 K begrenzt.
+var cfg = global.get('OPT_cfg');
+if (!cfg || !cfg.delaytest) { return null; }
+var C = cfg.delaytest, now = Date.now(), MIN = 60000;
+var G = function (k) { var v; try { v = global.get(k, 'file'); } catch (e) { v = undefined; } return v !== undefined ? v : global.get(k); };
+function num(v) { if (v === null || v === undefined || v === '') { return null; } v = Number(v); return isFinite(v) ? v : null; }
+var HP = G('OPT_hp') || {};
+function hpv(name) { var e = HP[name]; return (e && typeof e.v === 'number' && now - e.ts < 10 * MIN) ? e.v : null; }
+var FILE = '/data/optimizer/delaytest-state.json';
+var ds = flow.get('dt'), restart = false;
+if (!ds) {
+    ds = {S: {}, arm: 'aus', armTs: 0, saved: ''};
+    try { var sj = JSON.parse(fs.readFileSync(FILE, 'utf8')); if (sj && sj.S) { ds.S = sj.S; ds.arm = sj.arm || 'aus'; ds.armTs = sj.armTs || 0; } } catch (e) { /* noch keine Datei */ }
+    if (ds.S.phase && ds.S.phase !== 'idle' && ds.S.phase !== 'nach') { restart = true; }
+    flow.set('dt', ds);
+}
+function pd(x) { return (x < 10 ? '0' : '') + x; }
+function stampL(ts) { var d = new Date(ts); return d.getFullYear() + '-' + pd(d.getMonth() + 1) + '-' + pd(d.getDate()) + ' ' + pd(d.getHours()) + ':' + pd(d.getMinutes()) + ':' + pd(d.getSeconds()); }
+var evPre = [];
+var ARMS = ['aus', 'ausschalten', 'einschalten'];
+if (typeof msg.payload === 'string' && ARMS.indexOf(msg.payload) >= 0) {                      // Schalter in der Oberflaeche
+    if (ds.S.phase === 'test' && msg.payload === 'aus') { ds.arm = 'aus'; }                    // Entschaerfen waehrend des Tests: der Kern bricht ab
+    else if (ds.S.phase !== 'idle' && ds.S.phase) { return null; }                             // laufender Test: Wahl ignorieren
+    else { ds.arm = msg.payload; ds.armTs = now; evPre.push(stampL(now) + ',verzoegerungstest_wahl,' + msg.payload); }
+}
+if (ds.arm !== 'aus' && now - ds.armTs > C.armTtlH * 60 * MIN && ds.S.phase !== 'test') {        // vergessene Scharfschaltung verfaellt
+    ds.arm = 'aus'; evPre.push(stampL(now) + ',verzoegerungstest_wahl,aus (abgelaufen)');
+}
+var rooms = [];
+(cfg.rooms || []).forEach(function (rc) {
+    if (!rc.active) { return; }
+    var st = (G('OPT_rooms') || {})[rc.id] || {};
+    rooms.push({name: rc.name, t: num(st.last), ageMin: st.ts ? (now - st.ts) / MIN : null, maxAgeMin: rc.maxAgeMin, min: rc.min, max: rc.max});
+});
+var lt = new Date(now);
+var o = {now: now, hour: lt.getHours() + lt.getMinutes() / 60, restart: restart, arm: ds.arm, hpFresh: hpv('Compressor_Freq') !== null,
+         hpOn: num(G('TOP0_Heatpump_State')) === 1, ccMode: num(G('TOP76_Heating_Mode')) === 0, zones: num(G('TOP94_Zones_State')),
+         blockActive: num(G('MQTT.block_active')) === 1, hz: num(G('compressor_frequency')) || 0, runMin: num(G('compressor_runtime')), vl: num(G('TOP6_Main_Outlet_Temp')), rl: num(G('TOP5_Main_Inlet_Temp')),
+         soll: num(G('TOP42_Z1_Water_Target_Temp')), shiftHp: num(G('TOP27_Z1_Heat_Request_Temp')), at: num(G('TOP14_Outside_Temp')), pumpRpm: hpv('Pump_Speed'),
+         pel: num(G('TOP16_Heat_Energy_Consumption')), defrost: num(G('TOP26_Defrosting_State')) === 1, dhw: num(G('TOP20_ThreeWay_Valve_State')) === 1,
+         heater: (hpv('Internal_Heater_State') || 0) > 0 || (hpv('External_Heater_State') || 0) > 0, hc: hpv('Heating_Control'), quiet: num(G('TOP18_Quiet_Mode_Level')), rooms: rooms};
+var res;
+try { res = dtStep(ds.S, o, C); }
+catch (e) { res = {S: {phase: 'idle'}, shift: 0, rows: [], ev: [stampL(now) + ',verzoegerungstest_abbruch,Fehler: ' + String(e && e.message).replace(/,/g, ';')], status: 'Fehler im Prüfstand, Verschiebung 0', changed: true, disarm: true}; }
+ds.S = res.S;
+if (res.disarm) { ds.arm = 'aus'; }
+// Verschiebung bereitstellen: waehrend des Tests jede Minute frisch; danach einmal 0; im Leerlauf nichts
+if (res.shift !== 0 || ds.wrote || res.changed) { global.set('OPT_test_shift', res.shift); global.set('OPT_test_ts', now); ds.wrote = res.shift !== 0; }
+global.set('OPT_dt_status', res.status);
+var json = JSON.stringify({S: ds.S, arm: ds.arm, armTs: ds.armTs});
+if (json !== ds.saved) { try { fs.writeFileSync(FILE, json, {mode: 0o644}); ds.saved = json; } catch (e) { /* naechster Versuch beim naechsten Aufruf */ } }
+// Protokoll
+var month = lt.getFullYear() + '-' + pd(lt.getMonth() + 1);
+function withHead(file, head, lines) {
+    var need = true;
+    try { var lh = null; String(fs.readFileSync(file, 'utf8')).split('\n').forEach(function (l) { if (l.indexOf(head.split(',')[0] + ',') === 0) { lh = l; } }); need = lh !== head; } catch (e) { need = true; }
+    return {filename: file, payload: (need ? head + '\n' : '') + lines.join('\n') + '\n'};
+}
+function c(v) { return (v === null || v === undefined || !isFinite(v)) ? '' : String(Math.round(v * 100) / 100); }
+var out0 = null, out1 = null;
+if (res.rows.length) {
+    var HEAD = 'zeit,test,phase,shift_befehl,soll_vl,soll_basis,ist_vl,vl_minus_basis,ist_rl,verdichter_hz,leistung_el_w,pumpe_rpm,aussen,shift_anlage,raum_ueber_max_k,raum_unter_min_k,notiz';
+    out0 = withHead('/data/optimizer/delaytest-' + month + '.csv', HEAD, res.rows.map(function (r) { return r.map(function (v, i) { return (i === 1 || i === 2 || i === 16) ? String(v === undefined || v === null ? '' : v).replace(/,/g, ';') : (i === 0 ? v : c(v)); }).join(','); }));
+}
+var evAll = evPre.concat(res.ev);
+if (evAll.length) { out1 = withHead('/data/optimizer/quiet-events-' + month + '.csv', 'zeit,ereignis,wechsel', evAll); }
+var out3 = null;
+if (ds.shown !== ds.arm) { ds.shown = ds.arm; out3 = {payload: ds.arm}; }                // Schalter in der Oberflaeche nachfuehren (nach Test/Ablauf wieder "Aus")
+return [out0, out1, {payload: res.status}, out3];
+"""
+
 # ---------------------------------------------------------------- dashboard
 upsert({"id": UI_TAB, "type": "ui_tab", "name": "Optimierung", "icon": "tune", "order": 12.5, "disabled": False, "hidden": False})
 # Seite "Optimierung": nur breite Karten (Diagramme + Raumtabelle); die schmalen Statuskarten liegen auf der Seite "Daten & Güte" (der Masonry-Algorithmus legt gemischte Breiten uebereinander)
@@ -2470,7 +2555,7 @@ upsert({"id": UI_TAB_DATA, "type": "ui_tab", "name": "Daten & Güte", "icon": "a
 GROUPS = [("opt_g_ch_wp", "Wärmepumpe · letzte 24 h", 18, UI_TAB), ("opt_g_ch_rooms", "Räume · letzte 24 h", 18, UI_TAB), ("opt_g_ch_at", "Außentemperatur · letzte 48 h", 18, UI_TAB), ("opt_g_rooms", "Räume und Komfortbänder", 18, UI_TAB),
           ("opt_g_opt", "Optimierung", 6, UI_TAB_DATA),
           ("opt_g_wx", "Außen & Wetter", 6, UI_TAB_DATA), ("opt_g_calc", "Berechnete Außentemperatur", 6, UI_TAB_DATA), ("opt_g_quiet", "Leistung & Quiet (Shadow)", 6, UI_TAB_DATA), ("opt_g_en", "Energie & Preise (nur Anzeige)", 6, UI_TAB_DATA),
-          ("opt_g_fq", "Prognosegüte (nur Anzeige)", 6, UI_TAB_DATA), ("opt_g_wp", "Wärmepumpe", 6, UI_TAB_DATA)]
+          ("opt_g_fq", "Prognosegüte (nur Anzeige)", 6, UI_TAB_DATA), ("opt_g_wp", "Wärmepumpe", 6, UI_TAB_DATA), ("opt_g_dt", "Schaltlogik-Test (Einmal-Test, +1 K)", 6, UI_TAB_DATA)]
 _ord = {}
 for gid, gname, gwidth, gtab in GROUPS:
     _ord[gtab] = _ord.get(gtab, 0) + 1
@@ -2948,6 +3033,20 @@ upsert(inject("opt_i_vrm_load", "VRM-Zugangsdaten prüfen", 0, 7, ["opt_vrm_load
 upsert(fn("opt_vrm_load", "Gespeicherte Installation laden", VRM_LOAD_JS, 1, [["opt_ui_vrm_form"]], 420, 1780, FS))
 upsert(fn("opt_vrm_save", "VRM-Zugangsdaten speichern", VRM_SAVE_JS, 4,
           [["opt_ui_vrm_form"], ["opt_ui_toast"], ["opt_vrm_req"], ["opt_ui_vrmstatus"]], 1100, 1720, FS))
+
+
+# Verzoegerungstest (Schalt-Pruefstand): Kern + Huelle als eine Funktion; Schalter und Status auf der Seite "Daten & Guete".
+upsert(fn("opt_dt", "Verzögerungstest (Prüfstand)", DT_CORE_JS + DT_WRAP_JS, 4, [["opt_f_dt"], ["opt_f_qev"], ["opt_ui_dt_status"], ["opt_ui_dt_arm"]], 700, 1260, FS))
+upsert(inject("opt_i_dt", "jede Minute", 60, 25, ["opt_dt"], 440, 1260))
+upsert({"id": "opt_f_dt", "type": "file", "z": TAB, "name": "Verzögerungstest-Protokoll", "filename": "filename", "filenameType": "msg", "appendNewline": False,
+        "createDir": True, "overwriteFile": "false", "encoding": "utf8", "x": 960, "y": 1260, "wires": [[]]})
+upsert({"id": "opt_ui_dt_arm", "type": "ui_dropdown", "z": TAB, "name": "Schalter Verzögerungstest", "label": "Test", "tooltip": "Einmal-Test: +1 K Heizkurvenverschiebung. Bleibt aus, bis hier etwas gewählt wird.",
+        "place": "Auswahl", "group": "opt_g_dt", "order": 1, "width": 6, "height": 1, "passthru": False, "multiple": False,
+        "options": [{"label": "Aus", "value": "aus", "type": "str"}, {"label": "Ausschalten hinauszögern", "value": "ausschalten", "type": "str"},
+                    {"label": "Einschalten auslösen", "value": "einschalten", "type": "str"}],
+        "payload": "", "topic": "arm", "topicType": "str", "className": "", "x": 440, "y": 1320, "wires": [["opt_dt"]]})
+upsert({"id": "opt_ui_dt_status", "type": "ui_text", "z": TAB, "group": "opt_g_dt", "order": 2, "width": 6, "height": 5,
+        "name": "Status Verzögerungstest", "label": "", "format": "{{msg.payload}}", "layout": "col-center", "className": "", "x": 960, "y": 1320, "wires": []})
 
 # the new page also belongs into the menu configuration (SYSTEM > menu), otherwise it can not be hidden/shown there
 form = B.get("e35b7df78bc6f722")
