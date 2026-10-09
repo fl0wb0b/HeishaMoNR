@@ -15,6 +15,7 @@ user typed into the tab environment variables.
 Usage: python3 tools/optimizer_phase1.py "flows (26.5.1 stable).json"
 """
 import json
+import os
 import sys
 
 path = sys.argv[1] if len(sys.argv) > 1 else "flows (26.5.1 stable).json"
@@ -63,6 +64,7 @@ upsert({"id": BROKER, "type": "mqtt-broker", "name": "MQTT (Venus) Optimizer", "
         "userProps": "", "sessionExpiry": ""})
 
 
+UI_CHART_JS = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui_chart.js"), encoding="utf-8").read()      # SVG-Diagramme der Oberflaeche (reine Funktionen, in der Sim getestet)
 FS = [{"var": "fs", "module": "fs"}]       # core module, allowed on this instance (functionExternalModules: true)
 
 
@@ -2053,7 +2055,19 @@ if (P.status === 'ok') {
                   o: recH === 0 || offH === null ? '–' : (g.some(function (x) { return x.offFloor; }) && offH === 0 ? 'Untergrenze ' + f(P.minVlC, 0, '°C') : (offH > 0 ? '+' : '') + f(offH, 1, 'K')), q: qh});
     }
 }
-out[0] = {payload: {rows: rows, plan: tab}};
+var chartD = null, kpi = [];
+if (P.status === 'ok') {                                                                         // Daten fuer Diagramm und Kennzahlen-Kacheln der Karte
+    var sm2 = P.sum, rs2 = P.res || {}, wf = function (w) { return w ? hhmm(P.slots[w.i].t) + '–' + hhmm(P.slots[w.i].t + 3 * H) : '–'; };
+    chartD = {slots: P.slots.slice(0, 96).map(function (x) { return [x.t, Math.round(x.b * 4000) / 1000, Math.round(x.p * 4000) / 1000, Math.round(x.price * 1000) / 10, x.pv === null ? null : Math.round(x.pv), Math.round(x.cop * 100) / 100, Math.round(x.at * 10) / 10, ok(x.atK) ? Math.round(x.atK * 10) / 10 : null, x.rec]; })};
+    kpi = [{k: 'Stand', v: hhmm(P.t), s: 'Shadow, ' + (P.enough ? 'plant' : 'kaum Heizbedarf')},
+           {k: 'Wärmebedarf 24 h', v: f(sm2.bedarf, 1, 'kWh'), s: 'Ø ' + f(sm2.bedarf / 24, 2, 'kW')},
+           {k: 'Strom Wärmepumpe', v: f(P.elModel, 1, 'kWh'), s: 'VRM ' + (P.vrmHp !== null ? f(P.vrmHp, 1, 'kWh') : '–')},
+           {k: 'Ersparnis (Modell)', v: f(sm2.costB - sm2.costP, 0, 'ct'), s: 'ohne Grenzen ' + f(sm2.costB - sm2.costPot, 0, 'ct')},
+           {k: 'Reserve Gebäude', v: f(rs2.down, 1) + ' / ' + f(rs2.up, 1) + ' kWh', s: 'hinten / vorn'},
+           {k: 'Günstigstes Fenster', v: wf(sm2.thermWin), s: sm2.thermWin ? 'Ø ' + f(sm2.thermWin.v, 1, 'ct/kWh') : ''},
+           {k: 'PV-Fenster', v: wf(sm2.pvWin), s: sm2.pvWin ? 'Ø ' + f(sm2.pvWin.v, 0, 'W') : 'keine Prognose'}];
+}
+out[0] = {payload: {rows: rows, plan: tab, chart: chartD, kpi: kpi}};
 global.set('OPT_plan', {ts: now, s0: P.s0, status: P.status, reserve: P.res || null, slots: P.slots ? P.slots.map(function (x) { return [x.t, x.rec, x.b, x.p, x.cost, x.cA]; }) : null});
 flow.set('plan', pl);
 return out;
@@ -2450,11 +2464,17 @@ return out;
 
 # ---------------------------------------------------------------- dashboard
 upsert({"id": UI_TAB, "type": "ui_tab", "name": "Optimierung", "icon": "tune", "order": 12.5, "disabled": False, "hidden": False})
-# one wide card for the rooms (situation + settings), three slim status cards next to it; templates: width 0 = group width
-GROUPS = [("opt_g_rooms", "Räume und Komfortbänder", 12), ("opt_g_opt", "Optimierung", 6),
-          ("opt_g_wx", "Außen & Wetter", 6), ("opt_g_calc", "Berechnete Außentemperatur", 6), ("opt_g_quiet", "Leistung & Quiet (Shadow)", 6), ("opt_g_en", "Energie & Preise (nur Anzeige)", 6), ("opt_g_fq", "Prognosegüte (nur Anzeige)", 6), ("opt_g_wp", "Wärmepumpe", 6)]
-for _order, (gid, gname, gwidth) in enumerate(GROUPS, 1):
-    upsert({"id": gid, "type": "ui_group", "name": gname, "tab": UI_TAB, "order": _order, "disp": True,
+# Seite "Optimierung": nur breite Karten (Diagramme + Raumtabelle); die schmalen Statuskarten liegen auf der Seite "Daten & Güte" (der Masonry-Algorithmus legt gemischte Breiten uebereinander)
+UI_TAB_DATA = "opt_ui_tab_data"
+upsert({"id": UI_TAB_DATA, "type": "ui_tab", "name": "Daten & Güte", "icon": "analytics", "order": 12.75, "disabled": False, "hidden": False})
+GROUPS = [("opt_g_ch_wp", "Wärmepumpe · letzte 24 h", 18, UI_TAB), ("opt_g_ch_rooms", "Räume · letzte 24 h", 18, UI_TAB), ("opt_g_ch_at", "Außentemperatur · letzte 48 h", 18, UI_TAB), ("opt_g_rooms", "Räume und Komfortbänder", 18, UI_TAB),
+          ("opt_g_opt", "Optimierung", 6, UI_TAB_DATA),
+          ("opt_g_wx", "Außen & Wetter", 6, UI_TAB_DATA), ("opt_g_calc", "Berechnete Außentemperatur", 6, UI_TAB_DATA), ("opt_g_quiet", "Leistung & Quiet (Shadow)", 6, UI_TAB_DATA), ("opt_g_en", "Energie & Preise (nur Anzeige)", 6, UI_TAB_DATA),
+          ("opt_g_fq", "Prognosegüte (nur Anzeige)", 6, UI_TAB_DATA), ("opt_g_wp", "Wärmepumpe", 6, UI_TAB_DATA)]
+_ord = {}
+for gid, gname, gwidth, gtab in GROUPS:
+    _ord[gtab] = _ord.get(gtab, 0) + 1
+    upsert({"id": gid, "type": "ui_group", "name": gname, "tab": gtab, "order": _ord[gtab], "disp": True,
             "width": gwidth, "collapse": False, "className": ""})
 
 # The heat plan gets its own dashboard page: the dashboard's masonry layout places cards of mixed widths (6/12/18) on top of each other.
@@ -2530,8 +2550,8 @@ upsert(_qt)
 upsert(template("opt_t_en", "opt_g_en", 14, 350))
 upsert(template("opt_t_fq", "opt_g_fq", 12, 400))
 QSTATS = """<style>.optq{width:100%;border-collapse:collapse;font-size:13px}
-.optq th{text-align:left;font-weight:normal;color:#666;padding:4px 6px;border-bottom:1px solid #ccc;font-size:12px}
-.optq td{padding:5px 6px;border-bottom:1px solid #eee;white-space:nowrap}
+.optq th{text-align:left;font-weight:normal;color:#666;padding:4px 4px;border-bottom:1px solid #ccc;font-size:12px}
+.optq td{padding:5px 4px;border-bottom:1px solid #eee;white-space:nowrap}
 .optq-note{font-size:12px;color:#777;padding:6px 2px}</style>
 <div class="optfit"><div style="overflow-x:auto"><table class="optq"><tr><th>Stufe</th><th>Außen</th><th>Minuten Lauf</th><th>Ø Hz</th><th>Ø Fan</th><th>Ø P el. (W)</th><th>Ø P th. (W)</th><th>Max Hz</th><th>Max P th. (W, ab 10 min Lauf)</th><th>Ø COP</th>
 <th>Ø VL / RL / ΔT (°C)</th><th>Ø Soll VL / RL</th><th>Ø Flow (l/min)</th><th>Starts/h</th><th>Ø Lauf (min)</th><th>Abtauungen</th><th>Komfortdefizit</th></tr>
@@ -2541,28 +2561,148 @@ upsert({"id": "opt_t_qstats", "type": "ui_template", "z": TAB, "group": "opt_g_q
         "format": QSTATS + FIT_JS.replace("__ID__", "opt_t_qstats"), "storeOutMessages": True, "fwdInMessages": False, "resendOnRefresh": True,
         "templateScope": "local", "className": "", "x": 1260, "y": 320, "wires": [[]]})
 upsert(template("opt_t_wp", "opt_g_wp", 6, 260))
+HIST_JS = r"""
+// Verlaufsdaten fuer die Diagramme (nur lesen): letzte 48 h aus dem 5-Minuten-Protokoll optimizer-v2-YYYY-MM.csv; Kopfzeilen-Abschnitte werden ueber die Spaltennamen zugeordnet.
+// Zeitstempel einmal, Reihen als Zahlenfelder (kleine Nachrichten). Ausgang 1: Waermepumpe 24 h, 2: Raeume 24 h, 3: Aussentemperatur 48 h.
+var now = Date.now(), H = 3600000, t0 = now - 48 * H;
+function pad(x) { return (x < 10 ? '0' : '') + x; }
+function monthOf(ts) { var d = new Date(ts); return d.getFullYear() + '-' + pad(d.getMonth() + 1); }
+function tsOf(s) { var m = /^(\d{4})-(\d\d)-(\d\d) (\d\d):(\d\d):(\d\d)/.exec(s); return m ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime() : null; }
+function nn(x) { if (x === '' || x === undefined) { return null; } var v = Number(x); return isFinite(v) ? v : null; }
+var months = [monthOf(t0)]; if (monthOf(now) !== months[0]) { months.push(monthOf(now)); }
+var rows = [];
+months.forEach(function (mo) {
+    var head = null, text = '';
+    try { text = String(fs.readFileSync('/data/optimizer/optimizer-v2-' + mo + '.csv', 'utf8')); } catch (e) { return; }
+    text.split('\n').forEach(function (l) {
+        if (!l) { return; }
+        var p = l.split(',');
+        if (p[0] === 'zeit') { head = p; return; }
+        if (!head || p.length !== head.length) { return; }
+        var t = tsOf(p[0]); if (t === null || t < t0 || t > now + 60000) { return; }
+        var o = {t: t}; for (var i = 1; i < head.length; i++) { o[head[i]] = p[i]; }
+        rows.push(o);
+    });
+});
+rows.sort(function (a, b) { return a.t - b.t; });
+function cut(hours) { var lim = now - hours * H; return rows.filter(function (r) { return r.t >= lim; }); }
+function col(rs, name, f) { return rs.map(function (r) { var v = nn(r[name]); return v === null ? null : Math.round(v * f) / f; }); }
+var cfg = global.get('OPT_cfg') || {}, rc = cfg.rooms || [];
+var r24 = cut(24), r48 = rows;
+var wp = {now: now, n: r24.length, t: r24.map(function (r) { return r.t; }), at: col(r24, 'aussen_panasonic', 10), sollVl: col(r24, 'soll_vorlauf', 100), vl: col(r24, 'vorlauf', 100), rl: col(r24, 'ruecklauf', 100), hz: col(r24, 'verdichter_hz', 10), el: col(r24, 'leistung_w', 1)};
+var rm = {now: now, n: r24.length, t: wp.t, rooms: rc.map(function (x) { return {id: x.id, name: x.name, min: x.min, max: x.max, active: x.active !== false, v: col(r24, x.id + '_wert', 100)}; })};
+var wx = {now: now, n: r48.length, t: r48.map(function (r) { return r.t; }), at: col(r48, 'aussen_panasonic', 10), owm: col(r48, 'aussen_wetter', 10), calc: col(r48, 'aussen_berechnet', 10), wind: col(r48, 'wetter_wind_ms', 10), clouds: col(r48, 'wetter_bewoelkung', 1)};
+return [{payload: wp}, {payload: rm}, {payload: wx}];
+"""
+
+def chart_card(cid, gid, name, units, y, body):
+    """Chart card: a div for the SVG diagram, redrawn on every message and on window resize; the card fits its height to the diagram."""
+    script = ("<script>" + UI_CHART_JS + "</script>"
+              "<script>(function (scope) {\n"
+              "var key = '" + cid + "', last = null;\n"
+              "function pairs(t, a) { var o = [], i; for (i = 0; i < t.length; i++) { o.push([t[i], a[i]]); } return o; }\n"
+              "function draw() {\n"
+              "    var el = document.getElementById('optch_" + cid + "'), m = last;\n"
+              "    if (!el || !m || !m.payload || !window.optChart) { return; }\n"
+              "    var P = m.payload, H = 3600000, spec = null;\n"
+              "    if (!P.n || P.n < 2) { el.innerHTML = '<div style=\"padding:24px;color:#757575\">Noch keine Verlaufsdaten.</div>'; return; }\n"
+              + body +
+              "    if (spec) { window.optChart.mount(el, spec); }\n"
+              "}\n"
+              "window.__optChMap = window.__optChMap || {}; window.__optChMap[key] = draw;\n"
+              "if (!window.__optChRs) { window.__optChRs = true; var tm = null; window.addEventListener('resize', function () { clearTimeout(tm); tm = setTimeout(function () { Object.keys(window.__optChMap).forEach(function (k) { window.__optChMap[k](); }); }, 200); }); }\n"
+              "scope.$watch('msg', function (m) { last = m; setTimeout(draw, 40); });\n"
+              "})(scope);</script>")
+    return {"id": "opt_t_ch_" + cid, "type": "ui_template", "z": TAB, "group": gid, "name": name, "order": 1, "width": 0, "height": units,
+            "format": '<div class="optfit"><div id="optch_' + cid + '" style="min-height:120px"></div></div>' + script + FIT_JS.replace("__ID__", "opt_t_ch_" + cid),
+            "storeOutMessages": True, "fwdInMessages": False, "resendOnRefresh": True, "templateScope": "local", "className": "", "x": 1260, "y": y, "wires": [[]]}
+
+
+CH_WP = (
+    "    var t = P.t; spec = {t0: P.now - 24 * H, t1: P.now, panels: [\n"
+    "        {h: 170, unit: '°C', series: [\n"
+    "            {n: 'Soll-VL', c: '#1565c0', k: 'step', dash: '5 3', w: 1.4, dg: 1, u: '°C', d: pairs(t, P.sollVl)},\n"
+    "            {n: 'Ist-VL', c: '#1976d2', k: 'line', dg: 2, u: '°C', d: pairs(t, P.vl)},\n"
+    "            {n: 'Rücklauf', c: '#ef6c00', k: 'line', dg: 2, u: '°C', d: pairs(t, P.rl)},\n"
+    "            {n: 'Außen (Fühler)', c: '#78909c', k: 'line', w: 1.2, dg: 1, u: '°C', d: pairs(t, P.at)}]},\n"
+    "        {h: 90, unit: 'Hz', zero: true, runit: 'W', rzero: true, series: [\n"
+    "            {n: 'Verdichter', c: '#00897b', k: 'area', dg: 0, u: 'Hz', d: pairs(t, P.hz)},\n"
+    "            {n: 'Strom', c: '#6a1b9a', k: 'line', w: 1.2, r: true, dg: 0, u: 'W', d: pairs(t, P.el)}]}]};\n")
+CH_ROOMS = (
+    "    var t = P.t, cols = ['#1976d2', '#43a047', '#8e24aa', '#ef6c00', '#00838f', '#6d4c41'], ser = [], bands = [];\n"
+    "    P.rooms.forEach(function (r, i) { if (!r.active) { return; } var c = cols[i % cols.length]; ser.push({n: r.name + ' (' + String(r.min).replace('.', ',') + '–' + String(r.max).replace('.', ',') + ')', c: c, k: 'line', w: 1.8, dg: 2, u: '°C', d: pairs(t, r.v)}); bands.push({a: r.min, b: r.max, c: c.replace('#', '') && 'rgba(' + parseInt(c.slice(1, 3), 16) + ',' + parseInt(c.slice(3, 5), 16) + ',' + parseInt(c.slice(5, 7), 16) + ',0.07)'}); });\n"
+    "    spec = {t0: P.now - 24 * H, t1: P.now, panels: [{h: 230, unit: '°C', bands: bands, series: ser}]};\n")
+CH_AT = (
+    "    var t = P.t; spec = {t0: P.now - 48 * H, t1: P.now, panels: [\n"
+    "        {h: 170, unit: '°C', series: [\n"
+    "            {n: 'Fühler (Regelwert)', c: '#37474f', k: 'line', w: 1.8, dg: 1, u: '°C', d: pairs(t, P.at)},\n"
+    "            {n: 'Wetterdienst (OWM)', c: '#ef6c00', k: 'line', dg: 1, u: '°C', d: pairs(t, P.owm)},\n"
+    "            {n: 'berechnet', c: '#1976d2', k: 'line', dash: '5 3', w: 1.4, dg: 1, u: '°C', d: pairs(t, P.calc)}]},\n"
+    "        {h: 80, unit: 'm/s', zero: true, runit: '%', rmin: 0, rmax: 100, series: [\n"
+    "            {n: 'Bewölkung', c: '#b0bec5', k: 'area', r: true, dg: 0, u: '%', d: pairs(t, P.clouds)},\n"
+    "            {n: 'Wind', c: '#00897b', k: 'line', w: 1.4, dg: 1, u: 'm/s', d: pairs(t, P.wind)}]}]};\n")
+upsert(chart_card("wp", "opt_g_ch_wp", "Verlauf Wärmepumpe", 9, 520, CH_WP))
+upsert(chart_card("rooms", "opt_g_ch_rooms", "Verlauf Räume", 7, 560, CH_ROOMS))
+upsert(chart_card("at", "opt_g_ch_at", "Verlauf Außentemperatur", 8, 600, CH_AT))
+upsert(fn("opt_hist", "Verlaufsdaten (nur lesen)", HIST_JS, 3, [["opt_t_ch_wp"], ["opt_t_ch_rooms"], ["opt_t_ch_at"]], 440, 520, FS))
+upsert(inject("opt_i_hist", "alle 5 Minuten", 300, 20, ["opt_hist"], 140, 520))
+
 PLAN_TPL = """<style>
 .optp{font-size:14px;line-height:1.4}
-.optp .sum{display:grid;grid-template-columns:max-content 1fr;gap:3px 16px;margin:2px 0 14px}
+.optp .kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(125px,1fr));gap:10px;margin:2px 0 14px}
+.optp .tile{border:1px solid #e0e0e0;border-radius:6px;padding:8px 10px;background:#fafafa}
+.optp .tile .k{font-size:11px;color:#757575;text-transform:uppercase;letter-spacing:.03em}
+.optp .tile .v{font-size:19px;font-weight:600;color:#263238;white-space:nowrap}
+.optp .tile .s{font-size:12px;color:#757575;min-height:16px}
+.optp .sec{margin:16px 0 6px;font-size:13px;color:#546e7a;font-weight:600}
+.optp .sum{display:grid;grid-template-columns:max-content 1fr;gap:3px 16px;margin:2px 0 6px}
 .optp .sum .k{color:#666}
 .optp .sum .v{font-weight:bold}
 .optp .warn{color:#c62828}
 .optp .ok{color:#2e7d32}
 .optp table{width:100%;border-collapse:collapse;font-size:13px}
-.optp th{text-align:right;font-weight:normal;color:#666;padding:4px 6px;border-bottom:1px solid #ccc;font-size:12px;white-space:nowrap}
+.optp th{text-align:right;font-weight:normal;color:#666;padding:4px 6px;border-bottom:1px solid #ccc;font-size:12px;line-height:1.25;vertical-align:bottom}
 .optp td{padding:4px 6px;border-bottom:1px solid #eee;text-align:right;white-space:nowrap}
 .optp th:first-child,.optp td:first-child{text-align:left}
 .optp tr.up td.r{color:#2e7d32;font-weight:bold}
 .optp tr.down td.r{color:#e65100;font-weight:bold}
 </style>
 <div class="optp optfit">
-<div class="sum"><span ng-repeat-start="r in msg.payload.rows track by $index" class="k">{{r[0]}}</span><span ng-repeat-end class="v" ng-class="r[2]">{{r[1]}}</span></div>
+<div class="kpi"><div class="tile" ng-repeat="t in msg.payload.kpi track by $index"><div class="k">{{t.k}}</div><div class="v">{{t.v}}</div><div class="s">{{t.s}}</div></div></div>
+<div id="optch_plan" style="min-height:120px"></div>
+<div class="sec">Stundenübersicht</div>
 <div style="overflow-x:auto"><table>
 <tr><th>Ab</th><th>Bedarf → Plan kWh</th><th>COP</th><th>Feuchte · Taupunkt</th><th>Preis ct/kWh</th><th>Kosten ct/kWh Wärme</th><th>PV W</th><th>Defrost</th><th>Vertrauen</th><th>Attraktivität</th><th>Empfehlung</th><th>Offset</th><th>Quiet</th></tr>
 <tr ng-repeat="r in msg.payload.plan track by $index" ng-class="r.cls"><td>{{r.z}}</td><td>{{r.b}} → {{r.p}}</td><td>{{r.cop}}</td><td>{{r.h}}</td><td>{{r.pr}}</td><td>{{r.k}}</td><td>{{r.pv}}</td><td>{{r.d}}</td><td>{{r.v}}</td><td>{{r.a}}</td><td class="r">{{r.r}}</td><td>{{r.o}}</td><td>{{r.q}}</td></tr>
-</table></div></div>"""
+</table></div>
+<div class="sec" style="cursor:pointer" ng-click="plOpen = !plOpen">Details und Modell {{plOpen ? '▾' : '▸'}}</div>
+<div class="sum" ng-if="plOpen"><span ng-repeat-start="r in msg.payload.rows track by $index" class="k">{{r[0]}}</span><span ng-repeat-end class="v" ng-class="r[2]">{{r[1]}}</span></div>
+</div>"""
+PLAN_CH_JS = ("<script>" + UI_CHART_JS + "</script><script>(function (scope) {\n"
+    "var last = null;\n"
+    "function draw() {\n"
+    "    var el = document.getElementById('optch_plan'), m = last;\n"
+    "    if (!el || !m || !m.payload || !m.payload.chart || !window.optChart) { return; }\n"
+    "    var S = m.payload.chart.slots, Q = 900000, t0 = S[0][0], t1 = S[S.length - 1][0] + Q, i, col = function (r) { return r[8] === 1 ? '#2e7d32' : (r[8] === -1 ? '#ef6c00' : '#1976d2'); };\n"
+    "    var spec = {t0: t0, t1: t1, panels: [\n"
+    "        {h: 150, unit: 'kW', zero: true, series: [\n"
+    "            {n: 'Bedarf (normal)', c: '#b0bec5', k: 'bar', bw: Q, bf: 0.95, dg: 2, u: 'kW', d: S.map(function (r) { return [r[0], r[1]]; })},\n"
+    "            {n: 'Plan (grün vorziehen · orange verschieben)', c: '#1976d2', k: 'bar', bw: Q, bf: 0.55, op: 0.95, dg: 2, u: 'kW', d: S.map(function (r) { return [r[0], r[2]]; }), bc: S.map(function (r) { return [r[0], col(r)]; })}]},\n"
+    "        {h: 90, unit: 'ct/kWh', zero: true, runit: 'W', rzero: true, series: [\n"
+    "            {n: 'PV-Prognose', c: '#fbc02d', k: 'area', r: true, dg: 0, u: 'W', d: S.map(function (r) { return [r[0], r[4]]; })},\n"
+    "            {n: 'Strompreis', c: '#ef6c00', k: 'step', w: 1.8, dg: 1, u: 'ct/kWh', d: S.map(function (r) { return [r[0], r[3]]; })}]},\n"
+    "        {h: 90, unit: '°C', runit: 'COP', rzero: false, series: [\n"
+    "            {n: 'Außen (Plan)', c: '#37474f', k: 'line', w: 1.6, dg: 1, u: '°C', d: S.map(function (r) { return [r[0], r[6]]; })},\n"
+    "            {n: 'Außen (Fühler-korrigiert)', c: '#1976d2', k: 'line', dash: '5 3', w: 1.4, dg: 1, u: '°C', d: S.map(function (r) { return [r[0], r[7]]; })},\n"
+    "            {n: 'COP', c: '#00897b', k: 'line', w: 1.4, r: true, dg: 1, u: '', d: S.map(function (r) { return [r[0], r[5]]; })}]}]};\n"
+    "    window.optChart.mount(el, spec);\n"
+    "}\n"
+    "window.__optChMap = window.__optChMap || {}; window.__optChMap.plan = draw;\n"
+    "if (!window.__optChRs) { window.__optChRs = true; var tm = null; window.addEventListener('resize', function () { clearTimeout(tm); tm = setTimeout(function () { Object.keys(window.__optChMap).forEach(function (k) { window.__optChMap[k](); }); }, 200); }); }\n"
+    "scope.$watch('msg', function (m) { last = m; setTimeout(draw, 40); });\n"
+    "})(scope);</script>")
 upsert({"id": "opt_t_plan", "type": "ui_template", "z": TAB, "group": "opt_g_plan", "name": "Wärmefahrplan", "order": 1, "width": 0, "height": 21,
-        "format": PLAN_TPL + FIT_JS.replace("__ID__", "opt_t_plan"), "storeOutMessages": True, "fwdInMessages": False, "resendOnRefresh": True,
+        "format": PLAN_TPL + PLAN_CH_JS + FIT_JS.replace("__ID__", "opt_t_plan"), "storeOutMessages": True, "fwdInMessages": False, "resendOnRefresh": True,
         "templateScope": "local", "className": "", "x": 1260, "y": 440, "wires": [[]]})
 
 
