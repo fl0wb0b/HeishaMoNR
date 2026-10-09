@@ -1,5 +1,7 @@
 // Offline-Simulation der Optimizer-Funktionen mit Fake-Uhr (kein Node-RED noetig)
+process.env.TZ = process.env.TZ_SIM || 'Europe/Berlin';       // Ortszeit der Anlage: Tagesgrenzen und Uhrzeiten in den Tests haengen davon ab
 const vm = require('vm');
+const path = require('path');
 const fs = require('fs');
 // Usage: node tools/optimizer_sim.js "flows (26.5.1 stable).json"
 const flowsFile = process.argv[2] || 'flows (26.5.1 stable).json';
@@ -1565,6 +1567,33 @@ check('Sicherheit: der Plan hat nur Ausgaenge zur Anzeige und zu Protokolldateie
 const nonOptPlan = Object.keys(gstore).filter(k => !k.startsWith('OPT_') && JSON.stringify(gstore[k]) !== JSON.stringify(({Z1_Heat_Curve_Outside_Low_Temp: -13, Z1_Heat_Curve_Outside_High_Temp: 11, Z1_Heat_Curve_Target_Low_Temp: 29, Z1_Heat_Curve_Target_High_Temp: 38, compressor_frequency: 0, TOP26_Defrosting_State: 0, TOP20_ThreeWay_Valve_State: 0})[k]) && k !== 'TOP14_Outside_Temp');
 check('Sicherheit: der Plan schreibt nur OPT_*-Werte (Heizkurve, Quiet und Warmwasser bleiben unberuehrt)', nonOptPlan.length === 0, nonOptPlan.join());
 check('Dateien: Ist, Vergleich, Schnappschuesse und Zustand unter /data/optimizer, Plan-Zustand ohne Zugangsdaten', !/token|appid|key/i.test(files['/data/optimizer/plan-state.json'].data), Object.keys(files).filter(k => /plan/.test(k)).join());
+// ---- S0) Referenzlauf: Plan, Kosten, Empfehlungen, Schnappschuss und Anzeige muessen sich mit den neuen Koeffizienten 0 BIT-IDENTISCH zum Stand vor Fahrplan v2 verhalten
+//      Erzeugen (nur mit dem alten Code!): PLAN_REF=write node tools/optimizer_sim.js ...   danach vergleicht jeder Lauf gegen tools/fixtures/plan_ref_v7.json
+{
+  const refFile = path.join(__dirname, 'fixtures', 'plan_ref_v7.json');
+  const NEWROWS = new Set(['Gebäudemodell', 'Fühlerkorrektur']);                          // Zeilen, die erst mit Fahrplan v2 dazukommen
+  const capture = () => {
+    const P = planNow(), sn = fstore.plan.snaps[fstore.plan.snaps.length - 1];
+    return {
+      status: P.status, ua: P.model && P.model.ua, eta: P.model && P.model.eta, sum: P.sum, cap: P.cap,
+      slots: P.slots.map(x => [x.t, x.at, x.rh, x.cop, x.price, x.pv, x.bedarf, x.b, x.p, x.pPot, x.cost, x.rec, x.off, x.quiet, x.att, x.resBack, x.resFwd, x.risk, x.cA, x.cP]),
+      snap: sn ? sn.slots.map(r => r.slice(0, 23)) : null,
+      rows: planRows().filter(r => !NEWROWS.has(r[0])).map(r => [r[0], r[1], r[2]]),
+      table: lastOut[0].payload.plan
+    };
+  };
+  const scen = [['A wide', {wide: true}, 6], ['B warm+PV', {wide: true, atBase: 14, pvPeak: 15000}, 6], ['C quiet3', {wide: true, quiet: 3}, 6], ['D gelernter Tag', {wide: true, atBase: 5, running: true, hp: 2500, atNow: 5}, 1445 + 5]];
+  const got = {};
+  scen.forEach(([name, o, n]) => { pworld(o); if (o.hp) { O.hp = o.hp; } step(n); got[name] = capture(); });
+  const txt = JSON.stringify(got);
+  if (process.env.PLAN_REF === 'write') { fs.mkdirSync(path.dirname(refFile), {recursive: true}); fs.writeFileSync(refFile, txt); console.log('Referenzlauf geschrieben: ' + refFile + ' (' + txt.length + ' Byte)'); }
+  let same = false, first = '';
+  try {
+    const ref = JSON.parse(fs.readFileSync(refFile, 'utf8')); same = JSON.stringify(ref) === txt;
+    if (!same) { Object.keys(got).some(nm => { const a = ref[nm], b = got[nm]; if (!a) { first = nm + ': fehlt in der Referenz'; return true; } return Object.keys(b).some(k => { if (JSON.stringify(a[k]) !== JSON.stringify(b[k])) { first = nm + '.' + k; if (Array.isArray(b[k])) { const i = b[k].findIndex((v, j) => JSON.stringify(v) !== JSON.stringify(a[k][j])); first += '[' + i + ']: ' + JSON.stringify(a[k][i]).slice(0, 120) + ' <> ' + JSON.stringify(b[k][i]).slice(0, 120); } return true; } return false; }); }); }
+  } catch (e) { first = 'Referenzdatei fehlt oder ist nicht lesbar (' + e.message + ')'; }
+  check('Referenzlauf: 4 Szenarien (Slots mit Bedarf/Plan/Kosten/Empfehlung/Offset, Summen, Schnappschuss ohne neue Spalten, Anzeige und Tabelle) sind bit-identisch zum Stand vor Fahrplan v2', same, first);
+}
 })();
 
 
