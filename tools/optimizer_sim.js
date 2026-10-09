@@ -977,8 +977,8 @@ const heaterFeed = () => { hpm('main/Heater_On_Outdoor_Temp', 0); hpm('main/Heat
 const sentBefore = sent.length;
 // 1) Efficiency, Vorlauf bleibt 4 K unter Soll: nach 120 min Ausloeser mit Wartezeit, nach weiteren 10 min "wuerde jetzt schalten"; Wechsel erst nach 3 min stabil als Ereignis
 ewRun({}, undefined, new Date(2026, 9, 7, 8, 0, 0).getTime()); let ew = ewCollect(134, rtHook(1)); delete fstore.qHead; ew = ew.concat(ewCollect(1, rtHook(135)));
-check('Waechter: Efficiency, Sollvorlauf nach 120 min nicht erreicht -> Ausloeser mit Wartezeit (noch kein Schalten), danach "wuerde jetzt schalten: Efficiency → Comfort" (tagsueber: Vorschlag zur Bestaetigung)',
-      /nicht erreicht \(Grenze 120 min\).*Wartezeit/.test(ewRow(ew[125])[1]) && /würde jetzt schalten: Heizregelung Efficiency → Comfort \(Tag: Vorschlag zur Bestätigung\)/.test(ewRow(ew[134])[1]) && ewRow(ew[134])[2] === 'warn', ewRow(ew[125])[1] + ' // ' + ewRow(ew[134])[1]);
+check('Waechter: Efficiency, Sollvorlauf nach 120 min nicht erreicht -> Ausloeser mit Wartezeit (noch kein Schalten), danach "wuerde jetzt schalten: Efficiency → Comfort" (Dauerlauf ohne Pause: mitten im Lauf; tagsueber: Vorschlag zur Bestaetigung)',
+      /nicht erreicht \(Grenze 120 min\).*Wartezeit/.test(ewRow(ew[125])[1]) && /würde jetzt schalten: Heizregelung Efficiency → Comfort · Dauerlauf: kein Pausenfenster, Wechsel mitten im Lauf \(Tag: Vorschlag zur Bestätigung\)/.test(ewRow(ew[134])[1]) && ewRow(ew[134])[2] === 'warn', ewRow(ew[125])[1] + ' // ' + ewRow(ew[134])[1]);
 const ev1 = evAll(ew);
 check('Waechter: Zustandswechsel stehen als Ereignis (wartet, schalten) erst nach 3 min Stabilitaet, nicht jede Minute', /eskalation_schatten,wartet: Sollvorlauf nach 12\d min nicht erreicht/.test(ev1) && /eskalation_schatten,schalten: /.test(ev1) && (ev1.match(/eskalation_schatten/g) || []).length === 2, (ev1.match(/eskalation_schatten[^\n]*/g) || []).join(' | '));
 {
@@ -1002,6 +1002,35 @@ check('Waechter nach Neustart im laufenden Betrieb: Laufzeit steht wieder bei 0,
 // 3) Raum seit 60 min unter Minimum, Vorlauf aber 1,5 K ueber Soll: Takt-Gefahr sperrt das Schalten
 ewRun({TOP6_Main_Outlet_Temp: 33.5}); ew = ewCollect(65, rtHook(30, () => { gstore.OPT_state = {ts: NOW, deficit: true, deficitRoom: 'Kinderzimmer oben', valid: 3, active: 3}; }));
 check('Waechter: Raum 60 min unter Minimum, aber Vorlauf 1,5 K ueber Soll -> gesperrt wegen Takt-Gefahr, kein "wuerde jetzt schalten"', /unter Minimum \(Kinderzimmer oben\)/.test(ewRow(ew[64])[1]) && /gesperrt: .*Vorlauf \+1,5 K über Soll: Takt-Gefahr/.test(ewRow(ew[64])[1]) && !/würde jetzt schalten/.test(ewRow(ew[64])[1]), ewRow(ew[64])[1]);
+// 3b) Pausenfenster: Wechsel Efficiency -> Comfort ist ein grober Hebel (Pumpe springt im Lauf um ca. 65 %) und wird in der Takt-Phase nur in der PAUSE vorgeschlagen (wirkt ab dem naechsten Start)
+{
+  let pumpRpm = 2650;
+  const defHook = r0 => rtHook(r0, () => { gstore.OPT_state = {ts: NOW, deficit: true, deficitRoom: 'Kinderzimmer oben', valid: 3, active: 3}; hpm('main/Pump_Speed', pumpRpm); });     // HeishaMon meldet die Pumpendrehzahl laufend
+  ewRun({TOP6_Main_Outlet_Temp: 28}, undefined, new Date(2026, 9, 7, 9, 0, 0).getTime()); pumpRpm = 2650;
+  const run1 = ewCollect(20, defHook(1));                                                       // Lauf 1: 20 min, Raum seit Beginn unter Minimum
+  gstore.compressor_frequency = 0; pumpRpm = 1750;
+  const pa = ewCollect(55, defHook(0));                                                         // Pause 55 min mit laufender Pumpe
+  check('Pausenfenster: Efficiency, Raum seit 60 min unter Minimum (Lauf und Pause zusammen gezaehlt) -> in der Pause "Auslöser … → Heizregelung Efficiency → Comfort (in der Pause, wirkt ab dem nächsten Start) nach 10 min Wartezeit"', /^Pause · Auslöser: Raum seit \d+ min unter Minimum \(Kinderzimmer oben\) → Heizregelung Efficiency → Comfort \(in der Pause, wirkt ab dem nächsten Start\) nach 10 min Wartezeit/.test(ewRow(pa[44])[1]) && ewRow(pa[44])[2] === 'warn', ewRow(pa[44])[1]);
+  check('Pausenfenster: nach der Wartezeit "würde jetzt in der Pause schalten" (Tag: Vorschlag zur Bestätigung); Ereignis "schalten (Pause)" nach 3 min Stabilität', /würde jetzt in der Pause schalten: Heizregelung Efficiency → Comfort \(in der Pause, wirkt ab dem nächsten Start\) \(Tag: Vorschlag zur Bestätigung\)/.test(ewRow(pa[54])[1]) && /eskalation_schatten,wartet \(Pause\): Raum seit \d+ min unter Minimum/.test(evAll(pa)) && /eskalation_schatten,schalten \(Pause\): /.test(evAll(pa)), ewRow(pa[54])[1]);
+  // Lauf 2 in der Takt-Phase (Verdichter stand vor wenigen Minuten): der Wechsel mitten im Lauf ist gesperrt
+  gstore.compressor_frequency = 17; pumpRpm = 2650;
+  const r2 = ewCollect(30, defHook(1));
+  check('Takt-Phase: laeuft der Verdichter wieder (stand vor wenigen Minuten), ist der Wechsel mitten im Lauf gesperrt: "gesperrt: … Pausenfenster abwarten (Takt-Phase, Verdichter stand zuletzt vor N min)"', /gesperrt: .*Pausenfenster abwarten \(Takt-Phase, Verdichter stand zuletzt vor \d+ min\)/.test(ewRow(r2[29])[1]) && !/würde jetzt schalten/.test(ewRow(r2[29])[1]), ewRow(r2[29])[1]);
+  // Pumpe steht (Heizgrenze): kein Pausenfenster
+  gstore.compressor_frequency = 0; pumpRpm = 0;
+  const ph = ewCollect(15, defHook(0));
+  check('Pausenfenster: steht auch die Pumpe (Heizgrenze-Aus), gibt es kein Fenster: "gesperrt: Pumpe steht (Heizgrenze): kein Pausenfenster"', /gesperrt: .*Pumpe steht \(Heizgrenze\): kein Pausenfenster/.test(ewRow(ph[14])[1]), ewRow(ph[14])[1]);
+  // Abtauen in der Pause und Mindestabstand zum letzten Wechsel
+  pumpRpm = 1750; gstore.TOP26_Defrosting_State = 1; const pd_ = ewCollect(3, defHook(0)); gstore.TOP26_Defrosting_State = 0;
+  check('Pausenfenster: Abtauen sperrt', /gesperrt: .*Abtauen/.test(ewRow(pd_[2])[1]), ewRow(pd_[2])[1]);
+  const pg = ewCollect(15, defHook(0)); fstore.qs.esc.lastChg = NOW - 20 * 60000; const pg2 = ewCollect(2, defHook(0));
+  check('Pausenfenster: Mindestabstand 60 min zum letzten Wechsel sperrt', /gesperrt: .*Mindestabstand 60 min zum letzten Wechsel/.test(ewRow(pg2[1])[1]), ewRow(pg2[1])[1]);
+  // Raum wieder in Ordnung: der Auslöser faellt weg, nichts wird vorgeschlagen
+  const pr = ewCollect(3, rtHook(0, () => { gstore.OPT_state = {ts: NOW, deficit: false, deficitRoom: '', valid: 3, active: 3}; }));
+  check('Pausenfenster: Raum wieder ueber Minimum -> kein Ausloeser mehr, Anzeige "Verdichter steht · Wächter prüft im Betrieb"', /^Verdichter steht · Wächter prüft im Betrieb$/.test(ewRow(pr[2])[1]) && ewRow(pr[2])[2] !== 'warn', ewRow(pr[2])[1]);
+  // Comfort braucht kein Pausenfenster (nur Quiet-Wechsel): Dauerlauf-Text erscheint nur bei Efficiency
+  check('Pausenfenster: ohne Takt-Phase (kein Stopp in den letzten 12 h, Dauerlauf) steht "Dauerlauf: kein Pausenfenster, Wechsel mitten im Lauf" – bereits im Test "Sollvorlauf nach 120 min" geprueft', true, '');
+}
 // 4) Heizstab-Schwelle: AT -3, Heizstab ab 0 °C, Start bei -3 K nach 15 min; Vorlauf 2,5 K unter Soll seit 11 min, Verdichter erst 12 min im Lauf -> Ausloeser, aber Startphase
 ewRun({TOP14_Outside_Temp: -3, TOP6_Main_Outlet_Temp: 29.5}); ew = ewCollect(12, rtHook(1, heaterFeed));
 check('Waechter: Heizstab-Schwelle naht (Defizit 2,5 K, Heizstab ab -3 K nach 15 min, ab 0 °C) -> Ausloeser schon nach 10 min Defizit; in der Startphase (<15 min) aber gesperrt', /Heizstab-Schwelle naht/.test(ewRow(ew[11])[1]) && /Startphase/.test(ewRow(ew[11])[1]), ewRow(ew[11])[1]);
@@ -1055,7 +1084,7 @@ ewRun(); ew = ewCollect(100, rtHook(1, i => { gstore.TOP6_Main_Outlet_Temp = i %
 check('Waechter: Vorlauf pendelt zwischen +0,9 und +1,1 K ueber Soll -> hoechstens 3 Ereignisse "eskalation_schatten" in 100 min (nicht ein Ereignis je Minute)', (evAll(ew).match(/eskalation_schatten/g) || []).length <= 3, String((evAll(ew).match(/eskalation_schatten/g) || []).length));
 // 12) Tag/Nacht: um 23:30 "Nacht: automatisch"
 ewRun({}, undefined, new Date(2026, 9, 7, 21, 20, 0).getTime()); ew = ewCollect(135, rtHook(1));
-check('Waechter: gegen 23:30 Ortszeit steht "(Nacht: automatisch)"', /würde jetzt schalten: Heizregelung Efficiency → Comfort \(Nacht: automatisch\)/.test(ewRow(ew[134])[1]), ewRow(ew[134])[1]);
+check('Waechter: gegen 23:30 Ortszeit steht "(Nacht: automatisch)" (Dauerlauf)', /würde jetzt schalten: Heizregelung Efficiency → Comfort · Dauerlauf: kein Pausenfenster, Wechsel mitten im Lauf \(Nacht: automatisch\)/.test(ewRow(ew[134])[1]), ewRow(ew[134])[1]);
 // 13) Eingaenge: HeishaMon meldet nicht / Verdichterwert fehlt -> Waechter pausiert, kein falsches Lauf-Ende
 ewRun(); ewCollect(5, rtHook(30)); const runKeyBefore = fstore.qs.esc.runKey;
 ew = []; for (let i = 0; i < 12; i++) { NOW += 60000; ew.push(run('opt_quiet', {})); }        // HeishaMon-Werte werden nicht mehr erneuert (>10 min alt)
