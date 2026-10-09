@@ -1631,6 +1631,93 @@ check('Dateien: Ist, Vergleich, Schnappschuesse und Zustand unter /data/optimize
   check('Sicherheit (Flow-Datei): opt_plan hat dieselben 5 Ausgaenge (Karte, Ist, Vergleich, Schnappschuss, frei), kein node.send im Code', JSON.stringify(planNode.wires) === JSON.stringify([['opt_t_plan'], ['opt_f_pact'], ['opt_f_peval'], ['opt_f_psnap'], []]) && !/node\.send\s*\(/.test(planNode.func), JSON.stringify(planNode.wires));
 }
 
+// ---- S2) Fahrplan v2: Rueckrechnung und Regression (nur berechnen und anzeigen)
+{
+  const pureSrc = /\/\/ == REIN-BEGIN ==[\s\S]*?\/\/ == REIN-END ==/.exec(F['opt_plan'])[0];
+  const PU = new Function(pureSrc + '; return {parseCsv, daysFromRows, dayFromArr, gauss, prepRows, ridgeFit, looMae, ratioUa, looRatio, gateCheck, fitModel, predict, d0Of};')();
+  const O0 = {ua0: 0.22, sUA: 0.10, sW: 0.01, sS: 0.10, useW: false, useS: false};
+  const mkO = p => Object.assign({}, O0, p || {});
+  // Handwert und Plan-Schaetzer
+  const r1 = [{y: 30, x1: 100, x2: 0, x3: 0}];
+  check('Regression, Handwert: 1 Tag (100 K·h, 30 kWh): Ridge-UA = (1111,1·0,3 + 100·0,22)/1211,1 = 0,293394 (±1e-6); der bisherige Plan-Schaetzer gibt am selben Tag 0,2400', Math.abs(PU.ridgeFit(r1, mkO()).ua - 0.293394) < 1e-6 && Math.abs(PU.ratioUa(r1, 0.22, 300) - 0.24) < 1e-12, PU.ridgeFit(r1, mkO()).ua.toFixed(6));
+  // Zufallsgenerator mit festem Samen
+  const mkRnd = sd => { let s2 = sd; const r = () => (s2 = (s2 * 1103515245 + 12345) % 2147483648) / 2147483648; const g = () => { const u = 1 - r(), v = r(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }; return {r, g}; };
+  // Wiederfindung: 20 Tage, UA 0,25, bs 0,08, bw 0,015, 3 % Rauschen
+  let recOk = true, recDetail = '';
+  [4711, 1, 2, 3].forEach(sd => {
+    const R = mkRnd(sd), rows = []; for (let i = 0; i < 20; i++) { const kh = 40 + R.r() * 160, v = 1 + R.r() * 7, S = 5 + R.r() * 95, wk = kh * v; rows.push({y: (0.25 * kh + 0.015 * wk - 0.08 * S) * (1 + 0.03 * R.g()), x1: kh, x2: wk, x3: S}); }
+    const ft = PU.ridgeFit(rows, mkO({useW: true, useS: true}));
+    if (!(Math.abs(ft.ua / 0.25 - 1) < 0.10 && Math.abs(ft.bs / 0.08 - 1) < 0.10 && Math.abs(ft.bw / 0.015 - 1) < 0.20)) { recOk = false; recDetail += 'Samen ' + sd + ': ' + ft.ua.toFixed(4) + '/' + ft.bw.toFixed(4) + '/' + ft.bs.toFixed(4) + ' '; }
+  });
+  check('Regression, Wiederfindung (4 feste Zufallssamen, 20 synthetische Tage, 3 % Rauschen): UA ±10 %, Sonne ±10 %, Wind ±20 % (der Prior zieht Wind leicht zu 0)', recOk, recDetail);
+  // Kollinearitaet in beide Richtungen
+  let colOk = true, colDetail = '';
+  [0.9, -0.9].forEach(rho => {
+    const R = mkRnd(77), rows = []; for (let i = 0; i < 20; i++) { const z1 = R.g(), z3 = rho * z1 + Math.sqrt(1 - rho * rho) * R.g(), kh = 120 + 40 * z1, S = 50 + 15 * z3; rows.push({y: (0.25 * kh - 0.08 * S) * (1 + 0.03 * R.g()), x1: kh, x2: 0, x3: S}); }
+    const ft = PU.ridgeFit(rows, mkO({useS: true}));
+    if (!(ft.bs >= 0 && ft.ua >= 0.11 - 1e-9 && ft.ua <= 0.44 + 1e-9 && Math.abs(ft.ua / 0.25 - 1) < 0.25)) { colOk = false; colDetail += 'rho ' + rho + ': ' + ft.ua.toFixed(4) + '/' + ft.bs.toFixed(4) + ' '; }
+  });
+  check('Regression, Kollinearitaet PV/Heizgradstunden (r = +0,9 und −0,9): keine Vorzeichenumkehr, UA in den Grenzen und innerhalb ±25 % des wahren Wertes', colOk, colDetail);
+  // Vorzeichen: wahre Sonne wirkt "falsch herum" -> 0, UA = Loesung ohne Sonnenterm
+  { const R = mkRnd(5), rows = []; for (let i = 0; i < 15; i++) { const kh = 60 + R.r() * 120, S = 10 + R.r() * 80; rows.push({y: 0.25 * kh + 0.05 * S, x1: kh, x2: 0, x3: S}); }
+    const a2 = PU.ridgeFit(rows, mkO({useS: true})), b2 = PU.ridgeFit(rows.map(r => Object.assign({}, r, {x3: 0})), mkO({useS: false}));
+    check('Regression, Vorzeichen: Daten mit "negativer Sonne" -> bs genau 0 und UA gleich der Loesung ohne Sonnenterm (1e-9)', a2.bs === 0 && Math.abs(a2.ua - b2.ua) < 1e-9, a2.bs + ' / ' + a2.ua.toFixed(6) + ' vs ' + b2.ua.toFixed(6)); }
+  // Exaktheit gegen projiziertes Gradientenverfahren (200 Zufallsprobleme)
+  { const R = mkRnd(2026); let worst = 0, detail = '';
+    const J = (rows, beta, o) => { const n = rows.length, ym = rows.reduce((a, r) => a + r.y, 0) / n, sr = Math.max(1, 0.1 * ym), sg = [o.sUA, o.sW, o.sS], b0 = [o.ua0, 0, 0]; let j = 0; rows.forEach(r => { const e = r.y - (beta[0] * r.x1 + beta[1] * r.x2 - beta[2] * r.x3); j += e * e / (sr * sr); }); [0, 1, 2].forEach(p => { j += (beta[p] - b0[p]) ** 2 / sg[p] ** 2; }); return j; };
+    for (let it = 0; it < 200; it++) {
+      const n = 2 + Math.floor(R.r() * 8), useW = R.r() < 0.5, useS = R.r() < 0.7, rows = [];
+      for (let i = 0; i < n; i++) { const kh = 30 + R.r() * 170, w = kh * (1 + R.r() * 6), S = 5 + R.r() * 90; rows.push({y: Math.max(1, (0.25 * kh + (R.r() - 0.4) * 0.03 * w - (R.r() - 0.3) * 0.2 * S) + R.g() * 2), x1: kh, x2: useW ? w : 0, x3: useS ? S : 0}); }
+      const o = mkO({useW, useS}), ft = PU.ridgeFit(rows, o), jf = J(rows, [ft.ua, ft.bw, ft.bs], o);
+      const lo = [0.11, 0, 0], hi = [0.44, useW ? 1 : 0, useS ? 5 : 0]; let b = [0.22, 0, 0];
+      const ym = rows.reduce((a, r) => a + r.y, 0) / n, sr = Math.max(1, 0.1 * ym), Lp = rows.reduce((a, r) => a + (r.x1 ** 2 + r.x2 ** 2 + r.x3 ** 2) / (sr * sr), 0) * 2 + 2 * (1 / o.sUA ** 2 + 1 / o.sW ** 2 + 1 / o.sS ** 2);
+      for (let k = 0; k < 40000; k++) { const g = [0, 0, 0]; rows.forEach(r => { const e = r.y - (b[0] * r.x1 + b[1] * r.x2 - b[2] * r.x3); g[0] += -2 * e * r.x1 / (sr * sr); g[1] += -2 * e * r.x2 / (sr * sr); g[2] += 2 * e * r.x3 / (sr * sr); }); g[0] += 2 * (b[0] - 0.22) / o.sUA ** 2; g[1] += 2 * b[1] / o.sW ** 2; g[2] += 2 * b[2] / o.sS ** 2; b = b.map((v, p) => Math.min(hi[p], Math.max(lo[p], v - g[p] / Lp))); if (!useW) { b[1] = 0; } if (!useS) { b[2] = 0; } }
+      const jp = J(rows, b, o), rel = (jp - jf) / Math.max(1, Math.abs(jf)); if (rel < -1e-6) { worst = Math.max(worst, -rel); detail = 'Fall ' + it + ': exakt ' + jf.toFixed(6) + ' > Referenz ' + jp.toFixed(6); } }
+    check('Regression, Exaktheit: in 200 Zufallsproblemen (mit/ohne Wind und Sonne, 2-9 Tage, Grenzen aktiv) ist das Ergebnis nie schlechter als ein projiziertes Gradientenverfahren (Zielwert, 1e-6)', worst === 0, detail); }
+  // Leave-one-day-out von Hand
+  { const rows = [{y: 24, x1: 100, x2: 0, x3: 0}, {y: 30, x1: 120, x2: 0, x3: 0}, {y: 40, x1: 150, x2: 0, x3: 0}];
+    const sr = (y) => Math.max(1, 0.1 * y), ua = (rs) => { const ym = rs.reduce((a, r) => a + r.y, 0) / rs.length, r2 = sr(ym) ** 2; return Math.min(0.44, Math.max(0.11, (rs.reduce((a, r) => a + r.x1 * r.y / r2, 0) + 0.22 / 0.01) / (rs.reduce((a, r) => a + r.x1 * r.x1 / r2, 0) + 1 / 0.01))); };
+    let e = 0; rows.forEach((r, i) => { const rest = rows.filter((x, j) => j !== i); e += Math.abs(r.y - ua(rest) * r.x1); });
+    check('Regression, Leave-one-day-out: 3 Tage nur UA stimmt mit der Handrechnung ueberein (1e-9); der Plan-Schaetzer-Fehler ebenso (looRatio)', Math.abs(PU.looMae(rows, mkO()) - e / 3) < 1e-9 && PU.looRatio(rows, 0.22, 300) > 0, (PU.looMae(rows, mkO())).toFixed(6) + ' vs ' + (e / 3).toFixed(6)); }
+  // Gate
+  { const mkRows = (n) => Array.from({length: n}, (_, i) => ({y: 30, x1: 120, x2: 0, x3: i % 2 ? 80 : 20})), fit = {ua: 0.25, bw: 0, bs: 0.1};
+    const g10 = PU.gateCheck(10, mkRows(10), 10, 8.5, fit, {minDays: 10}), g9 = PU.gateCheck(9, mkRows(9), 10, 8.5, fit, {minDays: 10}), gN = PU.gateCheck(10, mkRows(10), 10, 9.5, fit, {minDays: 10}), gP = PU.gateCheck(10, mkRows(10), 10, 8.5, {ua: 0.25, bw: 0, bs: 0.6}, {minDays: 10}), gF = PU.gateCheck(10, Array.from({length: 10}, () => ({y: 30, x1: 120, x2: 0, x3: 50})), 10, 8.5, fit, {minDays: 10});
+    check('Gate (nur Anzeige): ok bei 10 Tagen, PV-Spreizung und 15 % besserem Fehler; nicht ok bei 9 Tagen, nur 5 % Verbesserung, unplausiblem Koeffizienten (bs 0,6) oder gleichfoermigem PV', g10.ok && !g9.ok && !gN.ok && !gP.ok && !gF.ok, JSON.stringify([g10.why, g9.why, gN.why, gP.why, gF.why])); }
+  // Rueckrechnung aus plan-actuals: mehrere Kopfzeilen, Zuordnung ueber Namen, falsche Zeilen, Zeitumstellung
+  { const mkSlots = (day, count, extra) => { const o = []; for (let i = 0; i < count; i++) { const h = Math.floor(i / 4), m = (i % 4) * 15; o.push(day + ' ' + (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m); } return o; };
+    const hOld = 'slot_start,ist_aussen,ist_pv_w,ist_waerme_kwh,ist_raum_a', hNew = 'slot_start,ist_aussen,ist_pv_w,ist_waerme_kwh,ist_raum_a,ist_wind_ms,ist_aussen_owm';
+    let txt = hOld + '\n'; mkSlots('2026-11-10', 96).forEach((s2, i) => { txt += s2 + ',5,2000,0.6,' + (22 + i / 96) + '\n'; });
+    txt += 'kaputte,zeile\n' + hNew + '\n'; mkSlots('2026-11-11', 96).forEach((s2, i) => { txt += s2 + ',5,2000,0.6,22,4,7\n'; });
+    txt += hNew + '\n'; mkSlots('2026-10-25', 100).forEach(s2 => { txt += s2 + ',10,0,0.3,22,2,12\n'; });
+    const ds = PU.daysFromRows(PU.parseCsv(txt), 15), d1 = ds.find(d => d.d0 === PU.d0Of('2026-11-10')), d2 = ds.find(d => d.d0 === PU.d0Of('2026-11-11')), d3 = ds.find(d => d.d0 === PU.d0Of('2026-10-25'));
+    check('Rueckrechnung: Tag aus 96 Slots (alte Kopfzeile ohne Wind) -> n 1440, kh 240, q 57,6, PV 48 kWh, Wind/OWM null, Raumaenderung ~0,99 K; Zeilen mit falscher Spaltenzahl werden uebersprungen', ds.length === 3 && d1.n === 1440 && Math.abs(d1.kh - 240) < 1e-9 && Math.abs(d1.q - 57.6) < 1e-9 && Math.abs(d1.s - 48) < 1e-9 && d1.wk === null && d1.khW === null && Math.abs(d1.dtr - 95 / 96) < 1e-9, JSON.stringify(d1));
+    check('Rueckrechnung: Tag mit neuer Kopfzeile (Wind 4 m/s, OWM 7 °C) -> wk 960, khW 192, wkW 768', Math.abs(d2.wk - 960) < 1e-9 && Math.abs(d2.khW - 192) < 1e-9 && Math.abs(d2.wkW - 768) < 1e-9 && d2.dtr === 0, JSON.stringify(d2));
+    check('Rueckrechnung: Zeitumstellung (25.10.2026, 100 Slots) -> n 1500, wird gezaehlt', d3.n === 1500 && Math.abs(d3.q - 30) < 1e-9, JSON.stringify(d3)); }
+  // Live gegen Rueckrechnung: ein voller Tag live, daraus die plan-actuals-Zeilen, dann zurueckgerechnet
+  { pworld({wide: true, atBase: 5, running: true, hp: 2500, atNow: 5, pvNow: 2000, windNow: 4, owmTemp: 7}); O.hp = 2500; const all = step(1440 + 20); let txtL = '';
+    all.forEach(o => { [].concat(o[1] || []).forEach(m => { if (/plan-actuals-/.test(m.filename)) { txtL += m.payload; } }); });
+    const live = PU.dayFromArr(fstore.plan.learn.days[0]), bf = PU.daysFromRows(PU.parseCsv(txtL), 15).find(d => d.d0 === live.d0);
+    check('Rueckrechnung gegen live: derselbe Tag aus den geschriebenen plan-actuals-Zeilen zurueckgerechnet ergibt kh ±1 %, q ±0,5 %, PV ±1 %, wk ±1 %, khW ±1 % gegenueber den live gesammelten Werten', !!bf && Math.abs(bf.kh / live.kh - 1) < 0.01 && Math.abs(bf.q / live.q - 1) < 0.005 && Math.abs(bf.s / live.s - 1) < 0.01 && Math.abs(bf.wk / live.wk - 1) < 0.01 && Math.abs(bf.khW / live.khW - 1) < 0.01, JSON.stringify({live, bf}).slice(0, 300));
+    const dayMsgs = all.map(o => [].concat(o[1] || [])).reduce((a, b) => a.concat(b), []).filter(m => /plan-days-/.test(m.filename));
+    check('Tagesblatt: beim Tageswechsel eine Zeile in plan-days-2026-11.csv mit Kopfzeile (12 Spalten), Datum und Werten mit Punkt', dayMsgs.length === 1 && dayMsgs[0].filename === '/data/optimizer/plan-days-2026-11.csv' && dayMsgs[0].payload.split('\n')[0].split(',').length === 12 && dayMsgs[0].payload.split('\n')[1].split(',').length === 12 && /^2026-11-12,/.test(dayMsgs[0].payload.split('\n')[1]) && !/\d,\d{3}\b/.test(dayMsgs[0].payload.split('\n')[1].slice(11)) , dayMsgs.map(m => m.payload).join('|').slice(0, 220)); }
+  // Anzeige und Berechnung ueber step(): 4 Tage vorgeben
+  { const day = (k, kh, q, s, wk) => [Date.UTC(2026, 10, 1 + k, 0, 0), kh, q, 1440, s, wk, kh * 0.9, wk * 0.9, 0.1, 1440, wk === null ? 0 : 1440, 1440, wk === null ? 0 : 1440];
+    pworld({wide: true}); step(2); fstore.plan.bf = {days: []}; fstore.plan.learn.days = []; delete fstore.plan.learn.coef; step(1);
+    let rowG = () => (planRows().find(r => r[0] === 'Gebäudemodell') || [])[1];
+    check('Anzeige "Gebäudemodell": ohne Tage "UA .. W/K (Plan) · keine Daten"', /^UA \d+ W\/K \(Plan\) · keine Daten$/.test(rowG()), rowG());
+    fstore.plan.learn.days = [day(0, 100, 24, 20, null)]; step(1);
+    check('Anzeige "Gebäudemodell": ein Tag -> "· 1 Tag · Kandidat ab 3 Tagen"', /^UA \d+ W\/K \(Plan\) · 1 Tag · Kandidat ab 3 Tagen$/.test(rowG()), rowG());
+    const R = mkRnd(9); fstore.plan.learn.days = [0, 1, 2, 3, 4].map(k => { const kh = 80 + R.r() * 100, S = 10 + R.r() * 60; return day(k, kh, 0.25 * kh - 0.05 * S, S, null); }); step(1);
+    const cf = fstore.plan.learn.coef;
+    check('Anzeige "Gebäudemodell": 5 Tage -> Kandidat mit UA, Sonne, "Wind n 0 Tage", Fehler Plan/Kandidat; aktiv bleibt false, Gate nicht ok; Berechnung nur bei geaenderten Eingaben (Zeitstempel bleibt)', /^UA \d+ W\/K · Sonne \d,\d{3} · Wind n 0 Tage · Kandidat · 5 Tage · Fehler Plan [\d,]+ \/ Kandidat [\d,]+ kWh$/.test(rowG()) && cf.aktiv === false && cf.gate.ok === false && cf.n === 5 && (() => { const ts0 = cf.ts; step(3); return fstore.plan.learn.coef.ts === ts0; })(), rowG());
+    const keepCoef = JSON.stringify(fstore.plan.learn.coef); delete fstore.plan; step(1);
+    check('Neustart: Koeffizienten und Zeitstempel kommen aus plan-state.json zurueck und werden nicht neu gerechnet', JSON.stringify(fstore.plan.learn.coef) === keepCoef, '');
+    check('Plan unveraendert: mit berechnetem Kandidaten (aktiv false) bleiben UA und Bedarf des Plans beim bisherigen Schaetzer', Math.abs(planNow().model.ua - ((0.22 * 300 + fstore.plan.learn.days.filter(d => d[1] >= 30).reduce((a, d) => a + d[2], 0)) / (300 + fstore.plan.learn.days.filter(d => d[1] >= 30).reduce((a, d) => a + d[1], 0)))) < 1e-9, planNow().model.ua.toFixed(5));
+    // robust: leere/NaN-Eingaben
+    const fe = PU.fitModel([], {ua0: 0.22, h0: 300, sUA: 0.1, sW: 0.01, sS: 0.1, minDays: 10, minWindDays: 7, storeC: [0, 3]}), fn2 = PU.fitModel([{d0: 1, kh: NaN, q: NaN, n: 1440, s: NaN, wk: null, khW: null, wkW: null, dtr: null}], {ua0: 0.22, h0: 300, sUA: 0.1, sW: 0.01, sS: 0.1, minDays: 10, minWindDays: 7, storeC: [0, 3]});
+    check('Randfaelle: leere oder NaN-Tage -> Prior, keine Kandidaten, kein Fehler', fe.n === 0 && fn2.n === 0 && Number.isFinite(fe.ua), JSON.stringify([fe.n, fn2.n])); }
+}
+
 // ---- S0) Referenzlauf: Plan, Kosten, Empfehlungen, Schnappschuss und Anzeige muessen sich mit den neuen Koeffizienten 0 BIT-IDENTISCH zum Stand vor Fahrplan v2 verhalten
 //      Erzeugen (nur mit dem alten Code!): PLAN_REF=write node tools/optimizer_sim.js ...   danach vergleicht jeder Lauf gegen tools/fixtures/plan_ref_v7.json
 {

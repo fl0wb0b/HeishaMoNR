@@ -1332,6 +1332,158 @@ function planDP(b, c, lam, rd, ru, mMin, mMax, cap) {
 }
 
 // ---------- Zustand (ueberlebt Neustarts per Datei: Lernwerte und Plan-Schnappschuesse der letzten Stunden)
+// == REIN-BEGIN == reine Funktionen des Gebaeudemodells (Fahrplan v2): kein Zugriff auf global, flow, fs oder die Uhr, einzeln testbar
+function isN(v) { return typeof v === 'number' && isFinite(v); }
+function nz(x) { if (x === '' || x === undefined || x === null) { return null; } var v = Number(x); return isFinite(v) ? v : null; }
+function parseCsv(text) {                                                                            // mehrere Kopfzeilen-Abschnitte; Zuordnung strikt ueber die Spaltennamen des jeweiligen Abschnitts
+    var rows = [], head = null;
+    String(text || '').split('\n').forEach(function (l) {
+        if (!l) { return; }
+        var p = l.split(',');
+        if (p[0] === 'slot_start') { head = p; return; }
+        if (!head || p.length !== head.length) { return; }
+        var o = {}; for (var i = 0; i < head.length; i++) { o[head[i]] = p[i]; }
+        rows.push(o);
+    });
+    return rows;
+}
+function d0Of(key) { var p = key.split('-'); return new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2])).getTime(); }
+function dayFromArr(a) {                                                                             // Eintrag aus learn.days (4er-Array oder 13er-Array) als Objekt
+    var g = function (i) { return (a.length > i && isN(a[i])) ? a[i] : null; };
+    return {d0: a[0], kh: g(1), q: g(2), n: g(3), s: g(4), wk: g(5), khW: g(6), wkW: g(7), dtr: g(8)};
+}
+function daysFromRows(rows, tbal) {                                                                  // Tagesaggregate aus plan-actuals-Zeilen (Ortszeit-Datum des Stempels, ein Slot = 15 min)
+    var days = {}, order = [];
+    rows.forEach(function (r) {
+        var st = r.slot_start; if (!st || st.length < 16) { return; }
+        var key = st.slice(0, 10), d = days[key];
+        if (!d) { d = days[key] = {d0: d0Of(key), n: 0, kh: 0, q: 0, s: 0, wk: 0, khW: 0, wkW: 0, sN: 0, wN: 0, owN: 0, wwN: 0, r0: {}, rl: {}}; order.push(key); }
+        d.n += 15;
+        var at = nz(r.ist_aussen), q = nz(r.ist_waerme_kwh), pv = nz(r.ist_pv_w), wd = nz(r.ist_wind_ms), ow = nz(r.ist_aussen_owm);
+        if (at !== null) { d.kh += Math.max(0, tbal - at) * 0.25; }
+        if (q !== null) { d.q += q; }
+        if (pv !== null) { d.s += pv * 0.25 / 1000; d.sN += 15; }
+        if (ow !== null) { d.khW += Math.max(0, tbal - ow) * 0.25; d.owN += 15; }
+        if (wd !== null && at !== null) { d.wk += Math.max(0, tbal - at) * wd * 0.25; d.wN += 15; }
+        if (wd !== null && ow !== null) { d.wkW += Math.max(0, tbal - ow) * wd * 0.25; d.wwN += 15; }
+        Object.keys(r).forEach(function (k) { if (k.indexOf('ist_raum_') === 0) { var v = nz(r[k]); if (v !== null) { if (d.r0[k] === undefined) { d.r0[k] = v; } d.rl[k] = v; } } });
+    });
+    return order.map(function (k) {
+        var d = days[k], part = function (v, cnt) { return cnt >= 0.9 * d.n ? v : null; }, dl = [];
+        Object.keys(d.r0).forEach(function (rk) { dl.push(d.rl[rk] - d.r0[rk]); });
+        return {d0: d.d0, kh: d.kh, q: d.q, n: d.n, s: part(d.s, d.sN), wk: part(d.wk, d.wN), khW: part(d.khW, d.owN), wkW: part(d.wkW, d.wwN), dtr: dl.length ? dl.reduce(function (x, y) { return x + y; }, 0) / dl.length : null};
+    });
+}
+function gauss(A, b) {                                                                               // lineares Gleichungssystem, Pivotsuche; null bei singulaerer Matrix
+    var n = b.length, M = A.map(function (r, i) { return r.slice().concat([b[i]]); }), i, j, k;
+    for (i = 0; i < n; i++) {
+        var p = i; for (j = i + 1; j < n; j++) { if (Math.abs(M[j][i]) > Math.abs(M[p][i])) { p = j; } }
+        if (Math.abs(M[p][i]) < 1e-12) { return null; }
+        var tmp = M[i]; M[i] = M[p]; M[p] = tmp;
+        for (j = i + 1; j < n; j++) { var f0 = M[j][i] / M[i][i]; for (k = i; k <= n; k++) { M[j][k] -= f0 * M[i][k]; } }
+    }
+    var x = new Array(n); for (i = n - 1; i >= 0; i--) { var s = M[i][n]; for (k = i + 1; k < n; k++) { s -= M[i][k] * x[k]; } x[i] = s / M[i][i]; }
+    return x;
+}
+function prepRows(days, o) {                                                                         // Datenzeilen {y, x1, x2, x3} fuer die Regression; Tage ohne noetige Werte entfallen
+    var rows = [], vb = null, sw = 0, sk = 0;
+    days.forEach(function (d) {
+        var x1 = o.tref === 'khW' ? d.khW : d.kh, w = o.tref === 'khW' ? d.wkW : d.wk;
+        if (isN(w) && isN(x1) && x1 > 0) { sw += w; sk += x1; }
+    });
+    if (sk > 0) { vb = sw / sk; }
+    var nW = 0;
+    days.forEach(function (d) {
+        var x1 = o.tref === 'khW' ? d.khW : d.kh, w = o.tref === 'khW' ? d.wkW : d.wk;
+        if (!isN(x1) || !isN(d.q) || (o.useS && !isN(d.s)) || ((o.C || 0) > 0 && !isN(d.dtr))) { return; }
+        var y = d.q - (o.C || 0) * (isN(d.dtr) ? d.dtr : 0);
+        var x2 = 0; if (o.useW) { if (isN(w)) { x2 = w; nW++; } else if (vb !== null) { x2 = x1 * vb; } }          // Tage ohne Wind: mittlere Windstaerke der Windtage annehmen
+        rows.push({y: y, x1: x1, x2: x2, x3: o.useS ? d.s : 0, d0: d.d0});
+    });
+    return {rows: rows, nW: nW};
+}
+function ridgeFit(rows, o) {                                                                         // y = UA*x1 + bw*x2 - bs*x3, Ridge mit Prior (ua0, 0, 0), Grenzen: UA in [lo, hi], bw/bs >= 0; exakt ueber alle Faelle (aktive Grenzen)
+    var n = rows.length, ua0 = o.ua0, sig = [o.sUA, o.sW, o.sS], b0 = [ua0, 0, 0];
+    if (!n) { return {ua: ua0, bw: 0, bs: 0, J: 0, n: 0}; }
+    var ym = rows.reduce(function (a, r) { return a + r.y; }, 0) / n, sr = Math.max(1.0, 0.10 * ym), r2 = sr * sr;
+    var en = [true, !!o.useW, !!o.useS], lo = [0.5 * ua0, 0, 0], hi = [2 * ua0, 0, 0];
+    var best = null, stU, stW, stS;
+    var feat = function (r) { return [r.x1, r.x2, -r.x3]; };
+    var F = rows.map(feat);
+    for (stU = 0; stU < 3; stU++) { for (stW = 0; stW < 2; stW++) { for (stS = 0; stS < 2; stS++) {
+        if ((!en[1] && stW === 0) || (!en[2] && stS === 0)) { continue; }                           // abgeschaltete Merkmale bleiben bei 0
+        var st = [stU, stW, stS], fixedV = [0, 0, 0], free = [], p, ok = true;
+        fixedV[0] = stU === 1 ? lo[0] : (stU === 2 ? hi[0] : 0);
+        for (p = 0; p < 3; p++) { if (p === 0 ? stU === 0 : (p === 1 ? (stW === 0 && en[1]) : (stS === 0 && en[2]))) { free.push(p); } }
+        var beta = [fixedV[0], 0, 0];
+        if (free.length) {
+            var m = free.length, A = [], bb = [], a, c;
+            for (a = 0; a < m; a++) { A.push(new Array(m).fill(0)); bb.push(0); }
+            rows.forEach(function (r, i) {
+                var f = F[i], resid = r.y; for (var q = 0; q < 3; q++) { if (free.indexOf(q) < 0) { resid -= f[q] * beta[q]; } }
+                for (a = 0; a < m; a++) { for (c = 0; c < m; c++) { A[a][c] += f[free[a]] * f[free[c]] / r2; } bb[a] += f[free[a]] * resid / r2; }
+            });
+            for (a = 0; a < m; a++) { A[a][a] += 1 / (sig[free[a]] * sig[free[a]]); bb[a] += b0[free[a]] / (sig[free[a]] * sig[free[a]]); }
+            var sol = gauss(A, bb); if (!sol) { continue; }
+            for (a = 0; a < m; a++) { beta[free[a]] = sol[a]; }
+            if (free.indexOf(0) >= 0 && (beta[0] < lo[0] - 1e-12 || beta[0] > hi[0] + 1e-12)) { ok = false; }
+            if (free.indexOf(1) >= 0 && beta[1] < -1e-12) { ok = false; }
+            if (free.indexOf(2) >= 0 && beta[2] < -1e-12) { ok = false; }
+        }
+        if (!ok) { continue; }
+        var J = 0; rows.forEach(function (r, i) { var f = F[i], e = r.y - (f[0] * beta[0] + f[1] * beta[1] + f[2] * beta[2]); J += e * e / r2; });
+        for (p = 0; p < 3; p++) { if (en[p]) { J += (beta[p] - b0[p]) * (beta[p] - b0[p]) / (sig[p] * sig[p]); } }
+        if (best === null || J < best.J) { best = {ua: beta[0], bw: beta[1], bs: beta[2], J: J, n: n}; }
+    } } }
+    if (best === null) { return {ua: ua0, bw: 0, bs: 0, J: 0, n: n}; }
+    return best;
+}
+function predict(fit, r) { return fit.ua * r.x1 + fit.bw * r.x2 - fit.bs * r.x3; }
+function looMae(rows, o) {                                                                           // Leave-one-day-out: mittlerer absoluter Tagesfehler [kWh]
+    if (rows.length < 3) { return null; }
+    var s = 0;
+    rows.forEach(function (r, i) { var rest = rows.filter(function (x, j) { return j !== i; }); s += Math.abs(r.y - predict(ridgeFit(rest, o), r)); });
+    return s / rows.length;
+}
+function ratioUa(rows, ua0, h0) { var sq = 0, sk = 0; rows.forEach(function (r) { sq += r.y; sk += r.x1; }); return (ua0 * h0 + sq) / (h0 + sk); }       // bisheriger Plan-Schaetzer (Prior ua0 mit h0 K*h)
+function looRatio(rows, ua0, h0) {
+    if (rows.length < 3) { return null; }
+    var s = 0; rows.forEach(function (r, i) { var rest = rows.filter(function (x, j) { return j !== i; }); s += Math.abs(r.y - ratioUa(rest, ua0, h0) * r.x1); });
+    return s / rows.length;
+}
+function gateCheck(n, rows, maeBase, maeCand, fit, o) {                                              // Aktivierungsbedingungen (F4.3); in S2 nur Anzeige
+    var why = [];
+    if (n < o.minDays) { why.push('weniger als ' + o.minDays + ' Tage'); }
+    var sv = rows.map(function (r) { return r.x3; }), sm = sv.length ? sv.reduce(function (a, b) { return a + b; }, 0) / sv.length : 0;
+    var lowN = sv.filter(function (v) { return v < 0.8 * sm; }).length, highN = sv.filter(function (v) { return v > 1.2 * sm; }).length;
+    if (lowN < 2 || highN < 2) { why.push('PV-Tage zu gleichfoermig'); }
+    if (!(maeBase > 0 && maeCand !== null && maeCand <= 0.9 * maeBase)) { why.push('Fehler nicht um 10 % besser'); }
+    if (fit.bs > 0.5 || fit.bw > 0.05) { why.push('Koeffizient unplausibel'); }
+    return {ok: why.length === 0, why: why};
+}
+function fitModel(daysIn, P) {                                                                       // alle Varianten rechnen (nur Anzeige in S2): Basis (Plan-Schaetzer), nur UA, + Sonne, + Wind, OWM-Temperatur, Speicherterm
+    var o0 = {ua0: P.ua0, sUA: P.sUA, sW: P.sW, sS: P.sS, useS: false, useW: false, tref: 'kh', C: 0};
+    var mk = function (patch) { var o = {}; Object.keys(o0).forEach(function (k) { o[k] = o0[k]; }); Object.keys(patch).forEach(function (k) { o[k] = patch[k]; }); return o; };
+    var base = prepRows(daysIn, mk({}));
+    var out = {n: base.rows.length, ts: 0, maeBase: looRatio(base.rows, P.ua0, P.h0), maeUA: null, maeSun: null, maeWind: null, maeOwm: null, store: {}, ua: ratioUa(base.rows, P.ua0, P.h0), uaRidge: null, bs: 0, bw: 0, nW: 0, bestC: 0};
+    if (base.rows.length < 1) { return out; }
+    var f1 = ridgeFit(base.rows, mk({})); out.uaRidge = f1.ua; out.maeUA = looMae(base.rows, mk({}));
+    var oS = mk({useS: true}), pS = prepRows(daysIn, oS), fS = ridgeFit(pS.rows, oS);
+    out.maeSun = looMae(pS.rows, oS); out.bs = fS.bs; out.uaSun = fS.ua; out.nSun = pS.rows.length;
+    var oW = mk({useS: true, useW: true}), pW = prepRows(daysIn, oW);
+    out.nW = pW.nW;
+    if (pW.nW >= P.minWindDays) { var fW = ridgeFit(pW.rows, oW); out.bw = fW.bw; out.bsW = fW.bs; out.uaWind = fW.ua; out.maeWind = looMae(pW.rows, oW); }
+    var oO = mk({tref: 'khW'}), pO = prepRows(daysIn, oO); if (pO.rows.length >= 3) { out.maeOwm = looMae(pO.rows, oO); out.nOwm = pO.rows.length; }
+    var bestC = 0, bestM = null;
+    P.storeC.forEach(function (C) { var oC = mk({useS: true, C: C}), pC = prepRows(daysIn, oC), m = pC.rows.length >= 3 ? looMae(pC.rows, oC) : null; out.store[C] = m; if (m !== null && (bestM === null || m < bestM)) { bestM = m; bestC = C; } });
+    out.bestC = bestC;
+    var cand = out.maeWind !== null ? out.maeWind : out.maeSun;
+    var gp = out.maeWind !== null ? {ua: out.uaWind, bw: out.bw, bs: out.bsW || 0} : {ua: out.uaSun, bw: 0, bs: out.bs};
+    out.gate = gateCheck(out.n, pS.rows, out.maeBase, cand, gp, {minDays: P.minDays});
+    return out;
+}
+// == REIN-END ==
+
 var pl = flow.get('plan');
 if (!pl) {
     pl = {acc: null, hour: null, day: null, lastTs: null, prevDefrost: false, plan: null, planSlot: 0, snaps: [], learn: {days: []}, lastSave: 0};
@@ -1375,7 +1527,7 @@ function csvOut(file, head, lines) {                                            
     if (pl.heads[file] === key) { needHead = false; }
     else {
         pl.heads[file] = key;
-        try { var lastH = null; String(fs.readFileSync(file, 'utf8')).split('\n').forEach(function (l) { if (l.indexOf('slot_start,') === 0) { lastH = l; } }); needHead = lastH !== head; } catch (e) { needHead = true; }
+        try { var lastH = null; var key0 = head.split(',')[0] + ','; String(fs.readFileSync(file, 'utf8')).split('\n').forEach(function (l) { if (l.indexOf(key0) === 0) { lastH = l; } }); needHead = lastH !== head; } catch (e) { needHead = true; }
     }
     return {filename: file, payload: (needHead ? head + '\n' : '') + lines.join('\n') + '\n'};
 }
@@ -1455,8 +1607,12 @@ if (pl.day && pl.day.d0 !== d0) {
     if (pl.day.n >= 1200) {                                                                    // Eintrag: [d0, hdd, q, n] wie bisher, dahinter (nur anhaengen) s, wk, khW, wkW, dtr, sN, wN, owN, wwN; Zaehler unter 90 % der Minuten -> null
         var dd = fillDay(pl.day), part = function (v, cnt, dg) { return cnt >= 0.9 * dd.n ? Math.round(v * dg) / dg : null; }, dtrL = [];
         Object.keys(dd.r0).forEach(function (id) { if (ok(dd.rl[id])) { dtrL.push(dd.rl[id] - dd.r0[id]); } });
-        pl.learn.days.push([dd.d0, Math.round(dd.hdd * 100) / 100, Math.round(dd.q * 1000) / 1000, dd.n,
-                            part(dd.s, dd.sN, 1000), part(dd.wk, dd.wN, 100), part(dd.khW, dd.owN, 100), part(dd.wkW, dd.wwN, 100), dtrL.length ? Math.round(dtrL.reduce(function (x, y) { return x + y; }, 0) / dtrL.length * 1000) / 1000 : null, dd.sN, dd.wN, dd.owN, dd.wwN]);
+        var dtrM = dtrL.length ? Math.round(dtrL.reduce(function (x, y) { return x + y; }, 0) / dtrL.length * 1000) / 1000 : null;
+        var entry = [dd.d0, Math.round(dd.hdd * 100) / 100, Math.round(dd.q * 1000) / 1000, dd.n, part(dd.s, dd.sN, 1000), part(dd.wk, dd.wN, 100), part(dd.khW, dd.owN, 100), part(dd.wkW, dd.wwN, 100), dtrM, dd.sN, dd.wN, dd.owN, dd.wwN];
+        pl.learn.days.push(entry);
+        var dayMsg = csvOut('/data/optimizer/plan-days-' + monthOf(dd.d0 + 6 * H) + '.csv', 'tag,kh_fuehler,kh_owm,waerme_kwh,minuten,pv_kwh,wk_fuehler,wk_owm,dtr_k,min_pv,min_wind,min_owm',
+                            [stamp(dd.d0).slice(0, 10) + ',' + [entry[1], entry[6], entry[2], entry[3], entry[4], entry[5], entry[7], entry[8], entry[9], entry[10], entry[11]].map(function (v) { return c(v, 3); }).join(',')]);
+        out[1] = out[1] ? [out[1], dayMsg] : dayMsg;                                               // Tagesblatt fuer die Auswertung (eine Zeile je abgeschlossenem Tag)
     }
     while (pl.learn.days.length > pn('learnDays', 21)) { pl.learn.days.shift(); }
     pl.day = null; pl.lastSave = 0;
@@ -1471,6 +1627,36 @@ if (owNow !== null && atNow !== null) { pl.day.khW += Math.max(0, pn('tbalC', 15
 if (windNow !== null && atNow !== null) { pl.day.wk += Math.max(0, pn('tbalC', 15) - atNow) * windNow / 60; pl.day.wN++; }          // Wind x Heizgradstunden (Fuehler)
 if (windNow !== null && owNow !== null) { pl.day.wkW += Math.max(0, pn('tbalC', 15) - owNow) * windNow / 60; pl.day.wwN++; }      // Wind x Heizgradstunden (OWM)
 ROOMS.forEach(function (rc) { var r = Rr[rc.id]; if (r && r.ts && now - r.ts < (rc.maxAgeMin || 90) * MS_MIN && ok(r.ema)) { if (pl.day.r0[rc.id] === undefined) { pl.day.r0[rc.id] = r.ema; } pl.day.rl[rc.id] = r.ema; } });
+
+// ---------- Gebaeudemodell (Fahrplan v2, S2): Rueckrechnung aus plan-actuals und Regression, nur BERECHNEN und ANZEIGEN (wirkt nicht auf den Plan)
+if (!pl.bf) {
+    pl.bf = {days: []};                                                                            // einmal je Prozess: abgeschlossene Tage aus den Ist-Dateien der letzten Wochen
+    try {
+        var bfRows = [], mo0 = new Date(now - pn('learnDays', 21) * 86400000), moN = new Date(now);
+        for (var mm = new Date(mo0.getFullYear(), mo0.getMonth(), 1); mm <= moN; mm = new Date(mm.getFullYear(), mm.getMonth() + 1, 1)) {
+            try { bfRows = bfRows.concat(parseCsv(fs.readFileSync('/data/optimizer/plan-actuals-' + mm.getFullYear() + '-' + ('0' + (mm.getMonth() + 1)).slice(-2) + '.csv', 'utf8'))); } catch (e) { /* keine Datei */ }
+        }
+        pl.bf.days = daysFromRows(bfRows, pn('tbalC', 15)).filter(function (d) { return d.d0 < dayStart(now) && d.n >= 1200; });
+    } catch (e) { pl.bf.days = []; }
+}
+function modelDays() {                                                                             // Live-Tage und Rueckrechnung zusammenfuehren (Live gilt fuer kh, q, n; fehlende Zusatzwerte kommen aus der Rueckrechnung)
+    var map = {}, order = [];
+    (pl.bf.days || []).forEach(function (d) { map[d.d0] = d; order.push(d.d0); });
+    (pl.learn.days || []).forEach(function (a) {
+        var d = dayFromArr(a), b = map[d.d0];
+        if (b) { ['s', 'wk', 'khW', 'wkW', 'dtr'].forEach(function (k) { if (d[k] === null) { d[k] = b[k]; } }); } else { order.push(d.d0); }
+        map[d.d0] = d;
+    });
+    return order.map(function (k) { return map[k]; }).filter(function (d) { return d.n >= 1200 && d.kh >= pn('learnMinHdd', 30); }).sort(function (x, y) { return x.d0 - y.d0; });
+}
+var mDays = modelDays(), mSig = mDays.length + '|' + mDays.map(function (d) { return d.d0 + ':' + Math.round(d.q * 100) + ':' + (d.s === null ? '-' : Math.round(d.s * 10)) + ':' + (d.wk === null ? '-' : 'w'); }).join(',');
+if (!pl.learn.coef || pl.learn.coef.sig !== mSig) {
+    try {
+        var fm = fitModel(mDays, {ua0: pn('uaKwPerK', 0.22), h0: pn('uaPriorKh', 300), sUA: 0.10, sW: 0.01, sS: 0.10, minDays: pn('coefMinDays', 10), minWindDays: 7, storeC: [0, 3, 6, 10]});
+        fm.sig = mSig; fm.ts = now; fm.aktiv = false;                                              // in S2 wirkt nichts auf den Plan
+        pl.learn.coef = fm;
+    } catch (e) { pl.learn.coef = {n: 0, sig: mSig, ts: now, aktiv: false, error: String(e && e.message || e)}; }
+}
 
 // ---------- Plan berechnen: einmal pro 15-Minuten-Slot, bis er gelingt jede Minute
 function buildPlan() {
@@ -1723,6 +1909,17 @@ if (P.status === 'ok') {
         ['COP-Modell', 'η ' + f(ml.eta, 2) + ' vom Carnot-Wert (' + (ml.etaMin >= 60 ? 'gemessen ' + Math.round(ml.etaW * 100) + ' %, ' + ml.etaMin + ' min' : 'Standardwert') + ') · Heizgrenze ' + f(ml.tbal, 0, '°C'), ''],
         ['Auflösung der Quellen', 'Temperatur 3 h · PV ' + (sm.pvRes ? f(sm.pvRes, 0, 'min') : '–') + ' · Preis 15 min', '']
     ];
+    (function () {                                                                                 // Gebaeudemodell (nur Werte): Kandidat aus Sonne/Wind, Fehler gegen den Plan-Schaetzer
+        var cf = pl.learn.coef, txt, cls = '';
+        if (!cf || !cf.n) { txt = 'UA ' + f(ml.ua * 1000, 0, 'W/K') + ' (Plan) · keine Daten'; }
+        else if (cf.n < 3) { txt = 'UA ' + f(ml.ua * 1000, 0, 'W/K') + ' (Plan) · ' + cf.n + ' Tag' + (cf.n === 1 ? '' : 'e') + ' · Kandidat ab 3 Tagen'; }
+        else {
+            var bestE = [cf.maeUA, cf.maeSun, cf.maeWind].filter(function (v) { return v !== null && v !== undefined; }).reduce(function (m, v) { return m === null || v < m ? v : m; }, null);
+            txt = 'UA ' + f((cf.uaRidge || ml.ua) * 1000, 0, 'W/K') + ' · Sonne ' + f(cf.bs, 3) + ' · Wind ' + (cf.maeWind !== null && cf.maeWind !== undefined ? f(cf.bw, 3) : 'n ' + cf.nW + ' Tage') + ' · ' + (cf.aktiv ? 'aktiv' : 'Kandidat') + ' · ' + cf.n + ' Tage · Fehler Plan ' + f(cf.maeBase, 1) + ' / Kandidat ' + f(bestE, 1, 'kWh');
+            if (cf.aktiv) { cls = 'ok'; }
+        }
+        rows.splice(rows.findIndex(function (r) { return r[0] === 'COP-Modell'; }) + 1, 0, ['Gebäudemodell', txt, cls]);
+    })();
     // Tabelle: 24 h in Stundenbloecken ab dem aktuellen Slot
     for (var b = 0; b < 24; b++) {
         var g = sl0.slice(b * 4, b * 4 + 4), n = g.length, mean = function (k) { var s = 0, cnt = 0; g.forEach(function (x) { if (x[k] !== null && x[k] !== undefined) { s += x[k]; cnt++; } }); return cnt ? s / cnt : null; };
