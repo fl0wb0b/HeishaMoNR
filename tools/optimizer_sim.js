@@ -823,7 +823,7 @@ const run1 = (n, hook) => { const evs = []; let o; for (let i = 0; i < n; i++) {
 world({TOP14_Outside_Temp: 12}); hpmsg('main/Heating_Control', 0); let rr = run1(2);
 check('Comfort: Zeile "Heizregelung" zeigt nur "Comfort", keine Empfehlung', qrow(rr.o, 'Heizregelung')[1] === 'Comfort' && qrow(rr.o, 'Heizregelung')[2] === '', JSON.stringify(qrow(rr.o, 'Heizregelung')));
 world({TOP14_Outside_Temp: 12}); hpmsg('main/Heating_Control', 1); rr = run1(2);
-check('Efficiency bei 12 °C ohne Abtauen, Vorlauf nahe Soll, Raeume ok: "Efficiency · keine Warnung" (gruen), keine Warnung als Ereignis', qrow(rr.o, 'Heizregelung')[1] === 'Efficiency · keine Warnung' && qrow(rr.o, 'Heizregelung')[2] === 'ok' && rr.evs.length === 0, JSON.stringify(qrow(rr.o, 'Heizregelung')));
+check('Efficiency bei 12 °C ohne Abtauen, Vorlauf nahe Soll, Raeume ok: "Efficiency · keine Warnung" (gruen), keine Warnung als Ereignis', qrow(rr.o, 'Heizregelung')[1] === 'Efficiency · keine Warnung' && qrow(rr.o, 'Heizregelung')[2] === 'ok' && rr.evs.filter(e => e.includes('heizregelung_empfehlung')).length === 0, JSON.stringify(qrow(rr.o, 'Heizregelung')));
 rr = run1(1, () => { gstore.TOP14_Outside_Temp = 3.2; });
 check('Efficiency bei 3,2 °C: Warnung "Comfort empfohlen: Außentemperatur 3,2 °C" (rot), Ereignis "ok->Comfort empfohlen (...)" einmal festgehalten', qrow(rr.o, 'Heizregelung')[1] === 'Efficiency · Comfort empfohlen: Außentemperatur 3,2 °C' && qrow(rr.o, 'Heizregelung')[2] === 'warn' && rr.evs.length === 1 && /,heizregelung_empfehlung,ok->Comfort empfohlen \(Außentemperatur 3\.2 °C\)/.test(rr.evs[0]) && gstore.OPT_hc_reco.warn === true, qrow(rr.o, 'Heizregelung')[1] + ' | ' + rr.evs.join('').trim());
 rr = run1(3, () => { gstore.TOP14_Outside_Temp = 3.2; });
@@ -926,6 +926,67 @@ check('Verdichter geht nach dem Abtauen aus, bevor der Vorlauf Soll erreicht: Ei
 dfWorld(); dfAll = collect(2); [0, 1].forEach(k => { dfAll = dfAll.concat(collect(3, () => { gstore.TOP26_Defrosting_State = 1; gstore.TOP6_Main_Outlet_Temp = 25; })); dfAll = dfAll.concat(collect(k === 0 ? 4 : 40, () => { gstore.TOP26_Defrosting_State = 0; gstore.TOP6_Main_Outlet_Temp = k === 0 ? 27 : 31.5; })); });
 dfR = defRows(dfAll); const dfL0 = dfR[0][dfR[0].length - 1].split(','), dfL1 = dfR[1] ? dfR[1][dfR[1].length - 1].split(',') : [];
 check('Zweiter Abtauzyklus waehrend der Erholung: der erste wird als "unterbrochen" abgeschlossen, der zweite eigenstaendig; Abstand zur letzten Abtauung wird festgehalten', dfR.length === 2 && dfL0[2] === 'unterbrochen' && dfL1[2] !== 'unterbrochen' && Number(dfL1[14]) >= 6 && Number(dfL1[14]) <= 9, dfL0.slice(0, 3).join(',') + ' | ' + dfL1.slice(0, 3).join(',') + ' Abstand ' + dfL1[14]);
+// Heizstab (Winter): Minuten mit aktivem Heizstab waehrend Abtauen + Wiederaufheizen und Zustand im Quiet-Protokoll
+dfWorld(); hpm('main/Internal_Heater_State', 0); dfAll = collect(2);
+dfAll = dfAll.concat(collect(3, i => { gstore.TOP26_Defrosting_State = 1; gstore.TOP6_Main_Outlet_Temp = 25; hpm('main/Internal_Heater_State', i >= 1 ? 1 : 0); }));
+dfAll = dfAll.concat(collect(4, i => { gstore.TOP26_Defrosting_State = 0; gstore.TOP6_Main_Outlet_Temp = [25, 26, 27, 31.2][i]; hpm('main/Internal_Heater_State', 0); }));
+dfR = defRows(dfAll); dfH = dfR[0] && dfR[0][0].split(','); dfL = dfR[0] && dfR[0][dfR[0].length - 1].split(',');
+check('Abtauzyklus: Heizstab-Minuten werden gezaehlt (2 von 3 Abtau-Minuten mit aktivem Heizstab, danach aus -> heizstab_min 2), Spaltenzahl stimmt', dfR.length === 1 && dfH.length === dfL.length && dfH.indexOf('heizstab_min') === dfH.length - 1 && dfL[dfH.indexOf('heizstab_min')] === '2', dfR[0] && dfR[0].join(' / '));
+dfWorld(); dfAll = collect(2); dfAll = dfAll.concat(collect(3, () => { gstore.TOP26_Defrosting_State = 1; gstore.TOP6_Main_Outlet_Temp = 25; })); dfAll = dfAll.concat(collect(4, i => { gstore.TOP26_Defrosting_State = 0; gstore.TOP6_Main_Outlet_Temp = [25, 26, 27, 31.2][i]; }));
+dfR = defRows(dfAll); dfL = dfR[0] && dfR[0][dfR[0].length - 1].split(',');
+check('Abtauzyklus ohne Heizstab: heizstab_min 0 (kein leeres Feld)', dfR.length === 1 && dfL[dfL.length - 1] === '0', dfL && dfL[dfL.length - 1]);
+world({TOP5_Main_Inlet_Temp: 24.3}); ['Internal_Heater_State', 1, 'External_Heater_State', 0, 'Room_Heater_State', 1, 'Room_Heater_Operations_Hours', 76, 'Heater_Start_Delta', -3, 'Heater_Delay_Time', 15].forEach((v, k, arr) => { if (k % 2 === 0) { hpm('main/' + v, arr[k + 1]); } });
+delete fstore.qHead; const hsOuts = collect(2);
+{
+  const lines = hsOuts.filter(x => x[2]).map(x => x[2].payload).join('').split('\n').filter(Boolean), hh = lines.find(l => l.startsWith('zeit,')).split(','), dd = lines.filter(l => !l.startsWith('zeit,')).pop().split(',');
+  const gv = n => dd[hh.indexOf(n)];
+  check('Quiet-Protokoll: Heizstab-Spalten (intern, extern, Raumheizung frei, Betriebsstunden, Start-Delta, Verzoegerung) mit den HeishaMon-Werten, Spaltenzahl stimmt', ['heizstab_intern', 'heizstab_extern', 'heizstab_raum_frei', 'heizstab_stunden', 'heizstab_start_delta', 'heizstab_verzoegerung_min'].every(n => hh.indexOf(n) >= 0) && dd.length === hh.length && gv('heizstab_intern') === '1' && gv('heizstab_extern') === '0' && gv('heizstab_raum_frei') === '1' && gv('heizstab_stunden') === '76' && gv('heizstab_start_delta') === '-3' && gv('heizstab_verzoegerung_min') === '15', dd.slice(-6).join(','));
+}
+// ---- Eskalationswaechter (Schatten): wann muesste Efficiency verlassen / Quiet freigegeben werden? Schaltet nichts, protokolliert nur
+console.log('\n--- Eskalationswaechter (Schatten)');
+const evAll = os => os.filter(x => x[3]).map(x => x[3].payload).join('');
+const ewRow = o => (o[0].payload.rows.find(r => r[0] === 'Eskalationswächter (Schatten, schaltet nichts)') || []);
+const ewWorld = (over, hc) => { delete fstore.qs; dfWorld(Object.assign({TOP14_Outside_Temp: 8, compressor_frequency: 17, TOP42_Z1_Water_Target_Temp: 32, TOP6_Main_Outlet_Temp: 28, TOP5_Main_Inlet_Temp: 26, compressor_runtime: 1}, over || {})); hpm('main/Heating_Control', hc === undefined ? 1 : hc); };
+const sentBefore = sent.length;
+// 1) Efficiency, Vorlauf bleibt 4 K unter Soll: nach 120 min Ausloeser, nach weiteren 10 min Wartezeit "wuerde jetzt schalten"
+ewWorld(); let ew = collect(135, i => { gstore.compressor_runtime = 1 + i; });
+check('Waechter: Efficiency, Sollvorlauf nach 120 min nicht erreicht -> Ausloeser mit Wartezeit (noch kein Schalten), danach "wuerde jetzt schalten: Efficiency → Comfort" (Nacht automatisch / Tag Vorschlag)',
+      /nicht erreicht \(Grenze 120 min\).*Wartezeit/.test(ewRow(ew[125])[1]) && /würde jetzt schalten: Heizregelung Efficiency → Comfort \((Nacht: automatisch|Tag: Vorschlag zur Bestätigung)\)/.test(ewRow(ew[134])[1]) && ewRow(ew[134])[2] === 'warn', ewRow(ew[125])[1] + ' // ' + ewRow(ew[134])[1]);
+const ev1 = evAll(ew);
+check('Waechter: Zustandswechsel stehen als Ereignis (wartet, schalten), nicht jede Minute', /eskalation_schatten,wartet: Sollvorlauf nach 12\d min nicht erreicht/.test(ev1) && /eskalation_schatten,schalten: /.test(ev1) && (ev1.match(/eskalation_schatten/g) || []).length === 2, (ev1.match(/eskalation_schatten[^\n]*/g) || []).join(' | '));
+// 2) Sollvorlauf wird erreicht: Ereignis mit Minuten, kein Ausloeser; Lauf-Ende fasst zusammen
+ewWorld(); ew = collect(90, i => { gstore.compressor_runtime = 1 + i; gstore.TOP6_Main_Outlet_Temp = i < 60 ? 28 : 31.5; });
+const ev2 = evAll(ew);
+check('Waechter: Sollvorlauf (Soll -1 K) wird nach 60 min erreicht -> Ereignis "sollvorlauf_erreicht" mit Minuten, Modus, Quiet, Aussen; Anzeige gruen "kein Ausloeser"', /sollvorlauf_erreicht,nach 6[01] min · Heizregelung 1 · Quiet 3 · Außen 8 °C · Soll 32/.test(ev2) && /kein Auslöser · Sollvorlauf erreicht nach 6[01] min/.test(ewRow(ew[89])[1]) && ewRow(ew[89])[2] === 'ok' && !/eskalation_schatten/.test(ev2), ev2.split('\n').filter(l => /sollvorlauf/.test(l)).join(' | ') + ' // ' + ewRow(ew[89])[1]);
+const ew2 = collect(1, () => { gstore.compressor_frequency = 0; });
+check('Waechter: Lauf-Ende wird mit Dauer und "Sollvorlauf erreicht nach N min" festgehalten', /lauf_ende,Lauf 90 min · Sollvorlauf erreicht nach 6[01] min · Heizregelung 1 · Quiet 3/.test(evAll(ew2)), evAll(ew2));
+// 2b) Lauf ist beim ersten Hinsehen schon 200 min im Gang (z. B. nach Neustart/Deploy): Zeit bis Sollvorlauf unbekannt, keine falsche Statistik
+ewWorld({TOP6_Main_Outlet_Temp: 32, compressor_runtime: 200}); ew = collect(2, i => { gstore.compressor_runtime = 200 + i; });
+const ev2b = evAll(ew), ew2b = collect(1, () => { gstore.compressor_frequency = 0; });
+check('Waechter: Lauf beim ersten Hinsehen schon 200 min im Gang -> "Zeit unbekannt" statt falscher Minutenzahl, Lauf-Ende "erreicht (Zeit unbekannt)"', /sollvorlauf_erreicht,Zeit unbekannt \(Lauf war beim Beobachtungsbeginn schon 200 min im Gang\)/.test(ev2b) && /lauf_ende,Lauf 201 min · Sollvorlauf erreicht \(Zeit unbekannt\)/.test(evAll(ew2b)), ev2b + evAll(ew2b));
+// 3) Raum seit 60 min unter Minimum, Vorlauf aber 1,5 K ueber Soll: Takt-Gefahr sperrt das Schalten
+ewWorld({TOP6_Main_Outlet_Temp: 33.5, compressor_runtime: 30}); ew = collect(65, i => { gstore.compressor_runtime = 30 + i; gstore.OPT_state = {ts: NOW, deficit: true, deficitRoom: 'Kinderzimmer oben', valid: 3, active: 3}; });
+check('Waechter: Raum 60 min unter Minimum, aber Vorlauf 1,5 K ueber Soll -> gesperrt wegen Takt-Gefahr, kein "wuerde jetzt schalten"', /unter Minimum \(Kinderzimmer oben\)/.test(ewRow(ew[64])[1]) && /gesperrt: .*Vorlauf 1,5 K über Soll: Takt-Gefahr/.test(ewRow(ew[64])[1]) && !/würde jetzt schalten/.test(ewRow(ew[64])[1]), ewRow(ew[64])[1]);
+// 4) Heizstab-Schwelle: AT -3, Heizstab ab 0 °C, Start bei -3 K nach 15 min; Vorlauf 2,5 K unter Soll seit 11 min, Verdichter erst 12 min im Lauf -> Ausloeser, aber Startphase
+ewWorld({TOP14_Outside_Temp: -3, TOP6_Main_Outlet_Temp: 29.5});
+const heaterFeed = () => { hpm('main/Heater_On_Outdoor_Temp', 0); hpm('main/Heater_Start_Delta', -3); hpm('main/Heater_Delay_Time', 15); };       // HeishaMon schickt alle Werte alle 5 min neu; im Test jede Minute
+ew = collect(12, i => { gstore.compressor_runtime = 1 + i; heaterFeed(); });
+check('Waechter: Heizstab-Schwelle naht (Defizit 2,5 K, Heizstab ab -3 K nach 15 min, ab 0 °C) -> Ausloeser schon nach 10 min Defizit; in der Startphase (<15 min) aber gesperrt', /Heizstab-Schwelle naht/.test(ewRow(ew[11])[1]) && /Startphase/.test(ewRow(ew[11])[1]), ewRow(ew[11])[1]);
+// 5) Comfort laeuft schon: Quiet-Freigabe nur wenn der Verdichter am Deckel haengt
+ewWorld({TOP5_Main_Inlet_Temp: 26}, 0); ew = collect(130, i => { gstore.compressor_runtime = 1 + i; });
+check('Waechter: Comfort, Sollvorlauf nicht erreicht, Verdichter bei 17 Hz (weit unter dem Quiet-3-Deckel) -> "Quiet-Freigabe brächte nichts"', /Quiet-Freigabe brächte nichts \(Verdichter bei 17 Hz/.test(ewRow(ew[129])[1]), ewRow(ew[129])[1]);
+ewWorld({}, 0); ew = collect(130, i => { gstore.compressor_runtime = 1 + i; gstore.compressor_frequency = 30; });
+check('Waechter: Comfort, Verdichter bei 30 Hz (am Quiet-3-Deckel ~28 Hz), Sollvorlauf nicht erreicht -> Vorschlag "Quiet 3 → 2"', /Quiet 3 → 2/.test(ewRow(ew[129])[1]) && /würde jetzt schalten|Wartezeit/.test(ewRow(ew[129])[1]), ewRow(ew[129])[1]);
+// 6) Takt durch Steuerung: Verdichter geht 3 min nach einem Wechsel aus -> Ereignis und Sperre fuer 24 h; naechster Lauf zeigt die Sperre
+ewWorld({TOP6_Main_Outlet_Temp: 31.5, compressor_runtime: 30}); collect(5, i => { gstore.compressor_runtime = 30 + i; });
+collect(1, () => { hpm('main/Heating_Control', 0); }); collect(2, () => {}); ew = collect(1, () => { gstore.compressor_frequency = 0; });
+check('Waechter: Verdichter geht 3 min nach einem Wechsel der Heizregelung aus -> Ereignis "takt_nach_wechsel" mit Sperre 24 h, ausserdem lauf_ende', /takt_nach_wechsel,Verdichter [23] min nach einem Wechsel aus · automatisches Schalten gesperrt bis/.test(evAll(ew)) && /lauf_ende/.test(evAll(ew)) && fstore.qs.esc.blockUntil > NOW + 23 * 3600000, evAll(ew));
+hpm('main/Heating_Control', 1); gstore.compressor_frequency = 17; gstore.TOP6_Main_Outlet_Temp = 28; ew = collect(130, i => { gstore.compressor_runtime = 1 + i; });
+check('Waechter: nach "Takt durch Wechsel" ist das automatische Schalten gesperrt (Anzeige nennt die Sperre)', /nach Takt durch Wechsel gesperrt bis/.test(ewRow(ew[129])[1]), ewRow(ew[129])[1]);
+// 7) Verdichter steht: keine Pruefung; Waechter sendet nie etwas
+ewWorld({compressor_frequency: 0}); ew = collect(2);
+check('Waechter: bei stehendem Verdichter nur Hinweis "Wächter prüft im Betrieb"', /Verdichter steht/.test(ewRow(ew[1])[1]), ewRow(ew[1])[1]);
+check('Waechter nur lesend: in allen Szenarien wurde kein Befehl an die Waermepumpe gesendet', sent.length === sentBefore || sent.slice(sentBefore).every(x => x.id !== 'opt_quiet' || !x.m || !x.m.topic), String(sent.length - sentBefore));
 check('Abtauprotokoll nur lesend: die Funktion sendet nichts an die Waermepumpe, nur Datei-Ausgabe (Ausgang 5)', JSON.parse(fs.readFileSync(flowsFile, 'utf8')).find(n => n.id === 'opt_quiet').wires[4].join() === 'opt_f_def' && sent.every(x => x.id !== 'opt_quiet' || !x.m || !x.m.topic), '');
 check('Komfortdefizit-Anteil je Kennfeldzeile (hier 100 %)', trow(tab, 3, '3–7 °C')[16] === '100 %', trow(tab, 3, '3–7 °C')[16]);
 world({}); collect(3); gstore.compressor_frequency = 0; collect(2); gstore.compressor_frequency = 20; collect(40);
