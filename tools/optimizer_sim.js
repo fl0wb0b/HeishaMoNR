@@ -1193,6 +1193,12 @@ check('Kosten nachvollziehbar: je Slot Preis/COP + Defrost-Strafe + Unsicherheit
 check('Taupunkt je Slot plausibel (unter der Lufttemperatur bei 85 % Feuchte, ca. 2 K darunter)', P.slots.every(x => x.dew < x.at && x.at - x.dew < 6), P.slots[0].at.toFixed(1) + ' / ' + P.slots[0].dew.toFixed(1));
 check('Anzeige: Auflösung der Quellen bleibt bekannt (Temperatur 3 h, PV 60 min, Preis 15 min)', rowsT['Auflösung der Quellen'] === 'Temperatur 3 h · PV 60 min · Preis 15 min', rowsT['Auflösung der Quellen']);
 check('Anzeige: Ersparnis nur als Modell, PV-Fenster und Batterie getrennt (keine gemeinsame Entscheidung)', /Ersparnis Modell/.test(rowsT['Verschobene Wärme']) && rowsT['Batterie'] === '60 % (Venus)' && !/Batterie/.test(rowsT['PV-günstigstes Fenster']), rowsT['Verschobene Wärme']);
+{
+  const S = P.sum, parts = S.savPrice + S.savCop + S.savDef + S.savUnc, tot = S.costB - S.costP;
+  check('Ersparnis nach Ursache: Preis + COP/Wetter + Abtaurisiko + Unsicherheit ergeben genau die Modell-Ersparnis (Plan minus Normalverlauf)', Math.abs(parts - tot) < 1e-6 && tot > 0, parts.toFixed(4) + ' vs ' + tot.toFixed(4));
+  check('Ersparnis nach Ursache: Preisanteil ist beim Nacht-Niedertarif der groesste Anteil und positiv; mittlerer COP plausibel (1,5-6,5)', S.savPrice > 0 && S.savPrice >= Math.max(S.savCop, S.savDef, S.savUnc) - 1e-9 && S.cop0 > 1.5 && S.cop0 < 6.5, JSON.stringify({p: S.savPrice, c: S.savCop, d: S.savDef, u: S.savUnc, cop0: S.cop0}));
+  check('Anzeige: Zeile "Ersparnis nach Ursache (Modell)" nennt Preis, COP/Wetter, Abtaurisiko, Unsicherheit und den mittleren COP', /^Preis [\d,.-]+ ct · COP\/Wetter [\d,.-]+ ct · Abtaurisiko [\d,.-]+ ct · Unsicherheit [\d,.-]+ ct \(mittlerer COP \d,\d\d\)$/.test(rowsT['Ersparnis nach Ursache (Modell)']), rowsT['Ersparnis nach Ursache (Modell)']);
+}
 
 // ---- 2b) Konsistenz der Kennzahlen (24 h): Plan nie teurer als Normalverlauf, Potenzial ohne Komfortgrenze nie schlechter als mit; Slots nach 24 h bleiben Prognose
 {
@@ -1357,7 +1363,7 @@ outsAll.forEach(o => {
   if (o[2]) { evRows.push(o[2].payload); }
 });
 const snapKeys = Object.keys(snaps).map(Number).sort((a, b) => a - b);
-check('Schnappschuss: genau einer je Stunde (' + snapKeys.length + ' in 27 h), mit Spaltenkopf, Auflösung der Quellen und Modellparametern', snapKeys.length >= 27 && snapKeys.length <= 29 && snaps[snapKeys[0]].cols.includes('conf_at') && snaps[snapKeys[0]].meta.res.price_min === 15 && snaps[snapKeys[0]].meta.model.eta > 0, snapKeys.length);
+check('Schnappschuss: genau einer je Stunde (' + snapKeys.length + ' in 27 h), mit Spaltenkopf, Auflösung der Quellen und Modellparametern', snapKeys.length >= 27 && snapKeys.length <= 29 && snaps[snapKeys[0]].cols.includes('conf_at') && snaps[snapKeys[0]].meta.res.price_min === 15 && snaps[snapKeys[0]].meta.model.eta > 0 && ['preis', 'cop', 'abtau', 'unsicher', 'summe', 'cop0'].every(k => typeof snaps[snapKeys[0]].meta.sav_ct[k] === 'number'), snapKeys.length);
 const cols = snaps[snapKeys[0]].cols, ci = n => cols.indexOf(n);
 const distinct = new Set(snapKeys.map(k => { const sn = snaps[k], i = sn.slots.findIndex(x => x[0] * 1000 === T0 + 26 * HH); return i >= 0 ? sn.slots[i][ci('at')] : null; }).filter(v => v !== null));
 check('Schnappschuesse enthalten je Planungszeitpunkt eine eigene Prognose fuer denselben Zielzeitpunkt (Test ist aussagekraeftig)', distinct.size >= 3, [...distinct].join(','));
