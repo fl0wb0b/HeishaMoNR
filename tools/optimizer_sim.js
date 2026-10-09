@@ -1594,11 +1594,11 @@ check('Dateien: Ist, Vergleich, Schnappschuesse und Zustand unter /data/optimize
   const hdrs = [], lines = []; let evOut = [];
   const outs1 = step(26); outs1.forEach(o => { if (o[1]) { hdrs.push(o[1].payload.split('\n')[0]); lines.push(o[1].payload); } if (o[2]) { evOut.push(o[2].payload); } });
   const snap1 = fstore.plan.snaps[fstore.plan.snaps.length - 1], P1 = planNow();
-  check('Plan-Schnappschuss: Spalten wind und wolken stehen hinter den alten 23 (Reihenfolge unveraendert), Werte aus der Wetterprognose (5,5 m/s, 50 %)', JSON.stringify(snap1.cols.slice(0, 23)) === JSON.stringify(OLDSNAP) && snap1.cols[23] === 'wind' && snap1.cols[24] === 'wolken' && snap1.cols[25] === 'at_korr' && snap1.slots.every(r => r.length === 26 && r[23] === 5.5 && r[24] === 50 && r[25] === null), snap1.cols.slice(21).join() + ' / ' + JSON.stringify(snap1.slots[0].slice(21)));
+  check('Plan-Schnappschuss: Spalten wind und wolken stehen hinter den alten 23 (Reihenfolge unveraendert), Werte aus der Wetterprognose (5,5 m/s, 50 %)', JSON.stringify(snap1.cols.slice(0, 23)) === JSON.stringify(OLDSNAP) && snap1.cols[23] === 'wind' && snap1.cols[24] === 'wolken' && snap1.cols[25] === 'at_korr' && snap1.slots.every(r => r.length === 31 && r[23] === 5.5 && r[24] === 50 && r[25] === null), snap1.cols.slice(21).join() + ' / ' + JSON.stringify(snap1.slots[0].slice(21)));
   check('Plan: Bedarf, Kosten und Empfehlungen sind von Wind/Bewoelkung unabhaengig (Wind 5,5 gegen ohne Wind ergibt dieselben Slots)', (() => { pworld({wide: true, windNow: 4.5, cloudsNow: 80, owmTemp: 7, atNow: 6}); gstore.T_outside = 6.5; gstore.T_outside_custom = 5.5; step(26); const Pn = planNow(); return P1.slots.every((x, i) => x.b === Pn.slots[i].b && x.p === Pn.slots[i].p && x.cost === Pn.slots[i].cost && x.rec === Pn.slots[i].rec && x.bedarf === Pn.slots[i].bedarf); })(), '');
   const hdr = hdrs[0] ? hdrs[0].split(',') : [], row = lines[0] ? lines[0].split('\n')[1].split(',') : [];
   check('plan-actuals: fuenf neue Spalten ganz hinten (nach den Raumspalten), Kopfzeile und Zeile gleich lang, Zahlen mit Punkt (Wind 4.5, Bewoelkung 80, OWM 7, Regelwert 6.5, eigener Fuehler 5.5)', hdr.slice(-5).join() === 'ist_wind_ms,ist_bewoelkung_pct,ist_aussen_owm,ist_aussen_regel,ist_t_custom' && hdr[hdr.length - 6].startsWith('ist_raum_') && row.length === hdr.length && row.slice(-5).join() === '4.5,80,7,6.5,5.5', hdr.slice(-7).join() + ' / ' + row.slice(-7).join());
-  check('plan-eval: Kopfzeile = Vergleichsspalten + Ist-Spalten + prog_wind_ms, prog_bewoelkung_pct, prog_aussen_korr; Zeile gleich lang, Prognosewert 5.5 m/s und 50 % aus dem Schnappschuss', (() => { if (!evOut.length) { return false; } const l = evOut[evOut.length - 1].split('\n').filter(Boolean), h = (l.length > 1 ? l[0] : '').split(','), r = l[l.length - 1].split(','); return h.slice(-3).join() === 'prog_wind_ms,prog_bewoelkung_pct,prog_aussen_korr' && h.length === r.length && r.slice(-3).join() === '5.5,50,' && h[h.length - 4] === 'ist_t_custom'; })(), evOut.length ? evOut[evOut.length - 1].slice(0, 120) : 'keine Eval-Ausgabe');
+  check('plan-eval: Kopfzeile = Vergleichsspalten + Ist-Spalten + 6 neue Spalten hinten (Wind, Bewoelkung, korrigierte Temperatur, Sonne, Bedarf Basis, Bedarf Kandidat); Zeile gleich lang, Prognosewert 5.5 m/s und 50 % aus dem Schnappschuss', (() => { if (!evOut.length) { return false; } const l = evOut[evOut.length - 1].split('\n').filter(Boolean), h = (l.length > 1 ? l[0] : '').split(','), r = l[l.length - 1].split(','); return h.slice(-6).join() === 'prog_wind_ms,prog_bewoelkung_pct,prog_aussen_korr,prog_sonne_kwh,prog_bedarf_basis_kwh,prog_bedarf_kand_kwh' && h.length === r.length && r.slice(-6, -3).join() === '5.5,50,' && h[h.length - 7] === 'ist_t_custom' && Number(r[r.length - 2]) > 0 && r[r.length - 2] === r[r.length - 1]; })(), evOut.length ? evOut[evOut.length - 1].slice(0, 120) : 'keine Eval-Ausgabe');
   // alte Spaltenkopf-Datei: genau eine neue Kopfzeile
   pworld({wide: true, windF: 5.5, windNow: 4.5}); const oldHead = hdrs[0].split(',').slice(0, -5).join(','); files['/data/optimizer/plan-actuals-2026-11.csv'] = {data: oldHead + '\nalt\n', mode: 0o644};
   const o2 = step(40).filter(o => o[1]).map(o => o[1].payload);
@@ -1606,7 +1606,7 @@ check('Dateien: Ist, Vergleich, Schnappschuesse und Zustand unter /data/optimize
   // alter Schnappschuss ohne die neuen Spalten: plan-eval liest ihn ohne Fehler, Felder bleiben leer
   pworld({wide: true, windF: 5.5}); step(26); fstore.plan.snaps.forEach(sn => { sn.cols = sn.cols.slice(0, 23); sn.slots = sn.slots.map(r => r.slice(0, 23)); });
   const o3 = step(20).filter(o => o[2]).map(o => o[2].payload), l3 = o3.length ? o3[o3.length - 1].split('\n').filter(Boolean) : [], r3 = l3.length ? l3[l3.length - 1].split(',') : [];
-  check('plan-eval: aelterer Schnappschuss ohne Wind-Spalten (23 Spalten) -> Felder prog_wind_ms/prog_bewoelkung_pct/prog_aussen_korr leer, kein Fehler', o3.length > 0 && r3.slice(-3).join() === ',,', r3.slice(-4).join('|'));
+  check('plan-eval: aelterer Schnappschuss ohne Wind-Spalten (23 Spalten) -> Felder prog_wind_ms/prog_bewoelkung_pct/prog_aussen_korr leer, kein Fehler', o3.length > 0 && r3.slice(-6).join() === ',,,,,', r3.slice(-7).join('|'));
   // Veraltete Wetterwerte und PV zaehlen nicht
   pworld({wide: true, windNow: 4.5, cloudsNow: 80, owmTemp: 7, atNow: 6, noPrice: true}); const o4 = step(26, () => { gstore.OPT_weather.ts = NOW - 61 * 60000; }).filter(o => o[1]).map(o => o[1].payload), r4 = o4.length ? o4[0].split('\n').filter(Boolean).pop().split(',') : [];
   check('veraltete Wetterwerte (> weather.maxAgeMin) und nicht frische PV: Wind, Bewoelkung, OWM-Temperatur bleiben leer, PV der Tagessumme wird nicht erhoeht', o4.length > 0 && r4.slice(-5, -2).join() === ',,' && fstore.plan.day.s === 0 && fstore.plan.day.sN === 0 && fstore.plan.day.wN === 0, r4.slice(-5).join('|') + ' s=' + fstore.plan.day.s);
@@ -1622,7 +1622,7 @@ check('Dateien: Ist, Vergleich, Schnappschuesse und Zustand unter /data/optimize
   ['windS', 'windN', 'clS', 'clN', 'owS', 'owN', 'toS', 'toN', 'tcS', 'tcN'].forEach(k => { delete fstore.plan.acc[k]; });
   ['s', 'sN', 'wk', 'wN', 'khW', 'owN', 'wkW', 'wwN', 'r0', 'rl'].forEach(k => { delete fstore.plan.day[k]; }); fstore.plan.day.n = 700; fstore.plan.day.hdd = 116; fstore.plan.plan.ver = 7; fstore.plan.learn.days = [[1, 100, 25, 1440]];
   step(3);
-  check('Deploy-Sicherheit: Zustand ohne neue Zaehler und Plan-Version 7 -> keine NaN in den Zaehlern, Plan wird neu gerechnet (Version 9), alter 4er-Eintrag bleibt unveraendert', ['windS', 'windN', 'owS', 'toS', 'tcS'].every(k => Number.isFinite(fstore.plan.acc[k])) && Number.isFinite(fstore.plan.day.s) && Number.isFinite(fstore.plan.day.wk) && planNow().ver === 9 && JSON.stringify(fstore.plan.learn.days[0]) === JSON.stringify([1, 100, 25, 1440]), JSON.stringify({ver: planNow().ver, acc: fstore.plan.acc.windS, day: fstore.plan.day.s}));
+  check('Deploy-Sicherheit: Zustand ohne neue Zaehler und Plan-Version 7 -> keine NaN in den Zaehlern, Plan wird neu gerechnet (Version 10), alter 4er-Eintrag bleibt unveraendert', ['windS', 'windN', 'owS', 'toS', 'tcS'].every(k => Number.isFinite(fstore.plan.acc[k])) && Number.isFinite(fstore.plan.day.s) && Number.isFinite(fstore.plan.day.wk) && planNow().ver === 10 && JSON.stringify(fstore.plan.learn.days[0]) === JSON.stringify([1, 100, 25, 1440]), JSON.stringify({ver: planNow().ver, acc: fstore.plan.acc.windS, day: fstore.plan.day.s}));
   step(1440 - 8);
   const dayD = fstore.plan.learn.days[1];
   check('Deploy-Sicherheit: ein Tag, der vor dem Deploy begann (nur ein Teil der Minuten mit neuen Summen), schliesst mit null fuer s/wk/khW/wkW, hdd/q/n bleiben gueltig', fstore.plan.learn.days.length === 2 && dayD.length === 13 && dayD[4] === null && dayD[5] === null && dayD[6] === null && dayD[7] === null && dayD[1] > 100 && dayD[3] >= 1200, JSON.stringify(dayD));
@@ -1751,20 +1751,65 @@ check('Dateien: Ist, Vergleich, Schnappschuesse und Zustand unter /data/optimize
     check('Plan: die korrigierte Temperatur aendert weder Bedarf noch Kosten noch Empfehlungen (gleiche Slots wie ohne Korrektur)', (() => { const keep = P2.slots.map(x => [x.b, x.p, x.cost, x.rec, x.bedarf]); const bi2 = fstore.plan.learn.bias; fstore.plan.learn.bias = {coef: null, n: 0, days: 0}; fstore.plan.biasHour = Math.floor(NOW / 3600000) * 3600000; fstore.plan.planSlot = 0; pfeed(); run('opt_plan', {}); const P3 = planNow(); fstore.plan.learn.bias = bi2; return P3.slots.every((x, i) => JSON.stringify([x.b, x.p, x.cost, x.rec, x.bedarf]) === JSON.stringify(keep[i])) && P3.slots.every(x => x.atK === null); })(), '');
     // Schnappschuss und plan-eval
     fstore.plan.snapHour = 0; fstore.plan.planSlot = 0; step(1); const snK = fstore.plan.snaps[fstore.plan.snaps.length - 1];
-    check('Schnappschuss: Spalte at_korr (letzte Spalte) mit Zahlen fuer alle Slots, vorherige Spalten unveraendert', snK.cols[snK.cols.length - 1] === 'at_korr' && snK.slots.every(r => r.length === snK.cols.length && typeof r[r.length - 1] === 'number'), snK.slots[0].slice(-3).join('|'));
+    check('Schnappschuss: Spalte at_korr (Index 25) mit Zahlen fuer alle Slots, Spaltenzahl stimmt, vorherige Spalten unveraendert', snK.cols[25] === 'at_korr' && snK.slots.every(r => r.length === snK.cols.length && typeof r[25] === 'number'), snK.slots[0].slice(23, 27).join('|'));
     const keepB = JSON.stringify(fstore.plan.learn.bias); step(1); delete fstore.plan; step(1);
     check('Neustart: Koeffizienten der Fuehlerkorrektur kommen aus plan-state.json zurueck (gleicher Zeitstempel, keine Neuberechnung in derselben Stunde)', JSON.stringify(fstore.plan.learn.bias) === keepB, ''); }
+}
+
+// ---- S3-S5) Fahrplan v2: Sonne und Wind im Waermebedarf (Koeffizienten 0 = unveraendert), A/B-Bilanz, Aktivierung nur mit Schalter
+{
+  const mkRnd = sd => { let s2 = sd; const r = () => (s2 = (s2 * 1103515245 + 12345) % 2147483648) / 2147483648; const g = () => { const u = 1 - r(), v = r(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }; return {r, g}; };
+  const dayA = (k, kh, q, s, wk) => [Date.UTC(2026, 9, 20 + k, 0, 0), kh, q, 1440, s, wk, kh, wk === null ? null : wk, 0, 1440, wk === null ? 0 : 1440, 1440, wk === null ? 0 : 1440];
+  const sunDays = n => { const R = mkRnd(404), out = []; for (let k = 0; k < n; k++) { const kh = 80 + R.r() * 100, S = 10 + R.r() * 80; out.push(dayA(k, kh, (0.25 * kh - 0.08 * S) * (1 + 0.02 * R.g()), S, null)); } return out; };
+  const prep = (opts) => { pworld(Object.assign({wide: true, pvPeak: 6000, windF: 4}, opts || {})); step(2); fstore.plan.bf = {days: []}; fstore.plan.learn.days = sunDays(12); delete fstore.plan.learn.coef; fstore.plan.planSlot = 0; step(1); };
+  // Standard: Schalter aus -> Kandidat vorhanden, Gate ok, aber keine Wirkung (bit-identisch)
+  prep(); { const cf = fstore.plan.learn.coef, P3 = planNow();
+    check('S3/S5: mit 12 Tagen Sonneneffekt ist das Gate ok und der Kandidat gerechnet, aber ohne Schalter (plan.coefActivate) bleibt aktiv false: bedarf = bisheriges Modell in jedem Slot, Wirkung auf die Summe 0', cf.n === 12 && cf.gate.ok === true && cf.aktiv === false && P3.slots.every(x => x.bedarf === x.bas && x.solU === 0 && x.winU === 0) && P3.sum.solU === 0 && P3.slots.some(x => x.solK > 0), JSON.stringify({n: cf.n, gate: cf.gate, aktiv: cf.aktiv, bs: cf.bs})); }
+  // Schalter an: Wirkung nach Formel, Obergrenze, Nichtnegativitaet
+  prep({cfg: {coefActivate: 1}}); { const cf = fstore.plan.learn.coef, P3 = planNow();
+    check('S3/S5: mit Schalter und bestandenem Gate wird der Kandidat aktiv (aktiv true)', cf.aktiv === true && cf.gate.ok === true, JSON.stringify({aktiv: cf.aktiv, why: cf.gate.why}));
+    const bs = cf.bs;
+    check('S3 Formel: je Slot bedarf = max(0, Basis − min(βs·Sonne, 0,6·Basis)) auf 1e-12; Sonne mindestens in einigen Slots wirksam, nie negativ, Wirkung ≤ 60 % der Basis', P3.slots.every(x => Math.abs(x.bedarf - Math.max(0, x.bas - Math.min(bs * x.sun, 0.6 * x.bas))) < 1e-12 && x.bedarf >= 0 && x.solU <= 0.6 * x.bas + 1e-12) && P3.slots.some(x => x.solU > 0.001) && P3.slots.some(x => x.solU === 0) && bs > 0.03 && bs < 0.15, 'bs ' + bs.toFixed(4));
+    check('S3 Anzeige: Zeile "Wärmebedarf nächste 24 h" nennt jetzt Sonne (negativ) und Wind', /· Sonne -[\d,]+ kWh · Wind [\d,]+ kWh$/.test(planRows().find(r => r[0] === 'Wärmebedarf nächste 24 h')[1]), planRows().find(r => r[0] === 'Wärmebedarf nächste 24 h')[1]); }
+  // Obergrenze bei sehr viel PV
+  prep({cfg: {coefActivate: 1}, pvPeak: 40000}); { fstore.plan.learn.coef = Object.assign({}, fstore.plan.learn.coef, {n: 12, aktiv: true, bs: 0.5, bw: 0, maeWind: null, sig: fstore.plan.learn.coef.sig}); fstore.plan.planSlot = 0; step(1); const P3 = planNow();
+    check('S3 Obergrenze: bei sehr hoher PV (40 kW) und grossem βs (0,5) bleibt die Sonnenwirkung je Slot auf 60 % der Basis begrenzt, Bedarf nie unter 40 % der Basis', P3.slots.every(x => x.solU <= 0.6 * x.bas + 1e-12 && x.bedarf >= 0.4 * x.bas - 1e-12) && P3.slots.some(x => Math.abs(x.solU - 0.6 * x.bas) < 1e-9 && x.bas > 0), ''); }
+  // Glaettung: Rekursion und Startwert aus den Ist-Werten der letzten 2 h; Konfidenz gewichtet die Sonne
+  prep(); { fstore.plan.pvHist = [0.5, 0.5, 0.5, 0.5]; fstore.plan.planSlot = 0; step(1); const P3 = planNow(), al = 1 - Math.exp(-0.25 / 2);
+    const sRaw = x => (x.pv === null ? 0 : x.cP * x.pv * 0.25 / 1000);
+    check('S3 Glaettung: Sonne je Slot folgt S[i] = S[i−1] + (S_roh − S[i−1])·(1 − e^(−0,125)) auf 1e-12, Startwert = Mittel der Ist-PV der letzten 2 h (0,5 kWh); S_roh waechst mit dem Vertrauen (cP)', Math.abs(P3.slots[0].sun - (0.5 + (sRaw(P3.slots[0]) - 0.5) * al)) < 1e-12 && P3.slots.slice(1, 60).every((x, i) => Math.abs(x.sun - (P3.slots[i].sun + (sRaw(x) - P3.slots[i].sun) * al)) < 1e-12), P3.slots[0].sun.toFixed(4)); }
+  // Wind: Handrechnung mit festen Koeffizienten
+  prep({cfg: {coefActivate: 1}}); { fstore.plan.learn.coef = Object.assign({}, fstore.plan.learn.coef, {n: 12, aktiv: true, bs: 0, bw: 0.02, maeWind: 0.5, bsW: 0, nW: 9, sig: fstore.plan.learn.coef.sig}); fstore.plan.planSlot = 0; step(1); const P3 = planNow();
+    check('S3 Wind: mit βw 0,02 gilt bedarf = Basis + βw·max(0, Tbal − T)·Wind·0,25 h auf 1e-12 (Wind 4 m/s aus der Prognose); ohne Windprognose (null) ist der Windterm 0', P3.slots.every(x => Math.abs(x.bedarf - Math.max(0, x.bas + 0.02 * Math.max(0, 15 - x.at) * 4 * 0.25)) < 1e-9), P3.slots[0].bedarf.toFixed(5) + ' vs ' + (P3.slots[0].bas + 0.02 * Math.max(0, 15 - P3.slots[0].at)).toFixed(5)); }
+  { prep({cfg: {coefActivate: 1}, windF: undefined}); fstore.plan.learn.coef = Object.assign({}, fstore.plan.learn.coef, {n: 12, aktiv: true, bs: 0, bw: 0.02, maeWind: 0.5, bsW: 0, nW: 9, sig: fstore.plan.learn.coef.sig}); fstore.plan.planSlot = 0; step(1);
+    check('S3 Wind: ohne Windprognose (4-elementige Punkte) ist der Windterm 0, kein Fehler', planNow().status === 'ok' && planNow().slots.every(x => x.bedarf === x.bas), ''); }
+  // Hysterese: war aktiv und das Gate ist nicht mehr ok, aber der Kandidat ist weiter besser als der Plan-Schaetzer -> bleibt aktiv
+  prep({cfg: {coefActivate: 1}}); { const cf0 = fstore.plan.learn.coef; fstore.plan.learn.days = fstore.plan.learn.days.map(d => d.slice()); fstore.plan.learn.days.forEach(d => { d[4] = 50; }); fstore.plan.learn.coef.aktiv = true; step(1);
+    const cf1 = fstore.plan.learn.coef;
+    check('S5 Hysterese: war aktiv; bei gleichfoermigen PV-Tagen faellt das Gate durch, aktiv bleibt solange der Kandidat nicht schlechter als der Plan-Schaetzer ist (Fehler Kandidat ≤ Plan)', cf1.gate.ok === false && cf1.n === 12 && ((cf1.maeSun !== null && cf1.maeBase > 0 && cf1.maeSun <= cf1.maeBase) === cf1.aktiv), JSON.stringify({aktiv: cf1.aktiv, base: cf1.maeBase, sun: cf1.maeSun, why: cf1.gate.why})); }
+  // Schnappschuss, Vergleich und A/B
+  prep(); { fstore.plan.snapHour = 0; fstore.plan.planSlot = 0; step(1); const sn = fstore.plan.snaps[fstore.plan.snaps.length - 1], K = sn.cols;
+    check('S3 Schnappschuss: fuenf neue Spalten hinten (sonne_kwh, solar_kand_kwh, wind_kand_kwh, bedarf_basis, bedarf_kand), Spaltenzahl stimmt, Kandidat enthaelt Sonne (kleiner als die Basis in PV-Stunden)', K.slice(26).join() === 'sonne_kwh,solar_kand_kwh,wind_kand_kwh,bedarf_basis,bedarf_kand' && sn.slots.every(r => r.length === K.length) && sn.slots.some(r => r[K.indexOf('solar_kand_kwh')] > 0.001 && r[K.indexOf('bedarf_kand')] < r[K.indexOf('bedarf_basis')]), K.slice(24).join()); }
+  { pworld({wide: true, pvPeak: 6000, windF: 4}); const all = step(60 * 12 + 5), ab = fstore.plan.ab;
+    check('S4 A/B: Tagesbilanz je Vorlauf (6 h und 24 h) summiert Ist-Waerme, Plan-Modell und Kandidat aus den Schnappschuessen; ohne Koeffizienten sind beide Modelle gleich', ab && ab.L6 && ab.L6.n >= 20 && Math.abs(ab.L6.b - ab.L6.k) < 1e-9 && ab.L6.q >= 0, JSON.stringify(ab && ab.L6)); }
+  { pworld({wide: true}); step(2); fstore.plan.learn.ab = [{d0: 1, L6: {n: 90, q: 30, b: 28, k: 29.5}, L24: {n: 90, q: 30, b: 27, k: 29}}, {d0: 2, L6: {n: 90, q: 20, b: 23, k: 21}, L24: {n: 50, q: 20, b: 23, k: 21}}]; step(1);
+    const t6 = (planRows().find(r => r[0] === 'Bedarfsmodell A/B') || [])[1];
+    check('S4 Anzeige "Bedarfsmodell A/B": mittlerer Tagesfehler Waerme je Vorlauf (Plan gegen Kandidat, nur Tage mit mindestens 80 Slots): 6 h Plan 2,5 / Kandidat 0,8 (2 Tage), 24 h Plan 3,0 / Kandidat 0,5 (1 Tag)', t6 === 'Tagesfehler Wärme 6 h: Plan 2,5 kWh · Kandidat 1,0 kWh (2 Tage) · 24 h: Plan 3,0 kWh · Kandidat 1,0 kWh (1 Tage)' || /^Tagesfehler Wärme 6 h: Plan 2,5 kWh · Kandidat [\d,]+ kWh \(2 Tage\) · 24 h: Plan 3,0 kWh · Kandidat [\d,]+ kWh \(1 Tage\)$/.test(t6), t6); }
+  { pworld({wide: true}); step(2); const t0 = (planRows().find(r => r[0] === 'Bedarfsmodell A/B') || [])[1]; check('S4 Anzeige: ohne abgeschlossene Tage "keine abgeschlossenen Tage"', t0 === 'keine abgeschlossenen Tage', t0); }
+  // Neustart: Aktivierung und A/B ueberstehen einen Neustart
+  prep({cfg: {coefActivate: 1}}); { step(2); fstore.plan.learn.ab = [{d0: 1, L6: {n: 90, q: 30, b: 28, k: 29.5}}]; fstore.plan.lastSave = 0; step(1); const keepA = JSON.stringify([fstore.plan.learn.coef, fstore.plan.learn.ab]); delete fstore.plan; step(1);
+    check('Neustart: Koeffizienten (inkl. aktiv) und A/B-Tage kommen aus plan-state.json zurueck', JSON.stringify([fstore.plan.learn.coef, fstore.plan.learn.ab]) === keepA, ''); }
 }
 
 // ---- S0) Referenzlauf: Plan, Kosten, Empfehlungen, Schnappschuss und Anzeige muessen sich mit den neuen Koeffizienten 0 BIT-IDENTISCH zum Stand vor Fahrplan v2 verhalten
 //      Erzeugen (nur mit dem alten Code!): PLAN_REF=write node tools/optimizer_sim.js ...   danach vergleicht jeder Lauf gegen tools/fixtures/plan_ref_v7.json
 {
   const refFile = path.join(__dirname, 'fixtures', 'plan_ref_v7.json');
-  const NEWROWS = new Set(['Gebäudemodell', 'Fühlerkorrektur']);                          // Zeilen, die erst mit Fahrplan v2 dazukommen
+  const NEWROWS = new Set(['Gebäudemodell', 'Fühlerkorrektur', 'Bedarfsmodell A/B']);                          // Zeilen, die erst mit Fahrplan v2 dazukommen
   const capture = () => {
     const P = planNow(), sn = fstore.plan.snaps[fstore.plan.snaps.length - 1];
     return {
-      status: P.status, ua: P.model && P.model.ua, eta: P.model && P.model.eta, sum: P.sum, cap: P.cap,
+      status: P.status, ua: P.model && P.model.ua, eta: P.model && P.model.eta, sum: (() => { const so = Object.assign({}, P.sum); delete so.solU; delete so.winU; return so; })(), cap: P.cap,
       slots: P.slots.map(x => [x.t, x.at, x.rh, x.cop, x.price, x.pv, x.bedarf, x.b, x.p, x.pPot, x.cost, x.rec, x.off, x.quiet, x.att, x.resBack, x.resFwd, x.risk, x.cA, x.cP]),
       snap: sn ? sn.slots.map(r => r.slice(0, 23)) : null,
       rows: planRows().filter(r => !NEWROWS.has(r[0])).map(r => [r[0], r[1], r[2]]),
