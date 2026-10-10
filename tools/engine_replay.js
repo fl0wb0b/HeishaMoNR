@@ -108,7 +108,38 @@ function replay(dataDir, opts) {
 
 module.exports = {replay: replay, buildInputs: buildInputs, readMulti: readMulti, ASSUME: ASSUME};
 
+function markdown(R) {                                                          // Datenteil des Replay-Berichts (docs/replay_*.md), aus dem Lauf erzeugt
+    const E = ENGINE, L = [], names = {}; E.RULES.forEach(x => { names[x.id] = x.name; });
+    const de = (v, d) => E.de(v, d);
+    L.push('| Größe | Wert |', '|---|---|');
+    L.push('| Zeitraum | ' + E.iso(R.inputs[0].t) + ' bis ' + E.iso(R.inputs[R.inputs.length - 1].t) + ' |');
+    L.push('| Minuten (= Entscheidungsdatensätze) | ' + R.inputs.length + ' |');
+    L.push('| Datensatzgröße | ' + de(R.bytes / (R.inputs.length / 1440) / 1e6, 2) + ' MB je Tag |');
+    L.push('', '#### Status je Regel (Minuten)', '', '| Regel | ' + ['vorschlag', 'hinweis', 'wartet', 'gesperrt', 'bereit', 'inaktiv', 'abgelaufen'].join(' | ') + ' |', '|---|---|---|---|---|---|---|---|');
+    E.RULES.forEach((x, i) => { const c = {}; R.perMin.forEach(m => { c[m.st[i]] = (c[m.st[i]] || 0) + 1; }); L.push('| ' + x.name + ' | ' + ['vorschlag', 'hinweis', 'wartet', 'gesperrt', 'bereit', 'inaktiv', 'abgelaufen'].map(k => c[k] || 0).join(' | ') + ' |'); });
+    L.push('', '#### Häufigste Gründe je Regel (Minuten; Zahlen im Text durch # ersetzt)', '');
+    E.RULES.forEach((x, i) => {
+        const c = {}; R.recs.forEach(l => { const d = JSON.parse(l), r = d.r[i]; const g = r.st + ': ' + r.grund.replace(/[0-9]+([,.][0-9]+)?/g, '#').slice(0, 140); c[g] = (c[g] || 0) + 1; });
+        L.push('**' + x.name + '**', ''); Object.keys(c).sort((a, b) => c[b] - c[a]).slice(0, 6).forEach(g => L.push('- ' + c[g] + ' × ' + g)); L.push('');
+    });
+    L.push('#### Vorschläge und Hinweise', '', '| Zeit | Regel | Was | Warum |', '|---|---|---|---|');
+    R.props.forEach(p => L.push('| ' + E.iso(p.ts).slice(0, 16) + ' | ' + names[p.rule] + ' | ' + p.was + ' | ' + p.warum.replace(/\|/g, '/') + ' |'));
+    L.push('', '#### Ereignisse der Maschine', '', '| Zeit | Ereignis | Text |', '|---|---|---|');
+    R.events.forEach(e => L.push('| ' + e[0].slice(0, 16) + ' | ' + e[1] + ' | ' + String(e[2]).replace(/\|/g, '/') + ' |'));
+    L.push('', '#### Punktebuch (scores)', '', '| Zeit | Typ | Regel | Punkte | Summe | Text |', '|---|---|---|---|---|---|');
+    R.scores.forEach(s => L.push('| ' + s.t.slice(0, 16) + ' | ' + s.typ + ' | ' + s.regel + ' | ' + de(s.punkte, 2) + ' | ' + de(s.summe, 2) + ' | ' + String(s.text).replace(/\|/g, '/') + ' |'));
+    L.push('', '#### Stand je Regel am Ende', '', '| Regel | Punkte | Fälle (bewertet) | Treffer | Fehlalarm | neutral | Brier-Skill | Schaden | Verpasst | Wirkung (davon Kalibrierung) | Freigabereife |', '|---|---|---|---|---|---|---|---|---|---|---|');
+    R.report.forEach(r => L.push('| ' + r.name + ' | ' + de(r.punkte, 2) + ' | ' + r.faelle + ' (' + r.bewertet + ') | ' + r.treffer + ' | ' + r.fehlalarm + ' | ' + r.neutral + ' | ' + (r.skill === null ? '–' : de(r.skill, 2)) + ' | ' + r.schaden + ' | ' + r.verpasst + ' | ' + r.wirkung.n + ' (' + r.wirkung.kalib + '), ' + de(r.wirkung.punkte, 0) + ' | ' + (r.art === 'befehl' ? (r.reif ? 'reif' : 'nein: ' + r.kriterien.filter(k => !k.ok).map(k => k.k).join(', ')) : 'Hinweis') + ' |'));
+    L.push('', '#### Basisraten „bleibt, wie es ist“ am Ende (n Vergleichslagen, k Problem bestand)', '', '| Regel | Horizont | n | k | b |', '|---|---|---|---|---|');
+    Object.keys(R.S.sc.base).forEach(id => Object.keys(R.S.sc.base[id]).forEach(h => { const b = R.S.sc.base[id][h]; L.push('| ' + names[id] + ' | ' + h + ' min | ' + b[0] + ' | ' + b[1] + ' | ' + (b[0] >= E.SCORE.baseMinN ? de((b[1] + 1) / (b[0] + 2), 2) : '0,50 (zu wenig)') + ' |'); }));
+    L.push('', '#### Messaufgabe Comfort/Efficiency', '', E.messStatus(R.S).text);
+    L.push('', '#### Annahmen für Werte, die das Protokoll nicht enthält', '', Object.keys(ASSUME).map(k => '- `' + k + '`: ' + JSON.stringify(ASSUME[k])).join('\n'));
+    return L.join('\n');
+}
+module.exports.markdown = markdown;
+
 if (require.main === module) {
+    if (process.argv.indexOf('--md') > 0) { console.log(markdown(replay(process.argv[2], {}))); process.exit(0); }
     const dir = process.argv[2], out = process.argv[3];
     if (!dir) { console.error('Usage: node tools/engine_replay.js <Datenordner> [Ausgabeordner]'); process.exit(2); }
     const R = replay(dir, {outDir: out});

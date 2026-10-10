@@ -222,6 +222,7 @@ var ENGINE = (function () {
         schaden: {sperre_verletzt: -50, heizstab: -50, stopp10: -30, ueberschwingen: -30, zu_warm: -20, zu_kalt: -20},
         verpasst: -20,
         raumAlterMax: 360,         // Bewertung (nicht Entscheidung): ein Raumwert bis 6 h alt zaehlt, weil die Shelly H&T Gen3 nur bei Aenderung >= 0,5 K melden
+        lueftungK: 1.0,            // Raum faellt >= 1 K in <= 60 min: Lueftung (Eingriff), danach keine Gegenfaktik fuer Raum-Prognosen (nach dem Replay ergaenzt: 09.10. Wohnzimmer -3,3 K)
         reife: {faelle: 10, tage: 14, skill: 0.2, wirkFaelle: 2, verpasst: 1}
     };
 
@@ -524,8 +525,21 @@ var ENGINE = (function () {
     function trackerUpdate(T, d, cfg) {
         var now = d.now, H = Math.max.apply(null, RULE[T.rule].prognose.h) * MIN;
         if (now - T.t0 > H || T.cut) { return; }
-        if (now > T.t0 && (d.qChanged || d.shiftChanged || Math.abs(d.sollJump) >= 2)) { T.cut = now; return; }   // Eingriff von aussen: ab hier keine Gegenfaktik mehr
-        if ((T.rule === 'raum_offset' || T.rule === 'heizgrenze_hinweis') && JSON.stringify(bandsOf(d)) !== JSON.stringify(T.ctx.bands)) { T.cut = now; return; }   // Komfortband geaendert = Eingriff
+        if (now > T.t0 && (d.qChanged || d.shiftChanged || Math.abs(d.sollJump) >= 2)) { T.cut = now; T.cutWhy = d.qChanged ? 'Quiet geändert' : (d.shiftChanged ? 'Verschiebung geändert' : 'Soll von Hand geändert'); return; }   // Eingriff von aussen: ab hier keine Gegenfaktik mehr
+        if ((T.rule === 'raum_offset' || T.rule === 'heizgrenze_hinweis') && JSON.stringify(bandsOf(d)) !== JSON.stringify(T.ctx.bands)) { T.cut = now; T.cutWhy = 'Komfortband geändert'; return; }   // Komfortband geaendert = Eingriff
+        if (T.rule === 'raum_offset' || T.rule === 'heizgrenze_hinweis') {                // Lueftungsverdacht: Raum faellt >= 1 K in <= 60 min (Heizung kann das nicht) = Eingriff von aussen
+            T.rh = T.rh || {};
+            var vent = null;
+            d.rooms.forEach(function (r) {
+                if (!r.active || !have(r.t)) { return; }
+                var h = T.rh[r.id] = (T.rh[r.id] || []).filter(function (x) { return now - x[0] <= 60 * MIN; });
+                if (h.length && h[h.length - 1][1] === r.t) { return; }
+                h.push([now, r.t]);
+                var mx = Math.max.apply(null, h.map(function (x) { return x[1]; }));
+                if (mx - r.t >= SCORE.lueftungK) { vent = r.name + ' −' + de(mx - r.t, 1) + ' K in ≤ 60 min'; }
+            });
+            if (vent && now > T.t0) { T.cut = now; T.cutWhy = 'Lüftungsverdacht (' + vent + ')'; return; }
+        }
         if (T.rule === 'quiet_strecken') { if (!T.stop && T.wasRun && !d.running && d.fresh) { T.stop = now; } if (d.running) { T.wasRun = true; } return; }
         var pr = problemNow(T.rule, T.ctx, d, cfg);
         if (pr !== null) { T.ser.push([now - T.t0, pr]); }
@@ -534,7 +548,7 @@ var ENGINE = (function () {
     }
     function outcome(T, h) {                                                       // Ergebnis o (1 = Problem bestand, 0 = loeste sich von selbst, null = unsicher)
         var H = h * MIN, end = T.cut ? Math.min(T.cut, T.t0 + H) : T.t0 + H, span = (end - T.t0) / MIN;
-        if (span < SCORE.teilMin * h) { return {o: null, why: T.cut ? 'Eingriff nach ' + Math.round(span) + ' min' : 'zu kurz beobachtet'}; }
+        if (span < SCORE.teilMin * h) { return {o: null, why: T.cut ? 'Eingriff nach ' + Math.round(span) + ' min: ' + (T.cutWhy || '') : 'zu kurz beobachtet'}; }
         if (T.rule === 'quiet_strecken') {
             if (T.stop && T.stop - T.t0 <= H) { return {o: 1, why: 'Lauf endete nach ' + mins(T.stop - T.t0) + ' min'}; }
             if (T.cut && T.cut < T.t0 + H) { return {o: null, why: 'Eingriff'}; }
@@ -543,6 +557,7 @@ var ENGINE = (function () {
         var ser = T.ser.filter(function (p) { return p[0] <= H; });
         if (T.rule === 'quiet_freigabe' && T.stop && T.stop - T.t0 <= H && T.stopVlStop) { return {o: 0, why: 'Verdichter holte auf und schaltete ab'}; }
         if (T.rule === 'raum_offset') {                                              // Raum: letzter gueltiger Wert in den letzten 30 min vor dem Horizont
+            if (T.cut && T.cut < T.t0 + H) { return {o: null, why: 'Eingriff nach ' + mins(T.cut - T.t0) + ' min: ' + (T.cutWhy || '')}; }
             var lastP = ser.filter(function (p) { return p[0] >= H - 30 * MIN; });
             if (!lastP.length) { return {o: null, why: 'Raumwert am Horizont ungültig'}; }
             return {o: lastP[lastP.length - 1][1], why: lastP[lastP.length - 1][1] ? 'Raum weiter außerhalb des Bandes' : 'Raum wieder im Band'};
