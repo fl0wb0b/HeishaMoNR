@@ -111,7 +111,7 @@ Abgeleitet je Minute (`abl` im Datensatz):
 |---|---|---|---|
 | **Quiet-Freigabe** | Quiet ≥ 1 · Verdichter läuft seit ≥ 15 min · ≤ 20 Hz (am Deckel) · Vorlauf ≥ 1,5 K unter Soll · Rücklauf ≥ 1,5 K unter Soll-Rücklauf · Raum unter Minimum *oder* Sollvorlauf in diesem Lauf noch nicht erreicht · alles **10 min am Stück** · keine Sperre | `SetQuietMode = 0` (direkt, nicht schrittweise) | keiner automatisch (0 ist Standard); „Zurücksetzen“ = vorige Stufe |
 | **Laufzeit strecken** | Quiet < 3 · Lauf ≥ 15 min · ≥ 22 Hz · kein Raum unter Minimum und Rücklauf ≤ 1 K unter Soll · Takt-Indiz (Abschaltgrenze in ≤ 45 min, letzter Lauf < 60 min oder ≥ 2 Starts in 3 h) · 10 min am Stück · keine Sperre | `SetQuietMode = 3` | automatisch zurück auf 0 bei Raum unter Minimum, bei Rücklauf ≥ 2,5 K unter Soll seit 15 min, spätestens nach 4 h |
-| **Raumeinfluss ±1 K** | Raumvorschlag der Phase 2 (−1/0/+1) ≠ Verschiebung der Anlage · seit ≥ 60 min unverändert · bei −1: Soll bleibt ≥ 29 °C · kein Wärmeverteilungsproblem · keine Sperre (u. a. Heizkurvenmodus, Wasserfühler, kein Handeingriff am Soll) | `SetZ1HeatRequestTemperature = −1/0/+1` | automatisch auf 0, sobald der Raumvorschlag 0 ist, spätestens nach 6 h |
+| **Raumeinfluss ±1 K** | Raumvorschlag der Phase 2 (−1/0/+1) ≠ Verschiebung der Anlage · seit ≥ 60 min unverändert · bei −1: Soll bleibt ≥ 29 °C · kein Wärmeverteilungsproblem · keine Sperre (u. a. Heizkurvenmodus, Wasserfühler, kein Handeingriff am Soll) | `SetZ1HeatRequestTemperature = −1/0/+1` | automatisch auf 0, sobald der Raumvorschlag 15 min am Stück 0 ist, spätestens nach 6 h |
 | **Heizgrenze-Hinweis** | Heizgrenze > 10 °C · Lauf ≥ 15 min bei Außentemperatur > 10 °C · alle aktiven Räume gültig und ≥ Minimum + 0,5 K · 15 min am Stück | nur Hinweis `SetHeatingOffOutdoorTemp = 10`, **nie per Klick** | Saisoneinstellung von Hand |
 
 **Comfort/Efficiency:** Es gibt keine Regel dafür. Die Whitelist kennt `SetHeatingControl` nicht. Das folgt der Nutzerregel: keine Heizregelung wegen Räumen.
@@ -213,7 +213,7 @@ Tabellen aus dem Regelwerk, erzeugt mit `node tools/engine_doc.js`. Die Sim prü
 
 *Erwartung:* +1 K: Soll-Vorlauf +1 K binnen 3 min, im Taktbetrieb +40–60 min Laufzeit je Lauf (Sollsprünge 07.–10.10.), Strom +2,5–3 % (8,5 W/K); Raumwirkung NICHT gemessen. −1 K: umgekehrt.
 
-*Rückweg:* Automatisch zurück auf 0 K, sobald der Raumvorschlag 0 ist oder spätestens nach 6 h; „Zurücksetzen“ jederzeit.
+*Rückweg:* Automatisch zurück auf 0 K, sobald der Raumvorschlag 15 min am Stück 0 ist oder spätestens nach 6 h; „Zurücksetzen“ jederzeit.
 
 #### Heizgrenze 12 → 10 °C (nur Hinweis) (`heizgrenze_hinweis` v1)
 
@@ -456,7 +456,7 @@ Option (b) ist dokumentiert, aber nicht gebaut. Sie hätte die Ratenbegrenzung d
    | Regel | Rückweg |
    |---|---|
    | Laufzeit strecken | nach 4 h oder wenn der Grund endet (Raum unter Minimum, Rücklauf-Rückstand ≥ 2,5 K seit 15 min) |
-   | Raumeinfluss | nach 6 h oder Raumvorschlag 0 |
+   | Raumeinfluss | nach 6 h oder Raumvorschlag 15 min am Stück 0 (er flackert, wenn Kinderzimmer-Werte ungültig werden) |
    | Quiet-Freigabe | kein automatischer, weil Quiet 0 der Standard ist |
 
    „Zurücksetzen“ ist jederzeit möglich, außer bei Notbremse. Der Rückweg macht bis zu 3 Versuche.

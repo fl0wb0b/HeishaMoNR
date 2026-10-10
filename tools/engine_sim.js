@@ -263,6 +263,25 @@ console.log('--- (b) Punktesystem');
     check('Verwerfen ist keine Bewertung: der Bewertungsteil des Kerns kennt weder Klicks noch den Uebernahme-Zustand (keine Nutzereingabe in den Punkten)', bewertung.length > 1000 && !/verworfen|lastClick|applyRequest|uebernehmen/.test(bewertung), bewertung.length + ' Zeichen geprueft');
 }
 
+// ================================================================== Nachpruefung 10.10. abends (gefundene Luecken, je mit Test)
+console.log('--- Nachpruefung: Ruecklese-Timeout, Flackern des Raumvorschlags');
+{
+    // L1: Ruecklese-Timeout, Anlage blieb nachweislich auf dem Ausgangswert -> Uebernahme endet (blockierte sonst die Groesse fuer jeden weiteren Klick)
+    const NOWx = T0 + 600 * MIN;
+    const A = E.newApply(); A.pending = {name: 'SetQuietMode', value: 0, ts: NOWx - 100000, versuche: 3, art: 'uebernahme', id: 'q'}; A.aktiv = {id: 'q', rule: 'quiet_freigabe', groesse: 'quiet', name: 'SetQuietMode', value: 0, von: 3, ts: NOWx - 300000, bis: null, bestaetigt: false};
+    const t1 = E.applyTick(JSON.parse(JSON.stringify(A)), {now: NOWx, plant: {q: 3, hpAge: 0.3, block: 0}});
+    check('Ruecklese-Timeout, Anlage steht weiter auf dem Ausgangswert: Warnung, Uebernahme beendet (kein Dauerblock der Groesse Quiet), kein Befehl', t1.send.length === 0 && t1.A.aktiv === null && /Keine Bestätigung/.test(t1.A.alarm.text), JSON.stringify(t1.A.aktiv));
+    const t2 = E.applyTick(JSON.parse(JSON.stringify(A)), {now: NOWx, plant: {q: 2, hpAge: 0.3, block: 0}});
+    check('Ruecklese-Timeout, Anlage meldet einen dritten Wert: Uebernahme bleibt (unbestaetigt), "Zurücksetzen" moeglich', t2.send.length === 0 && t2.A.aktiv && t2.A.aktiv.unbestaetigt === true, JSON.stringify(t2.A.aktiv));
+    const pq = {id: 'quiet_freigabe@x', rule: 'quiet_freigabe', ver: 1, art: 'befehl', ts: NOWx, bis: NOWx + 60 * MIN, cmd: {name: 'SetQuietMode', topic: 'panasonic_heat_pump/commands/SetQuietMode', value: 0}, von: 3, was: 'x'}; pq.sum = E.checksum(pq);
+    const c3 = E.applyRequest(t1.A, {topic: 'uebernehmen', payload: {id: pq.id, sum: pq.sum}}, {now: NOWx + 11 * MIN, enabled: true, rules: ['quiet_freigabe'], eng: {ts: NOWx + 11 * MIN, prop: pq, locks: {}}, plant: {q: 3, hpAge: 0.3, block: 0}});
+    check('... danach ist ein neuer Klick fuer Quiet wieder moeglich (nicht "schon eine Übernahme aktiv")', c3.send.length === 1, c3.toast && c3.toast.text);
+    // L2: Raumvorschlag flackert eine Minute auf 0 -> kein Rueckweg-Grund; erst nach 15 min am Stueck
+    const kz = v => ({v: v, code: 'x', distrib: false, lead: 'Kinderzimmer oben'});
+    const R = runSeq(40, i => inp(T0 + i * MIN, {shift: 1, soll: 31, korr: kz(i === 5 ? 0 : (i >= 20 ? 0 : 1))}));
+    check('Raumvorschlag flackert 1 min auf 0: kein Rueckweg-Grund fuer die Raumregel; 15 min am Stueck 0: Grund gesetzt', !R.outs[5].ende.raum_offset && !R.outs[6].ende.raum_offset && !R.outs[33].ende.raum_offset && /seit 15 min wieder 0 K/.test(R.outs[35].ende.raum_offset || ''), R.outs[35].ende.raum_offset);
+}
+
 // ================================================================== Replay der echten Daten (07.-10.10.)
 let RP = null;
 if (fs.existsSync(path.join(dataDir, 'quiet-2026-10.csv'))) {
@@ -366,6 +385,9 @@ if (flowsFile) {
     check('Huelle: ohne Klick sendet nichts (25 min, 100 Takte der Uebernahme)', sends(R).length === 0 && R.eng.every(o => !o || !o[4] || o[4].every(m => /^\/data\/optimizer\//.test(m.filename))), '');
     check('Huelle: Karte zeigt den Vorschlag mit Pruefsumme, Knopf "Übernahme gesperrt" (Hauptschalter aus)', (() => { const c = R.eng[24][0].payload; return c.prop && c.prop.id === eng.prop.id && c.prop.sum === eng.prop.sum && c.knopf.ok === false && c.knopf.text === 'Übernahme gesperrt' && /gesperrt \(Hauptschalter aus\)/.test(c.uebernahme.text); })(), JSON.stringify(R.eng[24][0].payload.knopf));
     check('Huelle: Regeltabelle (4 Regeln mit Status, Grund, "würde schalten, sobald …"), Punkte-Karte, letzte Entscheidungen', R.eng[24][1].payload.rows.length === 4 && R.eng[24][1].payload.rows.some(r => /würde schalten, sobald/.test(r[3])) && R.eng[24][2].payload.rows.length === 4 && R.eng[24][3].payload.rows.length >= 4, '');
+    { const hs = gstore.OPT_hp.Heating_Off_Outdoor_Temp; gstore.OPT_hp.Heater_On_Outdoor_Temp = {v: 0, ts: NOW - 3 * 3600000}; const keep = Object.assign({}, hs); hs.ts = NOW - 3 * 3600000;
+      NOW += 60000; runN('opt_engine', {topic: '', payload: NOW}); const last = JSON.parse(files[decFile].trim().split('\n').pop()); Object.assign(hs, keep); delete gstore.OPT_hp.Heater_On_Outdoor_Temp;
+      check('Huelle: Einstellungen (Heizgrenze, Heizstab-Einschaltgrenze) gelten bis 24 h nach der letzten Meldung (HeishaMon meldet sie selten), Heizstab-Sperre faellt nicht still aus', last.in.heatOffAT === 12 && last.in.htrOnAT === 0, JSON.stringify({heatOffAT: last.in.heatOffAT, htrOnAT: last.in.htrOnAT})); }
     const nDec = files[decFile].length, an = runN('opt_engine', {topic: 'anzeige'});
     check('Huelle: "anzeige" (von der Uebernahme) baut nur die Karten neu, rechnet und schreibt nichts', an && an[0] && an[0].payload.prop && an[4] === null && files[decFile].length === nDec, '');
     check('Huelle schreibt nur OPT_*-Werte (keine Anlagen-/HeishaMoNR-Variable)', (() => { const before = JSON.stringify(Object.keys(gstore).filter(k => !/^OPT_/.test(k)).sort().map(k => [k, gstore[k]])); world(); minute(2); return JSON.stringify(Object.keys(gstore).filter(k => !/^OPT_/.test(k)).sort().map(k => [k, gstore[k]])) === before; })(), '');

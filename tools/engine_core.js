@@ -152,7 +152,7 @@ var ENGINE = (function () {
                 {key: 'maxDauerMin', std: 360, einheit: 'min', herkunft: 'Rückweg spätestens nach 6 h (ANNAHME)'}
             ],
             erwartung: '+1 K: Soll-Vorlauf +1 K binnen 3 min, im Taktbetrieb +40–60 min Laufzeit je Lauf (Sollsprünge 07.–10.10.), Strom +2,5–3 % (8,5 W/K); Raumwirkung NICHT gemessen. −1 K: umgekehrt.',
-            rueckweg: 'Automatisch zurück auf 0 K, sobald der Raumvorschlag 0 ist oder spätestens nach 6 h; „Zurücksetzen“ jederzeit.',
+            rueckweg: 'Automatisch zurück auf 0 K, sobald der Raumvorschlag 15 min am Stück 0 ist oder spätestens nach 6 h; „Zurücksetzen“ jederzeit.',
             prognose: {p: 0.7, h: [60, 120, 240], text: 'Ohne Verschiebung bleibt der Führungsraum außerhalb seines Bandes'},
             kalibriert: [],
             eval: function (d, c, rs) {
@@ -245,7 +245,7 @@ var ENGINE = (function () {
     // ------------------------------------------------------------------ Zustand (ueberlebt Neustarts per Datei)
     function newState(now) {
         var S = {mv: VER, born: now, last: now, run: {on: null, start: 0, reached: false, reachN: 0, sollTop: null}, lastStop: 0, lastStart: 0, runs: [], starts: [],
-                 defrostEnd: 0, dhwEnd: 0, defrostWas: false, dhwWas: false, q: null, qChg: 0, shift: null, shiftChg: 0, soll: null, handWas: false, vlHist: [], needSince: 0,
+                 defrostEnd: 0, dhwEnd: 0, defrostWas: false, dhwWas: false, q: null, qChg: 0, shift: null, shiftChg: 0, soll: null, handWas: false, vlHist: [], needSince: 0, korr0Since: 0,
                  rules: {}, sc: newScore()};
         RULES.forEach(function (r) { S.rules[r.id] = {since: 0, failSince: 0, prop: null, cool: 0, n: 0, day: '', korrV: null, korrSince: 0, last: null}; });
         return S;
@@ -465,6 +465,7 @@ var ENGINE = (function () {
     }
 
     // ------------------------------------------------------------------ Hauptschritt
+    var KORR0_MIN = 15;          // Rueckweg der Raumregel: Raumvorschlag so lange am Stueck 0
     function step(S, inp, cfg) {
         cfg = cfg || defaults();
         var now = inp.t;
@@ -488,7 +489,10 @@ var ENGINE = (function () {
         S.needSince = (have(d.rlRueck) && d.rlRueck >= c2.bedarfRlK && d.running) ? (S.needSince || now) : 0;
         if (d.roomBelow.length) { ende.quiet_strecken = d.roomBelow[0].name + ' unter Minimum'; }
         else if (S.needSince && now - S.needSince >= 15 * MIN) { ende.quiet_strecken = 'Rücklauf seit 15 min ≥ ' + de(c2.bedarfRlK, 1) + ' K unter Soll (Leistung wird gebraucht)'; }
-        if (d.korr && num(d.korr.v) === 0) { ende.raum_offset = 'Raumvorschlag ist wieder 0 K'; }
+        // Raumvorschlag 0 erst nach 15 min am Stueck: er flackert (Kinderzimmer-Werte gelten nach 90 min als ungueltig), eine Minute 0 darf eine
+        // 60 min lang abgewartete Verschiebung nicht zuruecknehmen
+        S.korr0Since = (d.korr && num(d.korr.v) === 0) ? (S.korr0Since || now) : 0;
+        if (S.korr0Since && now - S.korr0Since >= KORR0_MIN * MIN) { ende.raum_offset = 'Raumvorschlag seit ' + KORR0_MIN + ' min wieder 0 K'; }
         S.last = now;
         var rec = {t: iso(now), mv: VER, sv: SCORE_VER, in: snapshot(inp),
                    abl: {z: d.zustand, lauf_min: r2(d.runMin), vl_rueck: r2(d.vlRueck), rl_rueck: r2(d.rlRueck), erreicht: d.reached ? 1 : 0, vl_k_h: r2(d.vlSlope), stopp_in_min: r2(d.stopEtaMin), starts_3h: d.starts3h},
@@ -916,7 +920,9 @@ var ENGINE = (function () {
                     A.alarm = {ts: now, text: 'Keine Bestätigung: ' + W.text + ' sollte ' + P.value + ' sein, die Anlage meldet ' + (ist === null ? 'nichts' : ist) + ' (' + P.versuche + ' Versuche). Bitte prüfen.'};
                     out.toast = {text: A.alarm.text, color: 'red'};
                     out.log.push({t: iso(now), aktion: 'ruecklese_timeout', art: P.art, befehl: P.name, wert: P.value, ist: ist, versuche: P.versuche});
-                    if (P.art === 'uebernahme' && A.aktiv) { A.aktiv.unbestaetigt = true; }
+                    // Anlage steht nachweislich noch auf dem Ausgangswert: es gibt nichts zurueckzusetzen, die Uebernahme endet (sonst blockierte sie diese
+                    // Groesse fuer jeden weiteren Klick, bei der Quiet-Freigabe ohne Ablaufzeit fuer immer). Unklarer Ist-Wert: aktiv lassen, "Zuruecksetzen" bleibt moeglich.
+                    if (P.art === 'uebernahme' && A.aktiv) { if (ist === A.aktiv.von && fresh(plant)) { A.aktiv = null; } else { A.aktiv.unbestaetigt = true; } }
                 }
             }
             return out;
