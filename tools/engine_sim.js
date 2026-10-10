@@ -366,6 +366,8 @@ if (flowsFile) {
     check('Huelle: ohne Klick sendet nichts (25 min, 100 Takte der Uebernahme)', sends(R).length === 0 && R.eng.every(o => !o || !o[4] || o[4].every(m => /^\/data\/optimizer\//.test(m.filename))), '');
     check('Huelle: Karte zeigt den Vorschlag mit Pruefsumme, Knopf "Übernahme gesperrt" (Hauptschalter aus)', (() => { const c = R.eng[24][0].payload; return c.prop && c.prop.id === eng.prop.id && c.prop.sum === eng.prop.sum && c.knopf.ok === false && c.knopf.text === 'Übernahme gesperrt' && /gesperrt \(Hauptschalter aus\)/.test(c.uebernahme.text); })(), JSON.stringify(R.eng[24][0].payload.knopf));
     check('Huelle: Regeltabelle (4 Regeln mit Status, Grund, "würde schalten, sobald …"), Punkte-Karte, letzte Entscheidungen', R.eng[24][1].payload.rows.length === 4 && R.eng[24][1].payload.rows.some(r => /würde schalten, sobald/.test(r[3])) && R.eng[24][2].payload.rows.length === 4 && R.eng[24][3].payload.rows.length >= 4, '');
+    const nDec = files[decFile].length, an = runN('opt_engine', {topic: 'anzeige'});
+    check('Huelle: "anzeige" (von der Uebernahme) baut nur die Karten neu, rechnet und schreibt nichts', an && an[0] && an[0].payload.prop && an[4] === null && files[decFile].length === nDec, '');
     check('Huelle schreibt nur OPT_*-Werte (keine Anlagen-/HeishaMoNR-Variable)', (() => { const before = JSON.stringify(Object.keys(gstore).filter(k => !/^OPT_/.test(k)).sort().map(k => [k, gstore[k]])); world(); minute(2); return JSON.stringify(Object.keys(gstore).filter(k => !/^OPT_/.test(k)).sort().map(k => [k, gstore[k]])) === before; })(), '');
     // 2) Klick bei Hauptschalter AUS
     let r = click('uebernehmen', {id: gstore.OPT_engine.prop.id, sum: gstore.OPT_engine.prop.sum});

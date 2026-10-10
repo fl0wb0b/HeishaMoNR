@@ -513,7 +513,7 @@ Der Beobachter schreibt nie an Anlage, NAS oder MQTT. Einen MQTT-Befundkanal zur
 | Befehl | Ergebnis (10.10.2026) |
 |---|---|
 | `cp "flows (26.5.1 stable).json" /tmp/x.json && python3 tools/optimizer_phase1.py /tmp/x.json && node tools/optimizer_sim.js /tmp/x.json` | **605 OK** (vorher 604; neu: Strukturprüfung des Sendewegs) |
-| `node tools/engine_sim.js /tmp/x.json [Datenordner]` | Kern, Sperren, Mehrtages-Modell, Punktesystem, Hüllen im vm, gesperrte Übernahme, Replay: **129 OK** mit Flow-Datei und Daten (ohne Flow-Datei 85, ohne Daten weniger) |
+| `node tools/engine_sim.js /tmp/x.json [Datenordner]` | Kern, Sperren, Mehrtages-Modell, Punktesystem, Hüllen im vm, gesperrte Übernahme, Replay: **130 OK** mit Flow-Datei und Daten (ohne Flow-Datei 84) |
 | `BEOBACHTER_TMP=<ordner> python3 tools/bonsai_beobachter_test.py [Datenordner]` | **9 OK**, LLM nur als Mock |
 | `node tools/engine_replay.js <Datenordner> [Ausgabe]` und `--md` | Replay der echten Protokolle |
 
