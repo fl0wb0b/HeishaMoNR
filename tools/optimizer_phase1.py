@@ -3090,9 +3090,10 @@ var ST = flow.get('eng');
 if (!ST) {                                                                       // nach einem Neustart: Zustand aus der Datei (Faelle, Punkte, Zaehler), Zeitgeber neu
     var F0 = null;
     try { F0 = JSON.parse(fs.readFileSync('/data/optimizer/engine-state.json', 'utf8')); } catch (e) { F0 = null; }
-    ST = {S: (F0 && F0.S) ? ENGINE.fixState(F0.S, now) : null, ui: (F0 && Array.isArray(F0.ui)) ? F0.ui : [], saved: 0, last: null};
+    ST = {S: (F0 && F0.S) ? ENGINE.fixState(F0.S, now) : null, V: (F0 && F0.V && Array.isArray(F0.V.ep)) ? F0.V : {ep: [], open: {}}, saved: 0, last: null};
     if (ST.S) { ST.S.born = now; }
 }
+if (!ST.V) { ST.V = {ep: [], open: {}}; }                                         // aeltere Fassung im Flow-Kontext (Episoden statt Einzelzeilen)
 // ---------- Eingabe (Schnappschuss) aus den globalen Werten
 var HP = G('OPT_hp') || {}, hpTs = 0;
 Object.keys(HP).forEach(function (k) { if (k.charAt(0) !== '_' && HP[k] && typeof HP[k].ts === 'number' && HP[k].ts > hpTs) { hpTs = HP[k].ts; } });
@@ -3135,7 +3136,8 @@ var files = [], d0 = new Date(now), month = d0.getFullYear() + '-' + p2(d0.getMo
 if (msg.topic !== 'anzeige') {
     var o;
     try { o = ENGINE.step(ST.S, inp, cfg); } catch (e) { node.warn('Entscheidungsmaschine: ' + e.message); global.set('OPT_engine', {ts: 0, fehler: e.message}); return null; }
-    ST.S = o.S; ST.last = {t: now, res: o.res, prop: o.prop, ende: o.ende, locks: o.locks};
+    ST.S = o.S; ST.last = {t: now, res: o.res, prop: o.prop, ende: o.ende, locks: o.locks, anl: {z: o.d.zustand, lauf: o.d.runMin, hz: o.d.hz, q: o.d.q, vlR: o.d.vlRueck}};
+    ENGVIEW.track(ST.V, o.res, ST.S.rules, now);
     files.push({filename: '/data/optimizer/decisions-' + month + '.jsonl', payload: JSON.stringify(o.rec) + '\n'});
     if (o.scores.length) { files.push({filename: '/data/optimizer/scores-' + month + '.jsonl', payload: o.scores.map(function (x) { return JSON.stringify(x); }).join('\n') + '\n'}); }
     var evl = o.ev.slice();
@@ -3145,65 +3147,16 @@ if (msg.topic !== 'anzeige') {
         try { fs.readFileSync(ef, 'utf8'); } catch (e) { eh = 'zeit,ereignis,wechsel\n'; }
         files.push({filename: ef, payload: eh + evl.map(function (x) { return ENGINE.iso(now) + ',' + x[0] + ',' + String(x[1]).replace(/,/g, ';').replace(/\n/g, ' ') + '\n'; }).join('')});
     }
-    // letzte Entscheidungen fuer die Anzeige: jede Aenderung von Status oder Grund-Art je Regel
-    var lastBy = flow.get('engLastBy') || {};
-    o.res.forEach(function (r) {
-        var key = r.st + '|' + String(r.grund).replace(/[0-9]+([,.][0-9]+)?/g, '#');
-        if (lastBy[r.id] !== key) { lastBy[r.id] = key; ST.ui.push([now, r.id, r.st, r.grund]); }
-    });
-    flow.set('engLastBy', lastBy);
-    if (ST.ui.length > 200) { ST.ui = ST.ui.slice(-200); }
     global.set('OPT_engine', {ts: now, ver: ENGINE.VER, prop: o.prop, locks: o.locks, ende: o.ende, rules: o.res.map(function (r) { return {id: r.id, st: r.st}; })});
     if (!ST.saved || now - ST.saved >= 10 * MIN || o.scores.length || o.ev.length) {
-        try { fs.mkdirSync('/data/optimizer', {recursive: true}); fs.writeFileSync('/data/optimizer/engine-state.json', JSON.stringify({S: ST.S, ui: ST.ui})); ST.saved = now; } catch (e) { node.warn('engine-state.json: ' + e.message); }
+        try { fs.mkdirSync('/data/optimizer', {recursive: true}); fs.writeFileSync('/data/optimizer/engine-state.json', JSON.stringify({S: ST.S, V: ST.V})); ST.saved = now; } catch (e) { node.warn('engine-state.json: ' + e.message); }
     }
 }
 flow.set('eng', ST);
 if (!ST.last) { return null; }
-// ---------- Anzeige
-var L = ST.last, AP = global.get('OPT_apply') || {}, en = global.get('OPT_apply_enabled') === true, rel = Array.isArray(AP.rules) ? AP.rules : [];
-var NAMES = {}; ENGINE.RULES.forEach(function (R) { NAMES[R.id] = R.name + ' v' + R.ver; });
-var STX = {vorschlag: 'Vorschlag', hinweis: 'Hinweis', wartet: 'wartet', gesperrt: 'gesperrt', bereit: 'kein Vorschlag', inaktiv: 'nicht zuständig', abgelaufen: 'abgelaufen'};
-var p = L.prop, verw = p && Array.isArray(AP.verworfen) && AP.verworfen.indexOf(p.id) >= 0;
-var card = {prop: null, naechste: [], enabled: en, reset: !!AP.aktiv, alarm: AP.alarm ? AP.alarm.text : '', knopf: {ok: false, text: 'Übernahme gesperrt'}, uebernahme: {text: '', cls: ''}};
-if (p && !verw) {
-    card.prop = {id: p.id, sum: p.sum, was: p.was, warum: p.warum, wann: p.wann, befehl: p.art === 'hinweis' ? p.cmd.name + ' = ' + p.cmd.value + ' (nur Hinweis, nie per Klick)' : p.cmd.topic.split('/').pop() + ' = ' + p.cmd.value + ' (jetzt ' + p.von + ')',
-                 erwartung: p.erwartung, bis: hm(p.bis), rueckweg: p.rueckweg, regel: NAMES[p.rule] || p.rule};
-}
-if (!p || verw) {
-    var rank = {wartet: 0, gesperrt: 1, bereit: 2, abgelaufen: 3, inaktiv: 4, vorschlag: 5, hinweis: 5};
-    L.res.slice().sort(function (a, b) { return (rank[a.st] - rank[b.st]) || ((a.naechste && a.naechste.abstand !== undefined ? Math.abs(a.naechste.abstand) : 99) - (b.naechste && b.naechste.abstand !== undefined ? Math.abs(b.naechste.abstand) : 99)); })
-        .slice(0, 2).forEach(function (r) { card.naechste.push([NAMES[r.id], r.naechste && r.naechste.text ? r.naechste.text : r.grund]); });
-    if (verw) { card.naechste.unshift(['Verworfen', p.was + ' (' + p.id + ')']); }
-}
-if (AP.pending) { card.uebernahme = {text: 'Befehl gesendet ' + hm(AP.pending.ts) + ', warte auf die Bestätigung der Anlage (Versuch ' + AP.pending.versuche + ')', cls: 'warn'}; }
-else if (AP.aktiv) { card.uebernahme = {text: 'aktiv seit ' + hm(AP.aktiv.ts) + ': ' + AP.aktiv.name + ' = ' + AP.aktiv.value + (AP.aktiv.bestaetigt ? ' (bestätigt)' : ' (unbestätigt)') + (AP.aktiv.bis ? ', automatisch zurück auf ' + AP.aktiv.von + ' um ' + hm(AP.aktiv.bis) : ', kein automatischer Rückweg'), cls: AP.aktiv.bestaetigt ? 'ok' : 'warn'}; }
-else if (!en) { card.uebernahme = {text: 'gesperrt (Hauptschalter aus)', cls: ''}; }
-else { card.uebernahme = {text: 'freigegeben für: ' + (rel.length ? rel.map(function (x) { return NAMES[x] || x; }).join(', ') : 'keine Regel'), cls: rel.length ? 'ok' : ''}; }
-if (card.prop) {
-    if (p.art === 'hinweis') { card.knopf = {ok: false, text: 'nur Hinweis'}; }
-    else if (!en) { card.knopf = {ok: false, text: 'Übernahme gesperrt'}; }
-    else if (rel.indexOf(p.rule) < 0) { card.knopf = {ok: false, text: 'Übernahme gesperrt (Regel nicht freigegeben)'}; }
-    else if (AP.pending) { card.knopf = {ok: false, text: 'wartet auf Bestätigung'}; }
-    else { card.knopf = {ok: true, text: 'Übernehmen'}; }
-}
-var rules = L.res.map(function (r) { return [NAMES[r.id], STX[r.st] || r.st, r.grund, r.naechste && r.naechste.text ? r.naechste.text : '', r.st === 'vorschlag' || r.st === 'hinweis' ? 'ok' : (r.st === 'gesperrt' || r.st === 'wartet' ? 'warn' : '')]; });
-// Punkte: Bericht, Woche, Verlauf (Summe je Regel), Messaufgabe
-var rep = ENGINE.report(ST.S), wk = ST.S.sc.week || {}, wks = Object.keys(wk).sort().slice(-4);
-var prow = rep.map(function (r) {
-    return [r.name + ' v' + r.v, ENGINE.de(r.punkte, 1), r.faelle + ' (' + r.bewertet + ')', r.bewertet ? Math.round(100 * r.trefferquote) + ' % / ' + Math.round(100 * r.fehlalarmquote) + ' %' : '–',
-            r.skill === null ? '–' : ENGINE.de(r.skill, 2), String(r.schaden), String(r.verpasst), r.art === 'befehl' ? r.wirkung.n + (r.wirkung.kalib ? ' (' + r.wirkung.kalib + ' Kalibrierung)' : '') + ', ' + ENGINE.sg(r.wirkung.punkte, 0) : '–',
-            r.art === 'befehl' ? (r.reif ? 'reif' : r.kriterien.filter(function (k) { return k.ok; }).length + ' von ' + r.kriterien.length) : 'nur Hinweis', r.kriterien.filter(function (k) { return !k.ok; }).map(function (k) { return k.text; }).join(' · ')];
-});
-var wrow = [];
-wks.forEach(function (w) { Object.keys(wk[w]).forEach(function (id) { var x = wk[w][id]; wrow.push([w, NAMES[id] || id, ENGINE.de(x.punkte, 1), String(x.faelle), x.treffer + ' / ' + x.fehlalarm, String(x.schaden), String(x.verpasst), String(x.wirkung || 0)]); }); });
-var hist = (ST.S.sc.hist || []).filter(function (h) { return h[0] >= now - 30 * 24 * 60 * MIN; });
-var series = ENGINE.RULES.map(function (R) { var pts = hist.filter(function (h) { return h[1] === R.id; }).map(function (h) { return [h[0], h[2]]; }); return {id: R.id, n: R.name, d: pts}; }).filter(function (x) { return x.d.length; });
-var t0 = hist.length ? Math.min(hist[0][0], now - 24 * 60 * MIN) : now - 7 * 24 * 60 * MIN;
-var mess = ENGINE.messStatus(ST.S);
-var score = {now: now, t0: t0, series: series, rows: prow, week: wrow, mess: mess.text, stand: 'Bewertungsregeln v' + ENGINE.SCORE_VER + ' · Entscheidungsdaten v' + ENGINE.VER + ' · Stand ' + hm(L.t)};
-var logRows = ST.ui.slice(-20).reverse().map(function (x) { return [dmhm(x[0]), NAMES[x[1]] || x[1], STX[x[2]] || x[2], x[3], x[2] === 'vorschlag' || x[2] === 'hinweis' ? 'ok' : (x[2] === 'gesperrt' ? 'warn' : '')]; });
-return [{payload: card}, {payload: {rows: rules, stand: 'Stand ' + hm(L.t)}}, {payload: score}, {payload: {rows: logRows}}, files.length ? files : null];
+// ---------- Anzeige (Karten-Daten aus ENGVIEW.build, gezeichnet in den Vorlagen mit optEngUi)
+var V = ENGVIEW.build({now: now, last: ST.last, S: ST.S, V: ST.V, AP: global.get('OPT_apply') || {}, enabled: global.get('OPT_apply_enabled') === true, cfg: cfg});
+return [{payload: V.card}, {payload: V.rules}, {payload: V.score}, {payload: V.log}, files.length ? files : null];
 """
 
 APPLY_WRAP_JS = r"""
@@ -3264,91 +3217,25 @@ return [out1.length ? out1 : null, toast, files.length ? files : null, refresh];
 
 ENG_TAB = "opt_eng_ui_tab"                       # eigene Seite "Optimierer" (eigenes Kennzeichen, die Seitenpruefung der anderen vier Seiten bleibt unberuehrt)
 upsert({"id": ENG_TAB, "type": "ui_tab", "name": "Optimierer", "icon": "lightbulb_outline", "order": 12.55, "disabled": False, "hidden": False})
-for _ord, (_gid, _gname) in enumerate((("opt_g_eng_prop", "Aktueller Vorschlag"), ("opt_g_eng_rules", "Regeln und Abstand zur Schwelle"),
-                                       ("opt_g_eng_score", "Punkte (automatisch bewertet)"), ("opt_g_eng_log", "Letzte 20 Entscheidungen")), start=1):
+for _ord, (_gid, _gname) in enumerate((("opt_g_eng_prop", "Entscheidungsmaschine"), ("opt_g_eng_rules", "Regeln"),
+                                       ("opt_g_eng_score", "Punkte"), ("opt_g_eng_log", "Entscheidungen")), start=1):
     upsert({"id": _gid, "type": "ui_group", "name": _gname, "tab": ENG_TAB, "order": _ord, "disp": True, "width": 18, "collapse": False, "className": ""})
 
-ENG_STYLE = """<style>
-.opte{font-size:14px;line-height:1.45}
-.opte .was{font-size:18px;font-weight:600;margin:2px 0 10px;color:#263238}
-.opte .grid{display:grid;grid-template-columns:max-content 1fr;gap:4px 16px}
-.opte .k{color:#666}
-.opte .warn{color:#c62828}
-.opte .ok{color:#2e7d32}
-.opte .mute{color:#888}
-.opte .btns{margin-top:14px;display:flex;gap:10px;flex-wrap:wrap}
-.opte button{font:inherit;padding:7px 16px;border-radius:4px;border:1px solid #1976d2;background:#1976d2;color:#fff;cursor:pointer}
-.opte button.sec{background:transparent;color:#1976d2}
-.opte button[disabled]{background:#eeeeee;border-color:#bdbdbd;color:#757575;cursor:not-allowed}
-.opte table{width:100%;border-collapse:collapse;font-size:13px}
-.opte th{text-align:left;font-weight:normal;color:#666;padding:4px 6px;border-bottom:1px solid #ccc;font-size:12px;vertical-align:bottom}
-.opte td{padding:5px 6px;border-bottom:1px solid #eee;vertical-align:top}
-.opte td.n{text-align:right;white-space:nowrap}
-.opte .sec2{margin:14px 0 4px;font-size:13px;color:#546e7a;font-weight:600}
-</style>"""
-ENG_PROP_TPL = ENG_STYLE + """<div class="opte optfit" ng-if="msg.payload">
-<div ng-if="msg.payload.prop">
-<div class="was">{{msg.payload.prop.was}}</div>
-<div class="grid">
-<span class="k">Warum</span><span>{{msg.payload.prop.warum}}</span>
-<span class="k">Wann</span><span>{{msg.payload.prop.wann}}</span>
-<span class="k">Befehl</span><span>{{msg.payload.prop.befehl}}</span>
-<span class="k">Erwartung</span><span>{{msg.payload.prop.erwartung}}</span>
-<span class="k">Gültig bis</span><span>{{msg.payload.prop.bis}}</span>
-<span class="k">Rückweg</span><span>{{msg.payload.prop.rueckweg}}</span>
-<span class="k">Regel</span><span>{{msg.payload.prop.regel}}</span>
-</div>
-</div>
-<div ng-if="!msg.payload.prop">
-<div class="was">Kein Vorschlag</div>
-<div class="grid"><span ng-repeat-start="r in msg.payload.naechste track by $index" class="k">{{r[0]}}</span><span ng-repeat-end>{{r[1]}}</span></div>
-</div>
-<div class="grid" style="margin-top:12px">
-<span class="k">Übernahme</span><span ng-class="msg.payload.uebernahme.cls">{{msg.payload.uebernahme.text}}</span>
-<span class="k" ng-if="msg.payload.alarm">Warnung</span><span class="warn" ng-if="msg.payload.alarm">{{msg.payload.alarm}}</span>
-</div>
-<div class="btns">
-<button ng-if="msg.payload.prop" ng-disabled="!msg.payload.knopf.ok" ng-click="send({topic: 'uebernehmen', payload: {id: msg.payload.prop.id, sum: msg.payload.prop.sum}})">{{msg.payload.knopf.text}}</button>
-<button class="sec" ng-if="msg.payload.prop" ng-click="send({topic: 'verwerfen', payload: {id: msg.payload.prop.id}})">Verwerfen</button>
-<button class="sec" ng-if="msg.payload.reset" ng-click="send({topic: 'zuruecksetzen', payload: {}})">Zurücksetzen</button>
-<button class="sec" ng-if="msg.payload.enabled" ng-click="send({topic: 'sperren', payload: {}})">Übernahme sperren</button>
-</div>
-</div>"""
-ENG_RULES_TPL = ENG_STYLE + """<div class="opte optfit"><div style="overflow-x:auto"><table>
-<tr><th>Regel</th><th>Status</th><th>Grund</th><th>Würde schalten, sobald …</th></tr>
-<tr ng-repeat="r in msg.payload.rows track by $index"><td style="white-space:nowrap">{{r[0]}}</td><td ng-class="r[4]" style="white-space:nowrap">{{r[1]}}</td><td>{{r[2]}}</td><td>{{r[3]}}</td></tr>
-</table></div><div class="mute" style="font-size:12px;margin-top:6px">{{msg.payload.stand}}</div></div>"""
-ENG_LOG_TPL = ENG_STYLE + """<div class="opte optfit"><div style="overflow-x:auto"><table>
-<tr><th>Zeit</th><th>Regel</th><th>Status</th><th>Grund</th></tr>
-<tr ng-repeat="r in msg.payload.rows track by $index"><td style="white-space:nowrap">{{r[0]}}</td><td style="white-space:nowrap">{{r[1]}}</td><td ng-class="r[4]" style="white-space:nowrap">{{r[2]}}</td><td>{{r[3]}}</td></tr>
-</table></div></div>"""
-ENG_SCORE_TPL = ENG_STYLE + """<div class="opte optfit">
-<div id="optch_engscore" style="min-height:120px"></div>
-<div style="overflow-x:auto"><table>
-<tr><th>Regel</th><th class="n">Punkte</th><th class="n">Fälle (bewertet)</th><th class="n">Treffer / Fehlalarm</th><th class="n">Brier-Skill</th><th class="n">Schaden</th><th class="n">Verpasst</th><th class="n">Wirkung</th><th class="n">Freigabereife</th><th>Offen</th></tr>
-<tr ng-repeat="r in msg.payload.rows track by $index"><td style="white-space:nowrap">{{r[0]}}</td><td class="n">{{r[1]}}</td><td class="n">{{r[2]}}</td><td class="n">{{r[3]}}</td><td class="n">{{r[4]}}</td><td class="n">{{r[5]}}</td><td class="n">{{r[6]}}</td><td class="n">{{r[7]}}</td><td class="n">{{r[8]}}</td><td style="font-size:12px">{{r[9]}}</td></tr>
-</table></div>
-<div class="sec2" ng-if="msg.payload.week.length">Wochenübersicht</div>
-<div style="overflow-x:auto" ng-if="msg.payload.week.length"><table>
-<tr><th>Woche</th><th>Regel</th><th class="n">Punkte</th><th class="n">Fälle</th><th class="n">Treffer / Fehlalarm</th><th class="n">Schaden</th><th class="n">Verpasst</th><th class="n">Wirkung</th></tr>
-<tr ng-repeat="r in msg.payload.week track by $index"><td>{{r[0]}}</td><td>{{r[1]}}</td><td class="n">{{r[2]}}</td><td class="n">{{r[3]}}</td><td class="n">{{r[4]}}</td><td class="n">{{r[5]}}</td><td class="n">{{r[6]}}</td><td class="n">{{r[7]}}</td></tr>
-</table></div>
-<div class="grid" style="margin-top:12px"><span class="k">Messaufgabe Comfort/Efficiency</span><span>{{msg.payload.mess}}</span><span class="k">Stand</span><span class="mute">{{msg.payload.stand}}</span></div>
-</div>"""
-ENG_SCORE_CH_JS = ("<script>" + UI_CHART_JS + "</script><script>(function (scope) {\n"
-    "var last = null, COL = ['#1976d2', '#00897b', '#ef6c00', '#8e24aa'];\n"
-    "function draw() {\n"
-    "    var el = document.getElementById('optch_engscore'), m = last;\n"
-    "    if (!el || !m || !m.payload || !window.optChart) { return; }\n"
-    "    var P = m.payload;\n"
-    "    if (!P.series || !P.series.length) { el.innerHTML = '<div style=\"padding:16px 4px;color:#757575\">Noch keine bewerteten Fälle.</div>'; return; }\n"
-    "    var ser = P.series.map(function (s, i) { var d = s.d.slice(); if (d.length) { d.push([P.now, d[d.length - 1][1]]); } return {n: s.n, c: COL[i % COL.length], k: 'step', w: 1.8, dg: 1, u: 'Punkte', d: d}; });\n"
-    "    window.optChart.mount(el, {t0: P.t0, t1: P.now, panels: [{h: 160, unit: 'Punkte', zero: true, series: ser}]});\n"
-    "}\n"
-    "window.__optChMap = window.__optChMap || {}; window.__optChMap.engscore = draw;\n"
-    "if (!window.__optChRs) { window.__optChRs = true; var tm = null; window.addEventListener('resize', function () { clearTimeout(tm); tm = setTimeout(function () { Object.keys(window.__optChMap).forEach(function (k) { window.__optChMap[k](); }); }, 200); }); }\n"
-    "scope.$watch('msg', function (m) { last = m; setTimeout(draw, 40); });\n"
-    "})(scope);</script>")
+ENGINE_VIEW_JS = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "engine_view.js"), encoding="utf-8").read()      # Karten-Daten (rein, getestet)
+ENG_UI_JS = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "eng_ui.js"), encoding="utf-8").read()              # Darstellung (rein, getestet)
+
+
+def eng_format(kind, with_chart=False):
+    """Karte der Seite "Optimierer": zeichnet die Nutzlast mit optEngUi (HTML aus reinen Funktionen), Knoepfe schicken nur Aktion + ID + Pruefsumme."""
+    return ('<div class="optfit"><div id="oe_' + kind + '"></div></div>'
+            + ("<script>" + UI_CHART_JS + "</script>" if with_chart else "")
+            + "<script>" + ENG_UI_JS + "</script><script>(function (scope) {\n"
+            "var last = null;\n"
+            "function draw() { var el = document.getElementById('oe_" + kind + "'); if (el && last && last.payload && window.optEngUi) { window.optEngUi.mount(el, '" + kind + "', last.payload, scope); } }\n"
+            "window.__optChMap = window.__optChMap || {}; window.__optChMap.oe_" + kind + " = draw;\n"
+            "if (!window.__optChRs) { window.__optChRs = true; var tm = null; window.addEventListener('resize', function () { clearTimeout(tm); tm = setTimeout(function () { Object.keys(window.__optChMap).forEach(function (k) { window.__optChMap[k](); }); }, 200); }); }\n"
+            "scope.$watch('msg', function (m) { last = m; setTimeout(draw, 40); });\n"
+            "})(scope);</script>")
 
 
 def eng_template(i, gid, name, height, fmt, y, wires=None):
@@ -3358,12 +3245,12 @@ def eng_template(i, gid, name, height, fmt, y, wires=None):
 
 
 upsert(comment("opt_c_eng", "Optimierer: Entscheidungsmaschine (Shadow, schaltet nichts) · Übernahme nur per Klick, GESPERRT ausgeliefert", 380, 2040))
-upsert(eng_template("opt_t_eng_prop", "opt_g_eng_prop", "Aktueller Vorschlag", 8, ENG_PROP_TPL, 2060, [["opt_apply"]]))
-upsert(eng_template("opt_t_eng_rules", "opt_g_eng_rules", "Regeln und Abstand zur Schwelle", 8, ENG_RULES_TPL, 2100))
-upsert(eng_template("opt_t_eng_score", "opt_g_eng_score", "Punkte", 10, ENG_SCORE_TPL + ENG_SCORE_CH_JS, 2140))
-upsert(eng_template("opt_t_eng_log", "opt_g_eng_log", "Letzte 20 Entscheidungen", 8, ENG_LOG_TPL, 2180))
+upsert(eng_template("opt_t_eng_prop", "opt_g_eng_prop", "Status und Vorschlag", 3, eng_format("card"), 2060, [["opt_apply"]]))
+upsert(eng_template("opt_t_eng_rules", "opt_g_eng_rules", "Regeln", 3, eng_format("rules"), 2100))
+upsert(eng_template("opt_t_eng_score", "opt_g_eng_score", "Punkte", 6, eng_format("score", True), 2140))
+upsert(eng_template("opt_t_eng_log", "opt_g_eng_log", "Entscheidungen", 4, eng_format("log"), 2180))
 upsert(inject("opt_i_engine", "jede Minute", 60, 50, ["opt_engine"], 140, 2100))
-upsert(fn("opt_engine", "Entscheidungsmaschine (Shadow)", ENGINE_CORE_JS + ENGINE_WRAP_JS, 5,
+upsert(fn("opt_engine", "Entscheidungsmaschine (Shadow)", ENGINE_CORE_JS + ENGINE_VIEW_JS + ENGINE_WRAP_JS, 5,
           [["opt_t_eng_prop"], ["opt_t_eng_rules"], ["opt_t_eng_score"], ["opt_t_eng_log"], ["opt_f_eng"]], 440, 2100, FS))
 upsert({"id": "opt_f_eng", "type": "file", "z": TAB, "name": "Entscheidungen, Punkte, Ereignisse", "filename": "filename", "filenameType": "msg", "appendNewline": False,
         "createDir": True, "overwriteFile": "false", "encoding": "utf8", "x": 760, "y": 2160, "wires": [[]]})

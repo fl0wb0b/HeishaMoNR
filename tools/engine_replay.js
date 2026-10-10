@@ -94,6 +94,7 @@ function replay(dataDir, opts) {
         o.ev.forEach(e => events.push([ENGINE.iso(inp.t), e[0], e[1]]));
         if (o.res.some(r => r.neu)) { o.res.filter(r => r.neu).forEach(r => props.push(JSON.parse(JSON.stringify(S.rules[r.id].prop)))); }
         perMin.push({t: inp.t, st: o.res.map(r => r.st), prop: o.prop ? o.prop.id : null});
+        if (opts.onStep) { opts.onStep(o, inp, i); }
     });
     const report = ENGINE.report(S);
     if (opts.outDir) {

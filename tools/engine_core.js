@@ -38,27 +38,27 @@ var ENGINE = (function () {
 
     // ------------------------------------------------------------------ Sperren, die jede Regel erbt (mit Herkunft)
     var LOCKS = [
-        {id: 'anlauf', text: 'Maschine beobachtet erst seit kurzem (Neustart)', herkunft: 'Zeitgeber und Zähler müssen nach einem Neustart erst wieder Daten sammeln (10 min)'},
-        {id: 'daten', text: 'HeishaMon-Daten fehlen oder sind veraltet', herkunft: 'HeishaMon meldet laufend; älter als 5 min = veraltet (Wächter: 10 min)'},
-        {id: 'mqtt_sperre', text: 'Alle MQTT-Befehle sind gesperrt (MQTT.block_active)', herkunft: 'HeishaMoNR-Notbremse; sie friert den Zustand ein (Opus-Review 09.10.)'},
-        {id: 'abtauen', text: 'Abtauen oder kurz danach', herkunft: 'Wächter/Quiet-Logik: keine Änderung beim und 10 min nach dem Abtauen (Opus: 10–20 min)'},
-        {id: 'warmwasser', text: 'Warmwasser oder kurz danach', herkunft: 'wie Abtauen (diese Anlage macht kein Warmwasser, die Sperre bleibt als Schutz)'},
-        {id: 'sanftanlauf', text: 'Sanftanlauf (HeishaMoNR SoftStart) aktiv', herkunft: 'SoftStart verschiebt die Heizkurve selbst'},
-        {id: 'laufbeginn', text: 'Verdichter läuft erst kurz', herkunft: 'Start-Pumpenspitze 2900 U/min für 11–16 min bei jedem Start; Quiet wirkt erst nach 1–2 min'},
-        {id: 'heizgrenze_aus', text: 'Heizgrenze-Aus (Pumpe steht)', herkunft: 'Heizgrenze 12 °C mit Hysterese: aus ab 15 °C, ein ab 12 °C, Pumpe 0, Vorlauf ohne Aussage'},
-        {id: 'regler', text: 'Ein anderer Regler stellt dieselbe Größe', herkunft: 'HeishaMoNR-Quiet-Logik/Scheduler/Solar/WP-Zeitplan bzw. Raumregelung/Nachtabsenkung/Sanftanlauf; Verschiebung nur im Heizkurvenmodus mit Wasserfühler und ohne Handeingriff am Soll'},
-        {id: 'abstand', text: 'Mindestabstand zur letzten Änderung', herkunft: 'Wächter: 60 min Abstand; Opus: höchstens 1 Wechsel pro Stunde'},
-        {id: 'tageslimit', text: 'Tageslimit der Regel erreicht', herkunft: 'Schreibbudget (Opus: höchstens 6 Wechsel/Tag), EEPROM-Verschleiß unbekannt'},
-        {id: 'abkuehlzeit', text: 'Wartezeit nach dem letzten Vorschlag', herkunft: 'kein Flattern: ein abgelaufener oder zurückgezogener Vorschlag kommt erst nach einer Pause wieder'},
-        {id: 'takt', text: 'Takt-Gefahr: Vorlauf über Soll', herkunft: 'Anlage schaltet bei Vorlauf ≥ Soll +3,25 K nach ~3 min ab (6 Stopps 07.–10.10.); Sperre ab Soll +1 K für Maßnahmen, die den Vorlauf näher an diese Grenze bringen (mehr Leistung, −1 K)'},
-        {id: 'heizstab', text: 'Heizstab-Nähe', herkunft: 'Heizstab ab Außentemperatur < Heater_On_Outdoor_Temp (0 °C) bei Vorlauf < Soll −3 K nach 15 min; ein +1-K-Schritt vergrößert den Rückstand sofort um 1 K'}
+        {id: 'anlauf', kurz: 'Anlaufsperre', text: 'Maschine beobachtet erst seit kurzem (Neustart)', herkunft: 'Zeitgeber und Zähler müssen nach einem Neustart erst wieder Daten sammeln (10 min)'},
+        {id: 'daten', kurz: 'keine HeishaMon-Daten', text: 'HeishaMon-Daten fehlen oder sind veraltet', herkunft: 'HeishaMon meldet laufend; älter als 5 min = veraltet (Wächter: 10 min)'},
+        {id: 'mqtt_sperre', kurz: 'MQTT-Notbremse', text: 'Alle MQTT-Befehle sind gesperrt (MQTT.block_active)', herkunft: 'HeishaMoNR-Notbremse; sie friert den Zustand ein (Opus-Review 09.10.)'},
+        {id: 'abtauen', kurz: 'Abtauen', text: 'Abtauen oder kurz danach', herkunft: 'Wächter/Quiet-Logik: keine Änderung beim und 10 min nach dem Abtauen (Opus: 10–20 min)'},
+        {id: 'warmwasser', kurz: 'Warmwasser', text: 'Warmwasser oder kurz danach', herkunft: 'wie Abtauen (diese Anlage macht kein Warmwasser, die Sperre bleibt als Schutz)'},
+        {id: 'sanftanlauf', kurz: 'Sanftanlauf', text: 'Sanftanlauf (HeishaMoNR SoftStart) aktiv', herkunft: 'SoftStart verschiebt die Heizkurve selbst'},
+        {id: 'laufbeginn', kurz: 'Laufbeginn', text: 'Verdichter läuft erst kurz', herkunft: 'Start-Pumpenspitze 2900 U/min für 11–16 min bei jedem Start; Quiet wirkt erst nach 1–2 min'},
+        {id: 'heizgrenze_aus', kurz: 'Heizgrenze-Aus', text: 'Heizgrenze-Aus (Pumpe steht)', herkunft: 'Heizgrenze 12 °C mit Hysterese: aus ab 15 °C, ein ab 12 °C, Pumpe 0, Vorlauf ohne Aussage'},
+        {id: 'regler', kurz: 'anderer Regler', text: 'Ein anderer Regler stellt dieselbe Größe', herkunft: 'HeishaMoNR-Quiet-Logik/Scheduler/Solar/WP-Zeitplan bzw. Raumregelung/Nachtabsenkung/Sanftanlauf; Verschiebung nur im Heizkurvenmodus mit Wasserfühler und ohne Handeingriff am Soll'},
+        {id: 'abstand', kurz: 'Mindestabstand', text: 'Mindestabstand zur letzten Änderung', herkunft: 'Wächter: 60 min Abstand; Opus: höchstens 1 Wechsel pro Stunde'},
+        {id: 'tageslimit', kurz: 'Tageslimit', text: 'Tageslimit der Regel erreicht', herkunft: 'Schreibbudget (Opus: höchstens 6 Wechsel/Tag), EEPROM-Verschleiß unbekannt'},
+        {id: 'abkuehlzeit', kurz: 'Wartezeit', text: 'Wartezeit nach dem letzten Vorschlag', herkunft: 'kein Flattern: ein abgelaufener oder zurückgezogener Vorschlag kommt erst nach einer Pause wieder'},
+        {id: 'takt', kurz: 'Takt-Gefahr', text: 'Takt-Gefahr: Vorlauf über Soll', herkunft: 'Anlage schaltet bei Vorlauf ≥ Soll +3,25 K nach ~3 min ab (6 Stopps 07.–10.10.); Sperre ab Soll +1 K für Maßnahmen, die den Vorlauf näher an diese Grenze bringen (mehr Leistung, −1 K)'},
+        {id: 'heizstab', kurz: 'Heizstab-Nähe', text: 'Heizstab-Nähe', herkunft: 'Heizstab ab Außentemperatur < Heater_On_Outdoor_Temp (0 °C) bei Vorlauf < Soll −3 K nach 15 min; ein +1-K-Schritt vergrößert den Rückstand sofort um 1 K'}
     ];
     var LOCK_TEXT = {}; LOCKS.forEach(function (l) { LOCK_TEXT[l.id] = l.text; });
 
     // ------------------------------------------------------------------ Regelwerk als Daten. Jede Schwelle: Standard, Einheit, Herkunft (Messung / Nutzerregel / ANNAHME)
     var RULES = [
         {
-            id: 'quiet_freigabe', ver: 1, name: 'Quiet-Freigabe', art: 'befehl', groesse: 'quiet', richtung: 'mehr_leistung', prio: 1,
+            id: 'quiet_freigabe', ver: 1, kurz: 'Quiet-Freigabe', name: 'Quiet-Freigabe', art: 'befehl', groesse: 'quiet', richtung: 'mehr_leistung', prio: 1,
             zweck: 'Hängt der Verdichter trotz deutlichen Rückstands am Quiet-Deckel, Quiet auf 0 freigeben (Nutzerregel: Standard ist 0, nicht schrittweise).',
             eingaenge: ['Quiet-Stufe', 'Verdichterfrequenz', 'Soll-/Ist-Vorlauf', 'Rücklauf und Ziel-Spreizung (Heat_Delta)', 'Laufzeit', 'Räume (gültig, eigenes Band)'],
             sperren: ['anlauf', 'daten', 'mqtt_sperre', 'abtauen', 'warmwasser', 'sanftanlauf', 'laufbeginn', 'heizgrenze_aus', 'regler', 'abstand', 'tageslimit', 'abkuehlzeit', 'takt'],
@@ -82,12 +82,12 @@ var ENGINE = (function () {
                 if (d.q === 0) { return {inaktiv: 'Quiet steht auf 0 (Standard des Betreibers)'}; }
                 var rb = d.roomBelow[0];
                 var cond = [
-                    {k: 'lauf', t: 'Verdichter läuft', tn: 'Verdichter steht (' + zTxt(d.zustand) + ')', ok: d.running},
-                    {k: 'laufMin', t: 'Lauf seit mindestens ' + c.laufMin + ' min', tn: 'Startphase: Lauf erst ' + de(d.runMin, 0) + ' von ' + c.laufMin + ' min', ok: d.runMin >= c.laufMin, ist: r2(d.runMin), soll: c.laufMin, op: '>=', u: 'min', dyn: true},
-                    {k: 'deckel', t: 'Verdichter am Quiet-Deckel (≤ ' + c.capHz + ' Hz)', tn: 'Verdichter nicht am Deckel (' + de(d.hz, 0) + ' Hz)', ok: have(d.hz) && d.hz > 0 && d.hz <= c.capHz, ist: d.hz, soll: c.capHz, op: '<=', u: 'Hz', dyn: true},
-                    {k: 'vlRueck', t: 'Vorlauf mindestens ' + de(c.vlRueckK, 1) + ' K unter Soll', tn: 'Vorlauf ' + rueckTxt(d.vlRueck) + ' (Schwelle ' + de(c.vlRueckK, 1) + ' K darunter)', ok: have(d.vlRueck) && d.vlRueck >= c.vlRueckK, ist: r2(d.vlRueck), it: rueckTxt(d.vlRueck), soll: c.vlRueckK, op: '>=', u: 'K', dyn: true},
-                    {k: 'rlRueck', t: 'Rücklauf mindestens ' + de(c.rlRueckK, 1) + ' K unter Soll-Rücklauf', tn: 'Rücklauf ' + rueckTxt(d.rlRueck) + ' (Schwelle ' + de(c.rlRueckK, 1) + ' K darunter)', ok: have(d.rlRueck) && d.rlRueck >= c.rlRueckK, ist: r2(d.rlRueck), it: rueckTxt(d.rlRueck), soll: c.rlRueckK, op: '>=', u: 'K', dyn: true},
-                    {k: 'bedarf', t: 'Raum unter Minimum oder Sollvorlauf noch nicht erreicht', tn: 'kein Bedarf: alle gültigen Räume ab Minimum und Sollvorlauf in diesem Lauf erreicht', ok: !!rb || !d.reached}
+                    {k: 'lauf', kz: 'Verdichter läuft', t: 'Verdichter läuft', tn: 'Verdichter steht (' + zTxt(d.zustand) + ')', ok: d.running},
+                    {k: 'laufMin', kz: 'Laufzeit', t: 'Lauf seit mindestens ' + c.laufMin + ' min', tn: 'Startphase: Lauf erst ' + de(d.runMin, 0) + ' von ' + c.laufMin + ' min', ok: d.runMin >= c.laufMin, ist: r2(d.runMin), soll: c.laufMin, op: '>=', u: 'min', dyn: true},
+                    {k: 'deckel', kz: 'Frequenz', t: 'Verdichter am Quiet-Deckel (≤ ' + c.capHz + ' Hz)', tn: 'Verdichter nicht am Deckel (' + de(d.hz, 0) + ' Hz)', ok: have(d.hz) && d.hz > 0 && d.hz <= c.capHz, ist: d.hz, soll: c.capHz, op: '<=', u: 'Hz', dyn: true},
+                    {k: 'vlRueck', kz: 'Vorlauf-Rückstand', t: 'Vorlauf mindestens ' + de(c.vlRueckK, 1) + ' K unter Soll', tn: 'Vorlauf ' + rueckTxt(d.vlRueck) + ' (Schwelle ' + de(c.vlRueckK, 1) + ' K darunter)', ok: have(d.vlRueck) && d.vlRueck >= c.vlRueckK, ist: r2(d.vlRueck), it: rueckTxt(d.vlRueck), soll: c.vlRueckK, op: '>=', u: 'K', dyn: true},
+                    {k: 'rlRueck', kz: 'Rücklauf-Rückstand', t: 'Rücklauf mindestens ' + de(c.rlRueckK, 1) + ' K unter Soll-Rücklauf', tn: 'Rücklauf ' + rueckTxt(d.rlRueck) + ' (Schwelle ' + de(c.rlRueckK, 1) + ' K darunter)', ok: have(d.rlRueck) && d.rlRueck >= c.rlRueckK, ist: r2(d.rlRueck), it: rueckTxt(d.rlRueck), soll: c.rlRueckK, op: '>=', u: 'K', dyn: true},
+                    {k: 'bedarf', kz: 'Bedarf', t: 'Raum unter Minimum oder Sollvorlauf noch nicht erreicht', tn: 'kein Bedarf: alle gültigen Räume ab Minimum und Sollvorlauf in diesem Lauf erreicht', ok: !!rb || !d.reached}
                 ];
                 return {cond: cond, halt: c.haltMin, wert: 0, von: d.q,
                         was: 'Quiet-Stufe ' + d.q + ' → 0',
@@ -95,7 +95,7 @@ var ENGINE = (function () {
             }
         },
         {
-            id: 'quiet_strecken', ver: 1, name: 'Laufzeit strecken (Quiet 3)', art: 'befehl', groesse: 'quiet', richtung: 'weniger_leistung', prio: 2,
+            id: 'quiet_strecken', ver: 1, kurz: 'Laufzeit strecken', name: 'Laufzeit strecken (Quiet 3)', art: 'befehl', groesse: 'quiet', richtung: 'weniger_leistung', prio: 2,
             zweck: 'Läuft der Verdichter ohne Bedarf deutlich über Minimum und droht ein kurzer Lauf, die Leistung mit Quiet 3 deckeln, damit er länger bei niedriger Leistung läuft. Rückkehr auf 0, sobald der Grund endet.',
             eingaenge: ['Quiet-Stufe', 'Verdichterfrequenz', 'Vorlauf und Anstieg', 'Rücklauf-Rückstand', 'Räume', 'letzte Läufe/Starts'],
             sperren: ['anlauf', 'daten', 'mqtt_sperre', 'abtauen', 'warmwasser', 'sanftanlauf', 'laufbeginn', 'heizgrenze_aus', 'regler', 'abstand', 'tageslimit', 'abkuehlzeit', 'takt', 'heizstab'],
@@ -126,11 +126,11 @@ var ENGINE = (function () {
                 if (have(d.lastRunMin) && d.lastRunMin < c.kurzerLaufMin) { takt = true; taktTxt.push('letzter Lauf nur ' + de(d.lastRunMin, 0) + ' min'); }
                 if (d.starts3h >= c.starts3h) { takt = true; taktTxt.push(d.starts3h + ' Starts in 3 h'); }
                 var cond = [
-                    {k: 'lauf', t: 'Verdichter läuft', tn: 'Verdichter steht (' + zTxt(d.zustand) + ')', ok: d.running},
-                    {k: 'laufMin', t: 'Lauf seit mindestens ' + c.laufMin + ' min', tn: 'Startphase: Lauf erst ' + de(d.runMin, 0) + ' von ' + c.laufMin + ' min', ok: d.runMin >= c.laufMin, ist: r2(d.runMin), soll: c.laufMin, op: '>=', u: 'min', dyn: true},
-                    {k: 'hoch', t: 'Verdichter deutlich über Minimum (≥ ' + c.hzHoch + ' Hz)', tn: 'Verdichter bei ' + de(d.hz, 0) + ' Hz (Schwelle ' + c.hzHoch + ' Hz)', ok: have(d.hz) && d.hz >= c.hzHoch, ist: d.hz, soll: c.hzHoch, op: '>=', u: 'Hz', dyn: true},
-                    {k: 'keinBedarf', t: 'kein Raum unter Minimum und Rücklauf höchstens ' + de(c.rlRueckMaxK, 1) + ' K unter Soll', tn: rb ? 'Bedarf: ' + rb.name + ' unter Minimum' : 'Bedarf: Rücklauf ' + rueckTxt(d.rlRueck), ok: !rb && have(d.rlRueck) && d.rlRueck <= c.rlRueckMaxK, ist: rb ? null : r2(d.rlRueck), soll: c.rlRueckMaxK, op: '<=', u: 'K', dyn: !rb},
-                    {k: 'takt', t: 'Takt-Indiz (Abschaltung binnen ' + c.stoppBaldMin + ' min, kurzer letzter Lauf oder viele Starts)', tn: 'kein Takt-Indiz' + (have(d.stopEtaMin) ? ' (Abschaltgrenze in ~' + de(d.stopEtaMin, 0) + ' min)' : ''), ok: takt}
+                    {k: 'lauf', kz: 'Verdichter läuft', t: 'Verdichter läuft', tn: 'Verdichter steht (' + zTxt(d.zustand) + ')', ok: d.running},
+                    {k: 'laufMin', kz: 'Laufzeit', t: 'Lauf seit mindestens ' + c.laufMin + ' min', tn: 'Startphase: Lauf erst ' + de(d.runMin, 0) + ' von ' + c.laufMin + ' min', ok: d.runMin >= c.laufMin, ist: r2(d.runMin), soll: c.laufMin, op: '>=', u: 'min', dyn: true},
+                    {k: 'hoch', kz: 'Frequenz', t: 'Verdichter deutlich über Minimum (≥ ' + c.hzHoch + ' Hz)', tn: 'Verdichter bei ' + de(d.hz, 0) + ' Hz (Schwelle ' + c.hzHoch + ' Hz)', ok: have(d.hz) && d.hz >= c.hzHoch, ist: d.hz, soll: c.hzHoch, op: '>=', u: 'Hz', dyn: true},
+                    {k: 'keinBedarf', kz: 'Rücklauf-Rückstand', t: 'kein Raum unter Minimum und Rücklauf höchstens ' + de(c.rlRueckMaxK, 1) + ' K unter Soll', tn: rb ? 'Bedarf: ' + rb.name + ' unter Minimum' : 'Bedarf: Rücklauf ' + rueckTxt(d.rlRueck), ok: !rb && have(d.rlRueck) && d.rlRueck <= c.rlRueckMaxK, ist: rb ? null : r2(d.rlRueck), soll: c.rlRueckMaxK, op: '<=', u: 'K', dyn: !rb},
+                    {k: 'takt', kz: 'Takt-Indiz', t: 'Takt-Indiz (Abschaltung binnen ' + c.stoppBaldMin + ' min, kurzer letzter Lauf oder viele Starts)', tn: 'kein Takt-Indiz' + (have(d.stopEtaMin) ? ' (Abschaltgrenze in ~' + de(d.stopEtaMin, 0) + ' min)' : ''), ok: takt}
                 ];
                 return {cond: cond, halt: c.haltMin, wert: 3, von: d.q,
                         was: 'Quiet-Stufe ' + d.q + ' → 3 (Laufzeit strecken)',
@@ -138,7 +138,7 @@ var ENGINE = (function () {
             }
         },
         {
-            id: 'raum_offset', ver: 1, name: 'Raumeinfluss (Heizkurve ±1 K)', art: 'befehl', groesse: 'shift', richtung: 'verschiebung', prio: 3,
+            id: 'raum_offset', ver: 1, kurz: 'Raumeinfluss ±1 K', name: 'Raumeinfluss (Heizkurve ±1 K)', art: 'befehl', groesse: 'shift', richtung: 'verschiebung', prio: 3,
             zweck: 'Räume wirken nur als langsamer, kleiner Offset auf die Heizkurve (Lambda-Prinzip). Übernimmt den Raumvorschlag der Phase-2-Logik (korrektur_vorschlag −1/0/+1) erst, wenn er lange stabil ist. Nie Comfort/Efficiency.',
             eingaenge: ['Raumvorschlag Phase 2 (korrektur_vorschlag, Führungsraum, Wärmeverteilung)', 'Verschiebung an der Anlage (TOP27)', 'Soll-Vorlauf und Heizkurve', 'Heizkurvenmodus/Zonenfühler'],
             sperren: ['anlauf', 'daten', 'mqtt_sperre', 'abtauen', 'warmwasser', 'sanftanlauf', 'laufbeginn', 'heizgrenze_aus', 'regler', 'abstand', 'tageslimit', 'abkuehlzeit', 'takt', 'heizstab'],
@@ -164,9 +164,9 @@ var ENGINE = (function () {
                 var stab = rs.korrSince ? mins(d.now - rs.korrSince) : 0, down = kv < d.shift;
                 var sollNeu = have(d.soll) ? d.soll + (kv - d.shift) : null;
                 var cond = [
-                    {k: 'stabil', t: 'Raumvorschlag seit mindestens ' + c.stabilMin + ' min stabil', tn: 'Raumvorschlag ' + sg(kv, 0) + ' K erst seit ' + stab + ' von ' + c.stabilMin + ' min stabil', ok: stab >= c.stabilMin, ist: stab, soll: c.stabilMin, op: '>=', u: 'min', dyn: true},
-                    {k: 'untergrenze', t: 'Soll-Vorlauf bleibt mindestens ' + de(c.minVlC, 0) + ' °C', tn: 'Soll-Vorlauf würde ' + de(sollNeu, 0) + ' °C (Untergrenze ' + de(c.minVlC, 0) + ' °C)', ok: !down || (have(sollNeu) && sollNeu >= c.minVlC - 1e-9), ist: r2(sollNeu), soll: c.minVlC, op: '>=', u: '°C', dyn: true},
-                    {k: 'verteilung', t: 'kein Wärmeverteilungsproblem', tn: 'Wärmeverteilungsproblem (ein Raum zu kalt, einer zu warm)', ok: !k.distrib}
+                    {k: 'stabil', kz: 'Raumvorschlag stabil', t: 'Raumvorschlag seit mindestens ' + c.stabilMin + ' min stabil', tn: 'Raumvorschlag ' + sg(kv, 0) + ' K erst seit ' + stab + ' von ' + c.stabilMin + ' min stabil', ok: stab >= c.stabilMin, ist: stab, soll: c.stabilMin, op: '>=', u: 'min', dyn: true},
+                    {k: 'untergrenze', kz: 'Soll-Vorlauf neu', t: 'Soll-Vorlauf bleibt mindestens ' + de(c.minVlC, 0) + ' °C', tn: 'Soll-Vorlauf würde ' + de(sollNeu, 0) + ' °C (Untergrenze ' + de(c.minVlC, 0) + ' °C)', ok: !down || (have(sollNeu) && sollNeu >= c.minVlC - 1e-9), ist: r2(sollNeu), soll: c.minVlC, op: '>=', u: '°C', dyn: true},
+                    {k: 'verteilung', kz: 'Wärmeverteilung', t: 'kein Wärmeverteilungsproblem', tn: 'Wärmeverteilungsproblem (ein Raum zu kalt, einer zu warm)', ok: !k.distrib}
                 ];
                 return {cond: cond, halt: 0, wert: kv, von: d.shift, dir: kv > d.shift ? 'soll_hoch' : 'soll_runter', lead: k.lead || '',
                         was: 'Heizkurve ' + sg(d.shift, 0) + ' → ' + sg(kv, 0) + ' K (Soll-Vorlauf ' + de(d.soll, 0) + ' → ' + de(sollNeu, 0) + ' °C)',
@@ -174,7 +174,7 @@ var ENGINE = (function () {
             }
         },
         {
-            id: 'heizgrenze_hinweis', ver: 1, name: 'Heizgrenze 12 → 10 °C (nur Hinweis)', art: 'hinweis', groesse: 'heizgrenze', richtung: 'weniger_waerme', prio: 4,
+            id: 'heizgrenze_hinweis', ver: 1, kurz: 'Heizgrenze 10 °C', name: 'Heizgrenze 12 → 10 °C (nur Hinweis)', art: 'hinweis', groesse: 'heizgrenze', richtung: 'weniger_waerme', prio: 4,
             zweck: 'An milden Tagen läuft die Anlage bei 11–14 °C, obwohl alle Räume Reserve haben. Eine niedrigere Heizgrenze würde solche Läufe vermeiden. Nur Hinweis: Parameteränderung, nie per Klick.',
             eingaenge: ['Außentemperatur (Fühler)', 'Heizgrenze (Heating_Off_Outdoor_Temp)', 'Räume (alle aktiv und gültig)', 'Laufzeit'],
             sperren: ['anlauf', 'daten'],
@@ -198,11 +198,11 @@ var ENGINE = (function () {
                 var allValid = d.roomsActive > 0 && d.roomsValid === d.roomsActive;
                 var tight = null; d.rooms.forEach(function (r) { if (r.active && r.valid && (tight === null || r.t - r.min < tight.t - tight.min)) { tight = r; } });
                 var cond = [
-                    {k: 'lauf', t: 'Verdichter läuft', tn: 'Verdichter steht (' + zTxt(d.zustand) + ')', ok: d.running},
-                    {k: 'laufMin', t: 'Lauf seit mindestens ' + c.laufMin + ' min', tn: 'Startphase: Lauf erst ' + de(d.runMin, 0) + ' von ' + c.laufMin + ' min', ok: d.runMin >= c.laufMin, ist: r2(d.runMin), soll: c.laufMin, op: '>=', u: 'min', dyn: true},
-                    {k: 'aussen', t: 'Außentemperatur über ' + de(c.zielC, 0) + ' °C', tn: 'Außentemperatur ' + de(d.at, 0) + ' °C (nicht über ' + de(c.zielC, 0) + ' °C)', ok: have(d.at) && d.at > c.zielC, ist: d.at, soll: c.zielC + 1, op: '>=', u: '°C', dyn: true},
-                    {k: 'raeume', t: 'alle aktiven Räume gültig', tn: 'nur ' + d.roomsValid + ' von ' + d.roomsActive + ' Räumen gültig', ok: allValid},
-                    {k: 'reserve', t: 'jeder Raum mindestens ' + de(c.reserveK, 1) + ' K über Minimum', tn: 'knappster Raum ' + (tight ? tight.name + ' ' + sg(tight.t - tight.min, 1) + ' K' : '–') + ' über Minimum (Reserve ' + de(c.reserveK, 1) + ' K)', ok: allValid && tight !== null && tight.t - tight.min >= c.reserveK, ist: tight ? r2(tight.t - tight.min) : null, soll: c.reserveK, op: '>=', u: 'K', dyn: true}
+                    {k: 'lauf', kz: 'Verdichter läuft', t: 'Verdichter läuft', tn: 'Verdichter steht (' + zTxt(d.zustand) + ')', ok: d.running},
+                    {k: 'laufMin', kz: 'Laufzeit', t: 'Lauf seit mindestens ' + c.laufMin + ' min', tn: 'Startphase: Lauf erst ' + de(d.runMin, 0) + ' von ' + c.laufMin + ' min', ok: d.runMin >= c.laufMin, ist: r2(d.runMin), soll: c.laufMin, op: '>=', u: 'min', dyn: true},
+                    {k: 'aussen', kz: 'Außentemperatur', t: 'Außentemperatur über ' + de(c.zielC, 0) + ' °C', tn: 'Außentemperatur ' + de(d.at, 0) + ' °C (nicht über ' + de(c.zielC, 0) + ' °C)', ok: have(d.at) && d.at > c.zielC, ist: d.at, soll: c.zielC + 1, op: '>=', u: '°C', dyn: true},
+                    {k: 'raeume', kz: 'Räume gültig', t: 'alle aktiven Räume gültig', tn: 'nur ' + d.roomsValid + ' von ' + d.roomsActive + ' Räumen gültig', ok: allValid},
+                    {k: 'reserve', kz: 'Raumreserve', t: 'jeder Raum mindestens ' + de(c.reserveK, 1) + ' K über Minimum', tn: 'knappster Raum ' + (tight ? tight.name + ' ' + sg(tight.t - tight.min, 1) + ' K' : '–') + ' über Minimum (Reserve ' + de(c.reserveK, 1) + ' K)', ok: allValid && tight !== null && tight.t - tight.min >= c.reserveK, ist: tight ? r2(tight.t - tight.min) : null, soll: c.reserveK, op: '>=', u: 'K', dyn: true}
                 ];
                 return {cond: cond, halt: c.haltMin, wert: c.zielC, von: d.heatOffAT, dir: 'weniger_waerme',
                         was: 'Heizgrenze ' + de(d.heatOffAT, 0) + ' → ' + de(c.zielC, 0) + ' °C (nur Hinweis)',
@@ -379,7 +379,7 @@ var ENGINE = (function () {
     function dgOf(u) { return (u === 'min' || u === 'Hz' || u === 'W') ? 0 : (u === 'K' ? 2 : 1); }
     function fmtIst(x) { if (x.it) { return x.it; } var v = num(x.ist); if (have(v)) { return de(v, dgOf(x.u)) + (x.u ? ' ' + x.u : ''); } return x.ist === undefined || x.ist === null ? '–' : String(x.ist); }
     function nextOf(x, bad, halt) {
-        var v = num(x.ist), n = {b: x.k, ist: have(v) ? r2(v) : null, s: have(x.soll) ? x.soll : null, u: x.u || ''};
+        var v = num(x.ist), n = {b: x.k, kz: x.kz || x.k, op: x.op || '', ist: have(v) ? r2(v) : null, s: have(x.soll) ? x.soll : null, u: x.u || ''};
         if (have(v) && have(x.soll)) {
             n.abstand = r2(x.op === '<=' ? v - x.soll : x.soll - v);
             n.text = 'würde schalten, sobald ' + x.t + ' (jetzt ' + fmtIst(x) + ', fehlen ' + de(Math.abs(n.abstand), dgOf(x.u)) + (x.u ? ' ' + x.u : '') + ')';
@@ -404,6 +404,7 @@ var ENGINE = (function () {
         var e = R.eval(d, c, rs);
         if (e.inaktiv) { rs.since = 0; rs.failSince = 0; endProp(e.inaktiv); res.st = 'inaktiv'; res.grund = e.inaktiv; return res; }
         var bad = e.cond.filter(function (x) { return !x.ok; });
+        res.bed = e.cond.map(function (x) { return [x.kz || x.k, x.ok ? 1 : 0, x.t]; });        // Bedingungen fuer die Anzeige (nicht im Datensatz)
         if (bad.length) {
             if (rs.prop) {                                                                  // laufender Vorschlag: erst nach 3 min am Stueck zurueckziehen (kein Flattern)
                 rs.failSince = rs.failSince || now;
@@ -421,7 +422,7 @@ var ENGINE = (function () {
             var held = (now - rs.since) / MIN;
             if (e.halt && held < e.halt) {
                 res.st = 'wartet'; res.grund = 'alle Bedingungen erfüllt, Haltezeit ' + Math.floor(held) + ' von ' + e.halt + ' min';
-                res.naechste = {b: 'haltezeit', ist: Math.floor(held), s: e.halt, abstand: e.halt - Math.floor(held), u: 'min', text: 'würde in ' + Math.ceil(e.halt - held) + ' min schalten, wenn alles so bleibt'};
+                res.naechste = {b: 'haltezeit', kz: 'Haltezeit', op: '>=', ist: Math.floor(held), s: e.halt, abstand: e.halt - Math.floor(held), u: 'min', text: 'würde in ' + Math.ceil(e.halt - held) + ' min schalten, wenn alles so bleibt'};
                 return res;
             }
         }
@@ -811,13 +812,13 @@ var ENGINE = (function () {
             var T = tot(sc, R.id, R.ver), days = T.since ? (S.last - T.since) / (24 * 60 * MIN) : 0;
             var skill = T.bsRef > 0 ? 1 - T.bs / T.bsRef : null;
             var crit = [
-                {k: 'faelle', ok: T.bewertet >= SCORE.reife.faelle, text: T.bewertet + ' von ' + SCORE.reife.faelle + ' bewerteten Fällen'},
-                {k: 'tage', ok: days >= SCORE.reife.tage, text: de(days, 1) + ' von ' + SCORE.reife.tage + ' Tagen'},
-                {k: 'skill', ok: have(skill) && skill >= SCORE.reife.skill, text: 'Brier-Skill ' + (have(skill) ? de(skill, 2) : '–') + ' (mindestens ' + de(SCORE.reife.skill, 1) + ')'},
-                {k: 'schaden', ok: T.schaden === 0, text: T.schaden + ' × Schaden'},
-                {k: 'verpasst', ok: T.verpasst <= SCORE.reife.verpasst, text: T.verpasst + ' × verpasst (höchstens ' + SCORE.reife.verpasst + ')'}
+                {k: 'faelle', ok: T.bewertet >= SCORE.reife.faelle, kurz: 'Fälle ' + T.bewertet + '/' + SCORE.reife.faelle, text: T.bewertet + ' von ' + SCORE.reife.faelle + ' bewerteten Fällen'},
+                {k: 'tage', ok: days >= SCORE.reife.tage, kurz: 'Tage ' + de(days, 1) + '/' + SCORE.reife.tage, text: de(days, 1) + ' von ' + SCORE.reife.tage + ' Tagen'},
+                {k: 'skill', ok: have(skill) && skill >= SCORE.reife.skill, kurz: 'Skill ' + (have(skill) ? de(skill, 2) : '–') + '/' + de(SCORE.reife.skill, 1), text: 'Brier-Skill ' + (have(skill) ? de(skill, 2) : '–') + ' (mindestens ' + de(SCORE.reife.skill, 1) + ')'},
+                {k: 'schaden', ok: T.schaden === 0, kurz: 'Schaden ' + T.schaden, text: T.schaden + ' × Schaden'},
+                {k: 'verpasst', ok: T.verpasst <= SCORE.reife.verpasst, kurz: 'Verpasst ' + T.verpasst + '/≤' + SCORE.reife.verpasst, text: T.verpasst + ' × verpasst (höchstens ' + SCORE.reife.verpasst + ')'}
             ];
-            if (R.art === 'befehl') { crit.push({k: 'wirkung', ok: T.wirkN - T.kalib >= SCORE.reife.wirkFaelle && T.wirkP > 0, text: (T.wirkN - T.kalib) + ' von ' + SCORE.reife.wirkFaelle + ' Wirkungsfällen (ohne Kalibrierung), ' + sg(T.wirkP, 0) + ' Punkte'}); }
+            if (R.art === 'befehl') { crit.push({k: 'wirkung', ok: T.wirkN - T.kalib >= SCORE.reife.wirkFaelle && T.wirkP > 0, kurz: 'Wirkung ' + (T.wirkN - T.kalib) + '/' + SCORE.reife.wirkFaelle, text: (T.wirkN - T.kalib) + ' von ' + SCORE.reife.wirkFaelle + ' Wirkungsfällen (ohne Kalibrierung), ' + sg(T.wirkP, 0) + ' Punkte'}); }
             out.push({regel: R.id, name: R.name, v: R.ver, art: R.art, punkte: T.punkte, faelle: T.faelle, bewertet: T.bewertet, treffer: T.treffer, fehlalarm: T.fehlalarm, neutral: T.neutral,
                       trefferquote: T.bewertet ? r2(T.treffer / T.bewertet) : null, fehlalarmquote: T.bewertet ? r2(T.fehlalarm / T.bewertet) : null, skill: r2(skill), schaden: T.schaden, verpasst: T.verpasst,
                       wirkung: {n: T.wirkN, kalib: T.kalib, punkte: T.wirkP}, tage: r2(days), reif: R.art === 'befehl' && crit.every(function (x) { return x.ok; }), kriterien: crit});
