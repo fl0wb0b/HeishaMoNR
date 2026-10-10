@@ -1100,22 +1100,24 @@ qs.hcKey = hcKey;
 // Zeitmessung ueber Startzeitpunkte (nicht ueber Aufrufe), Sperren und Wechselzeit werden in watcher-state.json gesichert (Neustart-fest), Eingaenge muessen frisch sein.
 var escEvents = [], escTxt = '–', escCls = '', escKey = '', escWhyTxt = '', escGateTxt = '', escRunMin = null, escDev = null;
 var ES = qs.esc = qs.esc || {};
-var ESD = {pDefiSince: 0, pTrigSince: 0, runKey: 0, prevRt: null, obsStart: 0, late: false, reached: null, reachSince: 0, reachSinceMin: 0, dropSince: 0, defiSince: 0, htrSince: 0, trigSince: 0, nearStop: false,
+var ESD = {capSince: 0, cappedAt: 0, pDefiSince: 0, pTrigSince: 0, runKey: 0, prevRt: null, obsStart: 0, late: false, reached: null, reachSince: 0, reachSinceMin: 0, dropSince: 0, defiSince: 0, htrSince: 0, trigSince: 0, nearStop: false,
            lastChg: 0, lastChgWhat: '', hcPrev: null, qPrev: null, blockUntil: 0, devHist: [], keyCand: 'ruhig', keySince: 0, keyShown: 'ruhig', runHc: null, runQ: null, saved: ''};
 Object.keys(ESD).forEach(function (k) { if (ES[k] === undefined) { ES[k] = ESD[k]; } });
 var escX = qn(Q.escReachMin, 120), escBand = qn(Q.escReachBandK, 1), escDropK = qn(Q.escDropK, 2), escDropMin = qn(Q.escDropMin, 30), escRoomMin = qn(Q.escRoomMin, 60),
     escGap = qn(Q.escMinGapMin, 60), escLock = qn(Q.escStartLockMin, 15), escMaxDev = qn(Q.escMaxDevK, 1), escWait = qn(Q.escWaitMin, 10), escTakt = qn(Q.escTaktMin, 30), escBlockH = qn(Q.escBlockH, 24),
-    escOver = qn(Q.escOvershootK, 2.5), escDebounce = 3, escCycleH = qn(Q.escCycleH, 12);
+    escOver = qn(Q.escOvershootK, 2.5), escDebounce = 3, escCycleH = qn(Q.escCycleH, 12), escCapHz = qn(Q.escCapHz, 20), escCapDevK = qn(Q.escCapDevK, 1.5), escCapMin = qn(Q.escCapMin, 10);
 var escHour = new Date(now).getHours(), escNight = escHour >= 22 || escHour < 7;
 var escLastRunEnd = 0; (qs.runs || []).forEach(function (r) { var e = r[0] + r[1] * MS_MIN; if (e > escLastRunEnd) { escLastRunEnd = e; } });
 var escLastStop = Math.max(qs.swStop || 0, escLastRunEnd), escCycling = escLastStop > 0 && now - escLastStop < escCycleH * 3600000;          // Takt-Phase: der Verdichter stand zuletzt vor weniger als 12 h (sonst Dauerlauf)
-var capHz = {3: 28, 2: 35, 1: 45};                                                                   // Annahme aus der Betreiberangabe (Quiet-Deckel in Hz), nicht gemessen
+// Quiet-Deckel in Hz. GEMESSEN ist nur Stufe 3: 10.10.2026 Boost (Soll 29 -> 38) blieb der Verdichter 15 min bei 16-17 Hz (300 W) mit 8 K Rueckstand; nach Quiet 3 -> 0 sofort 29 und 34 Hz (800 W, 4,7 kW thermisch).
+// Quiet 3 haelt den Verdichter also auf Minimum (kein "Bedarf unter Mindestleistung"). Stufen 2 und 1: weiter Annahme (nicht gemessen).
+var capHz = {2: 35, 1: 45};
 var escDataOk = freqRaw !== null && hpFresh;                                                         // Verdichterwert vorhanden und HeishaMon meldet noch
 var pd2 = function (x) { return (x < 10 ? '0' : '') + x; };
 var hd = function (ts) { var d0 = new Date(ts), n0 = new Date(now); return (d0.getDate() === n0.getDate() && d0.getMonth() === n0.getMonth() ? '' : pd2(d0.getDate()) + '.' + pd2(d0.getMonth() + 1) + '. ') + hhmm(ts); };
 var chgTxt = function (a0, b0) { if (a0 === null || a0 === undefined) { return b0 === null ? '?' : String(b0); } return (b0 === null || a0 === b0) ? String(a0) : a0 + '→' + b0; };
 var mins = function (since) { return since ? Math.floor((now - since) / MS_MIN) : 0; };
-function escReset() { ES.dropSince = 0; ES.defiSince = 0; ES.htrSince = 0; ES.trigSince = 0; ES.reachSince = 0; }
+function escReset() { ES.dropSince = 0; ES.defiSince = 0; ES.htrSince = 0; ES.trigSince = 0; ES.reachSince = 0; ES.capSince = 0; }
 function escRunEnd() {                                                                              // Lauf ist zu Ende (Stillstand beobachtet oder Laufzeit-Sprung): Zusammenfassung und Takt-Pruefung
     var obs = Math.round((now - ES.obsStart) / MS_MIN);
     escEvents.push(['lauf_ende', (ES.late ? 'beobachtet ' + obs + ' min (Beginn unbekannt)' : 'Lauf ' + Math.round(ES.prevRt || obs) + ' min') + ' · Sollvorlauf ' + (ES.reached !== null ? (ES.late ? 'erreicht (Zeit unbekannt)' : 'erreicht nach ' + ES.reached + ' min') : 'nicht erreicht')
@@ -1146,10 +1148,10 @@ if (!escDataOk) {
     var pRpm = hpv('Pump_Speed'), pDef = defrost || now - qs.lastDefrostEnd < qn(Q.afterDefrostMin, 10) * MS_MIN, pDhw = dhw || now - qs.lastDhwEnd < qn(Q.afterDhwMin, 10) * MS_MIN;
     if (sFresh && S.deficit) { ES.pDefiSince = carriedDefi || now; } else { ES.pDefiSince = 0; }
     var pWhy = [], pGate = [], pAct = null, pKeyNow = 'ruhig';
-    if (hcMode === 1 && ES.pDefiSince && mins(ES.pDefiSince) >= escRoomMin) { pWhy.push('Raum seit ' + mins(ES.pDefiSince) + ' min unter Minimum (' + (S.deficitRoom || '?') + ')'); }
+    if ((hcMode === 1 || (qNow !== null && qNow >= 1 && ES.cappedAt && now - ES.cappedAt < 6 * 3600000)) && ES.pDefiSince && mins(ES.pDefiSince) >= escRoomMin) { pWhy.push('Raum seit ' + mins(ES.pDefiSince) + ' min unter Minimum (' + (S.deficitRoom || '?') + ')'); }
     if (pWhy.length) {
         if (!ES.pTrigSince) { ES.pTrigSince = now; }
-        pAct = 'Heizregelung Efficiency → Comfort (in der Pause, wirkt ab dem nächsten Start)';
+        pAct = (qNow !== null && qNow >= 1 && ES.cappedAt && now - ES.cappedAt < 6 * 3600000) ? 'Quiet ' + qNow + ' → ' + (qNow - 1) + ' (in der Pause, wirkt ab dem nächsten Start; Verdichter hing zuletzt am Deckel)' : 'Heizregelung Efficiency → Comfort (in der Pause, wirkt ab dem nächsten Start)';
         if (pRpm === null) { pGate.push('Pumpendrehzahl unbekannt: kein Pausenfenster'); } else if (pRpm < 1000) { pGate.push('Pumpe steht (Heizgrenze): kein Pausenfenster'); }
         if (pDef) { pGate.push('Abtauen'); }
         if (pDhw) { pGate.push('Warmwasser'); }
@@ -1203,6 +1205,10 @@ if (!escDataOk) {
     if (ES.dropSince && mins(ES.dropSince) >= escDropMin) { escWhy.push('Vorlauf seit ' + mins(ES.dropSince) + ' min mehr als ' + f(escDropK, 0) + ' K unter Soll'); }
     if (ES.defiSince && mins(ES.defiSince) >= escRoomMin) { escWhy.push('Raum seit ' + mins(ES.defiSince) + ' min unter Minimum (' + (S.deficitRoom || '?') + ')'); }
     if (htrOn !== null && ES.htrSince && mins(ES.htrSince) >= Math.max(5, (htrDl === null ? 15 : htrDl) - 5)) { escWhy.push('Heizstab-Schwelle naht (Vorlauf ' + f(-escDev, 1) + ' K unter Soll seit ' + mins(ES.htrSince) + ' min, Heizstab ab ' + f(-Math.abs(htrSt), 0) + ' K nach ' + (htrDl === null ? 15 : htrDl) + ' min)'); }
+    // Verdichter am Quiet-Deckel: bleibt trotz Rueckstand zum Soll auf Minimum (Quiet >= 1, <= 20 Hz, Vorlauf mindestens 1,5 K unter Soll); nur dann bringt eine Quiet-Freigabe Leistung
+    var escCapped = qNow !== null && qNow >= 1 && freq > 0 && freq <= escCapHz && escDev !== null && escDev <= -escCapDevK && !escDef && !escDhw && escRunMin >= escLock;
+    if (escCapped) { ES.capSince = ES.capSince || now; ES.cappedAt = now; } else if (!(qNow !== null && qNow >= 1 && freq > 0 && freq <= escCapHz)) { ES.capSince = 0; }
+    var escCappedLong = ES.capSince > 0 && mins(ES.capSince) >= escCapMin;
     var escGate = [];
     if (escRunMin < escLock) { escGate.push('Startphase (' + Math.round(escRunMin) + ' von ' + escLock + ' min' + (ES.late ? ', Beginn unbekannt' : '') + ')'); }
     if (escDef) { escGate.push('Abtauen'); }
@@ -1211,21 +1217,22 @@ if (!escDataOk) {
     if (escDev === null) { escGate.push('Vorlauf unbekannt'); } else if (ES.nearStop) { escGate.push('Vorlauf ' + sg(escDev, 1) + ' K über Soll: Takt-Gefahr'); }
     if (ES.lastChg && now - ES.lastChg < escGap * MS_MIN) { escGate.push('Mindestabstand ' + escGap + ' min zum letzten Wechsel (noch ' + Math.ceil((escGap * MS_MIN - (now - ES.lastChg)) / MS_MIN) + ' min)'); }
     if (ES.blockUntil > now) { escGate.push('nach Takt durch Wechsel gesperrt bis ' + hd(ES.blockUntil)); }
-    if (escCycling && hcMode === 1) { escGate.push('Pausenfenster abwarten (Takt-Phase, Verdichter stand zuletzt vor ' + dur(now - escLastStop) + ')'); }
     var escAct = null, escKeyNow = 'ruhig', whyTxt = escWhy.join(' · ');
     if (escWhy.length) {
         if (!ES.trigSince) { ES.trigSince = now; }
         if (hcMode === null || (hcMode === 0 && qNow === null)) { escKeyNow = 'modus_unbekannt'; escCls = 'warn'; escTxt = 'Auslöser: ' + whyTxt + ' · ' + (hcMode === null ? 'Heizregelung' : 'Quiet-Stufe') + ' unbekannt, keine Aktion möglich'; }
+        else if (qNow !== null && qNow >= 1 && escCappedLong) { escAct = 'Quiet ' + qNow + ' → ' + (qNow - 1) + ' (Verdichter seit ' + mins(ES.capSince) + ' min bei ' + f(freq, 0, 'Hz') + ' am Deckel, Vorlauf ' + f(-escDev, 1) + ' K unter Soll)'; }
         else if (hcMode === 1) { escAct = 'Heizregelung Efficiency → Comfort'; }
         else if (qNow === 0) { escKeyNow = 'ausgeschoepft'; escCls = 'warn'; escTxt = 'Auslöser: ' + whyTxt + ' · Comfort und Quiet 0: keine weitere Stufe frei, die Leistung der Anlage reicht nicht'; }
         else if (capHz[qNow] !== undefined && freq >= capHz[qNow] - 3) { escAct = 'Quiet ' + qNow + ' → ' + (qNow - 1); }
         else { escKeyNow = 'ohne_wirkung'; escCls = ''; escTxt = 'Comfort aktiv, Auslöser: ' + whyTxt + ' · Quiet-Freigabe brächte nichts (Verdichter bei ' + f(freq, 0, 'Hz') + ', nicht am Deckel)'; }
     } else { ES.trigSince = 0; }
+    if (escAct !== null && /^Heizregelung/.test(escAct) && escCycling) { escGate.push('Pausenfenster abwarten (Takt-Phase, Verdichter stand zuletzt vor ' + dur(now - escLastStop) + ')'); }       // grober Hebel (Pumpe springt): in der Takt-Phase nur in der Pause
     if (escAct !== null) {
         escCls = 'warn';
         if (escGate.length) { escKeyNow = 'gesperrt'; escTxt = 'Auslöser: ' + whyTxt + ' → würde schalten: ' + escAct + ' · gesperrt: ' + escGate.join(' · '); }
         else if (mins(ES.trigSince) < escWait) { escKeyNow = 'wartet'; escTxt = 'Auslöser: ' + whyTxt + ' → ' + escAct + ' nach ' + escWait + ' min Wartezeit (seit ' + mins(ES.trigSince) + ' min)'; }
-        else { escKeyNow = 'schalten'; escTxt = 'Auslöser: ' + whyTxt + ' → würde jetzt schalten: ' + escAct + (hcMode === 1 && !escCycling ? ' · Dauerlauf: kein Pausenfenster, Wechsel mitten im Lauf' : '') + (escNight ? ' (Nacht: automatisch)' : ' (Tag: Vorschlag zur Bestätigung)'); }
+        else { escKeyNow = 'schalten'; escTxt = 'Auslöser: ' + whyTxt + ' → würde jetzt schalten: ' + escAct + (/^Heizregelung/.test(escAct) && !escCycling ? ' · Dauerlauf: kein Pausenfenster, Wechsel mitten im Lauf' : '') + (escNight ? ' (Nacht: automatisch)' : ' (Tag: Vorschlag zur Bestätigung)'); }
     } else if (!escWhy.length) {
         escCls = 'ok';
         escTxt = (hcMode === 1 ? 'Efficiency' : (hcMode === 0 ? 'Comfort' : 'Modus unbekannt')) + ' · kein Auslöser · ' + (ES.reached !== null ? (ES.late ? 'Sollvorlauf erreicht (Zeit unbekannt)' : 'Sollvorlauf erreicht nach ' + ES.reached + ' min') : 'läuft ' + Math.round(escRunMin) + ' min, Sollvorlauf noch nicht erreicht (Grenze ' + escX + ' min)');
