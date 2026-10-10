@@ -305,7 +305,12 @@ Je Minute eine Zeile. Beispiel aus dem Replay, Boost am 10.10., gekürzt:
 
 ## 6. Punktesystem (automatisch, ohne Nutzereingabe)
 
-Der Nutzer vergibt keine Punkte. Auch „Verwerfen“ ist keine Bewertung: der Bewertungsteil des Kerns kennt weder Klicks noch den Übernahme-Zustand, ein Test prüft das. Alle Regeln stehen vorab fest (`SCORE_VER` 1). Jede Änderung erhöht die Version, Punkte verschiedener Versionen bleiben getrennt.
+Der Nutzer vergibt keine Punkte. Auch „Verwerfen“ ist keine Bewertung: der Bewertungsteil des Kerns kennt weder Klicks noch den Übernahme-Zustand, ein Test prüft das. Alle Regeln stehen vorab fest (`SCORE_VER` 2, seit 10.10. abends; v1 bis dahin). Jede Änderung erhöht die Version, Punkte verschiedener Versionen bleiben getrennt:
+- Die Summen stehen je Regel, Regelversion und Bewertungsversion im Zustand (`regel|v1` = v1 unverändert, `regel|v1|s2` = v2). Alte Punkte werden nicht neu gerechnet; die Kachel und das Diagramm zeigen nur die aktuelle Version (Freigabereife und Tage zählen ab dem Wechsel neu).
+- Fälle und Wirkungsmessungen, die vor dem Wechsel begannen, werden mit ihrer Version zu Ende bewertet.
+- Nachrechnen mit den alten Regeln: `cfg.sv = 1` bzw. `node tools/engine_replay.js <Daten> --sv1`. Die Entscheidungen sind in beiden Versionen gleich, nur `sv` im Datensatz und die Bewertung unterscheiden sich (Test).
+
+**Änderung v1 → v2 (Entscheidung des Nutzers 10.10.):** „verpasst“ wird entschuldigt, wenn die Maschine nur wegen ihrer **eigenen**, im Regelwerk dokumentierten Sperren und Wartezeiten keinen Vorschlag machen durfte. Harte Schäden zählen trotzdem, damit Sperren keine Ausrede werden. Einzelheiten unter (4).
 
 **(1) Auslöser-Prognose je Fall.** Ein Fall ist eine Vorschlags- oder Hinweis-Episode einer Regel.
 - Jede Regel nennt vorab ihre Prognose mit Wahrscheinlichkeit *p*, z. B. Quiet-Freigabe: „Ohne Freigabe bleibt der Verdichter am Deckel (≤ 20 Hz) und der Rücklauf-Rückstand ≥ 1 K“, p = 0,8, Horizonte 30/60/120 min.
@@ -355,7 +360,24 @@ Nicht messbar zählt 0. **Kalibrierfälle** zählen 0 Punkte: Das sind die Messu
 | Raumeinfluss | Raum ≥ 0,5 K unter Minimum 180 min lang, kein Raum zu warm |
 | Laufzeit strecken | 10 min ≥ 22 Hz ohne Bedarf mit Abschaltung in ≤ 20 min |
 
-Sicherheits- und Datensperren entschuldigen. Die eigenen Grenzen der Regel (Tageslimit, Abstand, Wartezeit, Stabilität) entschuldigen nicht.
+Sicherheits- und Datensperren entschuldigen ganz (wie in v1).
+
+**Eigene Sperren (seit v2).** Eigene Sperren sind Mindestabstand (`gapMin` 60 min, z. B. nach Quiet von Hand), Tageslimit (`proTag`), Wartezeit nach einem Vorschlag (`pauseMin`), Haltezeit (`haltMin`) und Stabilitätszeit des Raumvorschlags (`stabilMin`).
+- Jede Minute der Lage ist entweder **frei** oder **gesperrt**. Gesperrt heißt: Alle Bedingungen der Regel sind erfüllt und nur eigene Sperren halten sie zurück. Beim Raumeinfluss reicht es auch, wenn nur die Stabilitätszeit fehlt.
+- **Verpasst** (−20) ist es erst, wenn die freien Minuten die Dauer der Lage erreichen (20/10/180 min). Ohne eigene Sperre ist das genau v1.
+- Lief die Dauer nur wegen eigener Sperren ab, entsteht ein Eintrag `verpasst_sperre`: **0 Punkte**, getrennt gezählt (`verpasstSperre`). Er zählt nicht für die Freigabereife und steht auf der Seite als Kennzahl „verpasst während Sperre“ in der Kachel.
+- **Nur Standardwerte entschuldigen.** Eine Minute zählt nur dann als gesperrt, wenn die Sperre auch mit dem dokumentierten Standardwert bestanden hätte. Ist ein Wert verlängert (z. B. `gapMin` 180), zählen die Minuten über den Standard hinaus als frei. Der Text nennt dann „über den Standardwert verlängert“.
+- **Harter Schaden hebt die Entschuldigung auf.** Tritt im Fenster ein Schaden ein, den ein rechtzeitiger Vorschlag verhindern sollte, ist es „verpasst“ (−20) mit `schaden: [...]`, auch wenn der neutrale Eintrag schon geschrieben war:
+
+  | Regel | harter Schaden im Fenster |
+  |---|---|
+  | Quiet-Freigabe | Raum mehr als 1 K unter Minimum (Komfortverlust über das Maß) |
+  | Laufzeit strecken | Verdichter stoppt (Takt), auch wenn der Stopp das Fenster beendet; Vorlauf ≥ Soll +3,25 K (Überschwingen) |
+  | Raumeinfluss | Raum mehr als 1 K unter Minimum |
+
+  1 K ist eine Annahme (die Lage selbst beginnt beim Raumeinfluss schon bei 0,5 K unter Minimum).
+- Ein Fenster kann erst neutral zählen und später zusätzlich „verpasst“ werden: wenn die Regel auch nach dem Ende der Sperre nicht vorschlägt oder ein Schaden eintritt.
+- Im Replay betrifft das genau einen Fall, Kinderzimmer oben am 09.10. ab 18:47. Er war nach v1 „verpasst“ (−20), nach v2 ist er „während Sperre“ (Stabilitätszeit, 0 Punkte). Siehe `docs/replay_2026-10-07_bis_10.md`.
 
 **Raumdaten in der Bewertung:** Werte bis 6 h Alter zählen, weil die Shelly H&T Gen3 nur bei ≥ 0,5 K Änderung melden. Die *Entscheidung* nutzt weiter das Datenalter-Limit des Raums (90 min).
 
@@ -363,7 +385,8 @@ Sicherheits- und Datensperren entschuldigen. Die eigenen Grenzen der Regel (Tage
 
 | Feld | Inhalt |
 |---|---|
-| `t`, `typ` | Zeit; Typ `ausloeser`, `wirkung`, `schaden`, `verpasst` oder `messaufgabe` |
+| `t`, `typ` | Zeit; Typ `ausloeser`, `wirkung`, `schaden`, `verpasst`, `verpasst_sperre` (seit v2, 0 Punkte) oder `messaufgabe` |
+| `sperre`, `schaden` | bei `verpasst`/`verpasst_sperre` (v2): eigene Sperren im Fenster, Schadensarten, die die Entschuldigung aufhoben |
 | `regel`, `v`, `sv` | Regel, Regelversion, Bewertungsversion |
 | `fall` | betroffener Fall |
 | `p`, `horizonte` | je Horizont: o, b, n, Punkte, Begründung |
@@ -371,7 +394,7 @@ Sicherheits- und Datensperren entschuldigen. Die eigenen Grenzen der Regel (Tage
 | `punkte`, `summe` | Punkte und laufende Summe |
 | `text` | Klartext |
 
-Die Karte „Punkte“ zeigt den Verlauf der Summen je Regel als Diagramm (`ui_chart.js`) und je Regel eine Kachel: Summe, Fälle mit Treffern und Fehlalarmen, Brier-Skill = 1 − ΣBS/ΣBS_ref, Wirkung (Kalibrierfälle getrennt), Schaden und Verpasst nur wenn > 0, Freigabereife. Die Wochenübersicht (ISO-Woche) steht weiter im Zustand und im Punktebuch, aber nicht mehr auf der Seite.
+Die Karte „Punkte“ zeigt den Verlauf der Summen je Regel als Diagramm (`ui_chart.js`) und je Regel eine Kachel: Summe, Fälle mit Treffern und Fehlalarmen, Brier-Skill = 1 − ΣBS/ΣBS_ref, Wirkung (Kalibrierfälle getrennt), Schaden und Verpasst nur wenn > 0, bei Befehlsregeln die Kennzahl „verpasst während Sperre“, Freigabereife. Die Wochenübersicht (ISO-Woche) steht weiter im Zustand und im Punktebuch, aber nicht mehr auf der Seite.
 
 **Freigabereife** ist nur eine Anzeige, die Freigabe entscheidet der Nutzer. Bedingungen:
 - ≥ 10 bewertete Fälle
@@ -485,7 +508,7 @@ Aufbau (Neufassung 10.10. abends):
 |---|---|
 | Entscheidungsmaschine | **Statuszeile** aus Chips: „Maschine läuft · hh:mm“ bzw. „Anlaufsperre bis …“, „keine HeishaMon-Daten“, „Maschine rechnet nicht“; Anlage kurz (Lauf · Hz · Quiet · Vorlauf-Abstand); Übernahme („🔒 Übernahme gesperrt“, „Übernahme frei: …“, „Übernommen …“, „wartet auf Bestätigung“); Warnung; „verworfen: …“. **Vorschlag** nur wenn einer da ist: hervorgehobener Kasten mit Regel, Was, Warum (eine Zeile mit Zahlen), Befehl, seit, gültig bis, Rückweg kurz; Erwartung und Rückweg-Text eingeklappt. **Knöpfe**: Übernehmen (deaktiviert mit Grund als Beschriftung), Verwerfen; Zurücksetzen nur bei aktiver Übernahme; Übernahme sperren nur wenn freigegeben |
 | Regeln | 4 Kacheln: Name, Status-Chip (Vorschlag/Hinweis, wartet, gesperrt, prüft, ruht, keine Daten), je Bedingung ein Segment (grün = erfüllt, Titel = Bedingung), eine Zeile mit dem Engpass und Balken: „Vorlauf-Rückstand 0,5 / 1,5 K“, „Haltezeit 4 / 10 min“, „🔒 Mindestabstand bis 09:38“, „seit 08:36 · gültig bis 09:06“ |
-| Punkte | Diagramm der Summen je Regel (nur wenn es Punkte gibt), 4 Kacheln (Summe, Fälle/Treffer/Fehlalarm, Skill, Wirkung, Schaden/Verpasst rot, Freigabereife n/m mit Balken, Kriterien eingeklappt), Messaufgabe Comfort/Efficiency als eine Zeile |
+| Punkte | Diagramm der Summen je Regel (nur wenn es Punkte gibt), 4 Kacheln (Summe, Fälle/Treffer/Fehlalarm, Skill, Wirkung, Schaden/Verpasst rot, Kennzahl „verpasst während Sperre“ (Befehlsregeln), Freigabereife n/m mit Balken, Kriterien eingeklappt), Messaufgabe Comfort/Efficiency als eine Zeile |
 | Entscheidungen | **Episoden** statt Minutenzeilen: je Regel von „alle Bedingungen erfüllt“ (wartet, gesperrt, Vorschlag/Hinweis) bis zum Ende, mit Verlauf als Chips und Ende-Grund; Dauerzustände („prüft“, „ruht“) und Datenlücken erzeugen keine Zeile, kurze „wartet“-Episoden unter 5 min ohne Sperre oder Vorschlag werden ausgeblendet; höchstens 12, neueste oben |
 
 **Vorschau ohne Dashboard:** `node tools/engine_ui_preview.js [Datenordner] [Ausgabe.html]` spielt die echten Protokolle durch den Kern und zeichnet vier Schnappschüsse (10.10. 08:38 mit Vorschlag; Replay-Ende; Hauptschalter an mit aktiver Übernahme; 5 Tage Kälte-Szenario mit Punkten) in eine HTML-Datei, die das Dashboard nachbildet (Gruppenbreite 966 px).
@@ -519,7 +542,7 @@ Der Beobachter schreibt nie an Anlage, NAS oder MQTT. Einen MQTT-Befundkanal zur
 | Befehl | Ergebnis (10.10.2026) |
 |---|---|
 | `cp "flows (26.5.1 stable).json" /tmp/x.json && python3 tools/optimizer_phase1.py /tmp/x.json && node tools/optimizer_sim.js /tmp/x.json` | **605 OK** (vorher 604; neu: Strukturprüfung des Sendewegs) |
-| `node tools/engine_sim.js /tmp/x.json [Datenordner]` | Kern, Sperren, Mehrtages-Modell, Punktesystem, Nachprüfung, Seite (Karten-Daten, Darstellung, Vorschau), Hüllen im vm, gesperrte Übernahme, Replay: **151 OK** mit Flow-Datei und Daten (ohne Flow-Datei 104) |
+| `node tools/engine_sim.js /tmp/x.json [Datenordner]` | Kern, Sperren, Mehrtages-Modell, Punktesystem, Nachprüfung, Seite (Karten-Daten, Darstellung, Vorschau), Hüllen im vm, gesperrte Übernahme, Replay: **162 OK** mit Flow-Datei und Daten (ohne Flow-Datei 115; neu in v2: Sperre entschuldigt, Schaden Komfort/Takt zählt, verlängerte Sperre entschuldigt nicht, v1 nachrechenbar, Versionswechsel, Replay v1/v2, Kachel) |
 | `BEOBACHTER_TMP=<ordner> python3 tools/bonsai_beobachter_test.py [Datenordner]` | **9 OK**, LLM nur als Mock |
 | `node tools/engine_replay.js <Datenordner> [Ausgabe]` und `--md` | Replay der echten Protokolle |
 
@@ -541,7 +564,7 @@ Jeder andere `mqtt out` sowie jeder Link- und HTTP-in-Knoten im Tab bleibt verbo
 **Kalte Außentemperatur, Abtauen, Heizstab.** Dafür gibt es keine Daten. Die Sperren sind vorsichtig gesetzt, aber ungeprüft.
 
 **Raumregel.** Sie hängt am Raumvorschlag der Phase 2. Der flackert, weil Kinderzimmer-Werte nach 90 min als ungültig gelten (die Shelly melden nur bei Änderung).
-- Im Replay entstand daraus ein „verpasst“: Kinderzimmer oben lag ab 09.10. 18:47 über 3 h ≥ 0,5 K unter Minimum.
+- Im Replay entstand daraus ein „verpasst“ (v1) bzw. „verpasst während Sperre“ (v2, Stabilitätszeit): Kinderzimmer oben lag ab 09.10. 18:47 über 3 h ≥ 0,5 K unter Minimum.
 - **Entscheidung des Nutzers:** Datenalter-Limit für die Gen3-Sensoren auf ~360 min setzen?
 
 **Laufzeit strecken.** Die Regel kam nie zum Zug. Bei mildem Wetter steht der Verdichter auch mit Quiet 0 und kleinem Rückstand am Minimum (10.10. 11:17). Kriterien und Erwartung stammen aus der Physik und einer Messung, nicht aus Fällen.
@@ -560,5 +583,7 @@ Jeder andere `mqtt out` sowie jeder Link- und HTTP-in-Knoten im Tab bleibt verbo
 - Rücklese-Timeout einer Übernahme, bei dem die Anlage nachweislich auf dem Ausgangswert blieb, ließ die Übernahme „aktiv“ stehen. Danach lehnte jeder weitere Klick für dieselbe Größe ab („schon eine Übernahme aktiv“), bei der Quiet-Freigabe ohne Ablaufzeit dauerhaft. Jetzt endet sie dort mit Warnung; bei einem dritten Ist-Wert bleibt sie aktiv (Zurücksetzen möglich).
 - Der Rückweg der Raumregel kam bei der ersten Minute mit Raumvorschlag 0. Der Raumvorschlag flackert (Kinderzimmer-Werte nach 90 min ungültig), eine Minute 0 hätte eine 60 min lang abgewartete Verschiebung zurückgenommen. Jetzt erst nach 15 min am Stück.
 - Heizstab- und Heizgrenze-Einstellungen galten nur 30 min nach der letzten HeishaMon-Meldung. Melden sie sich nur bei Änderung, wäre die Heizstab-Sperre still ausgefallen und der Heizgrenze-Hinweis „nicht zuständig“ geworden. Jetzt gilt der letzte Wert 24 h.
+
+**Bewertungsregeln v2 (10.10. abends).** Geänderte Knoten für den Deploy: `opt_engine`, `opt_apply` (Kern) und `opt_t_eng_prop`, `opt_t_eng_rules`, `opt_t_eng_score`, `opt_t_eng_log` (eingebettete Darstellung). Der Zustand bleibt erhalten; die v1-Summen bleiben unter ihrem Schlüssel stehen, Kachel und Diagramm beginnen für v2 bei 0. Die Grenze 1 K für „Komfortverlust über das Maß“ ist eine Annahme.
 
 **Zeitzone.** Wie im übrigen Optimierer ist sie die Ortszeit des Containers. Die Sim läuft mit Europe/Berlin, auch über die Zeitumstellung am 25.10.
