@@ -1093,8 +1093,9 @@ qs.hcKey = hcKey;
 
 // ---------- Eskalationswaechter (SCHATTEN, schaltet nichts): wann muesste Efficiency verlassen bzw. Quiet freigegeben werden?
 // Ausloeser: Sollvorlauf nach X min nicht erreicht · Vorlauf nach Erreichen laenger ueber 2 K unter Soll · Raum laenger unter Minimum · Heizstab-Schwelle naht.
-// Wechsel Efficiency <-> Comfort ist ein grober Hebel (Pumpe springt ca. +65 %): in der Takt-Phase (Verdichter stand in den letzten 12 h) nur in der PAUSE (Verdichter aus, Pumpe laeuft, wirkt ab dem naechsten Start),
-// im Dauerlauf (keine Pause, kaelteres Wetter) mitten im Lauf mit denselben strengen Sperren.
+// Nutzerregel (10.10.2026): Quiet bleibt auf 0, ausser man will die Laufzeit strecken; keine harte Regelung ueber Efficiency/Comfort, nur weil ein Raum waermer oder kaelter ist (der Wechsel
+// laesst die Pumpe im Lauf um ca. 65 % springen und aendert die Heizleistung nicht). Der Waechter schlaegt deshalb KEINEN Heizregelung-Wechsel mehr vor, sondern nur die Quiet-Freigabe (Quiet q -> q-1),
+// wenn der Verdichter trotz Rueckstand am Deckel haengt (Quiet 3 deckelt auf Minimum), und weist sonst nur darauf hin.
 // Sperren gegen Takt (aus den Logs): im Betrieb nicht kurz nach Start/Abtauen/Warmwasser/Sanftanlauf, nur wenn der Vorlauf hoechstens 1 K ueber Soll liegt (der Weg zu Comfort hebt ihn um ca. 0,5-1 K,
 // die Anlage schaltet bei mehr als +3 K ueber Soll ab), Mindestabstand zum letzten Wechsel. Geht der Verdichter nach einem Wechsel mit Ueberschwingen aus, wird das festgehalten und das automatische Schalten gesperrt.
 // Zeitmessung ueber Startzeitpunkte (nicht ueber Aufrufe), Sperren und Wechselzeit werden in watcher-state.json gesichert (Neustart-fest), Eingaenge muessen frisch sein.
@@ -1148,10 +1149,10 @@ if (!escDataOk) {
     var pRpm = hpv('Pump_Speed'), pDef = defrost || now - qs.lastDefrostEnd < qn(Q.afterDefrostMin, 10) * MS_MIN, pDhw = dhw || now - qs.lastDhwEnd < qn(Q.afterDhwMin, 10) * MS_MIN;
     if (sFresh && S.deficit) { ES.pDefiSince = carriedDefi || now; } else { ES.pDefiSince = 0; }
     var pWhy = [], pGate = [], pAct = null, pKeyNow = 'ruhig';
-    if ((hcMode === 1 || (qNow !== null && qNow >= 1 && ES.cappedAt && now - ES.cappedAt < 6 * 3600000)) && ES.pDefiSince && mins(ES.pDefiSince) >= escRoomMin) { pWhy.push('Raum seit ' + mins(ES.pDefiSince) + ' min unter Minimum (' + (S.deficitRoom || '?') + ')'); }
+    if ((qNow !== null && qNow >= 1 && ES.cappedAt && now - ES.cappedAt < 6 * 3600000) && ES.pDefiSince && mins(ES.pDefiSince) >= escRoomMin) { pWhy.push('Raum seit ' + mins(ES.pDefiSince) + ' min unter Minimum (' + (S.deficitRoom || '?') + ')'); }
     if (pWhy.length) {
         if (!ES.pTrigSince) { ES.pTrigSince = now; }
-        pAct = (qNow !== null && qNow >= 1 && ES.cappedAt && now - ES.cappedAt < 6 * 3600000) ? 'Quiet ' + qNow + ' → ' + (qNow - 1) + ' (in der Pause, wirkt ab dem nächsten Start; Verdichter hing zuletzt am Deckel)' : 'Heizregelung Efficiency → Comfort (in der Pause, wirkt ab dem nächsten Start)';
+        pAct = 'Quiet ' + qNow + ' → ' + (qNow - 1) + ' (in der Pause, wirkt ab dem nächsten Start; Verdichter hing zuletzt am Deckel)';
         if (pRpm === null) { pGate.push('Pumpendrehzahl unbekannt: kein Pausenfenster'); } else if (pRpm < 1000) { pGate.push('Pumpe steht (Heizgrenze): kein Pausenfenster'); }
         if (pDef) { pGate.push('Abtauen'); }
         if (pDhw) { pGate.push('Warmwasser'); }
@@ -1222,17 +1223,16 @@ if (!escDataOk) {
         if (!ES.trigSince) { ES.trigSince = now; }
         if (hcMode === null || (hcMode === 0 && qNow === null)) { escKeyNow = 'modus_unbekannt'; escCls = 'warn'; escTxt = 'Auslöser: ' + whyTxt + ' · ' + (hcMode === null ? 'Heizregelung' : 'Quiet-Stufe') + ' unbekannt, keine Aktion möglich'; }
         else if (qNow !== null && qNow >= 1 && escCappedLong) { escAct = 'Quiet ' + qNow + ' → ' + (qNow - 1) + ' (Verdichter seit ' + mins(ES.capSince) + ' min bei ' + f(freq, 0, 'Hz') + ' am Deckel, Vorlauf ' + f(-escDev, 1) + ' K unter Soll)'; }
-        else if (hcMode === 1) { escAct = 'Heizregelung Efficiency → Comfort'; }
+        else if (hcMode === 1) { escKeyNow = 'hinweis'; escCls = ''; escTxt = 'Auslöser: ' + whyTxt + ' · Efficiency bleibt: die Heizregelung wird nicht wegen eines Raums gewechselt (Verdichter bei ' + f(freq, 0, 'Hz') + ', nicht am Quiet-Deckel)'; }
         else if (qNow === 0) { escKeyNow = 'ausgeschoepft'; escCls = 'warn'; escTxt = 'Auslöser: ' + whyTxt + ' · Comfort und Quiet 0: keine weitere Stufe frei, die Leistung der Anlage reicht nicht'; }
         else if (capHz[qNow] !== undefined && freq >= capHz[qNow] - 3) { escAct = 'Quiet ' + qNow + ' → ' + (qNow - 1); }
         else { escKeyNow = 'ohne_wirkung'; escCls = ''; escTxt = 'Comfort aktiv, Auslöser: ' + whyTxt + ' · Quiet-Freigabe brächte nichts (Verdichter bei ' + f(freq, 0, 'Hz') + ', nicht am Deckel)'; }
     } else { ES.trigSince = 0; }
-    if (escAct !== null && /^Heizregelung/.test(escAct) && escCycling) { escGate.push('Pausenfenster abwarten (Takt-Phase, Verdichter stand zuletzt vor ' + dur(now - escLastStop) + ')'); }       // grober Hebel (Pumpe springt): in der Takt-Phase nur in der Pause
     if (escAct !== null) {
         escCls = 'warn';
         if (escGate.length) { escKeyNow = 'gesperrt'; escTxt = 'Auslöser: ' + whyTxt + ' → würde schalten: ' + escAct + ' · gesperrt: ' + escGate.join(' · '); }
         else if (mins(ES.trigSince) < escWait) { escKeyNow = 'wartet'; escTxt = 'Auslöser: ' + whyTxt + ' → ' + escAct + ' nach ' + escWait + ' min Wartezeit (seit ' + mins(ES.trigSince) + ' min)'; }
-        else { escKeyNow = 'schalten'; escTxt = 'Auslöser: ' + whyTxt + ' → würde jetzt schalten: ' + escAct + (/^Heizregelung/.test(escAct) && !escCycling ? ' · Dauerlauf: kein Pausenfenster, Wechsel mitten im Lauf' : '') + (escNight ? ' (Nacht: automatisch)' : ' (Tag: Vorschlag zur Bestätigung)'); }
+        else { escKeyNow = 'schalten'; escTxt = 'Auslöser: ' + whyTxt + ' → würde jetzt schalten: ' + escAct + '' + (escNight ? ' (Nacht: automatisch)' : ' (Tag: Vorschlag zur Bestätigung)'); }
     } else if (!escWhy.length) {
         escCls = 'ok';
         escTxt = (hcMode === 1 ? 'Efficiency' : (hcMode === 0 ? 'Comfort' : 'Modus unbekannt')) + ' · kein Auslöser · ' + (ES.reached !== null ? (ES.late ? 'Sollvorlauf erreicht (Zeit unbekannt)' : 'Sollvorlauf erreicht nach ' + ES.reached + ' min') : 'läuft ' + Math.round(escRunMin) + ' min, Sollvorlauf noch nicht erreicht (Grenze ' + escX + ' min)');

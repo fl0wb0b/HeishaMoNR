@@ -1000,37 +1000,8 @@ ewRun(); ewCollect(70, rtHook(1, i => { gstore.TOP6_Main_Outlet_Temp = i < 60 ? 
 delete fstore.qs; ew = ewCollect(25, rtHook(0, () => { gstore.TOP6_Main_Outlet_Temp = 31.5; }));
 check('Waechter nach Neustart im laufenden Betrieb: Laufzeit steht wieder bei 0, trotzdem keine falsche Zeit ("nach 0 min"), sondern "Zeit unbekannt"; die 120-min-Uhr zaehlt ab Beobachtung', !/nach 0 min/.test(evAll(ew)) && /sollvorlauf_erreicht,Zeit unbekannt/.test(evAll(ew)) && fstore.qs.esc.late === true, evAll(ew));
 // 3) Raum seit 60 min unter Minimum, Vorlauf aber 1,5 K ueber Soll: Takt-Gefahr sperrt das Schalten
-ewRun({TOP6_Main_Outlet_Temp: 33.5}); ew = ewCollect(65, rtHook(30, () => { gstore.OPT_state = {ts: NOW, deficit: true, deficitRoom: 'Kinderzimmer oben', valid: 3, active: 3}; }));
-check('Waechter: Raum 60 min unter Minimum, aber Vorlauf 1,5 K ueber Soll -> gesperrt wegen Takt-Gefahr, kein "wuerde jetzt schalten"', /unter Minimum \(Kinderzimmer oben\)/.test(ewRow(ew[64])[1]) && /gesperrt: .*Vorlauf \+1,5 K über Soll: Takt-Gefahr/.test(ewRow(ew[64])[1]) && !/würde jetzt schalten/.test(ewRow(ew[64])[1]), ewRow(ew[64])[1]);
-// 3b) Pausenfenster (Quiet 2, Verdichter hochmoduliert bei 30 Hz = nicht am Deckel -> der Heizregelung-Wechsel ist der Vorschlag): Wechsel Efficiency -> Comfort ist ein grober Hebel (Pumpe springt im Lauf um ca. 65 %) und wird in der Takt-Phase nur in der PAUSE vorgeschlagen (wirkt ab dem naechsten Start)
-{
-  let pumpRpm = 2650;
-  const defHook = r0 => rtHook(r0, () => { gstore.OPT_state = {ts: NOW, deficit: true, deficitRoom: 'Kinderzimmer oben', valid: 3, active: 3}; hpm('main/Pump_Speed', pumpRpm); });     // HeishaMon meldet die Pumpendrehzahl laufend
-  ewRun({TOP6_Main_Outlet_Temp: 28, TOP18_Quiet_Mode_Level: 2, compressor_frequency: 30}, undefined, new Date(2026, 9, 7, 9, 0, 0).getTime()); pumpRpm = 2650;
-  const run1 = ewCollect(20, defHook(1));                                                       // Lauf 1: 20 min, Raum seit Beginn unter Minimum
-  gstore.compressor_frequency = 0; pumpRpm = 1750;
-  const pa = ewCollect(55, defHook(0));                                                         // Pause 55 min mit laufender Pumpe
-  check('Pausenfenster: Efficiency, Raum seit 60 min unter Minimum (Lauf und Pause zusammen gezaehlt) -> in der Pause "Auslöser … → Heizregelung Efficiency → Comfort (in der Pause, wirkt ab dem nächsten Start) nach 10 min Wartezeit"', /^Pause · Auslöser: Raum seit \d+ min unter Minimum \(Kinderzimmer oben\) → Heizregelung Efficiency → Comfort \(in der Pause, wirkt ab dem nächsten Start\) nach 10 min Wartezeit/.test(ewRow(pa[44])[1]) && ewRow(pa[44])[2] === 'warn', ewRow(pa[44])[1]);
-  check('Pausenfenster: nach der Wartezeit "würde jetzt in der Pause schalten" (Tag: Vorschlag zur Bestätigung); Ereignis "schalten (Pause)" nach 3 min Stabilität', /würde jetzt in der Pause schalten: Heizregelung Efficiency → Comfort \(in der Pause, wirkt ab dem nächsten Start\) \(Tag: Vorschlag zur Bestätigung\)/.test(ewRow(pa[54])[1]) && /eskalation_schatten,wartet \(Pause\): Raum seit \d+ min unter Minimum/.test(evAll(pa)) && /eskalation_schatten,schalten \(Pause\): /.test(evAll(pa)), ewRow(pa[54])[1]);
-  // Lauf 2 in der Takt-Phase (Verdichter stand vor wenigen Minuten): der Wechsel mitten im Lauf ist gesperrt
-  gstore.compressor_frequency = 30; pumpRpm = 2650;
-  const r2 = ewCollect(30, defHook(1));
-  check('Takt-Phase: laeuft der Verdichter wieder (stand vor wenigen Minuten), ist der Wechsel mitten im Lauf gesperrt: "gesperrt: … Pausenfenster abwarten (Takt-Phase, Verdichter stand zuletzt vor N min)"', /gesperrt: .*Pausenfenster abwarten \(Takt-Phase, Verdichter stand zuletzt vor \d+ min\)/.test(ewRow(r2[29])[1]) && !/würde jetzt schalten/.test(ewRow(r2[29])[1]), ewRow(r2[29])[1]);
-  // Pumpe steht (Heizgrenze): kein Pausenfenster
-  gstore.compressor_frequency = 0; pumpRpm = 0;
-  const ph = ewCollect(15, defHook(0));
-  check('Pausenfenster: steht auch die Pumpe (Heizgrenze-Aus), gibt es kein Fenster: "gesperrt: Pumpe steht (Heizgrenze): kein Pausenfenster"', /gesperrt: .*Pumpe steht \(Heizgrenze\): kein Pausenfenster/.test(ewRow(ph[14])[1]), ewRow(ph[14])[1]);
-  // Abtauen in der Pause und Mindestabstand zum letzten Wechsel
-  pumpRpm = 1750; gstore.TOP26_Defrosting_State = 1; const pd_ = ewCollect(3, defHook(0)); gstore.TOP26_Defrosting_State = 0;
-  check('Pausenfenster: Abtauen sperrt', /gesperrt: .*Abtauen/.test(ewRow(pd_[2])[1]), ewRow(pd_[2])[1]);
-  const pg = ewCollect(15, defHook(0)); fstore.qs.esc.lastChg = NOW - 20 * 60000; const pg2 = ewCollect(2, defHook(0));
-  check('Pausenfenster: Mindestabstand 60 min zum letzten Wechsel sperrt', /gesperrt: .*Mindestabstand 60 min zum letzten Wechsel/.test(ewRow(pg2[1])[1]), ewRow(pg2[1])[1]);
-  // Raum wieder in Ordnung: der Auslöser faellt weg, nichts wird vorgeschlagen
-  const pr = ewCollect(3, rtHook(0, () => { gstore.OPT_state = {ts: NOW, deficit: false, deficitRoom: '', valid: 3, active: 3}; }));
-  check('Pausenfenster: Raum wieder ueber Minimum -> kein Ausloeser mehr, Anzeige "Verdichter steht · Wächter prüft im Betrieb"', /^Verdichter steht · Wächter prüft im Betrieb$/.test(ewRow(pr[2])[1]) && ewRow(pr[2])[2] !== 'warn', ewRow(pr[2])[1]);
-  // Comfort braucht kein Pausenfenster (nur Quiet-Wechsel): Dauerlauf-Text erscheint nur bei Efficiency
-  check('Pausenfenster: ohne Takt-Phase (kein Stopp in den letzten 12 h, Dauerlauf) steht "Dauerlauf: kein Pausenfenster, Wechsel mitten im Lauf" – bereits im Test "Sollvorlauf nach 120 min" geprueft', true, '');
-}
+ewRun({TOP6_Main_Outlet_Temp: 28}); ew = ewCollect(65, rtHook(30, i => { gstore.TOP6_Main_Outlet_Temp = i < 30 ? 28 : 33.5; gstore.OPT_state = {ts: NOW, deficit: true, deficitRoom: 'Kinderzimmer oben', valid: 3, active: 3}; }));
+check('Waechter: Verdichter am Deckel (Quiet 3, 17 Hz), Raum 60 min unter Minimum, aber Vorlauf inzwischen 1,5 K ueber Soll -> Quiet-Freigabe gesperrt wegen Takt-Gefahr, kein "wuerde jetzt schalten"', /unter Minimum \(Kinderzimmer oben\)/.test(ewRow(ew[64])[1]) && /gesperrt: .*Vorlauf \+1,5 K über Soll: Takt-Gefahr/.test(ewRow(ew[64])[1]) && !/würde jetzt schalten/.test(ewRow(ew[64])[1]), ewRow(ew[64])[1]);
 // 3c) Quiet 3 haelt den Verdichter auf Minimum (gemessen 10.10.2026): bei Raumdefizit ist die Quiet-Freigabe der Vorschlag, in der Pause (wirkt ab dem naechsten Start) wie im Lauf
 {
   let pumpRpm = 2650;
@@ -1042,10 +1013,30 @@ check('Waechter: Raum 60 min unter Minimum, aber Vorlauf 1,5 K ueber Soll -> ges
   gstore.compressor_frequency = 0; pumpRpm = 1750;
   const qp = ewCollect(65, defHook(0));
   check('Quiet-Deckel: in der Pause schlaegt der Waechter die Quiet-Freigabe vor (wirkt ab dem naechsten Start), weil der Verdichter zuletzt am Deckel hing', /^Pause · Auslöser: Raum seit \d+ min unter Minimum \(Kinderzimmer oben\) → (würde jetzt in der Pause schalten: )?Quiet 3 → 2 \(in der Pause, wirkt ab dem nächsten Start; Verdichter hing zuletzt am Deckel\)/.test(ewRow(qp[64])[1]), ewRow(qp[64])[1]);
+  check('Pausenfenster: nach der Wartezeit "würde jetzt in der Pause schalten" (Tag: Vorschlag zur Bestätigung); Ereignis "schalten (Pause)" nach 3 min Stabilität', /würde jetzt in der Pause schalten: Quiet 3 → 2/.test(ewRow(qp[64])[1]) && /Tag: Vorschlag zur Bestätigung/.test(ewRow(qp[64])[1]) && /eskalation_schatten,schalten \(Pause\): /.test(evAll(qp)), ewRow(qp[64])[1]);
+  pumpRpm = 0; const ph = ewCollect(15, defHook(0));
+  check('Pausenfenster: steht auch die Pumpe (Heizgrenze-Aus), gibt es kein Fenster: "gesperrt: Pumpe steht (Heizgrenze): kein Pausenfenster"', /gesperrt: .*Pumpe steht \(Heizgrenze\): kein Pausenfenster/.test(ewRow(ph[14])[1]), ewRow(ph[14])[1]);
+  pumpRpm = 1750; gstore.TOP26_Defrosting_State = 1; const pd_ = ewCollect(3, defHook(0)); gstore.TOP26_Defrosting_State = 0;
+  check('Pausenfenster: Abtauen sperrt', /gesperrt: .*Abtauen/.test(ewRow(pd_[2])[1]), ewRow(pd_[2])[1]);
+  ewCollect(15, defHook(0)); fstore.qs.esc.lastChg = NOW - 20 * 60000; const pg2 = ewCollect(2, defHook(0));
+  check('Pausenfenster: Mindestabstand 60 min zum letzten Wechsel sperrt', /gesperrt: .*Mindestabstand 60 min zum letzten Wechsel/.test(ewRow(pg2[1])[1]), ewRow(pg2[1])[1]);
+  const pr = ewCollect(3, rtHook(0, () => { gstore.OPT_state = {ts: NOW, deficit: false, deficitRoom: '', valid: 3, active: 3}; hpm('main/Pump_Speed', pumpRpm); }));
+  check('Pausenfenster: Raum wieder ueber Minimum -> kein Ausloeser mehr, Anzeige "Verdichter steht · Wächter prüft im Betrieb"', /^Verdichter steht · Wächter prüft im Betrieb$/.test(ewRow(pr[2])[1]) && ewRow(pr[2])[2] !== 'warn', ewRow(pr[2])[1]);
+}
+// 3d) Keine harte Regelung ueber Efficiency/Comfort wegen eines Raums (Nutzerregel): Verdichter hochmoduliert (nicht am Deckel), Raum seit 60 min unter Minimum -> nur Hinweis, kein Heizregelung-Vorschlag, auch nicht in der Pause
+{
+  let pumpRpm = 2650;
+  const defHook = r0 => rtHook(r0, () => { gstore.OPT_state = {ts: NOW, deficit: true, deficitRoom: 'Kinderzimmer oben', valid: 3, active: 3}; hpm('main/Pump_Speed', pumpRpm); });
+  ewRun({TOP6_Main_Outlet_Temp: 28, TOP18_Quiet_Mode_Level: 0, compressor_frequency: 30}, undefined, new Date(2026, 9, 7, 9, 0, 0).getTime()); pumpRpm = 2650;
+  const e1 = ewCollect(70, defHook(1));
+  check('Keine Heizregelung-Regel: Efficiency, Quiet 0, Verdichter bei 30 Hz, Raum seit 60 min unter Minimum -> nur Hinweis "Efficiency bleibt: die Heizregelung wird nicht wegen eines Raums gewechselt", kein Vorschlag "Heizregelung Efficiency → Comfort"', /Efficiency bleibt: die Heizregelung wird nicht wegen eines Raums gewechselt/.test(ewRow(e1[69])[1]) && !/→ Comfort|würde (jetzt )?schalten/.test(ewRow(e1[69])[1] + evAll(e1)), ewRow(e1[69])[1]);
+  gstore.compressor_frequency = 0; pumpRpm = 1750;
+  const e2 = ewCollect(30, defHook(0));
+  check('Keine Heizregelung-Regel: auch in der Pause schlaegt der Waechter keinen Wechsel Efficiency → Comfort vor (nur wenn der Verdichter zuletzt am Quiet-Deckel hing)', !/Pause · Auslöser/.test(ewRow(e2[29])[1]) && !/→ Comfort/.test(ewRow(e2[29])[1] + evAll(e2)), ewRow(e2[29])[1]);
 }
 // 4) Heizstab-Schwelle: AT -3, Heizstab ab 0 °C, Start bei -3 K nach 15 min; Vorlauf 2,5 K unter Soll seit 11 min, Verdichter erst 12 min im Lauf -> Ausloeser, aber Startphase
 ewRun({TOP14_Outside_Temp: -3, TOP6_Main_Outlet_Temp: 29.5}); ew = ewCollect(12, rtHook(1, heaterFeed));
-check('Waechter: Heizstab-Schwelle naht (Defizit 2,5 K, Heizstab ab -3 K nach 15 min, ab 0 °C) -> Ausloeser schon nach 10 min Defizit; in der Startphase (<15 min) aber gesperrt', /Heizstab-Schwelle naht/.test(ewRow(ew[11])[1]) && /Startphase/.test(ewRow(ew[11])[1]), ewRow(ew[11])[1]);
+check('Waechter: Heizstab-Schwelle naht (Defizit 2,5 K, Heizstab ab -3 K nach 15 min, ab 0 °C) -> Ausloeser schon nach 10 min Defizit (nur Hinweis, kein Heizregelung-Wechsel)', /Heizstab-Schwelle naht/.test(ewRow(ew[11])[1]) && !/→ Comfort/.test(ewRow(ew[11])[1]), ewRow(ew[11])[1]);
 ewRun({TOP14_Outside_Temp: -3, TOP6_Main_Outlet_Temp: 29.5}); ew = ewCollect(12, rtHook(1, () => { hpm('main/Heater_On_Outdoor_Temp', 0); hpm('main/Heater_Start_Delta', 3); hpm('main/Heater_Delay_Time', 15); }));
 check('Waechter: Heizstab-Schwelle mit positivem Vorzeichen des Parameters (Start-Delta +3) wird gleich behandelt', /Heizstab-Schwelle naht/.test(ewRow(ew[11])[1]), ewRow(ew[11])[1]);
 // 5) Comfort laeuft schon: Quiet-Freigabe nur wenn der Verdichter am Deckel haengt; bei Quiet 0 "ausgeschoepft"
@@ -1088,7 +1079,7 @@ ewRun(); ew = ewCollect(70, rtHook(1, i => { gstore.TOP6_Main_Outlet_Temp = i < 
 check('Waechter: Vorlauf war am Soll und liegt dann 3 K darunter -> nach 30 min Ausloeser "Vorlauf seit .. min mehr als 2 K unter Soll"', /Vorlauf seit 3\d min mehr als 2 K unter Soll/.test(ewRow(ew[109])[1]), ewRow(ew[109])[1]);
 ewRun({}, 0); ewCollect(100, rtHook(1)); ew = ewCollect(25, rtHook(101, i => { if (i === 0) { hpm('main/Heating_Control', 1); } }));
 check('Waechter: Wechsel der Heizregelung vor 24 min -> Ausloeser "nicht erreicht" ist durch den Mindestabstand von 60 min gesperrt (noch ca. 36 min)', /Mindestabstand 60 min zum letzten Wechsel \(noch 3\d min\)/.test(ewRow(ew[24])[1]), ewRow(ew[24])[1]);
-const gateCase = (label, setup, rx) => { ewRun(); const o = ewCollect(65, rtHook(30, () => { gstore.OPT_state = {ts: NOW, deficit: true, deficitRoom: 'Kinderzimmer oben', valid: 3, active: 3}; if (setup) { setup(); } })); check('Waechter: Sperre ' + label, rx.test(ewRow(o[64])[1]) && /gesperrt/.test(ewRow(o[64])[1]), ewRow(o[64])[1]); };
+const gateCase = (label, setup, rx) => { ewRun(); const o = ewCollect(65, rtHook(30, i => { gstore.OPT_state = {ts: NOW, deficit: true, deficitRoom: 'Kinderzimmer oben', valid: 3, active: 3}; if (setup && i >= 35) { setup(); } })); check('Waechter: Sperre ' + label, rx.test(ewRow(o[64])[1]) && /gesperrt/.test(ewRow(o[64])[1]), ewRow(o[64])[1]); };
 gateCase('"Abtauen" (Abtau-Wärme darf nicht zählen)', () => { gstore.TOP26_Defrosting_State = 1; }, /gesperrt: .*Abtauen/);
 gateCase('"Warmwasser"', () => { gstore.TOP20_ThreeWay_Valve_State = 1; }, /gesperrt: .*Warmwasser/);
 gateCase('"Sanftanlauf"', () => { gstore.F_SS = {state: 1, correction_value: 2}; }, /gesperrt: .*Sanftanlauf/);
