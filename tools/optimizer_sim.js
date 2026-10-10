@@ -23,6 +23,11 @@ const fsMock = {
   chmodSync: (p, mode) => { if (files[p]) { files[p].mode = mode; } },
 };
 const sent = [];
+// Ein-Klick-Uebernahme des Optimierers (tools/engine_core.js, GESPERRT ausgeliefert): GENAU dieser eine mqtt-out-Knoten im Tab ist erlaubt. Er wird nur von
+// opt_apply gespeist (Klick in der Karte "Aktueller Vorschlag" bzw. 15-s-Takt), ist standardmaessig deaktiviert und nutzt einen eigenen Broker-Client.
+// Jeder andere Sendeweg bleibt verboten (Pruefung "Uebernahme-Pfad" unten; Verhalten des Pfads in tools/engine_sim.js).
+const APPLY_OUT = 'opt_apply_mqtt';
+const otherOut = n => n.z === 'opt_tab' && n.type === 'mqtt out' && n.id !== APPLY_OUT;
 const gfile = {};                                                              // Speicher "file" (HeishaMoNR legt dort Anlagenwerte ab); normalerweise leer -> Rueckfall auf den Standardspeicher
 function makeCtx(store, fileStore) { return { get: (k, s) => (s === 'file' ? (fileStore ? fileStore[k] : undefined) : store[k]), set: (k, v) => { store[k] = v; } }; }
 const compiled = {};
@@ -824,9 +829,16 @@ check('Aenderung des WP-eigenen Quiet-Zeitplans wird protokolliert', r && r.payl
 check('andere Befehle und gleiche Werte erzeugen nichts', hpmsg('commands/SetZ1HeatRequestTemperature', 3) === null && hpmsg('main/Quiet_Mode_Level', 1) === null, '');
 // Es gibt keinen Weg, die Stufe zu schalten
 const flowsQ = JSON.parse(fs.readFileSync(flowsFile, 'utf8'));
-check('Sicherheit: im Optimierer-Tab gibt es keinen MQTT-Ausgang', flowsQ.filter(n => n.z === 'opt_tab' && n.type === 'mqtt out').length === 0, '');
-check('Sicherheit: nur der Waechter kennt "SetQuietMode" (lesend), keine andere Funktion sendet ein Kommando', flowsQ.filter(n => n.id.startsWith('opt_') && n.type === 'function' && /SetQuietMode|commands\//.test(n.func || '')).map(n => n.id).join() === 'opt_hp_in', flowsQ.filter(n => n.id.startsWith('opt_') && n.type === 'function' && /SetQuietMode|commands\//.test(n.func || '')).map(n => n.id).join());
-check('Sicherheit: Abonnements nur lesend: Anlagenwerte und genau die Befehle Quiet, Quiet-Prioritaet, Heizregelung, Pumpenmodus, max. Pumpenleistung (nur mitlesen, wer sie schickt); eigener Client im NAS-Broker, kein mqtt out im Tab', flowsQ.filter(n => n.z === 'opt_tab' && n.type === 'mqtt in' && /^opt_mqtt_hp_/.test(n.id)).map(n => n.topic).join() === 'panasonic_heat_pump/main/+,panasonic_heat_pump/extra/+,panasonic_heat_pump/commands/SetQuietMode,panasonic_heat_pump/commands/SetHeatingControl,panasonic_heat_pump/commands/SetPumpFlowrateMode,panasonic_heat_pump/commands/SetMaxPumpDuty,panasonic_heat_pump/commands/SetQuietModePriority' && !flowsQ.some(n => n.z === 'opt_tab' && n.type === 'mqtt out'), '');
+check('Sicherheit: im Optimierer-Tab gibt es keinen MQTT-Ausgang ausser dem gesperrten Uebernahme-Knoten', flowsQ.filter(otherOut).length === 0, '');
+check('Sicherheit: "SetQuietMode"/commands kennen nur der Waechter (lesend), die Entscheidungsmaschine (Vorschlagstext, ohne Ausgang zur Anlage) und die gesperrte Uebernahme', flowsQ.filter(n => n.id.startsWith('opt_') && n.type === 'function' && /SetQuietMode|commands\//.test(n.func || '')).map(n => n.id).sort().join() === 'opt_apply,opt_engine,opt_hp_in', flowsQ.filter(n => n.id.startsWith('opt_') && n.type === 'function' && /SetQuietMode|commands\//.test(n.func || '')).map(n => n.id).join());
+{ // Uebernahme-Pfad: genau ein mqtt out, deaktiviert ausgeliefert, nur von opt_apply erreichbar, eigener Broker-Client; opt_engine fuehrt nicht dorthin
+  const outs = flowsQ.filter(n => n.z === 'opt_tab' && n.type === 'mqtt out'), ap = flowsQ.find(n => n.id === 'opt_apply'), en = flowsQ.find(n => n.id === 'opt_engine'), br = flowsQ.find(n => n.id === 'opt_broker_cmd');
+  const feeders = flowsQ.filter(n => (n.wires || []).some(w => w.indexOf(APPLY_OUT) >= 0)).map(n => n.id), toApply = flowsQ.filter(n => (n.wires || []).some(w => w.indexOf('opt_apply') >= 0)).map(n => n.id).sort();
+  check('Sicherheit (Uebernahme-Pfad): genau ein mqtt out im Tab (opt_apply_mqtt), deaktiviert ausgeliefert, gespeist nur von opt_apply, Eingaenge nur Karte + Takt, eigener Broker-Client, opt_engine hat keinen Weg dorthin',
+        outs.length === 1 && outs[0].id === APPLY_OUT && outs[0].d === true && JSON.stringify(feeders) === '["opt_apply"]' && JSON.stringify(toApply) === '["opt_i_apply","opt_t_eng_prop"]' && JSON.stringify(ap.wires[0]) === '["opt_apply_mqtt"]' && br && br.clientid === 'nodered-optimizer-cmd' && outs[0].broker === 'opt_broker_cmd' && !en.wires.some(w => w.indexOf(APPLY_OUT) >= 0 || w.indexOf('opt_apply') >= 0),
+        JSON.stringify({outs: outs.map(n => n.id + (n.d ? '(aus)' : '(AN)')), feeders: feeders, toApply: toApply}));
+}
+check('Sicherheit: Abonnements nur lesend: Anlagenwerte und genau die Befehle Quiet, Quiet-Prioritaet, Heizregelung, Pumpenmodus, max. Pumpenleistung (nur mitlesen, wer sie schickt); eigener Client im NAS-Broker, kein mqtt out im Tab', flowsQ.filter(n => n.z === 'opt_tab' && n.type === 'mqtt in' && /^opt_mqtt_hp_/.test(n.id)).map(n => n.topic).join() === 'panasonic_heat_pump/main/+,panasonic_heat_pump/extra/+,panasonic_heat_pump/commands/SetQuietMode,panasonic_heat_pump/commands/SetHeatingControl,panasonic_heat_pump/commands/SetPumpFlowrateMode,panasonic_heat_pump/commands/SetMaxPumpDuty,panasonic_heat_pump/commands/SetQuietModePriority' && !flowsQ.some(otherOut), '');
 // Heizregelung / Pumpe: Status-Aenderungen und mitgelesene Befehle werden als Ereignis festgehalten (Grundlage fuer den spaeteren Comfort/Efficiency-Vergleich)
 { world({}); hpmsg('main/Heating_Control', 0); hpmsg('main/Pump_Flowrate_Mode', 0); hpmsg('main/Max_Pump_Duty', 254); hpmsg('main/Heat_Delta', 3);
   const ev1 = hpmsg('main/Heating_Control', 1), ev2 = hpmsg('main/Pump_Flowrate_Mode', 1), ev3 = hpmsg('main/Max_Pump_Duty', 200), ev4 = hpmsg('main/Heat_Delta', 4), ev0 = hpmsg('main/Heating_Control', 1);
@@ -864,7 +876,7 @@ rr = run1(2, () => { gstore.TOP6_Main_Outlet_Temp = 31.5; });
 check('Vorlauf wieder nahe Soll (< 1 K Abweichung): Warnung weg', qrow(rr.o, 'Heizregelung')[1] === 'Efficiency · keine Warnung', qrow(rr.o, 'Heizregelung')[1]);
 world({TOP14_Outside_Temp: 12}); hpmsg('main/Heating_Control', 1); gstore.OPT_state = {ts: NOW, deficit: true, deficitRoom: 'Kinderzimmer unten'}; rr = run1(1, () => { gstore.OPT_state.ts = NOW; });
 check('Raum unter Minimum: Warnung nennt den Raum', /Raum unter Minimum: Kinderzimmer unten/.test(qrow(rr.o, 'Heizregelung')[1]), qrow(rr.o, 'Heizregelung')[1]);
-check('Empfehlung schaltet nichts: kein Befehl, nur OPT_*-Werte und Ereignisdatei', sent.every(x => !/Heating|Command|mqtt/i.test(x.id + JSON.stringify(x.m || ''))) && !JSON.parse(fs.readFileSync(flowsFile, 'utf8')).some(n => n.z === 'opt_tab' && n.type === 'mqtt out'), '');
+check('Empfehlung schaltet nichts: kein Befehl, nur OPT_*-Werte und Ereignisdatei', sent.every(x => !/Heating|Command|mqtt/i.test(x.id + JSON.stringify(x.m || ''))) && !JSON.parse(fs.readFileSync(flowsFile, 'utf8')).some(otherOut), '');
 // getrennte Statistik
 world({TOP14_Outside_Temp: 5, compressor_frequency: 20, compressor_runtime: 40}); hpmsg('main/Heating_Control', 0); run1(5);
 hpmsg('main/Heating_Control', 1); rr = run1(5); const kfC = fstore.qs.kf['3|2'], kfE = fstore.qs.kfE['3|2'];
@@ -1128,7 +1140,7 @@ check('Eingaenge: ohne Speicher "file" (Normalfall auf der NAS) gilt der Standar
 {
   const nodes = JSON.parse(fs.readFileSync(flowsFile, 'utf8')), tabN = nodes.filter(n => n.z === 'opt_tab'), qf = nodes.find(n => n.id === 'opt_quiet'), hpf = nodes.find(n => n.id === 'opt_hp_in');
   const allowedQ = new Set(['opt_t_quiet', 'opt_t_qstats', 'opt_f_quiet', 'opt_f_qev', 'opt_f_def']);
-  check('Sicherheit: im Tab "WP Optimizer" gibt es keinen mqtt-out-, link-in/out- oder http-in-Knoten, der etwas an die Waermepumpe tragen koennte (nur http request fuer OWM)', tabN.every(n => !['mqtt out', 'link out', 'link in', 'link call', 'http in', 'http response'].includes(n.type)), tabN.filter(n => ['mqtt out', 'link out', 'link in', 'link call'].includes(n.type)).map(n => n.id).join(','));
+  check('Sicherheit: im Tab "WP Optimizer" gibt es keinen mqtt-out-, link-in/out- oder http-in-Knoten, der etwas an die Waermepumpe tragen koennte (nur http request fuer OWM)', tabN.every(n => n.id === APPLY_OUT || !['mqtt out', 'link out', 'link in', 'link call', 'http in', 'http response'].includes(n.type)), tabN.filter(n => n.id !== APPLY_OUT && ['mqtt out', 'link out', 'link in', 'link call'].includes(n.type)).map(n => n.id).join(','));
   check('Sicherheit: opt_quiet und opt_hp_in rufen nirgends node.send auf; alle Ausgaenge von opt_quiet gehen nur an Anzeige-Vorlagen und Datei-Knoten', !/node\.send\s*\(/.test(qf.func) && !/node\.send\s*\(/.test(hpf.func) && qf.wires.every(w => w.every(id => allowedQ.has(id))), JSON.stringify(qf.wires));
 }
 check('Abtauprotokoll nur lesend: die Funktion sendet nichts an die Waermepumpe, nur Datei-Ausgabe (Ausgang 5)', JSON.parse(fs.readFileSync(flowsFile, 'utf8')).find(n => n.id === 'opt_quiet').wires[4].join() === 'opt_f_def' && sent.every(x => x.id !== 'opt_quiet' || !x.m || !x.m.topic), '');
@@ -1308,9 +1320,9 @@ check('Prognosegueete: PV bleibt bei Nacht (0 W real, 0 W Prognose) ausgenommen,
 fo = fqWorld(1000, 1500, 7, 3, m => { if (m === 30) { gstore.OPT_weather = {status: 'Fehler', ts: NOW}; } });
 check('Prognosegueete: ohne frische OWM-Daten keine Temperaturprognose im Schnappschuss, kein Absturz', Array.isArray(fo[4].payload.rows) && fqrow(fo, 'Außentemperatur +1 h') !== undefined, fqrow(fo, 'Außentemperatur +1 h'));
 const nonOptFq = Object.keys(gstore).filter(k => !k.startsWith('OPT_') && JSON.stringify(gstore[k]) !== JSON.stringify(BASEQ()[k]) && k !== 'TOP14_Outside_Temp');
-check('Prognosegueete: nur Anzeige, es werden nur OPT_*-Werte geschrieben, kein MQTT', nonOptFq.length === 0 && sent.every(x => x.id !== 'opt_hp_in' || true) && !JSON.parse(fs.readFileSync(flowsFile, 'utf8')).some(n => n.z === 'opt_tab' && n.type === 'mqtt out'), nonOptFq.join());
+check('Prognosegueete: nur Anzeige, es werden nur OPT_*-Werte geschrieben, kein MQTT', nonOptFq.length === 0 && sent.every(x => x.id !== 'opt_hp_in' || true) && !JSON.parse(fs.readFileSync(flowsFile, 'utf8')).some(otherOut), nonOptFq.join());
 const fl = JSON.parse(fs.readFileSync(flowsFile, 'utf8'));
-check('Sicherheit: Venus nur abonniert (System und Batterie 278), evcc nur 3 Abonnements, weiterhin kein MQTT-Ausgang im Tab', fl.filter(n => n.z === 'opt_tab' && n.type === 'mqtt in' && /^opt_mqtt_en/.test(n.id)).map(n => n.broker + ':' + n.topic).join() === 'opt_broker_venus:N/+/system/0/#,opt_broker_nas:evcc/site/+,opt_broker_nas:evcc/site/forecast/+,opt_broker_nas:evcc/site/battery/soc,opt_broker_venus:N/+/battery/278/Soc' && fl.filter(n => n.z === 'opt_tab' && n.type === 'mqtt out').length === 0, '');
+check('Sicherheit: Venus nur abonniert (System und Batterie 278), evcc nur 3 Abonnements, weiterhin kein MQTT-Ausgang im Tab', fl.filter(n => n.z === 'opt_tab' && n.type === 'mqtt in' && /^opt_mqtt_en/.test(n.id)).map(n => n.broker + ':' + n.topic).join() === 'opt_broker_venus:N/+/system/0/#,opt_broker_nas:evcc/site/+,opt_broker_nas:evcc/site/forecast/+,opt_broker_nas:evcc/site/battery/soc,opt_broker_venus:N/+/battery/278/Soc' && fl.filter(otherOut).length === 0, '');
 check('Sicherheit: VRM-Zugangsdaten nur ueber das Formular, Datei 0600 (Code nutzt mode 0o600)', /mode: 0o600/.test(fl.find(n => n.id === 'opt_vrm_save').func) && /chmodSync\(file, 0o600\)/.test(fl.find(n => n.id === 'opt_vrm_save').func), '');
 })();
 
@@ -1617,7 +1629,7 @@ check('Gesamtweg: Batterie-SoC wird angezeigt, aber nichts daraus entschieden', 
 // ---- 10) Sicherheit: nur Anzeige und Protokoll
 const flp = JSON.parse(fs.readFileSync(flowsFile, 'utf8'));
 const pn_ = flp.find(n => n.id === 'opt_plan');
-check('Sicherheit: der Plan hat nur Ausgaenge zur Anzeige und zu Protokolldateien, kein MQTT, nichts zur Waermepumpe', pn_.wires.flat().every(id => ['opt_t_plan', 'opt_f_pact', 'opt_f_peval', 'opt_f_psnap'].includes(id)) && !flp.some(n => n.z === 'opt_tab' && n.type === 'mqtt out') && !/SetQuietMode|SetOperationMode|node\.send/.test(pn_.func), pn_.wires.flat().join());
+check('Sicherheit: der Plan hat nur Ausgaenge zur Anzeige und zu Protokolldateien, kein MQTT, nichts zur Waermepumpe', pn_.wires.flat().every(id => ['opt_t_plan', 'opt_f_pact', 'opt_f_peval', 'opt_f_psnap'].includes(id)) && !flp.some(otherOut) && !/SetQuietMode|SetOperationMode|node\.send/.test(pn_.func), pn_.wires.flat().join());
 const nonOptPlan = Object.keys(gstore).filter(k => !k.startsWith('OPT_') && JSON.stringify(gstore[k]) !== JSON.stringify(({Z1_Heat_Curve_Outside_Low_Temp: -13, Z1_Heat_Curve_Outside_High_Temp: 11, Z1_Heat_Curve_Target_Low_Temp: 29, Z1_Heat_Curve_Target_High_Temp: 38, compressor_frequency: 0, TOP26_Defrosting_State: 0, TOP20_ThreeWay_Valve_State: 0})[k]) && k !== 'TOP14_Outside_Temp');
 check('Sicherheit: der Plan schreibt nur OPT_*-Werte (Heizkurve, Quiet und Warmwasser bleiben unberuehrt)', nonOptPlan.length === 0, nonOptPlan.join());
 check('Dateien: Ist, Vergleich, Schnappschuesse und Zustand unter /data/optimizer, Plan-Zustand ohne Zugangsdaten', !/token|appid|key/i.test(files['/data/optimizer/plan-state.json'].data), Object.keys(files).filter(k => /plan/.test(k)).join());
@@ -1932,7 +1944,7 @@ const flowsK = JSON.parse(fs.readFileSync(flowsFile, 'utf8'));
 const subs = flowsK.filter(n => n.z === 'opt_tab' && n.type === 'mqtt in' && /^opt_mqtt_kz_/.test(n.id));
 check('Kinderzimmer: genau fuenf lesende Abos auf dem Venus/Shelly-Broker (Radiator-Ereignisse und online, Heizluefter relay/0, Leistung, online), alle nur an opt_kz_in', subs.map(n => n.topic).join() === 'shelly-radiator/events/rpc,shelly-radiator/online,shellies/shellyplug-s-heiz/relay/0,shellies/shellyplug-s-heiz/relay/0/power,shellies/shellyplug-s-heiz/online' && subs.every(n => n.broker === 'opt_broker_venus' && JSON.stringify(n.wires) === '[["opt_kz_in"]]'), subs.map(n => n.topic).join());
 const kzn = flowsK.find(n => n.id === 'opt_kz_in');
-check('Sicherheit: opt_kz_in ruft nirgends node.send auf, hat nur den Ausgang zur Ereignisdatei, und im Tab gibt es weiterhin keinen mqtt-out-, link- oder http-in-Knoten', !/node\.send\s*\(/.test(kzn.func) && JSON.stringify(kzn.wires) === '[["opt_f_qev"]]' && flowsK.filter(n => n.z === 'opt_tab').every(n => !['mqtt out', 'link out', 'link in', 'link call', 'http in', 'http response'].includes(n.type)), JSON.stringify(kzn.wires));
+check('Sicherheit: opt_kz_in ruft nirgends node.send auf, hat nur den Ausgang zur Ereignisdatei, und im Tab gibt es weiterhin keinen mqtt-out-, link- oder http-in-Knoten', !/node\.send\s*\(/.test(kzn.func) && JSON.stringify(kzn.wires) === '[["opt_f_qev"]]' && flowsK.filter(n => n.z === 'opt_tab').every(n => n.id === APPLY_OUT || !['mqtt out', 'link out', 'link in', 'link call', 'http in', 'http response'].includes(n.type)), JSON.stringify(kzn.wires));
 // ---- Radiator (Shelly 1 Mini Gen3): NotifyStatus
 world();
 let r = kz('shelly-radiator/events/rpc', {src: 'shelly1minig3-x', dst: 'shelly-radiator/events', method: 'NotifyStatus', params: {ts: 1791571080, 'switch:0': {counts: {on_time: 116250, switch_on: 66}}}});

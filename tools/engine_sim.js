@@ -280,8 +280,199 @@ if (fs.existsSync(path.join(dataDir, 'quiet-2026-10.csv'))) {
     check('Datensatzgroesse: unter 2,2 MB je Tag (ca. 60 MB/Monat)', RP.bytes / (RP.inputs.length / 1440) < 2.2e6, Math.round(RP.bytes / (RP.inputs.length / 1440)) + ' Bytes/Tag');
 }
 
-module.exports = {check: check, inp: inp, rooms: rooms, runSeq: runSeq, plantSim: plantSim, T0: T0};
+// ================================================================== (c) Node-RED-Huellen (opt_engine, opt_apply) und gesperrte Uebernahme, mit der erzeugten Flow-Datei
+function applyPathProblems(nodes) {                                              // Strukturregeln des Sendewegs (wie in optimizer_sim.js), hier auch fuer verfaelschte Kopien
+    const P = [], tab = nodes.filter(n => n.z === 'opt_tab'), outs = tab.filter(n => n.type === 'mqtt out');
+    if (outs.length !== 1 || outs[0].id !== 'opt_apply_mqtt') { P.push('mqtt out im Tab: ' + outs.map(n => n.id).join(',')); }
+    if (outs.some(n => n.d !== true)) { P.push('Uebernahme-Knoten nicht deaktiviert'); }
+    if (tab.some(n => ['link out', 'link in', 'link call', 'http in', 'http response'].includes(n.type))) { P.push('Link/HTTP-Knoten im Tab'); }
+    const feeders = nodes.filter(n => (n.wires || []).some(w => w.indexOf('opt_apply_mqtt') >= 0)).map(n => n.id);
+    if (JSON.stringify(feeders) !== '["opt_apply"]') { P.push('mqtt out gespeist von ' + feeders.join(',')); }
+    const toApply = nodes.filter(n => (n.wires || []).some(w => w.indexOf('opt_apply') >= 0)).map(n => n.id).sort();
+    if (JSON.stringify(toApply) !== '["opt_i_apply","opt_t_eng_prop"]') { P.push('opt_apply gespeist von ' + toApply.join(',')); }
+    const en = nodes.find(n => n.id === 'opt_engine');
+    if (!en || /node\.send\s*\(/.test(en.func) || en.wires.some(w => w.some(id => /^opt_apply/.test(id)))) { P.push('opt_engine fuehrt zum Sendeweg'); }
+    const ap = nodes.find(n => n.id === 'opt_apply');
+    if (!ap || /node\.send\s*\(/.test(ap.func)) { P.push('opt_apply nutzt node.send'); }
+    return P;
+}
+if (flowsFile) {
+    console.log('--- (c) Huellen und gesperrte Uebernahme mit der Flow-Datei ' + flowsFile);
+    const vm = require('vm');
+    const NODES = JSON.parse(fs.readFileSync(flowsFile, 'utf8')), FN = {}; NODES.forEach(n => { if (n.type === 'function') { FN[n.id] = n.func; } });
+    check('Flow-Datei: Huellen opt_engine/opt_apply enthalten den Kern unveraendert (Text identisch mit tools/engine_core.js)', ['opt_engine', 'opt_apply'].every(id => FN[id] && FN[id].indexOf(fs.readFileSync(path.join(__dirname, 'engine_core.js'), 'utf8')) === 0), '');
+    check('Struktur des Sendewegs: genau ein deaktivierter mqtt out, nur von opt_apply, Eingaenge nur Karte + Takt', applyPathProblems(NODES).length === 0, applyPathProblems(NODES).join(' | '));
+    const mut = (f) => { const c = JSON.parse(JSON.stringify(NODES)); f(c); return applyPathProblems(c); };
+    check('Strukturpruefung schlaegt an: Knoten aktiviert / zweiter mqtt out / opt_engine direkt verdrahtet / Link im Tab', mut(c => { delete c.find(n => n.id === 'opt_apply_mqtt').d; }).length > 0 && mut(c => { c.push({id: 'opt_x', type: 'mqtt out', z: 'opt_tab', wires: []}); }).length > 0 && mut(c => { c.find(n => n.id === 'opt_engine').wires[4].push('opt_apply_mqtt'); }).length > 0 && mut(c => { c.push({id: 'opt_l', type: 'link out', z: 'opt_tab', wires: []}); }).length > 0, '');
+    const tplP = NODES.find(n => n.id === 'opt_t_eng_prop'), grp = NODES.filter(n => n.type === 'ui_group' && n.tab === 'opt_eng_ui_tab');
+    check('Seite "Optimierer": vier gleich breite Gruppen (18, Masonry-Falle vermieden), Karte mit Uebernehmen/Verwerfen/Zuruecksetzen/Sperren, Klick schickt nur ID + Pruefsumme', grp.length === 4 && grp.every(g => g.width === 18) && /send\(\{topic: 'uebernehmen', payload: \{id: msg\.payload\.prop\.id, sum: msg\.payload\.prop\.sum\}\}\)/.test(tplP.format) && /'verwerfen'/.test(tplP.format) && /'zuruecksetzen'/.test(tplP.format) && /'sperren'/.test(tplP.format) && /ng-disabled="!msg\.payload\.knopf\.ok"/.test(tplP.format), grp.map(g => g.name + ':' + g.width).join(', '));
+    check('Seite "Optimierer": keine erklaerenden Hinweiszeilen (nur Daten, Status, Knoepfe)', !/class="note"|optq-note/.test(['opt_t_eng_prop', 'opt_t_eng_rules', 'opt_t_eng_score', 'opt_t_eng_log'].map(id => NODES.find(n => n.id === id).format).join('')), '');
+    // ---- vm-Harness (wie optimizer_sim.js): Fake-Uhr, Speicher, Dateien
+    let NOW = new Date(2026, 9, 12, 8, 0, 0).getTime();
+    class FD extends Date { constructor(...a) { if (a.length === 0) { super(NOW); } else { super(...a); } } static now() { return NOW; } }
+    let gstore = {}, fstores = {}, files = {}, warns = [];
+    const fsm = {readFileSync: p => { if (!(p in files)) { const e = new Error('ENOENT ' + p); e.code = 'ENOENT'; throw e; } return files[p]; }, writeFileSync: (p, d) => { files[p] = String(d); }, mkdirSync: () => {}, chmodSync: () => {}};
+    const comp = {};
+    const ctx = st => ({get: (k, s) => (s === 'file' ? undefined : st[k]), set: (k, v) => { st[k] = v; }});
+    function runN(id, msg) {
+        if (!comp[id]) { comp[id] = vm.runInNewContext('(function(msg,global,flow,context,env,node,fs,Date,Buffer){' + FN[id] + '\n})', {}); }
+        fstores[id] = fstores[id] || {};
+        const nd = {send: () => { throw new Error('node.send benutzt'); }, warn: m => warns.push(String(m)), error: () => {}, status: () => {}};
+        const res = comp[id](msg, ctx(gstore), ctx(fstores[id]), ctx({}), {get: () => undefined}, nd, fsm, FD, Buffer);
+        const fo = res && (id === 'opt_engine' ? res[4] : (id === 'opt_apply' ? res[2] : null));   // Datei-Knoten nachbilden (anhaengen)
+        if (fo) { [].concat(fo).forEach(m => { if (m && m.filename) { files[m.filename] = (files[m.filename] || '') + m.payload; } }); }
+        return res;
+    }
+    const restart = () => { fstores = {}; };                                         // Node-RED-Neustart: Flow-Kontext weg, Dateien bleiben (Speicher "file" ist hier nur memory)
+    const cfgRooms = [{id: 'ki_oben', name: 'Kinderzimmer oben', active: true, min: 22, max: 23.5, maxAgeMin: 90}];
+    function world(o) {                                                               // Anlagenwerte wie HeishaMoNR sie global ablegt (+ OPT_hp vom eigenen Abo)
+        o = o || {};
+        const hp = n => ({v: n, ts: NOW - 20000});
+        gstore = Object.assign(gstore, {OPT_cfg: {rooms: cfgRooms, sensor: {maxAgeMin: 90}}, compressor_frequency: 16, TOP6_Main_Outlet_Temp: 30, TOP5_Main_Inlet_Temp: 28.25, TOP42_Z1_Water_Target_Temp: 38,
+            TOP23_Heat_Delta: 3, TOP16_Heat_Energy_Consumption: 300, TOP1_Pump_Flow: 13.5, TOP18_Quiet_Mode_Level: 3, TOP14_Outside_Temp: 11, TOP26_Defrosting_State: 0, TOP20_ThreeWay_Valve_State: 0,
+            F_SS: {state: 0}, compressor_runtime: 40, TOP27_Z1_Heat_Request_Temp: 0, TOP76_Heating_Mode: 0, TOP111_Z1_Sensor_Settings: 0, MQTT: {block_active: 0},
+            Z1_Heat_Curve_Outside_Low_Temp: -13, Z1_Heat_Curve_Outside_High_Temp: 11, Z1_Heat_Curve_Target_Low_Temp: 29, Z1_Heat_Curve_Target_High_Temp: 38,
+            OPT_rooms: {ki_oben: {ema: 21.2, ts: NOW - 10 * 60000}}, OPT_state: {ts: NOW, korr: 0, korrCode: 'x', korrLead: '', distrib: false},
+            OPT_hp: {Quiet_Mode_Level: hp(o.q !== undefined ? o.q : 3), Pump_Speed: hp(1750), Heating_Control: hp(1), Z1_Heat_Request_Temp: hp(0), Heating_Off_Outdoor_Temp: hp(12), Main_Outlet_Temp: hp(30)}}, o.g || {});
+        gstore.TOP18_Quiet_Mode_Level = o.q !== undefined ? o.q : 3;
+    }
+    function minute(n, hook) {                                                         // n Minuten: Engine jede Minute, Uebernahme-Takt alle 15 s
+        const out = {eng: [], app: []};
+        for (let i = 0; i < n; i++) {
+            NOW += 60000; if (hook) { hook(i); }
+            gstore.OPT_hp && Object.keys(gstore.OPT_hp).forEach(k => { gstore.OPT_hp[k].ts = NOW - 20000; });
+            if (gstore.OPT_rooms && gstore.OPT_rooms.ki_oben) { gstore.OPT_rooms.ki_oben.ts = NOW - 10 * 60000; }
+            if (gstore.OPT_state) { gstore.OPT_state.ts = NOW; }
+            out.eng.push(runN('opt_engine', {topic: '', payload: NOW}));
+            for (let k = 0; k < 4; k++) { NOW += k ? 15000 : 0; out.app.push(runN('opt_apply', {topic: 'tick', payload: NOW})); }
+            NOW -= 45000;
+        }
+        return out;
+    }
+    const sends = outs => outs.app.filter(o => o && o[0]).map(o => o[0]);
+    const click = (topic, payload) => runN('opt_apply', {topic: topic, payload: payload});
+    // 1) Engine allein: Vorschlag entsteht, Dateien, globale Werte, ohne Klick nie ein Befehl
+    world(); let R = minute(25);
+    const eng = gstore.OPT_engine;
+    check('Huelle: Vorschlag Quiet 3 -> 0 im Boost (Soll 38, 16 Hz), OPT_engine mit Vorschlag, Sperren, Rueckweg-Gruenden', eng && eng.prop && eng.prop.rule === 'quiet_freigabe' && eng.prop.cmd.value === 0 && eng.locks && eng.ende !== undefined, eng && eng.prop && eng.prop.id);
+    const decFile = Object.keys(files).find(f => /decisions-2026-10\.jsonl$/.test(f));
+    check('Huelle: decisions-YYYY-MM.jsonl bekommt jede Minute genau einen Datensatz', decFile && files[decFile].trim().split('\n').length === 25 && JSON.parse(files[decFile].trim().split('\n')[24]).vorschlag === eng.prop.id, decFile);
+    check('Huelle: ohne Klick sendet nichts (25 min, 100 Takte der Uebernahme)', sends(R).length === 0 && R.eng.every(o => !o || !o[4] || o[4].every(m => /^\/data\/optimizer\//.test(m.filename))), '');
+    check('Huelle: Karte zeigt den Vorschlag mit Pruefsumme, Knopf "Übernahme gesperrt" (Hauptschalter aus)', (() => { const c = R.eng[24][0].payload; return c.prop && c.prop.id === eng.prop.id && c.prop.sum === eng.prop.sum && c.knopf.ok === false && c.knopf.text === 'Übernahme gesperrt' && /gesperrt \(Hauptschalter aus\)/.test(c.uebernahme.text); })(), JSON.stringify(R.eng[24][0].payload.knopf));
+    check('Huelle: Regeltabelle (4 Regeln mit Status, Grund, "würde schalten, sobald …"), Punkte-Karte, letzte Entscheidungen', R.eng[24][1].payload.rows.length === 4 && R.eng[24][1].payload.rows.some(r => /würde schalten, sobald/.test(r[3])) && R.eng[24][2].payload.rows.length === 4 && R.eng[24][3].payload.rows.length >= 4, '');
+    check('Huelle schreibt nur OPT_*-Werte (keine Anlagen-/HeishaMoNR-Variable)', (() => { const before = JSON.stringify(Object.keys(gstore).filter(k => !/^OPT_/.test(k)).sort().map(k => [k, gstore[k]])); world(); minute(2); return JSON.stringify(Object.keys(gstore).filter(k => !/^OPT_/.test(k)).sort().map(k => [k, gstore[k]])) === before; })(), '');
+    // 2) Klick bei Hauptschalter AUS
+    let r = click('uebernehmen', {id: gstore.OPT_engine.prop.id, sum: gstore.OPT_engine.prop.sum});
+    check('Klick, Hauptschalter AUS (keine apply.json): nichts gesendet, rote Meldung, Protokoll "abgelehnt"', !r[0] && r[1] && r[1].highlight === 'red' && /Hauptschalter/.test(r[1].payload) && /"ergebnis":"abgelehnt"/.test(r[2][0].payload), r[1] && r[1].payload);
+    files['/data/optimizer/apply.json'] = '{"enabled": true, "rules": []}';
+    r = click('uebernehmen', {id: gstore.OPT_engine.prop.id, sum: gstore.OPT_engine.prop.sum});
+    check('Klick, Hauptschalter AN, Regel nicht freigegeben: nichts gesendet', !r[0] && /nicht freigegeben/.test(r[1].payload), r[1].payload);
+    files['/data/optimizer/apply.json'] = '{"enabled": "ja", "rules": ["quiet_freigabe"]}';
+    r = click('uebernehmen', {id: gstore.OPT_engine.prop.id, sum: gstore.OPT_engine.prop.sum});
+    check('Hauptschalter nur bei enabled === true (Text "ja" zaehlt nicht)', !r[0] && /Hauptschalter/.test(r[1].payload), r[1].payload);
+    files['/data/optimizer/apply.json'] = '{"enabled": true, "rules": ["quiet_freigabe"]}';
+    r = click('uebernehmen', {id: gstore.OPT_engine.prop.id, sum: 'deadbeef'});
+    check('falsche Pruefsumme: nichts gesendet', !r[0] && /Prüfsumme/.test(r[1].payload), r[1].payload);
+    r = click('uebernehmen', {id: 'quiet_freigabe@2026-01-01T00:00', sum: gstore.OPT_engine.prop.sum});
+    check('veralteter/fremder Vorschlag (andere ID): nichts gesendet', !r[0] && /nicht mehr aktuell/.test(r[1].payload), r[1].payload);
+    r = click('uebernehmen', {id: gstore.OPT_engine.prop.id, sum: gstore.OPT_engine.prop.sum, topic: 'panasonic_heat_pump/commands/SetHeatingControl', value: 1});
+    const sent1 = r[0];
+    check('Klick + Hauptschalter AN + Regel frei: GENAU der Vorschlag wird gesendet (SetQuietMode = "0"), Zusatzfelder aus dem Browser werden ignoriert', sent1 && sent1.length === 1 && sent1[0].topic === 'panasonic_heat_pump/commands/SetQuietMode' && sent1[0].payload === '0' && sent1[0].retain === false, JSON.stringify(sent1));
+    check('Quelle fuer Waechter/HeishaMoNR gesetzt: MQTT_Source = "Optimierer (Klick)"; Protokoll applied-YYYY-MM.jsonl mit ID, Pruefsumme, Wert, Hauptschalter', gstore.MQTT_Source === 'Optimierer (Klick)' && /"aktion":"uebernehmen","ergebnis":"gesendet".*"hauptschalter":true/.test(files['/data/optimizer/applied-2026-10.jsonl'] || ''), gstore.MQTT_Source);
+    r = click('uebernehmen', {id: gstore.OPT_engine.prop.id, sum: gstore.OPT_engine.prop.sum});
+    check('Doppelklick: zweiter Klick wird ignoriert, nichts gesendet', !r[0] && /Doppelklick/.test(r[1].payload), r[1].payload);
+    // 3) Neustart mitten in der Uebernahme (vor der Bestaetigung) -> Zustand aus apply-state.json, Ruecklesen geht weiter, bestaetigt
+    restart();
+    gstore.OPT_hp.Quiet_Mode_Level.v = 0; gstore.TOP18_Quiet_Mode_Level = 0;
+    R = minute(2);
+    check('Neustart mitten in der Uebernahme: Zustand aus der Datei, Anlage meldet 0 -> bestaetigt, kein zweiter Befehl', sends(R).length === 0 && gstore.OPT_apply.aktiv && gstore.OPT_apply.aktiv.bestaetigt === true && gstore.OPT_apply.pending === null, JSON.stringify(gstore.OPT_apply.aktiv));
+    // 4) Quiet-Freigabe hat keinen automatischen Rueckweg; Zuruecksetzen schickt die vorherige Stufe; danach bestaetigt
+    R = minute(120);
+    check('Quiet-Freigabe: kein automatischer Rueckweg (Quiet 0 ist Standard), auch nach 2 h', sends(R).length === 0 && gstore.OPT_apply.aktiv, '');
+    r = click('zuruecksetzen', {});
+    check('Zuruecksetzen: sendet Quiet 3 (vorherige Stufe), Quelle "Optimierer (Rückweg)"', r[0] && r[0].length === 1 && r[0][0].payload === '3' && gstore.MQTT_Source === 'Optimierer (Rückweg)', JSON.stringify(r[0]));
+    gstore.OPT_hp.Quiet_Mode_Level.v = 3; gstore.TOP18_Quiet_Mode_Level = 3; R = minute(1);
+    check('Rueckweg bestaetigt: Uebernahme beendet', !gstore.OPT_apply.aktiv && !gstore.OPT_apply.pending, '');
+    // 5) Ruecklese-Timeout: Anlage reagiert nicht -> 2 Wiederholungen (90 s Abstand), dann Warnung; insgesamt 3 Befehle
+    NOW += 2 * 3600000; world(); minute(15);                                         // > 60 min nach der letzten Quiet-Aenderung (Mindestabstand)
+    const p2 = gstore.OPT_engine.prop;
+    r = click('uebernehmen', {id: p2.id, sum: p2.sum});
+    R = minute(8);
+    check('Ruecklese-Timeout: Anlage bleibt bei 3 -> 2 Wiederholungen, dann rote Warnung, insgesamt 3 Befehle, danach Ruhe', r[0] && sends(R).length === 2 && gstore.OPT_apply.alarm && /Keine Bestätigung/.test(gstore.OPT_apply.alarm.text) && !gstore.OPT_apply.pending, sends(R).length + ' Wiederholungen, ' + (gstore.OPT_apply.alarm && gstore.OPT_apply.alarm.text));
+    // 6) Notbremse und Sperren
+    files['/data/optimizer/apply-state.json'] = JSON.stringify(E.newApply()); restart(); NOW += 2 * 3600000; world(); minute(15);
+    gstore.MQTT.block_active = 1;
+    r = click('uebernehmen', {id: gstore.OPT_engine.prop ? gstore.OPT_engine.prop.id : 'x', sum: gstore.OPT_engine.prop ? gstore.OPT_engine.prop.sum : 'x'});
+    check('Notbremse MQTT.block_active: Klick sendet nichts (Vorschlag ist zudem gesperrt)', !r[0], r[1] && r[1].payload);
+    gstore.MQTT.block_active = 0; minute(12);
+    r = click('sperren', {});
+    check('"Übernahme sperren" (Not-Aus im Dashboard): apply.json enabled=false, Regeln bleiben, OPT_apply_enabled false', JSON.parse(files['/data/optimizer/apply.json']).enabled === false && JSON.parse(files['/data/optimizer/apply.json']).rules[0] === 'quiet_freigabe' && gstore.OPT_apply_enabled === false, files['/data/optimizer/apply.json']);
+    r = click('uebernehmen', {id: p2.id, sum: p2.sum});
+    check('nach dem Sperren: Klick sendet nichts', !r[0] && /Hauptschalter/.test(r[1].payload), r[1].payload);
+    // 7) Verwerfen: blendet aus, sendet nichts, Punkte bleiben unberuehrt
+    NOW += 3 * 3600000; world(); minute(15);
+    const scoreBefore = JSON.stringify(E.report(fstores.opt_engine.eng.S));
+    r = click('verwerfen', {id: gstore.OPT_engine.prop.id});
+    R = minute(1);
+    check('Verwerfen: nichts gesendet, Karte zeigt "Kein Vorschlag" mit Vermerk, Punktebuch unveraendert', !r[0] && R.eng[0][0].payload.prop === null && R.eng[0][0].payload.naechste[0][0] === 'Verworfen' && JSON.stringify(E.report(fstores.opt_engine.eng.S)) === scoreBefore, JSON.stringify(R.eng[0][0].payload.naechste[0]));
+    // 8) Raumoffset mit automatischem Rueckweg nach Ablauf (6 h); Whitelist-Grenzen
+    files['/data/optimizer/apply.json'] = '{"enabled": true, "rules": ["raum_offset"]}';
+    files['/data/optimizer/apply-state.json'] = JSON.stringify(E.newApply()); restart(); NOW += 3 * 3600000;
+    world({g: {TOP42_Z1_Water_Target_Temp: 30, TOP6_Main_Outlet_Temp: 30.5, OPT_state: {ts: NOW, korr: 1, korrCode: 'Raum unter Minimum', korrLead: 'Kinderzimmer oben', distrib: false}}});
+    minute(75);
+    const p3 = gstore.OPT_engine.prop;
+    r = click('uebernehmen', {id: p3 && p3.id, sum: p3 && p3.sum});
+    check('Raumoffset: Klick sendet SetZ1HeatRequestTemperature = 1', p3 && p3.rule === 'raum_offset' && r[0] && r[0][0].topic === 'panasonic_heat_pump/commands/SetZ1HeatRequestTemperature' && r[0][0].payload === '1', p3 ? p3.id : 'kein Vorschlag');
+    gstore.OPT_hp.Z1_Heat_Request_Temp.v = 1; gstore.TOP27_Z1_Heat_Request_Temp = 1; gstore.TOP42_Z1_Water_Target_Temp = 31;
+    R = minute(6 * 60 + 2, () => { gstore.OPT_state.korr = 1; const pa = gstore.OPT_apply && gstore.OPT_apply.pending; if (pa && pa.art === 'rueckweg') { gstore.OPT_hp.Z1_Heat_Request_Temp.v = 0; gstore.TOP27_Z1_Heat_Request_Temp = 0; } });   // Anlage bestaetigt den Rueckweg
+    const back = sends(R);
+    check('Raumoffset: automatischer Rueckweg nach 6 h (gehoert zum geklickten Vorschlag): genau ein Befehl SetZ1HeatRequestTemperature = 0, bestaetigt, Uebernahme beendet', back.length === 1 && back[0][0].payload === '0' && !gstore.OPT_apply.aktiv, JSON.stringify(back));
+    // 9) Whitelist/Wertebereich direkt am Kern (verfaelschte Vorschlaege in OPT_engine)
+    const forge = (cmd, value, art) => { const pp = JSON.parse(JSON.stringify(gstore.OPT_engine.prop || p3)); pp.cmd = {name: cmd, topic: 'panasonic_heat_pump/commands/' + cmd, value: value}; pp.art = art || 'befehl'; pp.von = gstore.TOP27_Z1_Heat_Request_Temp; pp.bis = NOW + 600000; pp.sum = E.checksum(pp); return E.applyRequest(null, {topic: 'uebernehmen', payload: {id: pp.id, sum: pp.sum}}, {now: NOW, enabled: true, rules: [pp.rule], eng: {ts: NOW, prop: pp, locks: {}}, plant: {q: 3, shift: pp.von, hpAge: 0.3, block: 0, heatMode: 0, z1Sensor: 0}}); };
+    check('Whitelist: SetHeatingControl wird abgelehnt (nie Comfort/Efficiency)', forge('SetHeatingControl', 1).send.length === 0 && /nicht auf der Whitelist/.test(forge('SetHeatingControl', 1).toast.text), forge('SetHeatingControl', 1).toast.text);
+    check('Whitelist: SetMaxPumpDuty steht nicht darauf (Pumpenlimit sitzt auf dem Mainboard; kein Vorschlag/Befehl)', !E.WHITELIST.SetMaxPumpDuty && forge('SetMaxPumpDuty', 94).send.length === 0 && !E.RULES.some(R0 => /Pump/.test(R0.befehl.name)), '');
+    check('Wertebereich: Verschiebung +2 K abgelehnt (nur -1..+1)', forge('SetZ1HeatRequestTemperature', 2).send.length === 0 && /nicht erlaubt/.test(forge('SetZ1HeatRequestTemperature', 2).toast.text), forge('SetZ1HeatRequestTemperature', 2).toast.text);
+    check('Hinweis-Regel (Heizgrenze) nie per Klick', forge('SetHeatingOffOutdoorTemp', 10, 'hinweis').send.length === 0, forge('SetHeatingOffOutdoorTemp', 10, 'hinweis').toast.text);
+    const old = (() => { const pp = JSON.parse(JSON.stringify(p3)); pp.bis = NOW + 600000; pp.sum = E.checksum(pp); return E.applyRequest(null, {topic: 'uebernehmen', payload: {id: pp.id, sum: pp.sum}}, {now: NOW, enabled: true, rules: ['raum_offset'], eng: {ts: NOW - 5 * 60000, prop: pp, locks: {}}, plant: {shift: 0, hpAge: 0.3, block: 0, heatMode: 0, z1Sensor: 0}}); })();
+    check('Alter: Entscheidungsmaschine rechnet seit 5 min nicht -> abgelehnt', old.send.length === 0 && /nicht gerechnet/.test(old.toast.text), old.toast.text);
+    const exp = (() => { const pp = JSON.parse(JSON.stringify(p3)); pp.bis = NOW - 1; pp.sum = E.checksum(pp); return E.applyRequest(null, {topic: 'uebernehmen', payload: {id: pp.id, sum: pp.sum}}, {now: NOW, enabled: true, rules: ['raum_offset'], eng: {ts: NOW, prop: pp, locks: {}}, plant: {shift: 0, hpAge: 0.3, block: 0, heatMode: 0, z1Sensor: 0}}); })();
+    check('Gueltigkeit: abgelaufener Vorschlag -> abgelehnt', exp.send.length === 0 && /abgelaufen/.test(exp.toast.text), exp.toast.text);
+    const stale = (() => { const pp = JSON.parse(JSON.stringify(p3)); pp.bis = NOW + 600000; pp.sum = E.checksum(pp); return E.applyRequest(null, {topic: 'uebernehmen', payload: {id: pp.id, sum: pp.sum}}, {now: NOW, enabled: true, rules: ['raum_offset'], eng: {ts: NOW, prop: pp, locks: {}}, plant: {shift: 0, hpAge: 7, block: 0, heatMode: 0, z1Sensor: 0}}); })();
+    check('frische Daten: HeishaMon 7 min alt -> abgelehnt', stale.send.length === 0 && /veraltet/.test(stale.toast.text), stale.toast.text);
+    const moved = (() => { const pp = JSON.parse(JSON.stringify(p3)); pp.bis = NOW + 600000; pp.sum = E.checksum(pp); return E.applyRequest(null, {topic: 'uebernehmen', payload: {id: pp.id, sum: pp.sum}}, {now: NOW, enabled: true, rules: ['raum_offset'], eng: {ts: NOW, prop: pp, locks: {}}, plant: {shift: -1, hpAge: 0.3, block: 0, heatMode: 0, z1Sensor: 0}}); })();
+    check('Abgleich mit dem Ist-Zustand: Anlage steht nicht mehr auf dem Ausgangswert -> abgelehnt', moved.send.length === 0 && /steht nicht mehr auf 0/.test(moved.toast.text), moved.toast.text);
+    // Rate und Tageslimit
+    let A = null, ns = 0; const pp0 = JSON.parse(JSON.stringify(p3));
+    for (let k = 0; k < 10; k++) { const pp = Object.assign({}, pp0, {id: 'raum_offset@x' + k, ts: NOW, bis: NOW + 3600000, von: 0}); pp.sum = E.checksum(pp); const rr = E.applyRequest(A, {topic: 'uebernehmen', payload: {id: pp.id, sum: pp.sum}}, {now: NOW, enabled: true, rules: ['raum_offset'], eng: {ts: NOW, prop: pp, locks: {}}, plant: {shift: 0, hpAge: 0.3, block: 0, heatMode: 0, z1Sensor: 0}}); A = rr.A; ns += rr.send.length; A.pending = null; A.aktiv = null; NOW += (k === 0 ? 5 : 11) * 60000; }
+    check('Rate (10 min Abstand) und Tageslimit (6 Befehle/Tag)', ns === 6 && A.n === 6, 'gesendet ' + ns);
+    // fremde Aenderung nach Bestaetigung: Warnung, kein automatischer Rueckweg
+    let A2 = E.newApply(); A2.aktiv = {id: 'x', rule: 'raum_offset', groesse: 'shift', name: 'SetZ1HeatRequestTemperature', value: 1, von: 0, ts: NOW, bis: NOW + 3600000, bestaetigt: true};
+    const fr = E.applyTick(A2, {now: NOW, plant: {shift: -1, hpAge: 0.3, block: 0}});
+    check('fremde Aenderung nach der Bestaetigung: Warnung, Uebernahme beendet, KEIN Befehl', fr.send.length === 0 && /von außen/.test(fr.toast.text) && fr.A.aktiv === null, fr.toast.text);
+    // Notbremse waehrend Wiederholung/Rueckweg: wartet, zaehlt nicht
+    let A3 = E.newApply(); A3.pending = {name: 'SetQuietMode', value: 0, ts: NOW - 200000, versuche: 1, art: 'uebernahme', id: 'y'}; A3.aktiv = {id: 'y', rule: 'quiet_freigabe', groesse: 'quiet', name: 'SetQuietMode', value: 0, von: 3, ts: NOW, bis: null};
+    const bl = E.applyTick(A3, {now: NOW, plant: {q: 3, hpAge: 0.3, block: 1}});
+    check('Notbremse waehrend der Wiederholung: kein Befehl, Versuch nicht verbraucht', bl.send.length === 0 && bl.A.pending.versuche === 1, JSON.stringify(bl.A.pending));
+    let A4 = E.newApply(); A4.aktiv = {id: 'z', rule: 'quiet_strecken', groesse: 'quiet', name: 'SetQuietMode', value: 3, von: 0, ts: NOW - 5 * 3600000, bis: NOW - 1, bestaetigt: true};
+    check('Rueckweg wartet bei Notbremse, kommt danach', E.applyTick(JSON.parse(JSON.stringify(A4)), {now: NOW, plant: {q: 3, hpAge: 0.3, block: 1}}).send.length === 0 && E.applyTick(A4, {now: NOW, plant: {q: 3, hpAge: 0.3, block: 0}}).send[0].payload === '0', '');
+    // Rueckweg, weil der Grund endet (Raumvorschlag wieder 0): nur nach Bestaetigung, genau ein Befehl
+    let A5 = E.newApply(); A5.aktiv = {id: 'r', rule: 'raum_offset', groesse: 'shift', name: 'SetZ1HeatRequestTemperature', value: 1, von: 0, ts: NOW - 3600000, bis: NOW + 3600000, bestaetigt: true};
+    const en5 = E.applyTick(A5, {now: NOW, plant: {shift: 1, hpAge: 0.3, block: 0}, endReason: {raum_offset: 'Raumvorschlag ist wieder 0 K'}});
+    check('Rueckweg, wenn der Grund endet (Raumvorschlag 0): ein Befehl zurueck auf 0 mit Grund im Protokoll', en5.send.length === 1 && en5.send[0].payload === '0' && /Raumvorschlag ist wieder 0 K/.test(en5.log[0].grund), JSON.stringify(en5.log[0]));
+    // Lange Fahrt mit Hauptschalter AN und ALLEN Regeln freigegeben, aber ohne Klick: nie ein Befehl
+    files['/data/optimizer/apply.json'] = '{"enabled": true, "rules": ["quiet_freigabe", "quiet_strecken", "raum_offset"]}';
+    files['/data/optimizer/apply-state.json'] = JSON.stringify(E.newApply()); restart(); NOW += 3600000; world();
+    let nProp = 0, nSend = 0;
+    for (let h = 0; h < 36; h++) {
+        const Rh = minute(60, i => { const boost = (h % 6) === 2; gstore.TOP42_Z1_Water_Target_Temp = boost ? 38 : 30; gstore.TOP6_Main_Outlet_Temp = boost ? 30 : 30.5; gstore.TOP5_Main_Inlet_Temp = boost ? 28.25 : 28; gstore.OPT_state.korr = (h % 8) < 4 ? 1 : 0; gstore.OPT_state.korrLead = 'Kinderzimmer oben'; });
+        nSend += sends(Rh).length; nProp += Rh.eng.filter(o => o && o[0] && o[0].payload.prop).length;
+    }
+    check('36 h mit Hauptschalter AN und allen Regeln freigegeben, Vorschlaege in ' + nProp + ' Minuten, aber ohne Klick: kein einziger Befehl (es gibt keinen automatischen Sendeweg)', nProp > 0 && nSend === 0, 'Befehle ' + nSend);
+    check('kein node.send in den Huellen und Warnungen nur erwartbare', !warns.some(w => /node\.send|TypeError|ReferenceError/.test(w)), warns.slice(0, 3).join(' | '));
+}
+
+module.exports = {check: check, inp: inp, rooms: rooms, runSeq: runSeq, plantSim: plantSim, T0: T0, applyPathProblems: applyPathProblems};
 if (require.main === module) {
-    console.log('\nERGEBNIS engine_sim (Teil a): ' + oks + ' OK, ' + fails + ' FAIL');
+    console.log('\nERGEBNIS engine_sim: ' + oks + ' OK, ' + fails + ' FAIL');
     process.exit(fails ? 1 : 0);
 }

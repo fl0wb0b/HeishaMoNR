@@ -18,7 +18,10 @@ import json
 import os
 import sys
 
-path = sys.argv[1] if len(sys.argv) > 1 else "flows (26.5.1 stable).json"
+_args = [a for a in sys.argv[1:] if not a.startswith("--")]
+path = _args[0] if _args else "flows (26.5.1 stable).json"
+# Ein-Klick-Uebernahme: der mqtt-out-Knoten wird GESPERRT (deaktiviert) ausgeliefert. Erst mit diesem Schalter UND apply.json (enabled + Regel) kann ein Klick senden.
+APPLY_NODE_ACTIVE = "--uebernahme-knoten-aktiv" in sys.argv[1:]
 flows = json.load(open(path, encoding="utf-8"))
 B = {n["id"]: n for n in flows}
 
@@ -2467,7 +2470,8 @@ try {
     global.set('OPT_shift_ts', now);
     flow.set('ctl', ctSt);
     var ctWorst = ctBelow.length ? ctPick(ctBelow, 'mLow') : null;                                  // Komfortzustand fuer die Quiet-Empfehlung
-    global.set('OPT_state', {ts: now, deficit: ctBelow.length > 0, deficitRoom: ctWorst ? ctWorst.x.name : '', coldTrend: ctWorst ? ctWorst.tr : null, distrib: ctDistrib, valid: valids.length, active: ctAct.length});
+    global.set('OPT_state', {ts: now, deficit: ctBelow.length > 0, deficitRoom: ctWorst ? ctWorst.x.name : '', coldTrend: ctWorst ? ctWorst.tr : null, distrib: ctDistrib, valid: valids.length, active: ctAct.length,
+                             korr: ctSt.cur, korrCode: ctCode, korrLead: ctLead ? ctLead.x.name : ''});      // korr*: Raumvorschlag (korrektur_vorschlag) fuer die Entscheidungsmaschine, nur lesen
     ctRes = {on: ctOn, probe: ctProbe, cur: ctSt.cur, want: ctWant, floorHit: ctFloorHit, applied: ctApplied, code: ctCode, lead: ctLead ? ctLead.x.name : '', distrib: ctDistrib,
              locks: ctLocks, holdLeft: ctHoldLeft, since: ctSt.since, startK: ctStart, relK: ctRel, holdMin: ctHold / MS_MIN, rtcOn: ctRtcOn};
 } catch (e) {
@@ -3064,6 +3068,318 @@ upsert(inject("opt_i_vrm_load", "VRM-Zugangsdaten prüfen", 0, 7, ["opt_vrm_load
 upsert(fn("opt_vrm_load", "Gespeicherte Installation laden", VRM_LOAD_JS, 1, [["opt_ui_vrm_form"]], 420, 1780, FS))
 upsert(fn("opt_vrm_save", "VRM-Zugangsdaten speichern", VRM_SAVE_JS, 4,
           [["opt_ui_vrm_form"], ["opt_ui_toast"], ["opt_vrm_req"], ["opt_ui_vrmstatus"]], 1100, 1720, FS))
+
+# ---------------------------------------------------------------- Optimierer: Entscheidungsmaschine (Shadow), Punkte, Ein-Klick-Uebernahme (GESPERRT ausgeliefert)
+# Reiner Kern in tools/engine_core.js (in tools/engine_sim.js getestet). opt_engine rechnet jede Minute und schreibt nur OPT_* und Protokolle.
+# opt_apply ist der EINZIGE Sendeweg im Tab: nur auf Klick in der Karte "Aktueller Vorschlag", nur mit Hauptschalter (apply.json) und freigegebener Regel,
+# nur Whitelist-Befehle; der mqtt-out-Knoten ist standardmaessig deaktiviert (siehe APPLY_NODE_ACTIVE).
+ENGINE_CORE_JS = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "engine_core.js"), encoding="utf-8").read()
+
+ENGINE_WRAP_JS = r"""
+// ---------- Huelle der Entscheidungsmaschine (Shadow, schaltet NICHTS). Liest Anlagen- und Optimierer-Werte, ruft jede Minute den reinen Kern
+// ENGINE.step, schreibt decisions-YYYY-MM.jsonl (jede Auswertung), scores-YYYY-MM.jsonl (Punkte) und Ereignisse, baut die Seite "Optimierer".
+// Ausgaenge: 1 Vorschlag, 2 Regeln, 3 Punkte, 4 Entscheidungen, 5 Dateien. msg.topic "anzeige" (von der Uebernahme): nur die Anzeige neu aufbauen.
+var now = Date.now(), MIN = 60000;
+var G = function (k) { var v; try { v = global.get(k, 'file'); } catch (e) { v = undefined; } return v !== undefined ? v : global.get(k); };
+function num(v) { if (v === null || v === undefined || v === '' || typeof v === 'boolean') { return null; } v = Number(v); return isFinite(v) ? v : null; }
+function p2(x) { return (x < 10 ? '0' : '') + x; }
+function hm(ts) { return ts ? ENGINE.hhmm(ts) : '–'; }
+function dmhm(ts) { if (!ts) { return '–'; } var d = new Date(ts); return p2(d.getDate()) + '.' + p2(d.getMonth() + 1) + '. ' + ENGINE.hhmm(ts); }
+var CF = global.get('OPT_cfg') || {}, cfg = ENGINE.mergeCfg(CF.engine || {});
+var ST = flow.get('eng');
+if (!ST) {                                                                       // nach einem Neustart: Zustand aus der Datei (Faelle, Punkte, Zaehler), Zeitgeber neu
+    var F0 = null;
+    try { F0 = JSON.parse(fs.readFileSync('/data/optimizer/engine-state.json', 'utf8')); } catch (e) { F0 = null; }
+    ST = {S: (F0 && F0.S) ? ENGINE.fixState(F0.S, now) : null, ui: (F0 && Array.isArray(F0.ui)) ? F0.ui : [], saved: 0, last: null};
+    if (ST.S) { ST.S.born = now; }
+}
+// ---------- Eingabe (Schnappschuss) aus den globalen Werten
+var HP = G('OPT_hp') || {}, hpTs = 0;
+Object.keys(HP).forEach(function (k) { if (k.charAt(0) !== '_' && HP[k] && typeof HP[k].ts === 'number' && HP[k].ts > hpTs) { hpTs = HP[k].ts; } });
+function hpv(n) { var e = HP[n]; return (e && typeof e.v === 'number' && now - e.ts < 30 * MIN) ? e.v : null; }
+function pick(a, b) { return a !== null ? a : b; }
+var ss = G('F_SS') || {}, mq = G('MQTT') || {}, sol = G('F_SOLAR') || {}, rtc = G('F_RTC') || {}, nr = G('NightReductionWaterTemp') || {};
+var otherQ = [], otherS = [];
+if (ss.state === 1 && ss.QM_state === 1) { otherQ.push('HeishaMoNR-Quiet-Logik AN'); }
+if (mq.allow_scheduler === 1) { otherQ.push('Scheduler darf senden'); }
+if (sol.state === 1) { otherQ.push('Solar AN'); }
+if (HP.Quiet_Mode_Schedule && HP.Quiet_Mode_Schedule.v === 1) { otherQ.push('WP-Zeitplan AN'); }
+if (rtc.z1 && rtc.z1.state === 1) { otherS.push('Raumregelung (RTC) AN'); }
+if (nr.state === 1) { otherS.push('Nachtabsenkung AN'); }
+if (ss.state === 1) { otherS.push('Sanftanlauf eingeschaltet'); }
+var shFin = num(G('SHIFT_Final')); if (shFin !== null && shFin !== 0) { otherS.push('HeishaMoNR-Verschiebung ' + shFin + ' K'); }
+var at = num(G('TOP14_Outside_Temp'));
+var cvLo = num(G('Z1_Heat_Curve_Outside_Low_Temp')), cvHi = num(G('Z1_Heat_Curve_Outside_High_Temp')), cvTl = num(G('Z1_Heat_Curve_Target_Low_Temp')), cvTh = num(G('Z1_Heat_Curve_Target_High_Temp'));
+var sollKurve = (at === null || cvLo === null || cvHi === null || cvTl === null || cvTh === null || cvHi <= cvLo) ? null : (at <= cvLo ? cvTh : (at >= cvHi ? cvTl : cvTh + (cvTl - cvTh) * (at - cvLo) / (cvHi - cvLo)));
+var RO = global.get('OPT_rooms') || {};
+var rooms = (CF.rooms || []).map(function (rc) {
+    var r = RO[rc.id] || {}, a = r.ts ? (now - r.ts) / MIN : null, lim = rc.maxAgeMin || (CF.sensor && CF.sensor.maxAgeMin) || 90;
+    var band = isFinite(rc.min) && isFinite(rc.max) && rc.min < rc.max, on = rc.active !== false;
+    return {id: rc.id, name: rc.name, t: r.ema !== undefined ? r.ema : null, age: a, min: rc.min, max: rc.max, active: on && band, valid: on && band && r.ema !== undefined && a !== null && a <= lim};
+});
+var OS = G('OPT_state') || {}, korr = (OS.ts && now - OS.ts < 5 * MIN && typeof OS.korr === 'number') ? {v: OS.korr, code: String(OS.korrCode || ''), distrib: !!OS.distrib, lead: String(OS.korrLead || '')} : null;
+var KZ = G('OPT_kz') || {};
+var inp = {t: now, hpAge: hpTs ? (now - hpTs) / MIN : null,
+           hz: num(G('compressor_frequency')), vl: num(G('TOP6_Main_Outlet_Temp')), rl: num(G('TOP5_Main_Inlet_Temp')), soll: num(G('TOP42_Z1_Water_Target_Temp')), dT: num(G('TOP23_Heat_Delta')),
+           pel: num(G('TOP16_Heat_Energy_Consumption')), pth: hpv('Heat_Power_Production_Extra'), flow: num(G('TOP1_Pump_Flow')), pump: hpv('Pump_Speed'),
+           q: pick(hpv('Quiet_Mode_Level'), num(G('TOP18_Quiet_Mode_Level'))), qPrio: hpv('Quiet_Mode_Priority'), hc: hpv('Heating_Control'), at: at,
+           defrost: num(G('TOP26_Defrosting_State')) === 1 ? 1 : 0, dhw: num(G('TOP20_ThreeWay_Valve_State')) === 1 ? 1 : 0, ss: (ss.state === 1 && Math.abs(num(ss.correction_value) || 0) > 0) ? 1 : 0,
+           rt: num(G('compressor_runtime')), shift: pick(hpv('Z1_Heat_Request_Temp'), num(G('TOP27_Z1_Heat_Request_Temp'))), heatMode: num(G('TOP76_Heating_Mode')), z1Sensor: num(G('TOP111_Z1_Sensor_Settings')),
+           heaterI: hpv('Internal_Heater_State'), heaterE: hpv('External_Heater_State'), htrOnAT: hpv('Heater_On_Outdoor_Temp'), htrStartDelta: hpv('Heater_Start_Delta'), heatOffAT: hpv('Heating_Off_Outdoor_Temp'),
+           sollKurve: sollKurve, block: mq.block_active === 1 ? 1 : 0, otherQ: otherQ.length ? otherQ.join(', ') : null, otherShift: otherS.length ? otherS.join(', ') : null,
+           kzRad: (KZ.rad && typeof KZ.rad.on === 'boolean') ? (KZ.rad.on ? 1 : 0) : null, rooms: rooms, korr: korr};
+// ---------- rechnen (jede Minute), protokollieren
+var files = [], d0 = new Date(now), month = d0.getFullYear() + '-' + p2(d0.getMonth() + 1);
+if (msg.topic !== 'anzeige') {
+    var o;
+    try { o = ENGINE.step(ST.S, inp, cfg); } catch (e) { node.warn('Entscheidungsmaschine: ' + e.message); global.set('OPT_engine', {ts: 0, fehler: e.message}); return null; }
+    ST.S = o.S; ST.last = {t: now, res: o.res, prop: o.prop, ende: o.ende, locks: o.locks};
+    files.push({filename: '/data/optimizer/decisions-' + month + '.jsonl', payload: JSON.stringify(o.rec) + '\n'});
+    if (o.scores.length) { files.push({filename: '/data/optimizer/scores-' + month + '.jsonl', payload: o.scores.map(function (x) { return JSON.stringify(x); }).join('\n') + '\n'}); }
+    var evl = o.ev.slice();
+    o.scores.forEach(function (x) { evl.push(['optimierer_punkte', x.regel + ' ' + x.typ + ' ' + (x.punkte > 0 ? '+' : '') + x.punkte + ': ' + x.text]); });
+    if (evl.length) {
+        var ef = '/data/optimizer/quiet-events-' + month + '.csv', eh = '';
+        try { fs.readFileSync(ef, 'utf8'); } catch (e) { eh = 'zeit,ereignis,wechsel\n'; }
+        files.push({filename: ef, payload: eh + evl.map(function (x) { return ENGINE.iso(now) + ',' + x[0] + ',' + String(x[1]).replace(/,/g, ';').replace(/\n/g, ' ') + '\n'; }).join('')});
+    }
+    // letzte Entscheidungen fuer die Anzeige: jede Aenderung von Status oder Grund-Art je Regel
+    var lastBy = flow.get('engLastBy') || {};
+    o.res.forEach(function (r) {
+        var key = r.st + '|' + String(r.grund).replace(/[0-9]+([,.][0-9]+)?/g, '#');
+        if (lastBy[r.id] !== key) { lastBy[r.id] = key; ST.ui.push([now, r.id, r.st, r.grund]); }
+    });
+    flow.set('engLastBy', lastBy);
+    if (ST.ui.length > 200) { ST.ui = ST.ui.slice(-200); }
+    global.set('OPT_engine', {ts: now, ver: ENGINE.VER, prop: o.prop, locks: o.locks, ende: o.ende, rules: o.res.map(function (r) { return {id: r.id, st: r.st}; })});
+    if (!ST.saved || now - ST.saved >= 10 * MIN || o.scores.length || o.ev.length) {
+        try { fs.mkdirSync('/data/optimizer', {recursive: true}); fs.writeFileSync('/data/optimizer/engine-state.json', JSON.stringify({S: ST.S, ui: ST.ui})); ST.saved = now; } catch (e) { node.warn('engine-state.json: ' + e.message); }
+    }
+}
+flow.set('eng', ST);
+if (!ST.last) { return null; }
+// ---------- Anzeige
+var L = ST.last, AP = global.get('OPT_apply') || {}, en = global.get('OPT_apply_enabled') === true, rel = Array.isArray(AP.rules) ? AP.rules : [];
+var NAMES = {}; ENGINE.RULES.forEach(function (R) { NAMES[R.id] = R.name + ' v' + R.ver; });
+var STX = {vorschlag: 'Vorschlag', hinweis: 'Hinweis', wartet: 'wartet', gesperrt: 'gesperrt', bereit: 'kein Vorschlag', inaktiv: 'nicht zuständig', abgelaufen: 'abgelaufen'};
+var p = L.prop, verw = p && Array.isArray(AP.verworfen) && AP.verworfen.indexOf(p.id) >= 0;
+var card = {prop: null, naechste: [], enabled: en, reset: !!AP.aktiv, alarm: AP.alarm ? AP.alarm.text : '', knopf: {ok: false, text: 'Übernahme gesperrt'}, uebernahme: {text: '', cls: ''}};
+if (p && !verw) {
+    card.prop = {id: p.id, sum: p.sum, was: p.was, warum: p.warum, wann: p.wann, befehl: p.art === 'hinweis' ? p.cmd.name + ' = ' + p.cmd.value + ' (nur Hinweis, nie per Klick)' : p.cmd.topic.split('/').pop() + ' = ' + p.cmd.value + ' (jetzt ' + p.von + ')',
+                 erwartung: p.erwartung, bis: hm(p.bis), rueckweg: p.rueckweg, regel: NAMES[p.rule] || p.rule};
+}
+if (!p || verw) {
+    var rank = {wartet: 0, gesperrt: 1, bereit: 2, abgelaufen: 3, inaktiv: 4, vorschlag: 5, hinweis: 5};
+    L.res.slice().sort(function (a, b) { return (rank[a.st] - rank[b.st]) || ((a.naechste && a.naechste.abstand !== undefined ? Math.abs(a.naechste.abstand) : 99) - (b.naechste && b.naechste.abstand !== undefined ? Math.abs(b.naechste.abstand) : 99)); })
+        .slice(0, 2).forEach(function (r) { card.naechste.push([NAMES[r.id], r.naechste && r.naechste.text ? r.naechste.text : r.grund]); });
+    if (verw) { card.naechste.unshift(['Verworfen', p.was + ' (' + p.id + ')']); }
+}
+if (AP.pending) { card.uebernahme = {text: 'Befehl gesendet ' + hm(AP.pending.ts) + ', warte auf die Bestätigung der Anlage (Versuch ' + AP.pending.versuche + ')', cls: 'warn'}; }
+else if (AP.aktiv) { card.uebernahme = {text: 'aktiv seit ' + hm(AP.aktiv.ts) + ': ' + AP.aktiv.name + ' = ' + AP.aktiv.value + (AP.aktiv.bestaetigt ? ' (bestätigt)' : ' (unbestätigt)') + (AP.aktiv.bis ? ', automatisch zurück auf ' + AP.aktiv.von + ' um ' + hm(AP.aktiv.bis) : ', kein automatischer Rückweg'), cls: AP.aktiv.bestaetigt ? 'ok' : 'warn'}; }
+else if (!en) { card.uebernahme = {text: 'gesperrt (Hauptschalter aus)', cls: ''}; }
+else { card.uebernahme = {text: 'freigegeben für: ' + (rel.length ? rel.map(function (x) { return NAMES[x] || x; }).join(', ') : 'keine Regel'), cls: rel.length ? 'ok' : ''}; }
+if (card.prop) {
+    if (p.art === 'hinweis') { card.knopf = {ok: false, text: 'nur Hinweis'}; }
+    else if (!en) { card.knopf = {ok: false, text: 'Übernahme gesperrt'}; }
+    else if (rel.indexOf(p.rule) < 0) { card.knopf = {ok: false, text: 'Übernahme gesperrt (Regel nicht freigegeben)'}; }
+    else if (AP.pending) { card.knopf = {ok: false, text: 'wartet auf Bestätigung'}; }
+    else { card.knopf = {ok: true, text: 'Übernehmen'}; }
+}
+var rules = L.res.map(function (r) { return [NAMES[r.id], STX[r.st] || r.st, r.grund, r.naechste && r.naechste.text ? r.naechste.text : '', r.st === 'vorschlag' || r.st === 'hinweis' ? 'ok' : (r.st === 'gesperrt' || r.st === 'wartet' ? 'warn' : '')]; });
+// Punkte: Bericht, Woche, Verlauf (Summe je Regel), Messaufgabe
+var rep = ENGINE.report(ST.S), wk = ST.S.sc.week || {}, wks = Object.keys(wk).sort().slice(-4);
+var prow = rep.map(function (r) {
+    return [r.name + ' v' + r.v, ENGINE.de(r.punkte, 1), r.faelle + ' (' + r.bewertet + ')', r.bewertet ? Math.round(100 * r.trefferquote) + ' % / ' + Math.round(100 * r.fehlalarmquote) + ' %' : '–',
+            r.skill === null ? '–' : ENGINE.de(r.skill, 2), String(r.schaden), String(r.verpasst), r.art === 'befehl' ? r.wirkung.n + (r.wirkung.kalib ? ' (' + r.wirkung.kalib + ' Kalibrierung)' : '') + ', ' + ENGINE.sg(r.wirkung.punkte, 0) : '–',
+            r.art === 'befehl' ? (r.reif ? 'reif' : r.kriterien.filter(function (k) { return k.ok; }).length + ' von ' + r.kriterien.length) : 'nur Hinweis', r.kriterien.filter(function (k) { return !k.ok; }).map(function (k) { return k.text; }).join(' · ')];
+});
+var wrow = [];
+wks.forEach(function (w) { Object.keys(wk[w]).forEach(function (id) { var x = wk[w][id]; wrow.push([w, NAMES[id] || id, ENGINE.de(x.punkte, 1), String(x.faelle), x.treffer + ' / ' + x.fehlalarm, String(x.schaden), String(x.verpasst), String(x.wirkung || 0)]); }); });
+var hist = (ST.S.sc.hist || []).filter(function (h) { return h[0] >= now - 30 * 24 * 60 * MIN; });
+var series = ENGINE.RULES.map(function (R) { var pts = hist.filter(function (h) { return h[1] === R.id; }).map(function (h) { return [h[0], h[2]]; }); return {id: R.id, n: R.name, d: pts}; }).filter(function (x) { return x.d.length; });
+var t0 = hist.length ? Math.min(hist[0][0], now - 24 * 60 * MIN) : now - 7 * 24 * 60 * MIN;
+var mess = ENGINE.messStatus(ST.S);
+var score = {now: now, t0: t0, series: series, rows: prow, week: wrow, mess: mess.text, stand: 'Bewertungsregeln v' + ENGINE.SCORE_VER + ' · Entscheidungsdaten v' + ENGINE.VER + ' · Stand ' + hm(L.t)};
+var logRows = ST.ui.slice(-20).reverse().map(function (x) { return [dmhm(x[0]), NAMES[x[1]] || x[1], STX[x[2]] || x[2], x[3], x[2] === 'vorschlag' || x[2] === 'hinweis' ? 'ok' : (x[2] === 'gesperrt' ? 'warn' : '')]; });
+return [{payload: card}, {payload: {rows: rules, stand: 'Stand ' + hm(L.t)}}, {payload: score}, {payload: {rows: logRows}}, files.length ? files : null];
+"""
+
+APPLY_WRAP_JS = r"""
+// ---------- Ein-Klick-Uebernahme (ausgeliefert GESPERRT). Einziger Sendeweg des Optimierer-Tabs, nur auf Klick in der Karte "Aktueller Vorschlag".
+// Pruefkette im Kern (ENGINE.applyRequest): Hauptschalter (apply.json, Standard AUS), freigegebene Regel, aktueller Vorschlag (ID + Pruefsumme), Alter,
+// Whitelist + Wertebereich, frische Daten, Abgleich mit dem Ist-Wert, MQTT-Notbremse, Rate und Tageslimit. Jede 15 s (tick): Ruecklesen, begrenzte
+// Wiederholung, Warnung bei Abweichung, Rueckweg. Alles in applied-YYYY-MM.jsonl. Ausgaenge: 1 mqtt out (deaktiviert ausgeliefert), 2 Meldung, 3 Dateien, 4 Anzeige.
+var now = Date.now(), MIN = 60000;
+var G = function (k) { var v; try { v = global.get(k, 'file'); } catch (e) { v = undefined; } return v !== undefined ? v : global.get(k); };
+function num(v) { if (v === null || v === undefined || v === '' || typeof v === 'boolean') { return null; } v = Number(v); return isFinite(v) ? v : null; }
+function p2(x) { return (x < 10 ? '0' : '') + x; }
+var AC = {enabled: false, rules: []};                                            // keine Datei, kaputte Datei oder enabled != true: gesperrt
+try { var j = JSON.parse(fs.readFileSync('/data/optimizer/apply.json', 'utf8')); if (j && j.enabled === true) { AC.enabled = true; } if (j && Array.isArray(j.rules)) { AC.rules = j.rules.filter(function (x) { return typeof x === 'string'; }); } } catch (e) { /* gesperrt */ }
+var A = flow.get('apply');
+if (!A) { try { A = JSON.parse(fs.readFileSync('/data/optimizer/apply-state.json', 'utf8')); } catch (e) { A = null; } }
+var A0 = JSON.stringify(A || null);
+var HP = G('OPT_hp') || {}, hpTs = 0;
+Object.keys(HP).forEach(function (k) { if (k.charAt(0) !== '_' && HP[k] && typeof HP[k].ts === 'number' && HP[k].ts > hpTs) { hpTs = HP[k].ts; } });
+function hpv(n) { var e = HP[n]; return (e && typeof e.v === 'number' && now - e.ts < 30 * MIN) ? e.v : null; }
+function pick(a, b) { return a !== null ? a : b; }
+var mq = G('MQTT') || {};
+var plant = {q: pick(hpv('Quiet_Mode_Level'), num(G('TOP18_Quiet_Mode_Level'))), shift: pick(hpv('Z1_Heat_Request_Temp'), num(G('TOP27_Z1_Heat_Request_Temp'))), hpAge: hpTs ? (now - hpTs) / MIN : null,
+             block: mq.block_active === 1 ? 1 : 0, heatMode: num(G('TOP76_Heating_Mode')), z1Sensor: num(G('TOP111_Z1_Sensor_Settings'))};
+var eng = global.get('OPT_engine') || {};
+var ctx = {now: now, enabled: AC.enabled, rules: AC.rules, eng: eng, plant: plant, cfg: ENGINE.mergeCfg(((global.get('OPT_cfg') || {}).engine) || {}), endReason: eng.ende || {}};
+var t = String(msg.topic || ''), r;
+try { r = t === 'tick' ? ENGINE.applyTick(A, ctx) : ENGINE.applyRequest(A, {topic: t, payload: (msg.payload && typeof msg.payload === 'object') ? {id: String(msg.payload.id || ''), sum: String(msg.payload.sum || '')} : {}}, ctx); }
+catch (e) { node.warn('Übernahme: ' + e.message); return [null, {topic: 'Optimierer', payload: 'Übernahme: Fehler (' + e.message + '). Nichts gesendet.', highlight: 'red'}, null, null]; }
+A = r.A;
+if (r.sperren) {                                                                  // Not-Aus aus dem Dashboard: Hauptschalter aus (Entsperren nur ueber apply.json)
+    AC.enabled = false;
+    try { fs.mkdirSync('/data/optimizer', {recursive: true}); fs.writeFileSync('/data/optimizer/apply.json', JSON.stringify({enabled: false, rules: AC.rules, gesperrt: ENGINE.iso(now), durch: 'Dashboard'}, null, 1)); } catch (e) { node.warn('apply.json: ' + e.message); }
+}
+global.set('OPT_apply_enabled', AC.enabled);
+// letzte Sicherung vor dem Ausgang: nur Whitelist-Topic, nur erlaubter Wert, nie bei Notbremse
+var out1 = [];
+r.send.forEach(function (m) {
+    var W = null; Object.keys(ENGINE.WHITELIST).forEach(function (k) { if (ENGINE.WHITELIST[k].topic === m.topic) { W = ENGINE.WHITELIST[k]; } });
+    var v = num(m.payload);
+    if (!W || v === null || W.werte.indexOf(v) < 0 || mq.block_active === 1) { node.warn('Übernahme: Befehl verworfen (' + m.topic + '=' + m.payload + ')'); return; }
+    global.set('MQTT_Source', m.source);                                          // Quelle fuer den Waechter und das HeishaMoNR-Protokoll
+    out1.push({topic: m.topic, payload: String(v), qos: 0, retain: false});
+});
+var d0 = new Date(now), month = d0.getFullYear() + '-' + p2(d0.getMonth() + 1), files = [];
+if (r.log.length) {
+    files.push({filename: '/data/optimizer/applied-' + month + '.jsonl', payload: r.log.map(function (x) { x.hauptschalter = AC.enabled; return JSON.stringify(x); }).join('\n') + '\n'});
+    var ef = '/data/optimizer/quiet-events-' + month + '.csv', eh = '';
+    try { fs.readFileSync(ef, 'utf8'); } catch (e) { eh = 'zeit,ereignis,wechsel\n'; }
+    files.push({filename: ef, payload: eh + r.log.map(function (x) { return x.t + ',optimierer_' + x.aktion + ',' + String((x.ergebnis || '') + ' ' + (x.befehl ? x.befehl + '=' + x.wert : '') + ' ' + (x.grund || '') + ' ' + (x.id || '')).replace(/,/g, ';').trim() + '\n'; }).join('')});
+}
+flow.set('apply', A);
+if (JSON.stringify(A) !== A0) { try { fs.mkdirSync('/data/optimizer', {recursive: true}); fs.writeFileSync('/data/optimizer/apply-state.json', JSON.stringify(A)); } catch (e) { node.warn('apply-state.json: ' + e.message); } }
+global.set('OPT_apply', {ts: now, aktiv: A.aktiv, pending: A.pending, alarm: A.alarm, verworfen: A.verworfen, n: A.n, enabled: AC.enabled, rules: AC.rules});
+var toast = r.toast ? {topic: 'Optimierer', payload: r.toast.text, highlight: r.toast.color || ''} : null;
+var refresh = (t !== 'tick' || r.log.length) ? {topic: 'anzeige'} : null;
+return [out1.length ? out1 : null, toast, files.length ? files : null, refresh];
+"""
+
+ENG_TAB = "opt_eng_ui_tab"                       # eigene Seite "Optimierer" (eigenes Kennzeichen, die Seitenpruefung der anderen vier Seiten bleibt unberuehrt)
+upsert({"id": ENG_TAB, "type": "ui_tab", "name": "Optimierer", "icon": "lightbulb_outline", "order": 12.55, "disabled": False, "hidden": False})
+for _ord, (_gid, _gname) in enumerate((("opt_g_eng_prop", "Aktueller Vorschlag"), ("opt_g_eng_rules", "Regeln und Abstand zur Schwelle"),
+                                       ("opt_g_eng_score", "Punkte (automatisch bewertet)"), ("opt_g_eng_log", "Letzte 20 Entscheidungen")), start=1):
+    upsert({"id": _gid, "type": "ui_group", "name": _gname, "tab": ENG_TAB, "order": _ord, "disp": True, "width": 18, "collapse": False, "className": ""})
+
+ENG_STYLE = """<style>
+.opte{font-size:14px;line-height:1.45}
+.opte .was{font-size:18px;font-weight:600;margin:2px 0 10px;color:#263238}
+.opte .grid{display:grid;grid-template-columns:max-content 1fr;gap:4px 16px}
+.opte .k{color:#666}
+.opte .warn{color:#c62828}
+.opte .ok{color:#2e7d32}
+.opte .mute{color:#888}
+.opte .btns{margin-top:14px;display:flex;gap:10px;flex-wrap:wrap}
+.opte button{font:inherit;padding:7px 16px;border-radius:4px;border:1px solid #1976d2;background:#1976d2;color:#fff;cursor:pointer}
+.opte button.sec{background:transparent;color:#1976d2}
+.opte button[disabled]{background:#eeeeee;border-color:#bdbdbd;color:#757575;cursor:not-allowed}
+.opte table{width:100%;border-collapse:collapse;font-size:13px}
+.opte th{text-align:left;font-weight:normal;color:#666;padding:4px 6px;border-bottom:1px solid #ccc;font-size:12px;vertical-align:bottom}
+.opte td{padding:5px 6px;border-bottom:1px solid #eee;vertical-align:top}
+.opte td.n{text-align:right;white-space:nowrap}
+.opte .sec2{margin:14px 0 4px;font-size:13px;color:#546e7a;font-weight:600}
+</style>"""
+ENG_PROP_TPL = ENG_STYLE + """<div class="opte optfit" ng-if="msg.payload">
+<div ng-if="msg.payload.prop">
+<div class="was">{{msg.payload.prop.was}}</div>
+<div class="grid">
+<span class="k">Warum</span><span>{{msg.payload.prop.warum}}</span>
+<span class="k">Wann</span><span>{{msg.payload.prop.wann}}</span>
+<span class="k">Befehl</span><span>{{msg.payload.prop.befehl}}</span>
+<span class="k">Erwartung</span><span>{{msg.payload.prop.erwartung}}</span>
+<span class="k">Gültig bis</span><span>{{msg.payload.prop.bis}}</span>
+<span class="k">Rückweg</span><span>{{msg.payload.prop.rueckweg}}</span>
+<span class="k">Regel</span><span>{{msg.payload.prop.regel}}</span>
+</div>
+</div>
+<div ng-if="!msg.payload.prop">
+<div class="was">Kein Vorschlag</div>
+<div class="grid"><span ng-repeat-start="r in msg.payload.naechste track by $index" class="k">{{r[0]}}</span><span ng-repeat-end>{{r[1]}}</span></div>
+</div>
+<div class="grid" style="margin-top:12px">
+<span class="k">Übernahme</span><span ng-class="msg.payload.uebernahme.cls">{{msg.payload.uebernahme.text}}</span>
+<span class="k" ng-if="msg.payload.alarm">Warnung</span><span class="warn" ng-if="msg.payload.alarm">{{msg.payload.alarm}}</span>
+</div>
+<div class="btns">
+<button ng-if="msg.payload.prop" ng-disabled="!msg.payload.knopf.ok" ng-click="send({topic: 'uebernehmen', payload: {id: msg.payload.prop.id, sum: msg.payload.prop.sum}})">{{msg.payload.knopf.text}}</button>
+<button class="sec" ng-if="msg.payload.prop" ng-click="send({topic: 'verwerfen', payload: {id: msg.payload.prop.id}})">Verwerfen</button>
+<button class="sec" ng-if="msg.payload.reset" ng-click="send({topic: 'zuruecksetzen', payload: {}})">Zurücksetzen</button>
+<button class="sec" ng-if="msg.payload.enabled" ng-click="send({topic: 'sperren', payload: {}})">Übernahme sperren</button>
+</div>
+</div>"""
+ENG_RULES_TPL = ENG_STYLE + """<div class="opte optfit"><div style="overflow-x:auto"><table>
+<tr><th>Regel</th><th>Status</th><th>Grund</th><th>Würde schalten, sobald …</th></tr>
+<tr ng-repeat="r in msg.payload.rows track by $index"><td style="white-space:nowrap">{{r[0]}}</td><td ng-class="r[4]" style="white-space:nowrap">{{r[1]}}</td><td>{{r[2]}}</td><td>{{r[3]}}</td></tr>
+</table></div><div class="mute" style="font-size:12px;margin-top:6px">{{msg.payload.stand}}</div></div>"""
+ENG_LOG_TPL = ENG_STYLE + """<div class="opte optfit"><div style="overflow-x:auto"><table>
+<tr><th>Zeit</th><th>Regel</th><th>Status</th><th>Grund</th></tr>
+<tr ng-repeat="r in msg.payload.rows track by $index"><td style="white-space:nowrap">{{r[0]}}</td><td style="white-space:nowrap">{{r[1]}}</td><td ng-class="r[4]" style="white-space:nowrap">{{r[2]}}</td><td>{{r[3]}}</td></tr>
+</table></div></div>"""
+ENG_SCORE_TPL = ENG_STYLE + """<div class="opte optfit">
+<div id="optch_engscore" style="min-height:120px"></div>
+<div style="overflow-x:auto"><table>
+<tr><th>Regel</th><th class="n">Punkte</th><th class="n">Fälle (bewertet)</th><th class="n">Treffer / Fehlalarm</th><th class="n">Brier-Skill</th><th class="n">Schaden</th><th class="n">Verpasst</th><th class="n">Wirkung</th><th class="n">Freigabereife</th><th>Offen</th></tr>
+<tr ng-repeat="r in msg.payload.rows track by $index"><td style="white-space:nowrap">{{r[0]}}</td><td class="n">{{r[1]}}</td><td class="n">{{r[2]}}</td><td class="n">{{r[3]}}</td><td class="n">{{r[4]}}</td><td class="n">{{r[5]}}</td><td class="n">{{r[6]}}</td><td class="n">{{r[7]}}</td><td class="n">{{r[8]}}</td><td style="font-size:12px">{{r[9]}}</td></tr>
+</table></div>
+<div class="sec2" ng-if="msg.payload.week.length">Wochenübersicht</div>
+<div style="overflow-x:auto" ng-if="msg.payload.week.length"><table>
+<tr><th>Woche</th><th>Regel</th><th class="n">Punkte</th><th class="n">Fälle</th><th class="n">Treffer / Fehlalarm</th><th class="n">Schaden</th><th class="n">Verpasst</th><th class="n">Wirkung</th></tr>
+<tr ng-repeat="r in msg.payload.week track by $index"><td>{{r[0]}}</td><td>{{r[1]}}</td><td class="n">{{r[2]}}</td><td class="n">{{r[3]}}</td><td class="n">{{r[4]}}</td><td class="n">{{r[5]}}</td><td class="n">{{r[6]}}</td><td class="n">{{r[7]}}</td></tr>
+</table></div>
+<div class="grid" style="margin-top:12px"><span class="k">Messaufgabe Comfort/Efficiency</span><span>{{msg.payload.mess}}</span><span class="k">Stand</span><span class="mute">{{msg.payload.stand}}</span></div>
+</div>"""
+ENG_SCORE_CH_JS = ("<script>" + UI_CHART_JS + "</script><script>(function (scope) {\n"
+    "var last = null, COL = ['#1976d2', '#00897b', '#ef6c00', '#8e24aa'];\n"
+    "function draw() {\n"
+    "    var el = document.getElementById('optch_engscore'), m = last;\n"
+    "    if (!el || !m || !m.payload || !window.optChart) { return; }\n"
+    "    var P = m.payload;\n"
+    "    if (!P.series || !P.series.length) { el.innerHTML = '<div style=\"padding:16px 4px;color:#757575\">Noch keine bewerteten Fälle.</div>'; return; }\n"
+    "    var ser = P.series.map(function (s, i) { var d = s.d.slice(); if (d.length) { d.push([P.now, d[d.length - 1][1]]); } return {n: s.n, c: COL[i % COL.length], k: 'step', w: 1.8, dg: 1, u: 'Punkte', d: d}; });\n"
+    "    window.optChart.mount(el, {t0: P.t0, t1: P.now, panels: [{h: 160, unit: 'Punkte', zero: true, series: ser}]});\n"
+    "}\n"
+    "window.__optChMap = window.__optChMap || {}; window.__optChMap.engscore = draw;\n"
+    "if (!window.__optChRs) { window.__optChRs = true; var tm = null; window.addEventListener('resize', function () { clearTimeout(tm); tm = setTimeout(function () { Object.keys(window.__optChMap).forEach(function (k) { window.__optChMap[k](); }); }, 200); }); }\n"
+    "scope.$watch('msg', function (m) { last = m; setTimeout(draw, 40); });\n"
+    "})(scope);</script>")
+
+
+def eng_template(i, gid, name, height, fmt, y, wires=None):
+    return {"id": i, "type": "ui_template", "z": TAB, "group": gid, "name": name, "order": 1, "width": 0, "height": height,
+            "format": fmt + FIT_JS.replace("__ID__", i), "storeOutMessages": True, "fwdInMessages": False, "resendOnRefresh": True,
+            "templateScope": "local", "className": "", "x": 1260, "y": y, "wires": wires if wires is not None else [[]]}
+
+
+upsert(comment("opt_c_eng", "Optimierer: Entscheidungsmaschine (Shadow, schaltet nichts) · Übernahme nur per Klick, GESPERRT ausgeliefert", 380, 2040))
+upsert(eng_template("opt_t_eng_prop", "opt_g_eng_prop", "Aktueller Vorschlag", 8, ENG_PROP_TPL, 2060, [["opt_apply"]]))
+upsert(eng_template("opt_t_eng_rules", "opt_g_eng_rules", "Regeln und Abstand zur Schwelle", 8, ENG_RULES_TPL, 2100))
+upsert(eng_template("opt_t_eng_score", "opt_g_eng_score", "Punkte", 10, ENG_SCORE_TPL + ENG_SCORE_CH_JS, 2140))
+upsert(eng_template("opt_t_eng_log", "opt_g_eng_log", "Letzte 20 Entscheidungen", 8, ENG_LOG_TPL, 2180))
+upsert(inject("opt_i_engine", "jede Minute", 60, 50, ["opt_engine"], 140, 2100))
+upsert(fn("opt_engine", "Entscheidungsmaschine (Shadow)", ENGINE_CORE_JS + ENGINE_WRAP_JS, 5,
+          [["opt_t_eng_prop"], ["opt_t_eng_rules"], ["opt_t_eng_score"], ["opt_t_eng_log"], ["opt_f_eng"]], 440, 2100, FS))
+upsert({"id": "opt_f_eng", "type": "file", "z": TAB, "name": "Entscheidungen, Punkte, Ereignisse", "filename": "filename", "filenameType": "msg", "appendNewline": False,
+        "createDir": True, "overwriteFile": "false", "encoding": "utf8", "x": 760, "y": 2160, "wires": [[]]})
+# Uebernahme: Klick (Karte) und Takt alle 15 s -> opt_apply -> (1) mqtt out GESPERRT, (2) Meldung, (3) Protokoll, (4) Anzeige neu
+upsert({"id": "opt_i_apply", "type": "inject", "z": TAB, "name": "alle 15 s (Rücklesen, Rückweg)", "props": [{"p": "payload"}, {"p": "topic", "vt": "str"}],
+        "repeat": "15", "crontab": "", "once": True, "onceDelay": "55", "topic": "tick", "payload": "", "payloadType": "date", "x": 160, "y": 2240, "wires": [["opt_apply"]]})
+upsert(fn("opt_apply", "Übernahme per Klick (gesperrt ausgeliefert)", ENGINE_CORE_JS + APPLY_WRAP_JS, 4,
+          [["opt_apply_mqtt"], ["opt_ui_toast"], ["opt_f_eng"], ["opt_engine"]], 440, 2240, FS))
+upsert({"id": "opt_broker_cmd", "type": "mqtt-broker", "name": "MQTT (NAS) Optimierer Übernahme", "broker": "10.10.10.128", "port": "1883",
+        "clientid": "nodered-optimizer-cmd", "autoConnect": True, "usetls": False, "protocolVersion": "4", "keepalive": "60",
+        "cleansession": True, "autoUnsubscribe": True, "birthTopic": "", "birthQos": "0", "birthRetain": "false", "birthPayload": "",
+        "birthMsg": {}, "closeTopic": "", "closeQos": "0", "closeRetain": "false", "closePayload": "", "closeMsg": {}, "willTopic": "",
+        "willQos": "0", "willRetain": "false", "willPayload": "", "willMsg": {}, "userProps": "", "sessionExpiry": ""})
+_apply_out = {"id": "opt_apply_mqtt", "type": "mqtt out", "z": TAB, "name": "Übernahme → HeishaMon (GESPERRT)", "topic": "", "qos": "0", "retain": "false",
+              "respTopic": "", "contentType": "", "userProps": "", "correl": "", "expiry": "", "broker": "opt_broker_cmd", "x": 760, "y": 2220, "wires": []}
+if not APPLY_NODE_ACTIVE:
+    _apply_out["d"] = True                      # deaktiviert: Node-RED legt den Knoten gar nicht an, nichts kann gesendet werden
+upsert(_apply_out)
 
 # the new page also belongs into the menu configuration (SYSTEM > menu), otherwise it can not be hidden/shown there
 form = B.get("e35b7df78bc6f722")
