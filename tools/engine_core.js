@@ -519,11 +519,13 @@ var ENGINE = (function () {
         }
         return null;
     }
-    function newTracker(rule, now, ctx) { return {rule: rule, t0: now, ctx: ctx, cut: 0, stop: 0, stopVlStop: false, wasRun: false, ser: []}; }
+    function bandsOf(d) { var o = {}; d.rooms.forEach(function (r) { o[r.id] = [r.min, r.max, r.active ? 1 : 0]; }); return o; }
+    function newTracker(rule, now, ctx, d) { ctx.bands = bandsOf(d); return {rule: rule, t0: now, ctx: ctx, cut: 0, stop: 0, stopVlStop: false, wasRun: false, ser: []}; }
     function trackerUpdate(T, d, cfg) {
         var now = d.now, H = Math.max.apply(null, RULE[T.rule].prognose.h) * MIN;
         if (now - T.t0 > H || T.cut) { return; }
         if (now > T.t0 && (d.qChanged || d.shiftChanged || Math.abs(d.sollJump) >= 2)) { T.cut = now; return; }   // Eingriff von aussen: ab hier keine Gegenfaktik mehr
+        if ((T.rule === 'raum_offset' || T.rule === 'heizgrenze_hinweis') && JSON.stringify(bandsOf(d)) !== JSON.stringify(T.ctx.bands)) { T.cut = now; return; }   // Komfortband geaendert = Eingriff
         if (T.rule === 'quiet_strecken') { if (!T.stop && T.wasRun && !d.running && d.fresh) { T.stop = now; } if (d.running) { T.wasRun = true; } return; }
         var pr = problemNow(T.rule, T.ctx, d, cfg);
         if (pr !== null) { T.ser.push([now - T.t0, pr]); }
@@ -552,6 +554,7 @@ var ENGINE = (function () {
         if (f <= 1 - SCORE.trefferAnteil) { return {o: 0, why: 'Problem nur in ' + Math.round(f * 100) + ' % der Minuten'}; }
         return {o: null, why: 'unklar (' + Math.round(f * 100) + ' %)'};
     }
+    function brier(p, b, o) { return SCORE.brierFaktor * (Math.pow(b - o, 2) - Math.pow(p - o, 2)); }   // > 0, wenn die Prognose p naeher am Ergebnis liegt als die Basisrate b
     function baseRate(sc, rule, h) { var b = (sc.base[rule] || {})[h]; if (!b || b[0] < SCORE.baseMinN) { return {b: 0.5, n: b ? b[0] : 0}; } return {b: (b[1] + 1) / (b[0] + 2), n: b[0]}; }
     function candidateNow(rule, d, cfg) {                                            // Vergleichslage fuer die Basisrate (schwaecher als der Ausloeser)
         var c = cfg.rules[rule];
@@ -589,7 +592,7 @@ var ENGINE = (function () {
             var R = RULE[r.id], p = S.rules[r.id].prop;
             var lead = p.lead || (d.roomBelow[0] ? d.roomBelow[0].name : '');
             sc.cases.push({id: p.id, rule: r.id, v: R.ver, t0: now, p: R.prognose.p, h: R.prognose.h.slice(), dir: p.dir, done: [], hr: [], pts: 0,
-                           tr: newTracker(r.id, now, {lead: lead, dir: p.dir}), dmg: r.locks.length ? ['sperre_verletzt'] : []});
+                           tr: newTracker(r.id, now, {lead: lead, dir: p.dir}, d), dmg: r.locks.length ? ['sperre_verletzt'] : []});
         });
         // 2) Faelle fortschreiben, Horizonte abschliessen
         sc.cases.forEach(function (C) {
@@ -600,7 +603,7 @@ var ENGINE = (function () {
                 C.done.push(h);
                 var oc = outcome(C.tr, h), br = baseRate(sc, C.rule, h), pts = 0;
                 if (oc.o !== null) {
-                    pts = SCORE.brierFaktor * (Math.pow(br.b - oc.o, 2) - Math.pow(C.p - oc.o, 2)) / C.h.length;
+                    pts = brier(C.p, br.b, oc.o) / C.h.length;
                     var T0 = tot(sc, C.rule, C.v); T0.bs += Math.pow(C.p - oc.o, 2); T0.bsRef += Math.pow(br.b - oc.o, 2);
                 }
                 C.hr.push({h: h, o: oc.o, b: r2(br.b), nb: br.n, punkte: r2(pts), why: oc.why});
@@ -626,7 +629,7 @@ var ENGINE = (function () {
             var slot = (R.id === 'raum_offset' || R.id === 'heizgrenze_hinweis') ? 60 : 15, sk = Math.floor(now / (slot * MIN));
             if (sc.lastSlot[R.id] === sk) { return; }
             var cn = candidateNow(R.id, d, cfg);
-            if (cn) { sc.lastSlot[R.id] = sk; sc.cands.push({rule: R.id, t0: now, h: R.prognose.h.slice(), done: [], tr: newTracker(R.id, now, {lead: cn.lead, dir: cn.dir})}); }
+            if (cn) { sc.lastSlot[R.id] = sk; sc.cands.push({rule: R.id, t0: now, h: R.prognose.h.slice(), done: [], tr: newTracker(R.id, now, {lead: cn.lead, dir: cn.dir}, d)}); }
         });
         sc.cands.forEach(function (C) {
             trackerUpdate(C.tr, d, cfg);
@@ -919,7 +922,7 @@ var ENGINE = (function () {
     }
 
     return {VER: VER, SCORE_VER: SCORE_VER, RULES: RULES, RULE: RULE, LOCKS: LOCKS, LOCK_CFG: LOCK_CFG, SCORE: SCORE, WHITELIST: WHITELIST, APPLY: APPLY,
-            defaults: defaults, mergeCfg: mergeCfg, newState: newState, fixState: fixState, step: step, report: report, messStatus: messStatus, MESS: MESS, snapshot: snapshot, unsnap: unsnap,
+            brier: brier, defaults: defaults, mergeCfg: mergeCfg, newState: newState, fixState: fixState, step: step, report: report, messStatus: messStatus, MESS: MESS, snapshot: snapshot, unsnap: unsnap,
             checksum: checksum, newApply: newApply, applyRequest: applyRequest, applyTick: applyTick, iso: iso, hhmm: hhmm, isoWeek: isoWeek, de: de, sg: sg};
 })();
 if (typeof module !== 'undefined' && module.exports) { module.exports = ENGINE; }

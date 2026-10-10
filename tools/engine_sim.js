@@ -185,6 +185,81 @@ console.log('--- (a) Mehrtages-Simulation (Anlagenmodell, Fake-Uhr)');
     check('5 Tage kaelter werdend (4 -> -3,5 °C, Bedarf ueber der Mindestleistung): Quiet-Freigabe schlaegt an (Deckel-Lage), hoechstens 3 je Tag, kein Fehler', D.errors === 0 && Object.keys(perDay).length >= 3 && Object.keys(perDay).every(k => perDay[k] <= 3), JSON.stringify(perDay));
 }
 
+// ================================================================== (b) Punktesystem (automatisch, ohne Nutzereingabe)
+console.log('--- (b) Punktesystem');
+{
+    // Grundlage: Brier-Prinzip. Eine Prognose p gewinnt gegen die Basisrate b nur, wenn sie trennt; Dauer-Alarm oder Raten bringt im Mittel <= 0 Punkte.
+    const ev = (p, f) => f * E.brier(p, f, 1) + (1 - f) * E.brier(p, f, 0);           // Erwartungswert, wenn die Basisrate stimmt (b = f)
+    check('Brier: Treffer gegen Basisrate 0,5 mit p 0,8 = +21, Fehlalarm = -39 (Punkte je Fall bei einem Horizont)', Math.abs(E.brier(0.8, 0.5, 1) - 21) < 1e-9 && Math.abs(E.brier(0.8, 0.5, 0) + 39) < 1e-9, E.brier(0.8, 0.5, 1) + ' / ' + E.brier(0.8, 0.5, 0));
+    check('Kein Gaming: wer ohne Trennschaerfe vorschlaegt (Ergebnis = Basisrate f), bekommt im Mittel <= 0 Punkte, egal welches p (f 0,1..0,9, p 0,1..0,9)', [0.1, 0.3, 0.5, 0.7, 0.9].every(f => [0.1, 0.5, 0.8, 0.9].every(p => ev(p, f) <= 1e-9)), [0.1, 0.5, 0.9].map(f => 'f' + f + ':' + ev(0.8, f).toFixed(1)).join(' '));
+    check('Treffer bei hoher Basisrate (0,86) bringt mit p 0,6 MINUS (der Vorschlag kam nur, wo das Problem ohnehin meist bleibt)', E.brier(0.6, 0.86, 1) < 0, E.brier(0.6, 0.86, 1).toFixed(2));
+
+    const boost = (i, o) => inp(T0 + i * MIN, Object.assign({rt: 30 + i, soll: 38, sollKurve: 29.75, vl: 30, rl: 28.25, q: 3, hz: 16, rooms: rooms({ki_oben: 21.2})}, o || {}));
+    // S1: Problem bleibt 150 min -> Treffer an allen drei Horizonten, Basisrate noch unbekannt (0,5) -> 3 x 7 = +21
+    let R = runSeq(160, i => boost(i));
+    let sc = [].concat.apply([], R.outs.map(o => o.scores)), a = sc.find(s => s.typ === 'ausloeser');
+    check('Fall bleibt bestehen (150 min am Deckel mit Rueckstand): Treffer an 30/60/120 min, Basisrate 0,5 (noch < 5 Vergleiche), +21 Punkte', a && a.ergebnis === 'treffer' && a.horizonte.every(h => h.o === 1 && h.b === 0.5) && Math.abs(a.punkte - 21) < 0.01 && a.fall === 'quiet_freigabe@2026-10-12T06:10', a && (a.ergebnis + ' ' + a.punkte + ' ' + a.text));
+    check('Punktebuch: Datensatz mit Regel, Version, Bewertungsversion, Prognose p, je Horizont Ergebnis/Basisrate/Punkte, laufende Summe', a && a.regel === 'quiet_freigabe' && a.v === 1 && a.sv === E.SCORE_VER && a.p === 0.8 && a.horizonte.length === 3 && a.summe === 21, a && JSON.stringify(a.horizonte[0]));
+    // S2: Problem loest sich nach 5 min von selbst -> Fehlalarm an allen Horizonten -> -39
+    R = runSeq(160, i => boost(i, i >= 15 ? {vl: 38, rl: 35.5} : {}));
+    sc = [].concat.apply([], R.outs.map(o => o.scores)); a = sc.find(s => s.typ === 'ausloeser');
+    check('Problem verschwindet von selbst (Ruecklauf am Soll nach 5 min): Fehlalarm, -39 Punkte', a && a.ergebnis === 'fehlalarm' && Math.abs(a.punkte + 39) < 0.01, a && (a.ergebnis + ' ' + a.punkte + ' ' + a.text));
+    // S3: Eingriff (Quiet 0 von Hand 5 min nach dem Vorschlag) -> Ausloeser neutral, Wirkungsfall bewertet (kein Kalibrierfall): 33 Hz, +500 W, Vorlauf +3 K
+    R = runSeq(160, i => boost(i, i >= 15 ? {q: 0, hz: 33, pel: 800, vl: Math.min(36, 30 + (i - 15) * 0.15)} : {pel: 300}));
+    sc = [].concat.apply([], R.outs.map(o => o.scores)); a = sc.find(s => s.typ === 'ausloeser'); const w = sc.find(s => s.typ === 'wirkung');
+    check('Eingriff von aussen (Quiet von Hand): Ausloeser-Prognose neutral (0), keine Gegenfaktik mehr', a && a.ergebnis === 'neutral' && a.punkte === 0 && /Eingriff nach 5 min/.test(a.text), a && a.text);
+    check('Wirkungsprognose bei gleichwertiger Aenderung: 3 von 3 getroffen (>= 25 Hz, +500 W, Vorlauf +3 K) = +30, kein Kalibrierfall', w && w.punkte === 30 && w.kalibrierfall === 0 && w.teile.every(t => t.ergebnis === 'getroffen'), w && w.text);
+    R = runSeq(160, i => boost(i, i >= 15 ? {q: 0, hz: 17, pel: 310} : {pel: 300}));
+    sc = [].concat.apply([], R.outs.map(o => o.scores)); const w2 = sc.find(s => s.typ === 'wirkung');
+    check('Wirkungsprognose daneben (Verdichter bleibt bei 17 Hz): -30', w2 && w2.punkte === -30, w2 && w2.text);
+    // S4: Schaden: Verdichter stoppt 4 min nach dem Vorschlag (Lage war knapp vor der Abschaltung) -> -30 und Fehlalarm
+    R = runSeq(160, i => boost(i, i >= 14 && i < 40 ? {hz: 0, rt: 0, pump: 1750, vl: 41.5, rl: 41} : (i >= 40 ? {soll: 30, vl: 31, rl: 28} : {})));
+    sc = [].concat.apply([], R.outs.map(o => o.scores)); const dmg = sc.find(s => s.typ === 'schaden');
+    check('Schaden: Stopp binnen 10 min nach dem Vorschlag = -30 (eigener Datensatz mit Art)', dmg && dmg.arten.indexOf('stopp10') >= 0 && dmg.punkte <= -30, dmg && dmg.text);
+    // S5: Verpasst: Lage 25 min (Ruecklauf >= 2 K am Deckel), aber Tageslimit 0 -> keine Vorschlaege -> -20; bei MQTT-Sperre entschuldigt
+    const c0 = E.mergeCfg({rules: {quiet_freigabe: {proTag: 0}}});
+    R = runSeq(40, i => boost(i), null, c0); sc = [].concat.apply([], R.outs.map(o => o.scores));
+    check('Verpasst: 20 min Lage am Deckel mit >= 2 K Rueckstand, eigenes Tageslimit verhinderte den Vorschlag -> -20', sc.some(s => s.typ === 'verpasst' && s.regel === 'quiet_freigabe' && s.punkte === -20), sc.map(s => s.typ).join(','));
+    R = runSeq(40, i => boost(i, {block: 1})); sc = [].concat.apply([], R.outs.map(o => o.scores));
+    check('Verpasst entschuldigt: MQTT-Sperre (Sicherheitssperre) -> keine Minuspunkte', !sc.some(s => s.typ === 'verpasst'), sc.map(s => s.typ).join(','));
+    // S6: Basisrate lernt aus Vergleichslagen: 8 kurze Episoden (Rueckstand 30 min, dann geloest) -> b fuer 60/120 min nahe 0 -> Treffer zaehlt viel
+    let S = null; const ep = [];
+    for (let k = 0; k < 8; k++) { for (let i = 0; i < 150; i++) { const t = k * 150 + i; const o = E.step(S, inp(T0 + t * MIN, {rt: 20 + i, soll: 31, sollKurve: 30.5, vl: i < 30 ? 29 : 31.5, rl: i < 30 ? 26.5 : 29.5, q: 3, hz: 16, block: 1}), cfg); S = o.S; } }
+    const B = S.sc.base.quiet_freigabe || {};
+    check('Basisrate "bleibt, wie es ist": aus Vergleichslagen gelernt (8 Episoden mit 30 min Rueckstand: nach 30 min bestand das Problem 8/8, nach 120 min 0/8; 60 min unklar = nicht gezaehlt)', B['30'] && B['30'][0] === 8 && B['30'][1] === 8 && B['120'] && B['120'][0] === 8 && B['120'][1] === 0 && !B['60'], JSON.stringify(B));
+    // S7: Neustart mitten in einem offenen Fall (Zustand per Datei) -> gleiches Ergebnis wie ohne Neustart
+    const A1 = runSeq(160, i => boost(i));
+    let Sx = null, sx = [];
+    for (let i = 0; i < 160; i++) { if (i === 60) { Sx = JSON.parse(JSON.stringify(Sx)); Sx.born = T0 + i * MIN; } const o = E.step(Sx, boost(i), cfg); Sx = o.S; sx = sx.concat(o.scores); }
+    const a1 = [].concat.apply([], A1.outs.map(o => o.scores)).find(s => s.typ === 'ausloeser'), ax = sx.find(s => s.typ === 'ausloeser');
+    check('Neustart mitten im Fall: offener Fall ueberlebt die Datei, gleiches Ergebnis (+21)', a1 && ax && a1.punkte === ax.punkte && ax.ergebnis === 'treffer', (ax && ax.punkte) + ' vs ' + (a1 && a1.punkte));
+    // S8: Raumoffset: Raum bleibt kalt -> Treffer; Verpasst, wenn der Raumvorschlag fehlt
+    R = runSeq(400, i => inp(T0 + i * MIN, {korr: {v: 1, code: 'Raum unter Minimum', distrib: false, lead: 'Kinderzimmer oben'}, rooms: rooms({ki_oben: 21.2})}));
+    sc = [].concat.apply([], R.outs.map(o => o.scores)); a = sc.find(s => s.typ === 'ausloeser' && s.regel === 'raum_offset');
+    check('Raumoffset +1 K: Raum bleibt 240 min unter Minimum -> Treffer an 60/120/240 min', a && a.ergebnis === 'treffer' && a.horizonte.length === 3, a && a.text);
+    R = runSeq(200, i => inp(T0 + i * MIN, {korr: {v: 0, code: 'Daten unvollständig', distrib: false, lead: ''}, rooms: rooms({ki_oben: 21.2, valid: false, age: 120})}));
+    sc = [].concat.apply([], R.outs.map(o => o.scores));
+    check('Raumoffset verpasst: Raum 0,8 K unter Minimum 180 min lang (Wert 2 h alt, Shelly meldet nur bei Aenderung), aber kein Raumvorschlag -> -20', sc.some(s => s.typ === 'verpasst' && s.regel === 'raum_offset'), sc.map(s => s.typ).join(','));
+    // S9: Hinweis Heizgrenze: Raeume behalten die Reserve -> Treffer; Raum faellt unter Minimum -> Fehlalarm und Schaden "zu kalt"
+    const mild = (i, t) => inp(T0 + i * MIN, {at: 13, rt: 20 + i, soll: 29, sollKurve: 29, vl: 30, rl: 28, rooms: [{id: 'ki_oben', name: 'Kinderzimmer oben', t: t, age: 10, min: 22, max: 23.5, valid: true, active: true}]});
+    R = runSeq(220, i => mild(i, 22.8)); sc = [].concat.apply([], R.outs.map(o => o.scores));
+    check('Heizgrenze-Hinweis: Raum behaelt die Reserve 180 min -> Treffer (nur Hinweis, kein Befehl)', sc.some(s => s.typ === 'ausloeser' && s.regel === 'heizgrenze_hinweis' && s.ergebnis === 'treffer') && R.outs.some(o => o.prop && o.prop.art === 'hinweis'), sc.map(s => s.typ + ':' + s.ergebnis).join(','));
+    R = runSeq(220, i => mild(i, i < 60 ? 22.8 : 21.6)); sc = [].concat.apply([], R.outs.map(o => o.scores));
+    check('Heizgrenze-Hinweis: Raum faellt unter Minimum - 0,3 K -> Fehlalarm und Schaden "zu kalt"', sc.some(s => s.typ === 'ausloeser' && s.ergebnis === 'fehlalarm') && sc.some(s => s.typ === 'schaden' && s.arten.indexOf('zu_kalt') >= 0), sc.map(s => s.typ + ':' + (s.ergebnis || s.arten)).join(','));
+    // S10: Bericht, Wochenuebersicht, Freigabereife
+    const rep = E.report(A1.S), rq = rep.find(r => r.regel === 'quiet_freigabe');
+    check('Bericht je Regel: Punkte, Faelle, Treffer-/Fehlalarmquote, Brier-Skill, Schaden, Verpasst, Wirkung, Freigabereife mit Kriterien', rq && rq.punkte === 21 && rq.trefferquote === 1 && rq.fehlalarmquote === 0 && rq.skill !== null && rq.reif === false && rq.kriterien.length === 6 && rq.kriterien.find(k => k.k === 'faelle').ok === false, JSON.stringify(rq.kriterien.map(k => k.k + (k.ok ? '+' : '-'))));
+    check('Wochenuebersicht (ISO-Woche) mit Punkten, Faellen, Treffern', A1.S.sc.week['2026-W42'] && A1.S.sc.week['2026-W42'].quiet_freigabe.punkte === 21 && A1.S.sc.week['2026-W42'].quiet_freigabe.treffer === 1, JSON.stringify(A1.S.sc.week));
+    check('Punkteverlauf fuer das Diagramm (Zeit, Regel, Summe)', A1.S.sc.hist.length >= 1 && A1.S.sc.hist[A1.S.sc.hist.length - 1][2] === 21, JSON.stringify(A1.S.sc.hist.slice(-1)));
+    // S11: Messaufgabe Comfort gegen Efficiency: beide Seiten mit Quiet 0 und Rueckstand -> ein Befund mit Zahlen
+    let Sm = null, ms = [];
+    for (let i = 0; i < 80; i++) { const hc = i < 40 ? 1 : 0, o = E.step(Sm, inp(T0 + i * MIN, {q: 0, hc: hc, rt: 30 + i, soll: 38, vl: 33, rl: 30, hz: hc ? 34 : 45, pel: hc ? 840 : 1150, pth: hc ? 5000 : 6500, at: 11}), cfg); Sm = o.S; ms = ms.concat(o.scores); }
+    const mb = ms.find(s => s.typ === 'messaufgabe');
+    check('Messaufgabe: Befund "Comfort bis 45 Hz, Efficiency bis 34 Hz" genau einmal, ohne Punkte', mb && mb.punkte === 0 && mb.comfort.hzMax === 45 && mb.efficiency.hzMax === 34 && ms.filter(s => s.typ === 'messaufgabe').length === 1 && /Comfort bis 45 Hz/.test(mb.text) && !E.messStatus(Sm).offen, mb && mb.text);
+    const src = fs.readFileSync(path.join(__dirname, 'engine_core.js'), 'utf8'), bewertung = src.slice(src.indexOf('// ------------------------------------------------------------------ Punktesystem'), src.indexOf('// ------------------------------------------------------------------ Ein-Klick'));
+    check('Verwerfen ist keine Bewertung: der Bewertungsteil des Kerns kennt weder Klicks noch den Uebernahme-Zustand (keine Nutzereingabe in den Punkten)', bewertung.length > 1000 && !/verworfen|lastClick|applyRequest|uebernehmen/.test(bewertung), bewertung.length + ' Zeichen geprueft');
+}
+
 // ================================================================== Replay der echten Daten (07.-10.10.)
 let RP = null;
 if (fs.existsSync(path.join(dataDir, 'quiet-2026-10.csv'))) {
