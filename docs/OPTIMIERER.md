@@ -265,7 +265,7 @@ Tabellen aus dem Regelwerk, erzeugt mit `node tools/engine_doc.js`. Die Sim prü
 
 *Übernahme-Grenzen:* `maxAlterMin` 2,5 · `hpMaxAgeMin` 5 · `abstandMin` 10 · `proTag` 6 · `doppelMs` 120000 · `rueckleseS` 90 · `wiederholungen` 2 · `rueckwegVersuche` 3
 
-### Bewertungsregeln (Version 1)
+### Bewertungsregeln (Version 2)
 
 | Größe | Wert |
 |---|---|
@@ -275,7 +275,9 @@ Tabellen aus dem Regelwerk, erzeugt mit `node tools/engine_doc.js`. Die Sim prü
 | Problem besteht / gelöst | ≥ 80 % / ≤ 20 % der gültigen Minuten, dazwischen neutral |
 | Wirkungsprognose | je Größe ±10, nicht messbar 0, Kalibriermessung 0 |
 | Schaden | sperre_verletzt -50, heizstab -50, stopp10 -30, ueberschwingen -30, zu_warm -20, zu_kalt -20 |
-| Verpasst | -20 |
+| Verpasst | -20 (gezählt werden nur Minuten, in denen die Regel nicht durch eine eigene Sperre zurückgehalten wurde) |
+| Verpasst während eigener Sperre (seit v2) | 0 Punkte, getrennt gezählt (`verpasst_sperre`); eigene Sperren: Mindestabstand (`gapMin`), Tageslimit (`proTag`), Wartezeit (`pauseMin`), Haltezeit (`haltMin`), Stabilitätszeit (`stabilMin`); nur soweit sie auch mit dem Standardwert bestanden hätten |
+| Schaden hebt die Entschuldigung auf (seit v2) | quiet_freigabe: Raum > 1 K unter Minimum; quiet_strecken: Verdichter stoppt, Vorlauf ≥ Soll +3,25 K; raum_offset: Raum > 1 K unter Minimum → verpasst -20 |
 | Raumwerte in der Bewertung | bis 360 min alt (Shelly melden nur bei Änderung) |
 | Eingriffe (Bewertung wird ab dort neutral) | Quiet, Verschiebung oder Soll (≥ 2 K) geändert; Komfortband geändert; Lüftungsverdacht (Raum fällt ≥ 1 K in ≤ 60 min) |
 | Freigabereife (nur Anzeige) | ≥ 10 bewertete Fälle, ≥ 14 Tage, Brier-Skill ≥ 0,2, 0 × Schaden, ≤ 1 × verpasst, ≥ 2 Wirkungsfälle mit Punkten > 0 (ohne Kalibrierung) |

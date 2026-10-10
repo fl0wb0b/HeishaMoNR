@@ -223,6 +223,33 @@ console.log('--- (b) Punktesystem');
     check('Verpasst: 20 min Lage am Deckel mit >= 2 K Rueckstand, eigenes Tageslimit verhinderte den Vorschlag -> -20', sc.some(s => s.typ === 'verpasst' && s.regel === 'quiet_freigabe' && s.punkte === -20), sc.map(s => s.typ).join(','));
     R = runSeq(40, i => boost(i, {block: 1})); sc = [].concat.apply([], R.outs.map(o => o.scores));
     check('Verpasst entschuldigt: MQTT-Sperre (Sicherheitssperre) -> keine Minuspunkte', !sc.some(s => s.typ === 'verpasst'), sc.map(s => s.typ).join(','));
+    // S5b (Bewertungsregeln v2): eigene Sperren/Wartezeiten entschuldigen "verpasst" (neutral, getrennt gezaehlt), Schaden und verlaengerte Werte nicht
+    const hand = (i, o) => boost(i, Object.assign(i === 0 ? {q: 2} : {}, o || {}));          // Quiet 2 -> 3 von Hand in Minute 1: 60 min Mindestabstand
+    const allSc = R0 => [].concat.apply([], R0.outs.map(o => o.scores));
+    R = runSeq(80, i => hand(i)); sc = allSc(R);
+    const vs = sc.filter(s => s.typ === 'verpasst_sperre'), pr1 = R.outs.findIndex(o => o.res.find(r => r.id === 'quiet_freigabe').neu);
+    check('v2: Sperre entschuldigt verpasst - Lage ab Minute 0, Regel nur durch Haltezeit (10 min) und Mindestabstand nach Quiet von Hand (60 min) zurueckgehalten -> nach 20 min "verpasst_sperre" mit 0 Punkten, kein "verpasst"; Vorschlag sobald der Abstand endet (Minute 61)',
+          vs.length === 1 && vs[0].punkte === 0 && vs[0].sv === 2 && vs[0].t === E.iso(T0 + 20 * MIN) && JSON.stringify(vs[0].sperre) === '["haltezeit","abstand"]' && !sc.some(s => s.typ === 'verpasst') && pr1 === 61, vs.map(s => s.t + ' ' + s.text).join(' | ') + ' · Vorschlag in Minute ' + pr1);
+    const rp1 = E.report(R.S).find(r => r.regel === 'quiet_freigabe');
+    check('v2: "waehrend Sperre" getrennt im Punktebuch (verpasstSperre 1, verpasst 0, 0 Punkte daraus) und nicht in der Freigabereife', rp1.verpasstSperre === 1 && rp1.verpasst === 0 && rp1.sv === 2 && rp1.kriterien.find(k => k.k === 'verpasst').ok, JSON.stringify({vs: rp1.verpasstSperre, v: rp1.verpasst, p: rp1.punkte}));
+    R = runSeq(80, i => hand(i), null, E.mergeCfg({sv: 1})); sc = allSc(R);
+    check('v1 bleibt nachrechenbar (cfg.sv = 1): dieselbe Lage ergibt wie bisher "verpasst" -20 nach 20 min, Datensatz sv 1', sc.filter(s => s.typ === 'verpasst').length === 1 && sc.find(s => s.typ === 'verpasst').punkte === -20 && sc.find(s => s.typ === 'verpasst').sv === 1 && !sc.some(s => s.typ === 'verpasst_sperre') && R.outs[5].rec.sv === 1, sc.map(s => s.typ + ':' + s.punkte).join(','));
+    R = runSeq(80, i => hand(i, {rooms: rooms({ki_oben: 20.8})})); sc = allSc(R);
+    const vd = sc.filter(s => s.typ === 'verpasst');
+    check('v2: Schaden waehrend Sperre zaehlt - Raum 1,2 K unter Minimum im Fenster -> trotz eigener Sperre "verpasst" -20 mit Schadensart, kein neutraler Eintrag', vd.length === 1 && vd[0].punkte === -20 && JSON.stringify(vd[0].schaden) === '["komfort"]' && /aber Schaden: Raum mehr als 1 K unter Minimum/.test(vd[0].text) && !sc.some(s => s.typ === 'verpasst_sperre'), vd.map(s => s.t + ' ' + s.text).join(' | '));
+    const late = (i, o) => hand(i, Object.assign(i < 70 ? {rl: 35} : {}, o || {}));        // Lage erst ab Minute 70 (Standard-Abstand endet in Minute 61)
+    R = runSeq(110, i => late(i)); sc = allSc(R);
+    check('v2: mit Standard-Abstand (60 min) schlaegt die Regel ab Minute 80 vor (Lage ab 70 + 10 min Haltezeit) - nichts verpasst', !sc.some(s => /^verpasst/.test(s.typ)) && R.outs.findIndex(o => o.res.find(r => r.id === 'quiet_freigabe').neu) === 80, sc.map(s => s.typ).join(','));
+    R = runSeq(110, i => late(i), null, E.mergeCfg({locks: {gapMin: 180}})); sc = allSc(R);
+    const vx = sc.filter(s => s.typ === 'verpasst');
+    check('v2: verlaengerte Sperre entschuldigt nicht - Mindestabstand auf 180 min verlaengert: die Minuten nach dem Standard (60 min) zaehlen frei -> "verpasst" -20 in Minute 99 (Haltezeit bis Minute 79 entschuldigt, ab Minute 80 frei, 20 freie Minuten)', vx.length === 1 && vx[0].punkte === -20 && vx[0].t === E.iso(T0 + 99 * MIN) && /verlängert: Mindestabstand/.test(vx[0].text) && !R.outs.some(o => o.res.find(r => r.id === 'quiet_freigabe').neu), vx.map(s => s.t + ' ' + s.text).join(' | '));
+    const stretch = i => inp(T0 + i * MIN, i < 25 ? {q: i === 0 ? 3 : 0, hz: 30, rt: 60 + i, soll: 30, sollKurve: 29.75, vl: Math.round((30.5 + 0.1 * i) * 100) / 100, rl: 26.5} : {q: 0, hz: 0, rt: 0, soll: 30, vl: 33, rl: 30});
+    R = runSeq(40, stretch); sc = allSc(R);
+    const ts = sc.filter(s => s.regel === 'quiet_strecken');
+    check('v2: Takten waehrend Sperre zaehlt - Laufzeit strecken nur durch Haltezeit/Mindestabstand (Quiet 3 -> 0 von Hand) zurueckgehalten: erst "verpasst_sperre" (0), der Verdichter-Stopp danach hebt die Entschuldigung auf -> "verpasst" -20 mit Schadensart Takt', ts.length === 2 && ts[0].typ === 'verpasst_sperre' && ts[1].typ === 'verpasst' && ts[1].punkte === -20 && JSON.stringify(ts[1].schaden) === '["takt"]', ts.map(s => s.t.slice(11, 16) + ' ' + s.typ + ' ' + (s.schaden || '')).join(' | '));
+    R = runSeq(40, i => boost(i), null, E.mergeCfg({sv: 1, rules: {quiet_freigabe: {proTag: 0}}}));
+    const Sold = R.S, oldSum = Sold.sc.tot['quiet_freigabe|v1'].punkte; R = runSeq(30, i => boost(40 + i), Sold);
+    check('Versionswechsel v1 -> v2 im laufenden Zustand: alte Punkte bleiben unveraendert unter "quiet_freigabe|v1", v2 zaehlt getrennt ("|s2"), Bericht zeigt v2', oldSum === -20 && R.S.sc.tot['quiet_freigabe|v1'].punkte === -20 && R.S.sc.tot['quiet_freigabe|v1|s2'] && E.report(R.S).find(r => r.regel === 'quiet_freigabe').sv === 2 && E.report(R.S, 1).find(r => r.regel === 'quiet_freigabe').punkte === -20, JSON.stringify(Object.keys(R.S.sc.tot)));
     // S6: Basisrate lernt aus Vergleichslagen: 8 kurze Episoden (Rueckstand 30 min, dann geloest) -> b fuer 60/120 min nahe 0 -> Treffer zaehlt viel
     let S = null; const ep = [];
     for (let k = 0; k < 8; k++) { for (let i = 0; i < 150; i++) { const t = k * 150 + i; const o = E.step(S, inp(T0 + t * MIN, {rt: 20 + i, soll: 31, sollKurve: 30.5, vl: i < 30 ? 29 : 31.5, rl: i < 30 ? 26.5 : 29.5, q: 3, hz: 16, block: 1}), cfg); S = o.S; } }
@@ -321,6 +348,9 @@ console.log('--- Seite "Optimierer": Karten-Daten und Darstellung');
     const A1 = runSeq(160, i => inp(T0 + i * MIN, {rt: 30 + i, soll: 38, sollKurve: 29.75, vl: 30, rl: 28.25, q: 3, hz: 16, rooms: rooms({ki_oben: 21.2})}));
     const s1 = VW.build({now: T0 + 159 * MIN, last: {t: T0 + 159 * MIN, res: A1.outs[159].res, anl: {}}, S: A1.S, V: {}, AP: {}}).score;
     check('Punkte-Diagramm: Summe je Regel als Stufenlinie ab 0 bis jetzt (SVG-Baukasten), Kachel +21', s1.series.length === 1 && s1.series[0].d[0][1] === 0 && s1.series[0].d[s1.series[0].d.length - 1][0] === T0 + 159 * MIN && s1.tiles[0].punkte === '+21,0' && /<svg/.test(require('./ui_chart.js').svg(UI.chartSpec(s1), 940).svg) && UI.html('score', s1).includes('id="oe_chart"'), JSON.stringify(s1.series[0].d));
+    const A2 = runSeq(80, i => inp(T0 + i * MIN, {rt: 30 + i, soll: 38, sollKurve: 29.75, vl: 30, rl: 28.25, q: i === 0 ? 2 : 3, hz: 16, rooms: rooms({ki_oben: 21.2})}));
+    const s2 = VW.build({now: T0 + 79 * MIN, last: {t: T0 + 79 * MIN, res: A2.outs[79].res, anl: {}}, S: A2.S, V: {}, AP: {}}).score, h2 = UI.html('score', s2);
+    check('Punkte-Karte (v2): "verpasst waehrend Sperre" als Kennzahl je Befehlsregel (Quiet-Freigabe 1, sonst 0, Hinweis ohne), kein Warntext, Punkte 0', s2.sv === 2 && s2.tiles[0].sperre === 1 && s2.tiles[1].sperre === 0 && s2.tiles[3].sperre === null && s2.tiles[0].warn === '' && s2.tiles[0].punkte === '0' && h2.includes('<div class="oe-ln" data-k="sperre"><span>🔒 verpasst während Sperre</span><b>1</b></div>') && (h2.match(/data-k="sperre"/g) || []).length === 3, s2.tiles.map(t => t.sperre).join(','));
     if (fs.existsSync(path.join(dataDir, 'quiet-2026-10.csv'))) {
         const PV = require('./engine_ui_preview.js'), SN = PV.snapshots(dataDir), html = PV.page({A: SN.A, B: SN.B});
         check('Vorschau mit echten Daten: 10.10. 08:38 Vorschlag Quiet 3 -> 0 (Übernahme gesperrt), Ende ohne Vorschlag; Entscheidungen hoechstens 12 Episoden, keine Wiederholungen', SN.A.card.prop && SN.A.card.prop.was === 'Quiet-Stufe 3 → 0' && !SN.B.card.prop && SN.B.log.rows.length <= 12 && new Set(SN.B.log.rows.map(r => r.t + r.n)).size === SN.B.log.rows.length && html.length < 200000, SN.B.log.rows.length + ' Episoden, ' + html.length + ' Bytes');
@@ -347,6 +377,10 @@ if (fs.existsSync(path.join(dataDir, 'quiet-2026-10.csv'))) {
     const RV = replay(dataDir, {cfg: {rules: {quiet_freigabe: {rlRueckK: -99}}}}), extra = RV.props.filter(p => p.rule === 'quiet_freigabe').length - 1;
     const sumV = RV.scores.filter(s0 => s0.regel === 'quiet_freigabe' && s0.typ !== 'wirkung').reduce((a0, s0) => a0 + s0.punkte, 0);
     check('Begruendung der Ruecklauf-Bedingung: ohne sie 4 zusaetzliche Quiet-Freigaben, alle Fehlalarm, mit Schaden "zu warm" (zusammen rund -213 Punkte)', extra === 4 && RV.scores.filter(s0 => s0.regel === 'quiet_freigabe' && s0.typ === 'ausloeser' && s0.ergebnis === 'fehlalarm').length === 4 && Math.round(sumV) === -213, extra + ' zusaetzlich, ' + sumV.toFixed(2) + ' Punkte');
+    const RP1 = replay(dataDir, {cfg: {sv: 1}}), rv1 = RP1.report.find(r => r.regel === 'raum_offset'), rv2 = RP.report.find(r => r.regel === 'raum_offset');
+    const m1 = RP1.scores.filter(s0 => /^verpasst/.test(s0.typ)), m2 = RP.scores.filter(s0 => /^verpasst/.test(s0.typ));
+    check('Replay v1 reproduzierbar (cfg.sv = 1): Raumeinfluss -23,73 mit "verpasst" 09.10. 21:47 wie im Bericht v1; Datensaetze ausser sv identisch mit v2', rv1.punkte === -23.73 && rv1.verpasst === 1 && m1.length === 1 && m1[0].typ === 'verpasst' && m1[0].t === '2026-10-09 21:47:00' && RP1.recs.every((l, i) => l.replace('"sv":1', '"sv":2') === RP.recs[i]), rv1.punkte + ' / ' + m1.map(x => x.t + ' ' + x.typ).join(','));
+    check('Replay v2: dieselbe Lage (Kinderzimmer oben ab 18:47) ist "waehrend Sperre" (Stabilitaetszeit des flackernden Raumvorschlags, kein Raum > 1 K unter Minimum) -> 0 Punkte, Raumeinfluss -3,73; sonst gleiche Punkte', rv2.punkte === -3.73 && rv2.verpasst === 0 && rv2.verpasstSperre === 1 && m2.length === 1 && m2[0].typ === 'verpasst_sperre' && JSON.stringify(m2[0].sperre) === '["stabil"]' && JSON.stringify(RP.scores.filter(s0 => !/^verpasst/.test(s0.typ)).map(s0 => [s0.t, s0.typ, s0.punkte])) === JSON.stringify(RP1.scores.filter(s0 => !/^verpasst/.test(s0.typ)).map(s0 => [s0.t, s0.typ, s0.punkte])), rv2.punkte + ' / ' + m2.map(x => x.t + ' ' + x.typ).join(','));
     check('Datensatzgroesse: unter 2,2 MB je Tag (ca. 60 MB/Monat)', RP.bytes / (RP.inputs.length / 1440) < 2.2e6, Math.round(RP.bytes / (RP.inputs.length / 1440)) + ' Bytes/Tag');
 }
 

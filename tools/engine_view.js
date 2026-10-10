@@ -114,7 +114,8 @@ var ENGVIEW = (function (E) {
                     bed: r.st === 'inaktiv' || dat ? [] : (r.bed || []), line: lineOf(r, pr, now), grund: r.st === 'vorschlag' || r.st === 'hinweis' ? '' : r.grund};   // Begruendung des Vorschlags nur in Karte 1
         });
         // Punkte
-        var rep = E.report(S), hist = ((S.sc && S.sc.hist) || []).filter(function (h) { return h[0] >= now - 30 * 24 * 60 * MIN; });
+        var sv = (S.sc && S.sc.sv) || E.SCORE_VER, rep = E.report(S, sv);
+        var hist = ((S.sc && S.sc.hist) || []).filter(function (h) { return h[0] >= now - 30 * 24 * 60 * MIN && (h[3] || 1) === sv; });   // nur die aktuelle Bewertungsversion
         var t0 = hist.length ? Math.min(hist[0][0] - 60 * MIN, now - 24 * 60 * MIN) : now - 7 * 24 * 60 * MIN;
         var series = E.RULES.map(function (R) {
             var pts = hist.filter(function (h) { return h[1] === R.id; }).map(function (h) { return [h[0], h[2]]; });
@@ -130,12 +131,13 @@ var ENGVIEW = (function (E) {
             var warn = []; if (r.schaden) { warn.push(r.schaden + ' × Schaden'); } if (r.verpasst) { warn.push(r.verpasst + ' × verpasst'); }
             var ok = r.kriterien.filter(function (k) { return k.ok; }).length;
             return {id: r.regel, name: (E.RULE[r.regel] || {}).kurz || r.regel, c: COL[r.regel], punkte: E.sg(r.punkte, 1).replace(/^0,0$/, '0'), neg: r.punkte < 0, sub: sub, more: more.join(' · '), warn: warn.join(' · '),
+                    sperre: r.art === 'befehl' ? (r.verpasstSperre || 0) : null,                                     // "verpasst" waehrend eigener Sperre (v2, neutral)
                     reife: r.art === 'befehl' ? {n: ok, m: r.kriterien.length, reif: r.reif} : null, krit: r.kriterien.map(function (k) { return [k.kurz, k.ok ? 1 : 0, k.text]; })};
         });
         var ms = E.messStatus(S), mess;
         if (ms.offen) { mess = {t: 'Comfort ' + Math.min(ms.comfortMin, E.MESS.minMin) + '/' + E.MESS.minMin + ' min · Efficiency ' + Math.min(ms.efficiencyMin, E.MESS.minMin) + '/' + E.MESS.minMin + ' min', c: 'warn', chip: 'offen'}; }
         else { var b = ms.befund || {}; mess = {t: 'Comfort bis ' + E.de(b.comfort && b.comfort.hzMax, 0) + ' Hz · Efficiency bis ' + E.de(b.efficiency && b.efficiency.hzMax, 0) + ' Hz', c: 'ok', chip: 'erledigt'}; }
-        var score = {now: now, t0: t0, series: series, tiles: tiles, mess: mess, sv: E.SCORE_VER};
+        var score = {now: now, t0: t0, series: series, tiles: tiles, mess: mess, sv: sv};
         return {card: card, rules: {rules: rules}, score: score, log: {rows: logRows(o.V || {}, now, 12)}};
     }
     return {track: track, build: build, logRows: logRows, COL: COL, CHIP: CHIP};

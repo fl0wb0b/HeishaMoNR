@@ -1,6 +1,7 @@
 // Rueckwirkende Pruefung (Replay): spielt die echten Minutenprotokolle offline mit Fake-Uhr durch die Entscheidungsmaschine (tools/engine_core.js).
 // Nur lesen: quiet-YYYY-MM.csv (1 min; aeltere Stillstandszeilen 5 min), optimizer-v2-YYYY-MM.csv (5 min, Raeume + Raumvorschlag Phase 2).
-// Usage: node tools/engine_replay.js <Datenordner> [Ausgabeordner]   (schreibt decisions-*.jsonl, scores-*.jsonl, events.csv, report.json in den Ausgabeordner)
+// Usage: node tools/engine_replay.js <Datenordner> [Ausgabeordner] [--sv1]   (schreibt decisions-*.jsonl, scores-*.jsonl, events.csv, report.json in den Ausgabeordner)
+//        --sv1: mit den Bewertungsregeln v1 nachrechnen (alte Punkte reproduzieren); Standard ist die aktuelle Version (ENGINE.SCORE_VER)
 // Annahmen fuer Werte, die das Protokoll nicht enthaelt, stehen in ASSUME (und im Bericht).
 process.env.TZ = process.env.TZ_SIM || 'Europe/Berlin';
 const fs = require('fs');
@@ -129,8 +130,8 @@ function markdown(R) {                                                          
     R.events.forEach(e => L.push('| ' + e[0].slice(0, 16) + ' | ' + e[1] + ' | ' + String(e[2]).replace(/\|/g, '/') + ' |'));
     L.push('', '#### Punktebuch (scores)', '', '| Zeit | Typ | Regel | Punkte | Summe | Text |', '|---|---|---|---|---|---|');
     R.scores.forEach(s => L.push('| ' + s.t.slice(0, 16) + ' | ' + s.typ + ' | ' + s.regel + ' | ' + de(s.punkte, 2) + ' | ' + de(s.summe, 2) + ' | ' + String(s.text).replace(/\|/g, '/') + ' |'));
-    L.push('', '#### Stand je Regel am Ende', '', '| Regel | Punkte | Fälle (bewertet) | Treffer | Fehlalarm | neutral | Brier-Skill | Schaden | Verpasst | Wirkung (davon Kalibrierung) | Freigabereife |', '|---|---|---|---|---|---|---|---|---|---|---|');
-    R.report.forEach(r => L.push('| ' + r.name + ' | ' + de(r.punkte, 2) + ' | ' + r.faelle + ' (' + r.bewertet + ') | ' + r.treffer + ' | ' + r.fehlalarm + ' | ' + r.neutral + ' | ' + (r.skill === null ? '–' : de(r.skill, 2)) + ' | ' + r.schaden + ' | ' + r.verpasst + ' | ' + r.wirkung.n + ' (' + r.wirkung.kalib + '), ' + de(r.wirkung.punkte, 0) + ' | ' + (r.art === 'befehl' ? (r.reif ? 'reif' : 'nein: ' + r.kriterien.filter(k => !k.ok).map(k => k.k).join(', ')) : 'Hinweis') + ' |'));
+    L.push('', '#### Stand je Regel am Ende (Bewertungsregeln v' + (R.report[0] ? R.report[0].sv : E.SCORE_VER) + ')', '', '| Regel | Punkte | Fälle (bewertet) | Treffer | Fehlalarm | neutral | Brier-Skill | Schaden | Verpasst | während Sperre (0 Punkte) | Wirkung (davon Kalibrierung) | Freigabereife |', '|---|---|---|---|---|---|---|---|---|---|---|---|');
+    R.report.forEach(r => L.push('| ' + r.name + ' | ' + de(r.punkte, 2) + ' | ' + r.faelle + ' (' + r.bewertet + ') | ' + r.treffer + ' | ' + r.fehlalarm + ' | ' + r.neutral + ' | ' + (r.skill === null ? '–' : de(r.skill, 2)) + ' | ' + r.schaden + ' | ' + r.verpasst + ' | ' + (r.art === 'befehl' ? r.verpasstSperre : '–') + ' | ' + r.wirkung.n + ' (' + r.wirkung.kalib + '), ' + de(r.wirkung.punkte, 0) + ' | ' + (r.art === 'befehl' ? (r.reif ? 'reif' : 'nein: ' + r.kriterien.filter(k => !k.ok).map(k => k.k).join(', ')) : 'Hinweis') + ' |'));
     L.push('', '#### Basisraten „bleibt, wie es ist“ am Ende (n Vergleichslagen, k Problem bestand)', '', '| Regel | Horizont | n | k | b |', '|---|---|---|---|---|');
     Object.keys(R.S.sc.base).forEach(id => Object.keys(R.S.sc.base[id]).forEach(h => { const b = R.S.sc.base[id][h]; L.push('| ' + names[id] + ' | ' + h + ' min | ' + b[0] + ' | ' + b[1] + ' | ' + (b[0] >= E.SCORE.baseMinN ? de((b[1] + 1) / (b[0] + 2), 2) : '0,50 (zu wenig)') + ' |'); }));
     L.push('', '#### Messaufgabe Comfort/Efficiency', '', E.messStatus(R.S).text);
@@ -140,13 +141,14 @@ function markdown(R) {                                                          
 module.exports.markdown = markdown;
 
 if (require.main === module) {
-    if (process.argv.indexOf('--md') > 0) { console.log(markdown(replay(process.argv[2], {}))); process.exit(0); }
-    const dir = process.argv[2], out = process.argv[3];
+    const sv1 = process.argv.indexOf('--sv1') > 0, ropt = sv1 ? {cfg: {sv: 1}} : {};
+    if (process.argv.indexOf('--md') > 0) { console.log(markdown(replay(process.argv[2], ropt))); process.exit(0); }
+    const dir = process.argv[2], out = process.argv[3] && process.argv[3].indexOf('--') !== 0 ? process.argv[3] : null;
     if (!dir) { console.error('Usage: node tools/engine_replay.js <Datenordner> [Ausgabeordner]'); process.exit(2); }
-    const R = replay(dir, {outDir: out});
+    const R = replay(dir, Object.assign({outDir: out}, ropt));
     console.log('Minuten:', R.inputs.length, '· Datensaetze', R.recs.length, '· Bytes/Tag', Math.round(R.bytes / (R.inputs.length / 1440)));
     console.log('Vorschlaege/Hinweise:'); R.props.forEach(p => console.log('  ' + p.id + ' · ' + p.was + ' · ' + p.warum));
     console.log('Ereignisse:'); R.events.forEach(e => console.log('  ' + e.join(' · ')));
     console.log('Punkte:'); R.scores.forEach(s => console.log('  ' + s.t + ' ' + s.typ + ' ' + s.regel + ' ' + s.punkte + ' · ' + s.text));
-    console.log('Bericht:'); R.report.forEach(r => console.log('  ' + r.regel + ' v' + r.v + ': ' + r.punkte + ' Punkte, Faelle ' + r.faelle + ' (bewertet ' + r.bewertet + ', Treffer ' + r.treffer + ', Fehlalarm ' + r.fehlalarm + '), Schaden ' + r.schaden + ', verpasst ' + r.verpasst + ', Wirkung ' + JSON.stringify(r.wirkung)));
+    console.log('Bericht:'); R.report.forEach(r => console.log('  ' + r.regel + ' v' + r.v + ': ' + r.punkte + ' Punkte, Faelle ' + r.faelle + ' (bewertet ' + r.bewertet + ', Treffer ' + r.treffer + ', Fehlalarm ' + r.fehlalarm + '), Schaden ' + r.schaden + ', verpasst ' + r.verpasst + ', waehrend Sperre ' + r.verpasstSperre + ' (sv ' + r.sv + '), Wirkung ' + JSON.stringify(r.wirkung)));
 }

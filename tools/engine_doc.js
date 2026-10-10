@@ -30,7 +30,11 @@ function tabellen() {
     L.push('| Problem besteht / gelöst | ≥ ' + Math.round(S.trefferAnteil * 100) + ' % / ≤ ' + Math.round((1 - S.trefferAnteil) * 100) + ' % der gültigen Minuten, dazwischen neutral |');
     L.push('| Wirkungsprognose | je Größe ±' + S.wirkung + ', nicht messbar 0, Kalibriermessung 0 |');
     L.push('| Schaden | ' + Object.keys(S.schaden).map(k => k + ' ' + S.schaden[k]).join(', ') + ' |');
-    L.push('| Verpasst | ' + S.verpasst + ' |');
+    L.push('| Verpasst | ' + S.verpasst + ' (gezählt werden nur Minuten, in denen die Regel nicht durch eine eigene Sperre zurückgehalten wurde) |');
+    const VS = S.verpasstSperre, own = {abstand: 'Mindestabstand (`gapMin`)', tageslimit: 'Tageslimit (`proTag`)', abkuehlzeit: 'Wartezeit (`pauseMin`)', haltezeit: 'Haltezeit (`haltMin`)', stabil: 'Stabilitätszeit (`stabilMin`)'};
+    const dmg = {komfort: 'Raum > ' + String(VS.komfortK).replace('.', ',') + ' K unter Minimum', takt: 'Verdichter stoppt', ueberschwingen: 'Vorlauf ≥ Soll +' + String(E.LOCK_CFG.stopK).replace('.', ',') + ' K'};
+    L.push('| Verpasst während eigener Sperre (seit v2) | 0 Punkte, getrennt gezählt (`verpasst_sperre`); eigene Sperren: ' + VS.eigene.map(k => own[k]).join(', ') + '; nur soweit sie auch mit dem Standardwert bestanden hätten |');
+    L.push('| Schaden hebt die Entschuldigung auf (seit v2) | ' + Object.keys(VS.schaden).map(k => k + ': ' + VS.schaden[k].map(x => dmg[x]).join(', ')).join('; ') + ' → verpasst ' + S.verpasst + ' |');
     L.push('| Raumwerte in der Bewertung | bis ' + S.raumAlterMax + ' min alt (Shelly melden nur bei Änderung) |');
     L.push('| Eingriffe (Bewertung wird ab dort neutral) | Quiet, Verschiebung oder Soll (≥ 2 K) geändert; Komfortband geändert; Lüftungsverdacht (Raum fällt ≥ ' + String(S.lueftungK).replace('.', ',') + ' K in ≤ 60 min) |');
     L.push('| Freigabereife (nur Anzeige) | ≥ ' + S.reife.faelle + ' bewertete Fälle, ≥ ' + S.reife.tage + ' Tage, Brier-Skill ≥ ' + String(S.reife.skill).replace('.', ',') + ', 0 × Schaden, ≤ ' + S.reife.verpasst + ' × verpasst, ≥ ' + S.reife.wirkFaelle + ' Wirkungsfälle mit Punkten > 0 (ohne Kalibrierung) |');

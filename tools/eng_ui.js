@@ -83,7 +83,8 @@
                      '<details data-k="reife_' + esc(t.id) + '"><summary>Kriterien</summary><div class="oe-kr">' + t.krit.map(function (k) { return chip((k[1] ? '✓ ' : '✗ ') + k[0], k[1] ? 'ok' : 'mute', k[2]); }).join('') + '</div></details>'
                    : '<div class="oe-ln" style="margin-top:6px"><span>nur Hinweis</span><b></b></div>';
             return '<div class="oe-tile"><div class="oe-hd"><span class="oe-nm"><i class="oe-dot" style="background:' + esc(t.c) + '"></i>' + esc(t.name) + '</span></div>' +
-                   '<div class="oe-pt' + (t.neg ? ' oe-neg' : '') + '">' + esc(t.punkte) + '</div><div class="oe-sub">' + esc(t.sub) + '</div><div class="oe-sub">' + esc(t.more) + '</div><div class="oe-wr">' + esc(t.warn) + '</div>' + rf + '</div>';
+                   '<div class="oe-pt' + (t.neg ? ' oe-neg' : '') + '">' + esc(t.punkte) + '</div><div class="oe-sub">' + esc(t.sub) + '</div><div class="oe-sub">' + esc(t.more) + '</div><div class="oe-wr">' + esc(t.warn) + '</div>' +
+                   (t.sperre !== null && t.sperre !== undefined ? '<div class="oe-ln" data-k="sperre"><span>🔒 verpasst während Sperre</span><b>' + esc(String(t.sperre)) + '</b></div>' : '<div class="oe-ln"></div>') + rf + '</div>';
         }).join('') + '</div>';
         if (P.mess) { h += '<div class="oe-line"><span>Messaufgabe Comfort/Efficiency</span>' + chip(P.mess.chip, P.mess.c) + '<span>' + esc(P.mess.t) + '</span></div>'; }
         return h;

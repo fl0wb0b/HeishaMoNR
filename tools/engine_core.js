@@ -9,7 +9,9 @@
 //   ENGINE.applyTick(A, ctx)            -> {A, send, toast, log}                         Ruecklesen, begrenzte Wiederholung, Rueckweg (alle 15 s)
 var ENGINE = (function () {
     var VER = 1;                 // Format der Entscheidungsdatensaetze
-    var SCORE_VER = 1;           // Bewertungsregeln (vorab festgelegt; jede Aenderung erhoeht die Version, alte Punkte bleiben getrennt)
+    var SCORE_VER = 2;           // Bewertungsregeln (vorab festgelegt; jede Aenderung erhoeht die Version, alte Punkte bleiben getrennt)
+                                 // v2 (10.10.2026): "verpasst" waehrend einer EIGENEN Sperre/Wartezeit (Standardwerte, ohne Schaden) zaehlt neutral und
+                                 // getrennt ("waehrend Sperre"). v1 bleibt nachrechenbar: cfg.sv = 1 (Replay alter Datensaetze).
     var MIN = 60000;
 
     // ------------------------------------------------------------------ Hilfen (ohne Locale, damit jede Umgebung gleich rechnet)
@@ -221,6 +223,10 @@ var ENGINE = (function () {
         wirkung: 10,               // je Wirkungsgroesse: getroffen +10, daneben -10, nicht messbar 0
         schaden: {sperre_verletzt: -50, heizstab: -50, stopp10: -30, ueberschwingen: -30, zu_warm: -20, zu_kalt: -20},
         verpasst: -20,
+        // ab v2: eigene Sperren/Wartezeiten der Regel entschuldigen "verpasst" (0 Punkte, als "waehrend Sperre" gezaehlt), aber nur mit den
+        // dokumentierten Standardwerten (eine verlaengerte Sperre zaehlt nur bis zum Standard) und nur ohne harten Schaden im Fenster.
+        verpasstSperre: {eigene: ['abstand', 'tageslimit', 'abkuehlzeit', 'haltezeit', 'stabil'], komfortK: 1.0,
+                         schaden: {quiet_freigabe: ['komfort'], quiet_strecken: ['takt', 'ueberschwingen'], raum_offset: ['komfort']}},
         raumAlterMax: 360,         // Bewertung (nicht Entscheidung): ein Raumwert bis 6 h alt zaehlt, weil die Shelly H&T Gen3 nur bei Aenderung >= 0,5 K melden
         lueftungK: 1.0,            // Raum faellt >= 1 K in <= 60 min: Lueftung (Eingriff), danach keine Gegenfaktik fuer Raum-Prognosen (nach dem Replay ergaenzt: 09.10. Wohnzimmer -3,3 K)
         reife: {faelle: 10, tage: 14, skill: 0.2, wirkFaelle: 2, verpasst: 1}
@@ -238,6 +244,7 @@ var ENGINE = (function () {
         if (over && typeof over === 'object') {
             if (over.locks) { Object.keys(c.locks).forEach(function (k) { if (have(num(over.locks[k]))) { c.locks[k] = num(over.locks[k]); } }); }
             if (over.rules) { Object.keys(c.rules).forEach(function (id) { var o = over.rules[id]; if (o) { Object.keys(c.rules[id]).forEach(function (k) { if (have(num(o[k]))) { c.rules[id][k] = num(o[k]); } }); } }); }
+            if (num(over.sv) === 1) { c.sv = 1; }                                  // Bewertungsregeln v1 nachrechnen (nur Replay/Tests)
         }
         return c;
     }
@@ -495,7 +502,7 @@ var ENGINE = (function () {
         S.korr0Since = (d.korr && num(d.korr.v) === 0) ? (S.korr0Since || now) : 0;
         if (S.korr0Since && now - S.korr0Since >= KORR0_MIN * MIN) { ende.raum_offset = 'Raumvorschlag seit ' + KORR0_MIN + ' min wieder 0 K'; }
         S.last = now;
-        var rec = {t: iso(now), mv: VER, sv: SCORE_VER, in: snapshot(inp),
+        var rec = {t: iso(now), mv: VER, sv: svOf(cfg), in: snapshot(inp),
                    abl: {z: d.zustand, lauf_min: r2(d.runMin), vl_rueck: r2(d.vlRueck), rl_rueck: r2(d.rlRueck), erreicht: d.reached ? 1 : 0, vl_k_h: r2(d.vlSlope), stopp_in_min: r2(d.stopEtaMin), starts_3h: d.starts3h},
                    r: res.map(function (x) { var o = {id: x.id, v: x.v, st: x.st, grund: x.grund}; if (x.naechste) { o.naechste = recNext(x.naechste); } if (x.p) { o.p = x.p; } if (x.locks.length) { o.sperren = x.locks; } return o; }),
                    vorschlag: prop ? prop.id : null};
@@ -585,33 +592,37 @@ var ENGINE = (function () {
         if (rule === 'heizgrenze_hinweis') { return (have(d.heatOffAT) && d.heatOffAT > c.zielC && d.running && d.runMin >= c.laufMin && have(d.at) && d.at > c.zielC) ? {} : null; }
         return null;
     }
-    function tot(sc, rule, ver) { var k = rule + '|v' + ver; return sc.tot[k] = sc.tot[k] || {rule: rule, ver: ver, since: 0, punkte: 0, faelle: 0, bewertet: 0, treffer: 0, fehlalarm: 0, neutral: 0, bs: 0, bsRef: 0, schaden: 0, verpasst: 0, wirkN: 0, wirkP: 0, kalib: 0}; }
+    function svOf(cfg) { return cfg && cfg.sv === 1 ? 1 : SCORE_VER; }
+    // Summen je Regel, Regelversion und Bewertungsversion (v1 behaelt den alten Schluessel "regel|vN", damit alte Punkte unveraendert getrennt bleiben)
+    function tot(sc, rule, ver, sv) { var k = rule + '|v' + ver + (sv > 1 ? '|s' + sv : ''); return sc.tot[k] = sc.tot[k] || {rule: rule, ver: ver, sv: sv, since: 0, punkte: 0, faelle: 0, bewertet: 0, treffer: 0, fehlalarm: 0, neutral: 0, bs: 0, bsRef: 0, schaden: 0, verpasst: 0, verpasstSperre: 0, wirkN: 0, wirkP: 0, kalib: 0}; }
     function book(sc, recs, rec, now) {
         recs.push(rec);
-        var T = tot(sc, rec.regel, rec.v);
+        var T = tot(sc, rec.regel, rec.v, rec.sv);
         T.punkte = Math.round((T.punkte + rec.punkte) * 100) / 100;
         rec.summe = T.punkte;
         var wk = isoWeek(now), W = sc.week[wk] = sc.week[wk] || {};
         var w = W[rec.regel] = W[rec.regel] || {punkte: 0, faelle: 0, treffer: 0, fehlalarm: 0, schaden: 0, verpasst: 0, wirkung: 0};
+        if (rec.typ === 'verpasst_sperre') { w.verpasstSperre = (w.verpasstSperre || 0) + 1; }
         w.punkte = Math.round((w.punkte + rec.punkte) * 100) / 100;
         if (rec.typ === 'ausloeser') { w.faelle++; if (rec.ergebnis === 'treffer') { w.treffer++; } if (rec.ergebnis === 'fehlalarm') { w.fehlalarm++; } }
         if (rec.typ === 'schaden') { w.schaden++; }
         if (rec.typ === 'verpasst') { w.verpasst++; }
         if (rec.typ === 'wirkung') { w.wirkung++; }
-        sc.hist.push([now, rec.regel, T.punkte]);
+        sc.hist.push([now, rec.regel, T.punkte, rec.sv]);
         if (sc.hist.length > 2000) { sc.hist = sc.hist.slice(-2000); }
         var ks = Object.keys(sc.week).sort(); while (ks.length > 12) { delete sc.week[ks.shift()]; }
     }
     var DMG_TEXT = {sperre_verletzt: 'Vorschlag trotz aktiver Sperre', heizstab: 'Heizstab lief', stopp10: 'Verdichter stoppte binnen 10 min', ueberschwingen: 'Vorlauf über der Abschaltgrenze (Soll +3,25 K)', zu_warm: 'Raum über Maximum + 0,5 K', zu_kalt: 'Raum unter Minimum − 0,3 K'};
     function scoreStep(S, d, inp, cfg, res) {
-        var sc = S.sc, now = d.now, recs = [];
-        RULES.forEach(function (R) { var T = tot(sc, R.id, R.ver); if (!T.since) { T.since = now; } });
+        var sc = S.sc, now = d.now, recs = [], sv = svOf(cfg);
+        sc.sv = sv;
+        RULES.forEach(function (R) { var T = tot(sc, R.id, R.ver, sv); if (!T.since) { T.since = now; } });
         // 1) neue Faelle aus neuen Vorschlaegen/Hinweisen
         res.forEach(function (r) {
             if (!r.neu) { return; }
             var R = RULE[r.id], p = S.rules[r.id].prop;
             var lead = p.lead || (d.roomBelow[0] ? d.roomBelow[0].name : '');
-            sc.cases.push({id: p.id, rule: r.id, v: R.ver, t0: now, p: R.prognose.p, h: R.prognose.h.slice(), dir: p.dir, done: [], hr: [], pts: 0,
+            sc.cases.push({id: p.id, rule: r.id, v: R.ver, sv: sv, t0: now, p: R.prognose.p, h: R.prognose.h.slice(), dir: p.dir, done: [], hr: [], pts: 0,
                            tr: newTracker(r.id, now, {lead: lead, dir: p.dir}, d), dmg: r.locks.length ? ['sperre_verletzt'] : []});
         });
         // 2) Faelle fortschreiben, Horizonte abschliessen
@@ -624,22 +635,22 @@ var ENGINE = (function () {
                 var oc = outcome(C.tr, h), br = baseRate(sc, C.rule, h), pts = 0;
                 if (oc.o !== null) {
                     pts = brier(C.p, br.b, oc.o) / C.h.length;
-                    var T0 = tot(sc, C.rule, C.v); T0.bs += Math.pow(C.p - oc.o, 2); T0.bsRef += Math.pow(br.b - oc.o, 2);
+                    var T0 = tot(sc, C.rule, C.v, C.sv || 1); T0.bs += Math.pow(C.p - oc.o, 2); T0.bsRef += Math.pow(br.b - oc.o, 2);
                 }
                 C.hr.push({h: h, o: oc.o, b: r2(br.b), nb: br.n, punkte: r2(pts), why: oc.why});
                 C.pts += pts;
             });
             if (C.done.length === C.h.length && !C.closed) {
                 C.closed = true;
-                var T = tot(sc, C.rule, C.v), os = C.hr.filter(function (x) { return x.o !== null; });
+                var T = tot(sc, C.rule, C.v, C.sv || 1), os = C.hr.filter(function (x) { return x.o !== null; });
                 var erg = os.length ? (os.filter(function (x) { return x.o === 1; }).length * 2 >= os.length ? 'treffer' : 'fehlalarm') : 'neutral';
                 T.faelle++; if (os.length) { T.bewertet++; } if (erg === 'treffer') { T.treffer++; } else if (erg === 'fehlalarm') { T.fehlalarm++; } else { T.neutral++; }
-                book(sc, recs, {t: iso(now), typ: 'ausloeser', regel: C.rule, v: C.v, sv: SCORE_VER, fall: C.id, p: C.p, horizonte: C.hr, ergebnis: erg, punkte: r2(C.pts),
+                book(sc, recs, {t: iso(now), typ: 'ausloeser', regel: C.rule, v: C.v, sv: C.sv || 1, fall: C.id, p: C.p, horizonte: C.hr, ergebnis: erg, punkte: r2(C.pts),
                                 text: RULE[C.rule].prognose.text + ': ' + C.hr.map(function (x) { return x.h + ' min ' + (x.o === null ? 'neutral (' + x.why + ')' : (x.o ? 'ja' : 'nein') + ' (' + x.why + ', Basisrate ' + de(x.b, 2) + ')'); }).join(' · ')}, now);
                 if (C.dmg.length) {
                     var sum = 0; C.dmg.forEach(function (k) { sum += SCORE.schaden[k]; });
                     T.schaden += C.dmg.length;
-                    book(sc, recs, {t: iso(now), typ: 'schaden', regel: C.rule, v: C.v, sv: SCORE_VER, fall: C.id, arten: C.dmg.slice(), punkte: sum, text: 'Hätte nach den Daten geschadet: ' + C.dmg.map(function (k) { return DMG_TEXT[k]; }).join(', ')}, now);
+                    book(sc, recs, {t: iso(now), typ: 'schaden', regel: C.rule, v: C.v, sv: C.sv || 1, fall: C.id, arten: C.dmg.slice(), punkte: sum, text: 'Hätte nach den Daten geschadet: ' + C.dmg.map(function (k) { return DMG_TEXT[k]; }).join(', ')}, now);
                 }
             }
         });
@@ -662,13 +673,15 @@ var ENGINE = (function () {
         });
         sc.cands = sc.cands.filter(function (C) { return C.done.length < C.h.length; }).slice(-400);
         // 3) Wirkungsprognosen
+        var nEff = sc.eff.length;
         effectStart(sc, d, S, cfg);
+        sc.eff.slice(nEff).forEach(function (E) { E.sv = sv; });
         sc.eff.forEach(function (E) { effectUpdate(E, d, sc, recs); });
         sc.eff = sc.eff.filter(function (E) { return !E.closed; });
         // 4) Verpasst
-        missedStep(sc, d, cfg, res, recs);
+        missedStep(S, sc, d, cfg, res, recs, sv);
         // 5) Messaufgabe (keine Punkte): Verdichterfrequenz/Leistung bei Quiet 0 und Rueckstand >= 2 K, Comfort gegen Efficiency
-        messStep(sc, d, S, recs);
+        messStep(sc, d, S, recs, sv);
         return recs;
     }
     function damageUpdate(C, d, cfg) {
@@ -743,15 +756,54 @@ var ENGINE = (function () {
     function closeEffect(E, parts, sc, recs, now) {
         E.closed = true;
         var raw = parts.reduce(function (a, x) { return a + x[1] * SCORE.wirkung; }, 0), pts = E.kal ? 0 : raw;
-        var T = tot(sc, E.rule, RULE[E.rule].ver); T.wirkN++; T.wirkP = r2(T.wirkP + pts); if (E.kal) { T.kalib++; }
-        book(sc, recs, {t: iso(now), typ: 'wirkung', regel: E.rule, v: RULE[E.rule].ver, sv: SCORE_VER, ab: iso(E.t0), kalibrierfall: E.kal ? 1 : 0, punkte: pts, roh: raw,
+        var T = tot(sc, E.rule, RULE[E.rule].ver, E.sv || 1); T.wirkN++; T.wirkP = r2(T.wirkP + pts); if (E.kal) { T.kalib++; }
+        book(sc, recs, {t: iso(now), typ: 'wirkung', regel: E.rule, v: RULE[E.rule].ver, sv: E.sv || 1, ab: iso(E.t0), kalibrierfall: E.kal ? 1 : 0, punkte: pts, roh: raw,
                         teile: parts.map(function (x) { return {prognose: x[0], ergebnis: x[1] > 0 ? 'getroffen' : (x[1] < 0 ? 'daneben' : 'nicht messbar'), messung: x[2]}; }),
                         text: E.text + ': ' + parts.map(function (x) { return x[0] + ' → ' + (x[1] > 0 ? 'getroffen' : (x[1] < 0 ? 'daneben' : 'nicht messbar')) + ' (' + x[2] + ')'; }).join(' · ') + (E.kal ? ' · Kalibrierfall: das Modell stammt aus genau dieser Messung, 0 Punkte' : '')}, now);
     }
     // Verpasst: eine unabhaengig und strenger definierte Lage, in der laut Regelwerk ein Vorschlag noetig gewesen waere, ohne dass die Regel einen machte.
-    // Sperren aus Daten/Sicherheit entschuldigen; die eigenen Grenzen der Regel (Tageslimit, Abstand, Wartezeit, Stabilitaet) nicht.
+    // v1: Sperren aus Daten/Sicherheit entschuldigen; die eigenen Grenzen der Regel (Tageslimit, Abstand, Wartezeit, Stabilitaet) nicht.
+    // v2: zusaetzlich entschuldigen die EIGENEN Sperren/Wartezeiten (SCORE.verpasstSperre.eigene), soweit sie auch mit den Standardwerten bestanden
+    //     haetten. Gezaehlt werden nur "freie" Minuten (Lage besteht, Regel nicht durch eine eigene Sperre zurueckgehalten); erst wenn diese die
+    //     Dauer erreichen, ist es "verpasst" (-20). Lief die Dauer nur wegen eigener Sperren ab, gibt es einen neutralen Eintrag "verpasst_sperre"
+    //     (0 Punkte, getrennt gezaehlt). Ein harter Schaden im Fenster (SCORE.verpasstSperre.schaden) hebt die Entschuldigung auf: dann -20.
     var EXCUSE = ['anlauf', 'daten', 'mqtt_sperre', 'abtauen', 'warmwasser', 'sanftanlauf', 'regler', 'heizstab'];
-    function missedStep(sc, d, cfg, res, recs) {
+    var OWN_TEXT = {abstand: 'Mindestabstand', tageslimit: 'Tageslimit', abkuehlzeit: 'Wartezeit', haltezeit: 'Haltezeit', stabil: 'Stabilitätszeit'};
+    var MISS_DMG_TEXT = {komfort: 'Raum mehr als 1 K unter Minimum', takt: 'Verdichter stoppte', ueberschwingen: 'Vorlauf über der Abschaltgrenze (Soll +3,25 K)'};
+    function stdOf(R, key) { var x = R.schwellen.filter(function (s) { return s.key === key; })[0]; return x ? x.std : null; }
+    // Haelt die Regel in dieser Minute NUR eine eigene Sperre/Wartezeit zurueck? -> {ids: [...]} (mit Standardwerten gueltig), {ext: [...]} (nur wegen
+    // verlaengerter Werte) oder null (andere Gruende: Bedingung fehlt, fremde Sperre, Vorschlag ...)
+    function ownBlock(R, r, d, S, cfg) {
+        var own = SCORE.verpasstSperre.eigene, rs = S.rules[R.id], c = cfg.rules[R.id], now = d.now, ok = [], ext = [];
+        if (!r) { return null; }
+        if (r.st === 'gesperrt' && r.locks.length) {
+            if (!r.locks.every(function (l) { return own.indexOf(l) >= 0; })) { return null; }
+            r.locks.forEach(function (l) {
+                var std = false;
+                if (l === 'abstand') { var chg = R.groesse === 'quiet' ? S.qChg : (R.groesse === 'shift' ? S.shiftChg : 0); std = !!chg && now - chg < LOCK_CFG.gapMin * MIN; }
+                if (l === 'tageslimit') { std = rs.n >= stdOf(R, 'proTag'); }
+                if (l === 'abkuehlzeit') { std = rs.cool - (c.pauseMin - stdOf(R, 'pauseMin')) * MIN > now; }
+                (std ? ok : ext).push(l);
+            });
+            return ext.length ? {ext: ext} : {ids: ok};
+        }
+        if (r.st === 'wartet' && own.indexOf('haltezeit') >= 0) {
+            return rs.since && now - rs.since < stdOf(R, 'haltMin') * MIN ? {ids: ['haltezeit']} : {ext: ['haltezeit']};
+        }
+        if (r.st === 'bereit' && own.indexOf('stabil') >= 0 && r.naechste && r.naechste.b === 'stabil' && !r.naechste.weitere) {
+            return rs.korrSince && now - rs.korrSince < stdOf(R, 'stabilMin') * MIN ? {ids: ['stabil']} : {ext: ['stabil']};
+        }
+        return null;
+    }
+    function missDamage(R, d, cfg, G) {                                             // harte Schaeden im Fenster (v2), je Regel nur die, die ein Vorschlag verhindern sollte
+        var kinds = SCORE.verpasstSperre.schaden[R.id] || [];
+        function hit(k) { if (kinds.indexOf(k) >= 0 && G.dmg.indexOf(k) < 0) { G.dmg.push(k); } }
+        if (!d.fresh) { return; }
+        if (d.running) { G.wasRun = true; } else if (G.wasRun) { hit('takt'); }
+        if (d.running && have(d.vl) && have(d.soll) && d.vl - d.soll >= cfg.locks.stopK) { hit('ueberschwingen'); }
+        d.rooms.forEach(function (x) { if (roomScore(x) && x.t < x.min - SCORE.verpasstSperre.komfortK) { hit('komfort'); } });
+    }
+    function missedStep(S, sc, d, cfg, res, recs, sv) {
         var now = d.now;
         RULES.forEach(function (R) {
             if (R.art !== 'befehl') { return; }
@@ -765,26 +817,56 @@ var ENGINE = (function () {
                 var warm = d.rooms.filter(function (x) { return roomScore(x) && x.t > x.max + 0.3; });
                 cond = d.fresh && cold.length > 0 && warm.length === 0; need = 180; lead = cold.length ? cold[0].name : '';
             }
+            function bookMiss(extra) {
+                var T = tot(sc, R.id, R.ver, sv); T.verpasst++;
+                book(sc, recs, {t: iso(now), typ: 'verpasst', regel: R.id, v: R.ver, sv: sv, ab: iso(G.since), punkte: SCORE.verpasst, sperre: extra.sperre, schaden: extra.schaden,
+                                text: 'Seit ' + hhmm(G.since) + ' (' + need + ' min) lag eine Lage vor, die einen Vorschlag gebraucht hätte' + (G.lead ? ' (' + G.lead + ')' : '') + '; die Regel machte keinen (Stand: ' + (r ? r.grund : '–') + ')' + (extra.text || '')}, now);
+            }
             if (cond) {
-                if (!G.since) { G.since = now; G.prop = false; G.excused = false; G.booked = false; G.lead = lead; }
+                if (!G.since) { G.since = now; G.prop = false; G.excused = false; G.booked = false; G.lead = lead; G.last = now; G.frei = 0; G.gesperrt = 0; G.ids = []; G.ext = []; G.dmg = []; G.wasRun = false; G.sperreBooked = false; }
                 if (r && (r.st === 'vorschlag' || r.st === 'hinweis')) { G.prop = true; }
                 if (r && r.locks && r.locks.some(function (l) { return EXCUSE.indexOf(l) >= 0; })) { G.excused = true; }
-                if (!G.booked && now - G.since >= need * MIN) {
-                    G.booked = true;
-                    if (!G.prop && !G.excused) {
-                        var T = tot(sc, R.id, R.ver); T.verpasst++;
-                        book(sc, recs, {t: iso(now), typ: 'verpasst', regel: R.id, v: R.ver, sv: SCORE_VER, ab: iso(G.since), punkte: SCORE.verpasst,
-                                        text: 'Seit ' + hhmm(G.since) + ' (' + need + ' min) lag eine Lage vor, die einen Vorschlag gebraucht hätte' + (G.lead ? ' (' + G.lead + ')' : '') + '; die Regel machte keinen (Stand: ' + (r ? r.grund : '–') + ')'}, now);
+                if (sv === 1) {
+                    if (!G.booked && now - G.since >= need * MIN) {
+                        G.booked = true;
+                        if (!G.prop && !G.excused) { bookMiss({}); }
                     }
+                    return;
                 }
-            } else { G.since = 0; }
+                var dt = Math.min(Math.max(0, now - (G.last || now)), 2 * MIN), ob = ownBlock(R, r, d, S, cfg);
+                G.last = now; G.ids = G.ids || []; G.ext = G.ext || []; G.dmg = G.dmg || [];
+                if (ob && ob.ids) { G.gesperrt = (G.gesperrt || 0) + dt; ob.ids.forEach(function (x) { if (G.ids.indexOf(x) < 0) { G.ids.push(x); } }); }
+                else { G.frei = (G.frei || 0) + dt; if (ob && ob.ext) { ob.ext.forEach(function (x) { if (G.ext.indexOf(x) < 0) { G.ext.push(x); } }); } }
+                missDamage(R, d, cfg, G);
+                if (G.booked || G.prop || G.excused || now - G.since < need * MIN) { return; }
+                var sp = G.ids.map(function (x) { return OWN_TEXT[x]; }).join(', '), ex = G.ext.length ? '; über den Standardwert verlängert: ' + G.ext.map(function (x) { return OWN_TEXT[x]; }).join(', ') : '';
+                if (G.frei >= need * MIN) {
+                    G.booked = true;
+                    bookMiss({sperre: G.ids.length ? G.ids.slice() : undefined, text: G.ids.length || G.ext.length ? ' · ' + need + ' min ohne eigene Sperre' + (sp ? ' (zeitweise ' + sp + ')' : '') + ex : ''});
+                } else if (G.dmg.length) {
+                    G.booked = true;
+                    bookMiss({sperre: G.ids.slice(), schaden: G.dmg.slice(), text: ' · während eigener Sperre (' + sp + '), aber Schaden: ' + G.dmg.map(function (k) { return MISS_DMG_TEXT[k]; }).join(', ') + ' → nicht entschuldigt'});
+                } else if (!G.sperreBooked) {
+                    G.sperreBooked = true;
+                    var T = tot(sc, R.id, R.ver, sv); T.verpasstSperre++;
+                    book(sc, recs, {t: iso(now), typ: 'verpasst_sperre', regel: R.id, v: R.ver, sv: sv, ab: iso(G.since), punkte: 0, sperre: G.ids.slice(),
+                                    text: 'Seit ' + hhmm(G.since) + ' (' + need + ' min) lag eine Lage vor, die einen Vorschlag gebraucht hätte' + (G.lead ? ' (' + G.lead + ')' : '') + '; die Regel durfte nur wegen eigener Sperre (' + sp + ') keinen machen, kein Schaden: neutral' + ex}, now);
+                }
+            } else {
+                // Fenster endet mit einem Verdichter-Stopp (Takt), nachdem die Dauer abgelaufen war: auch das hebt die Entschuldigung auf
+                if (sv > 1 && G.since && !G.booked && !G.prop && !G.excused && now - G.since >= need * MIN && G.gesperrt > 0) {
+                    G.dmg = G.dmg || []; missDamage(R, d, cfg, G);
+                    if (G.dmg.length) { G.booked = true; bookMiss({sperre: G.ids.slice(), schaden: G.dmg.slice(), text: ' · während eigener Sperre (' + G.ids.map(function (x) { return OWN_TEXT[x]; }).join(', ') + '), aber Schaden: ' + G.dmg.map(function (k) { return MISS_DMG_TEXT[k]; }).join(', ') + ' → nicht entschuldigt'}); }
+                }
+                G.since = 0;
+            }
         });
     }
     // Messaufgabe "Comfort gegen Efficiency" (Korrektur 10.10.: ob Efficiency den Verdichter begrenzt, ist ungeklaert, Quiet 3 hat es bisher verdeckt).
     // Sammelt Minuten mit Quiet 0, laufendem Verdichter (ab Minute 15 und 3 min nach einer Quiet-Aenderung) und Vorlauf >= 2 K unter Soll, getrennt nach
     // Heizregelung. Sobald beide Seiten >= 10 min bei aehnlicher Aussentemperatur (Mittel hoechstens 3 K auseinander) haben, wird EIN Befund festgehalten.
     var MESS = {rueckK: 2, minMin: 10, atTolK: 3, nachQuietMin: 3, laufMin: 15};
-    function messStep(sc, d, S, recs) {
+    function messStep(sc, d, S, recs, sv) {
         var M = sc.mess = sc.mess || {c: [], e: [], done: false};
         if (!d.fresh || !d.running || d.q !== 0 || !have(d.hc) || !have(d.vlRueck) || d.vlRueck < MESS.rueckK || d.runMin < MESS.laufMin || (S.qChg && d.now - S.qChg < MESS.nachQuietMin * MIN)) { return; }
         var L = d.hc === 0 ? M.c : (d.hc === 1 ? M.e : null); if (!L) { return; }
@@ -793,7 +875,7 @@ var ENGINE = (function () {
         var sC = messSum(M.c), sE = messSum(M.e);
         if (!have(sC.at) || !have(sE.at) || Math.abs(sC.at - sE.at) > MESS.atTolK) { return; }
         M.done = true; M.befund = {comfort: sC, efficiency: sE, t: d.now};
-        book(sc, recs, {t: iso(d.now), typ: 'messaufgabe', regel: 'quiet_freigabe', v: RULE.quiet_freigabe.ver, sv: SCORE_VER, punkte: 0, comfort: sC, efficiency: sE,
+        book(sc, recs, {t: iso(d.now), typ: 'messaufgabe', regel: 'quiet_freigabe', v: RULE.quiet_freigabe.ver, sv: sv, punkte: 0, comfort: sC, efficiency: sE,
                         text: 'Befund (Regel-Annahme prüfen): bei Quiet 0 und Vorlauf ≥ 2 K unter Soll lief der Verdichter in Comfort bis ' + de(sC.hzMax, 0) + ' Hz (Ø ' + de(sC.hzMittel, 0) + ' Hz, ' + de(sC.pel, 0) + ' W el, ' + de(sC.pth, 0) + ' W th, ' + sC.n + ' min, Ø ' + de(sC.at, 1) + ' °C), in Efficiency bis ' + de(sE.hzMax, 0) + ' Hz (Ø ' + de(sE.hzMittel, 0) + ' Hz, ' + de(sE.pel, 0) + ' W el, ' + de(sE.pth, 0) + ' W th, ' + sE.n + ' min, Ø ' + de(sE.at, 1) + ' °C)'}, d.now);
     }
     function messSum(L) {
@@ -806,10 +888,11 @@ var ENGINE = (function () {
         return {offen: true, comfortMin: M.c.length, efficiencyMin: M.e.length, efficiency: M.e.length ? messSum(M.e) : null, comfort: M.c.length ? messSum(M.c) : null,
                 text: 'offen: Comfort ' + M.c.length + ' min, Efficiency ' + M.e.length + ' min mit Quiet 0 und Vorlauf ≥ 2 K unter Soll (je ' + MESS.minMin + ' min bei ähnlicher Außentemperatur nötig; ein kurzer Boost in Comfort würde reichen)'};
     }
-    function report(S) {                                                             // Punktebuch je Regel/Version mit Freigabereife (nur Anzeige; die Freigabe entscheidet der Nutzer)
+    function report(S, sv) {                                                         // Punktebuch je Regel/Version mit Freigabereife (nur Anzeige; die Freigabe entscheidet der Nutzer)
         var sc = S.sc, out = [];
+        sv = sv || sc.sv || SCORE_VER;
         RULES.forEach(function (R) {
-            var T = tot(sc, R.id, R.ver), days = T.since ? (S.last - T.since) / (24 * 60 * MIN) : 0;
+            var T = tot(sc, R.id, R.ver, sv), days = T.since ? (S.last - T.since) / (24 * 60 * MIN) : 0;
             var skill = T.bsRef > 0 ? 1 - T.bs / T.bsRef : null;
             var crit = [
                 {k: 'faelle', ok: T.bewertet >= SCORE.reife.faelle, kurz: 'Fälle ' + T.bewertet + '/' + SCORE.reife.faelle, text: T.bewertet + ' von ' + SCORE.reife.faelle + ' bewerteten Fällen'},
@@ -820,7 +903,7 @@ var ENGINE = (function () {
             ];
             if (R.art === 'befehl') { crit.push({k: 'wirkung', ok: T.wirkN - T.kalib >= SCORE.reife.wirkFaelle && T.wirkP > 0, kurz: 'Wirkung ' + (T.wirkN - T.kalib) + '/' + SCORE.reife.wirkFaelle, text: (T.wirkN - T.kalib) + ' von ' + SCORE.reife.wirkFaelle + ' Wirkungsfällen (ohne Kalibrierung), ' + sg(T.wirkP, 0) + ' Punkte'}); }
             out.push({regel: R.id, name: R.name, v: R.ver, art: R.art, punkte: T.punkte, faelle: T.faelle, bewertet: T.bewertet, treffer: T.treffer, fehlalarm: T.fehlalarm, neutral: T.neutral,
-                      trefferquote: T.bewertet ? r2(T.treffer / T.bewertet) : null, fehlalarmquote: T.bewertet ? r2(T.fehlalarm / T.bewertet) : null, skill: r2(skill), schaden: T.schaden, verpasst: T.verpasst,
+                      trefferquote: T.bewertet ? r2(T.treffer / T.bewertet) : null, fehlalarmquote: T.bewertet ? r2(T.fehlalarm / T.bewertet) : null, skill: r2(skill), schaden: T.schaden, verpasst: T.verpasst, verpasstSperre: T.verpasstSperre || 0, sv: sv,
                       wirkung: {n: T.wirkN, kalib: T.kalib, punkte: T.wirkP}, tage: r2(days), reif: R.art === 'befehl' && crit.every(function (x) { return x.ok; }), kriterien: crit});
         });
         return out;
