@@ -45,6 +45,7 @@ check('Regelwerk: keine Regel stellt die Heizregelung (Comfort/Efficiency); kein
 check('Regelwerk: jede Sperre der Regeln ist definiert und hat eine Herkunft', E.RULES.every(R => R.sperren.every(id => E.LOCKS.some(l => l.id === id && l.herkunft))), '');
 check('Standardwerte entstehen aus dem Regelwerk (eine Quelle)', E.defaults().rules.quiet_freigabe.capHz === 20 && E.defaults().rules.raum_offset.minVlC === 29 && E.defaults().locks.stopK === 3.25, '');
 check('Konfiguration: nur bekannte Schwellen, Zahlen werden uebernommen, Unsinn verworfen', (() => { const c = E.mergeCfg({rules: {quiet_freigabe: {capHz: '18', foo: 1, haltMin: 'x'}}, locks: {gapMin: 30}}); return c.rules.quiet_freigabe.capHz === 18 && c.rules.quiet_freigabe.foo === undefined && c.rules.quiet_freigabe.haltMin === 10 && c.locks.gapMin === 30; })(), '');
+check('Doku aktuell: docs/OPTIMIERER.md enthaelt die aus dem Regelwerk erzeugten Tabellen unveraendert (node tools/engine_doc.js)', (() => { const doc = fs.readFileSync(path.join(__dirname, '..', 'docs', 'OPTIMIERER.md'), 'utf8'), m = /<!-- ENGINE-TABELLEN -->\n([\s\S]*?)\n<!-- \/ENGINE-TABELLEN -->/.exec(doc); return !!m && m[1] === require('./engine_doc.js').tabellen(); })(), '');
 check('Kern ist rein: kein Date.now, kein Math.random, kein require/fs/global/flow/node im Code', (() => { const src = fs.readFileSync(path.join(__dirname, 'engine_core.js'), 'utf8').replace(/\/\/.*$/gm, ''); return !/Date\.now|Math\.random|require\(|\bfs\.|global\.(get|set)|flow\.(get|set)|node\.(send|warn)/.test(src); })(), '');
 
 console.log('--- (a) Quiet-Freigabe: Ablauf bereit -> wartet -> Vorschlag, mit Gruenden und naechster Schwelle');
@@ -279,6 +280,9 @@ if (fs.existsSync(path.join(dataDir, 'quiet-2026-10.csv'))) {
     check('Laufzeit strecken: nie (Quiet 3 fast immer; bei Quiet 0 nur im Boost mit Raumbedarf ueber 22 Hz)', !RP.props.some(p => p.rule === 'quiet_strecken'), '');
     check('Kein Vorschlag mit aktiver Sperre und keiner ohne frische Daten', RP.recs.every(l => { const d = JSON.parse(l); return d.r.every(r => !(r.st === 'vorschlag' && r.sperren)); }), '');
     check('Messaufgabe Comfort/Efficiency: offen, Efficiency 41 min bei Quiet 0 (Boost, max 34 Hz), Comfort 0 min', (() => { const m = E.messStatus(RP.S); return m.offen && m.comfortMin === 0 && m.efficiencyMin >= 35 && m.efficiency.hzMax === 34; })(), E.messStatus(RP.S).text);
+    const RV = replay(dataDir, {cfg: {rules: {quiet_freigabe: {rlRueckK: -99}}}}), extra = RV.props.filter(p => p.rule === 'quiet_freigabe').length - 1;
+    const sumV = RV.scores.filter(s0 => s0.regel === 'quiet_freigabe' && s0.typ !== 'wirkung').reduce((a0, s0) => a0 + s0.punkte, 0);
+    check('Begruendung der Ruecklauf-Bedingung: ohne sie 4 zusaetzliche Quiet-Freigaben, alle Fehlalarm, mit Schaden "zu warm" (zusammen rund -213 Punkte)', extra === 4 && RV.scores.filter(s0 => s0.regel === 'quiet_freigabe' && s0.typ === 'ausloeser' && s0.ergebnis === 'fehlalarm').length === 4 && Math.round(sumV) === -213, extra + ' zusaetzlich, ' + sumV.toFixed(2) + ' Punkte');
     check('Datensatzgroesse: unter 2,2 MB je Tag (ca. 60 MB/Monat)', RP.bytes / (RP.inputs.length / 1440) < 2.2e6, Math.round(RP.bytes / (RP.inputs.length / 1440)) + ' Bytes/Tag');
 }
 
