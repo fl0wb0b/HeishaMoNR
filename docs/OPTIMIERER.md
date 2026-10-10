@@ -36,7 +36,7 @@ OPT_kz (Radiator) ────────────────────�
                                                             │       └──────┴──────────────────────────────┘
                                                             ├─► decisions-/scores-YYYY-MM.jsonl, quiet-events (Datei)
                                                             ├─► OPT_engine (global: Vorschlag, Sperren, Rückweg-Gründe)
-                                                            └─► Seite „Optimierer“ (4 Karten)
+                                                            └─► Seite „Optimierer“ (4 Karten): tools/engine_view.js baut die Daten, tools/eng_ui.js zeichnet sie
 Karte „Aktueller Vorschlag“ (Klick: ID + Prüfsumme) ─┐
 Takt alle 15 s (opt_i_apply) ────────────────────────┴─► opt_apply ─► opt_apply_mqtt (mqtt out, DEAKTIVIERT) ─► panasonic_heat_pump/commands/…
                                                                   ├─► Meldung (Toast), applied-YYYY-MM.jsonl, quiet-events
@@ -69,7 +69,7 @@ Takt alle 15 s (opt_i_apply) ─────────────────
 |---|---|
 | `decisions-YYYY-MM.jsonl` | jede Minute ein Datensatz, gemessen ≈ 2,1 MB/Tag ≈ 63 MB/Monat |
 | `scores-YYYY-MM.jsonl` | Punktebuch |
-| `engine-state.json` | Zustand: Fälle, Basisraten, Zähler, Verlauf; alle 10 min und bei Ereignissen gesichert |
+| `engine-state.json` | Zustand: Fälle, Basisraten, Zähler, Verlauf, Episoden der Seite; alle 10 min und bei Ereignissen gesichert |
 | `applied-YYYY-MM.jsonl` | jede Klick-, Rücklese- und Rückweg-Aktion |
 | `apply-state.json` | Zustand der Übernahme |
 | `apply.json` | Hauptschalter und freigegebene Regeln; fehlt = gesperrt |
@@ -369,7 +369,7 @@ Sicherheits- und Datensperren entschuldigen. Die eigenen Grenzen der Regel (Tage
 | `punkte`, `summe` | Punkte und laufende Summe |
 | `text` | Klartext |
 
-Die Karte „Punkte“ zeigt je Regel Summe, Fälle (bewertet), Treffer- und Fehlalarmquote, Brier-Skill = 1 − ΣBS/ΣBS_ref, Schaden, Verpasst und Wirkung (davon Kalibrierung). Dazu kommen die Wochenübersicht (ISO-Woche), der Verlauf der Summen als Diagramm (`ui_chart.js`) und der Stand der Messaufgabe.
+Die Karte „Punkte“ zeigt den Verlauf der Summen je Regel als Diagramm (`ui_chart.js`) und je Regel eine Kachel: Summe, Fälle mit Treffern und Fehlalarmen, Brier-Skill = 1 − ΣBS/ΣBS_ref, Wirkung (Kalibrierfälle getrennt), Schaden und Verpasst nur wenn > 0, Freigabereife. Die Wochenübersicht (ISO-Woche) steht weiter im Zustand und im Punktebuch, aber nicht mehr auf der Seite.
 
 **Freigabereife** ist nur eine Anzeige, die Freigabe entscheidet der Nutzer. Bedingungen:
 - ≥ 10 bewertete Fälle
@@ -473,16 +473,20 @@ Option (b) ist dokumentiert, aber nicht gebaut. Sie hätte die Ratenbegrenzung d
 
 ## 9. Seite „Optimierer“
 
-Vier Gruppen, alle 18 breit. Gemischte Breiten auf einer Seite legen die Karten übereinander (Masonry-Falle), deshalb sind sie gleich breit. Die Karten passen ihre Höhe selbst an (`FIT_JS`).
+Vier Gruppen, alle 18 breit. Gemischte Breiten auf einer Seite legen die Karten übereinander (Masonry-Falle), deshalb sind sie gleich breit. Die Karten passen ihre Höhe selbst an (`FIT_JS`). Keine erklärenden Hinweiszeilen, kein Satz „würde schalten, sobald …“ mehr auf der Seite (er bleibt nur als Feld `naechste` im Datensatz).
+
+Aufbau (Neufassung 10.10. abends):
+- **Daten** baut `tools/engine_view.js` (`ENGVIEW.build`, rein, in `opt_engine` hinter dem Kern eingebettet). **Darstellung**: `tools/eng_ui.js` (`optEngUi.html`/`mount`, rein, HTML mit Maskierung aller Texte), in jede der vier Vorlagen eingebettet. Die Vorlagen zeichnen per `innerHTML` wie die Diagrammkarten, ohne Angular-Ausdrücke.
+- **Knöpfe** schicken weiter nur Aktion, ID und Prüfsumme (`scope.send` genau viermal im Code, Test).
 
 | Karte | Inhalt |
 |---|---|
-| Aktueller Vorschlag | Was, Warum (Zahlen), Wann, Befehl (jetzt …), Erwartung, Gültig bis, Rückweg, Regel. Ohne Vorschlag: die zwei Regeln, die am nächsten dran sind, mit „würde schalten, sobald …“. Zeile „Übernahme“ (gesperrt, freigegeben für …, aktiv, wartet) und gegebenenfalls Warnung. Knöpfe Übernehmen (deaktiviert mit Grund), Verwerfen, Zurücksetzen (nur bei aktiver Übernahme), Übernahme sperren (nur wenn freigegeben) |
-| Regeln und Abstand zur Schwelle | je Regel Status, Grund, „Würde schalten, sobald …“ |
-| Punkte | Diagramm der Summen, Tabelle je Regel mit Freigabereife und offenen Kriterien, Wochenübersicht, Messaufgabe |
-| Letzte 20 Entscheidungen | Änderungen von Status oder Grund-Art je Regel |
+| Entscheidungsmaschine | **Statuszeile** aus Chips: „Maschine läuft · hh:mm“ bzw. „Anlaufsperre bis …“, „keine HeishaMon-Daten“, „Maschine rechnet nicht“; Anlage kurz (Lauf · Hz · Quiet · Vorlauf-Abstand); Übernahme („🔒 Übernahme gesperrt“, „Übernahme frei: …“, „Übernommen …“, „wartet auf Bestätigung“); Warnung; „verworfen: …“. **Vorschlag** nur wenn einer da ist: hervorgehobener Kasten mit Regel, Was, Warum (eine Zeile mit Zahlen), Befehl, seit, gültig bis, Rückweg kurz; Erwartung und Rückweg-Text eingeklappt. **Knöpfe**: Übernehmen (deaktiviert mit Grund als Beschriftung), Verwerfen; Zurücksetzen nur bei aktiver Übernahme; Übernahme sperren nur wenn freigegeben |
+| Regeln | 4 Kacheln: Name, Status-Chip (Vorschlag/Hinweis, wartet, gesperrt, prüft, ruht, keine Daten), je Bedingung ein Segment (grün = erfüllt, Titel = Bedingung), eine Zeile mit dem Engpass und Balken: „Vorlauf-Rückstand 0,5 / 1,5 K“, „Haltezeit 4 / 10 min“, „🔒 Mindestabstand bis 09:38“, „seit 08:36 · gültig bis 09:06“ |
+| Punkte | Diagramm der Summen je Regel (nur wenn es Punkte gibt), 4 Kacheln (Summe, Fälle/Treffer/Fehlalarm, Skill, Wirkung, Schaden/Verpasst rot, Freigabereife n/m mit Balken, Kriterien eingeklappt), Messaufgabe Comfort/Efficiency als eine Zeile |
+| Entscheidungen | **Episoden** statt Minutenzeilen: je Regel von „alle Bedingungen erfüllt“ (wartet, gesperrt, Vorschlag/Hinweis) bis zum Ende, mit Verlauf als Chips und Ende-Grund; Dauerzustände („prüft“, „ruht“) und Datenlücken erzeugen keine Zeile, kurze „wartet“-Episoden unter 5 min ohne Sperre oder Vorschlag werden ausgeblendet; höchstens 12, neueste oben |
 
-Keine erklärenden Hinweiszeilen.
+**Vorschau ohne Dashboard:** `node tools/engine_ui_preview.js [Datenordner] [Ausgabe.html]` spielt die echten Protokolle durch den Kern und zeichnet vier Schnappschüsse (10.10. 08:38 mit Vorschlag; Replay-Ende; Hauptschalter an mit aktiver Übernahme; 5 Tage Kälte-Szenario mit Punkten) in eine HTML-Datei, die das Dashboard nachbildet (Gruppenbreite 966 px).
 
 ## 10. Bonsai-Beobachter
 
@@ -513,7 +517,7 @@ Der Beobachter schreibt nie an Anlage, NAS oder MQTT. Einen MQTT-Befundkanal zur
 | Befehl | Ergebnis (10.10.2026) |
 |---|---|
 | `cp "flows (26.5.1 stable).json" /tmp/x.json && python3 tools/optimizer_phase1.py /tmp/x.json && node tools/optimizer_sim.js /tmp/x.json` | **605 OK** (vorher 604; neu: Strukturprüfung des Sendewegs) |
-| `node tools/engine_sim.js /tmp/x.json [Datenordner]` | Kern, Sperren, Mehrtages-Modell, Punktesystem, Hüllen im vm, gesperrte Übernahme, Replay: **130 OK** mit Flow-Datei und Daten (ohne Flow-Datei 84) |
+| `node tools/engine_sim.js /tmp/x.json [Datenordner]` | Kern, Sperren, Mehrtages-Modell, Punktesystem, Nachprüfung, Seite (Karten-Daten, Darstellung, Vorschau), Hüllen im vm, gesperrte Übernahme, Replay: **151 OK** mit Flow-Datei und Daten (ohne Flow-Datei 104) |
 | `BEOBACHTER_TMP=<ordner> python3 tools/bonsai_beobachter_test.py [Datenordner]` | **9 OK**, LLM nur als Mock |
 | `node tools/engine_replay.js <Datenordner> [Ausgabe]` und `--md` | Replay der echten Protokolle |
 
@@ -548,6 +552,11 @@ Jeder andere `mqtt out` sowie jeder Link- und HTTP-in-Knoten im Tab bleibt verbo
 
 **Datensatzmenge.** ≈ 2,1 MB pro Tag. Die Monatsdateien wachsen auf ≈ 63 MB. Älteres bei Bedarf von Hand packen.
 
-**Seite „Optimierer“.** Sie ist im Node-RED-Dashboard noch nicht angesehen. Nach dem Deploy die Breiten 1024–2560 px prüfen, wie bei den anderen Seiten.
+**Seite „Optimierer“.** Die Neufassung ist nur als statische Vorschau (Firefox headless, 1000 px) angesehen, nicht im Node-RED-Dashboard. Nach dem Deploy die Breiten 1024–2560 px prüfen, wie bei den anderen Seiten; die Episodenliste beginnt nach dem Deploy leer (alte Einzelzeilen werden nicht übernommen).
+
+**Nachprüfung 10.10. abends (behoben, je mit Test):**
+- Rücklese-Timeout einer Übernahme, bei dem die Anlage nachweislich auf dem Ausgangswert blieb, ließ die Übernahme „aktiv“ stehen. Danach lehnte jeder weitere Klick für dieselbe Größe ab („schon eine Übernahme aktiv“), bei der Quiet-Freigabe ohne Ablaufzeit dauerhaft. Jetzt endet sie dort mit Warnung; bei einem dritten Ist-Wert bleibt sie aktiv (Zurücksetzen möglich).
+- Der Rückweg der Raumregel kam bei der ersten Minute mit Raumvorschlag 0. Der Raumvorschlag flackert (Kinderzimmer-Werte nach 90 min ungültig), eine Minute 0 hätte eine 60 min lang abgewartete Verschiebung zurückgenommen. Jetzt erst nach 15 min am Stück.
+- Heizstab- und Heizgrenze-Einstellungen galten nur 30 min nach der letzten HeishaMon-Meldung. Melden sie sich nur bei Änderung, wäre die Heizstab-Sperre still ausgefallen und der Heizgrenze-Hinweis „nicht zuständig“ geworden. Jetzt gilt der letzte Wert 24 h.
 
 **Zeitzone.** Wie im übrigen Optimierer ist sie die Ortszeit des Containers. Die Sim läuft mit Europe/Berlin, auch über die Zeitumstellung am 25.10.
