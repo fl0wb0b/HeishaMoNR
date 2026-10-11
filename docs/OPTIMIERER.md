@@ -1,10 +1,10 @@
 # Optimierer: Entscheidungsmaschine, Punktesystem, Ein-Klick-Übernahme, Bonsai-Beobachter
 
-Stand 10.10.2026, Branch `optimizer-engine`. **Alles ist Shadow.** Die Maschine rechnet jede Minute aus, was sie schalten *würde*, und schreibt das auf. Sie sendet nichts. Der einzige Sendeweg ist ein Klick des Betreibers auf „Übernehmen“. Dieser Weg wird gesperrt ausgeliefert.
+Stand 11.10.2026, Branch `optimizer-engine`. **Alles ist Shadow.** Die Maschine rechnet jede Minute aus, was sie schalten *würde*, und schreibt das auf. Sie sendet nichts. Der einzige Sendeweg ist ein Klick des Betreibers auf „Übernehmen“. Dieser Weg wird gesperrt ausgeliefert.
 
 ## 1. Kurzfassung
 
-- **Entscheidungsmaschine** `opt_engine` (Tab „WP Optimizer“, jede Minute): Sie wertet vier Regeln aus. Je Regel hält sie fest: Status, Grund in Zahlen, nächste Schwelle mit Abstand („würde schalten, sobald …“) und gegebenenfalls einen Vorschlag mit Befehl, Erwartung, Gültigkeit und Rückweg.
+- **Entscheidungsmaschine** `opt_engine` (Tab „WP Optimizer“, jede Minute): Sie wertet fünf Regeln aus (seit 11.10. mit der **Vorausschau ±1 K**, die bis zur Freigabe des Gebäudemodells gesperrt mitläuft, und der **Verschiebungs-Arbitrierung**, siehe 4a). Je Regel hält sie fest: Status, Grund in Zahlen, nächste Schwelle mit Abstand („würde schalten, sobald …“) und gegebenenfalls einen Vorschlag mit Befehl, Erwartung, Gültigkeit und Rückweg.
   - Jede Auswertung wird ein unveränderlicher Datensatz in `decisions-YYYY-MM.jsonl`, auch „nichts tun“.
 - **Punktesystem**: Es arbeitet automatisch und ohne Eingabe des Nutzers.
   - Jeder Vorschlag ist ein Fall. Seine Auslöser-Prognose wird nach dem Brier-Prinzip gegen die Basisrate „bleibt, wie es ist“ bewertet.
@@ -112,11 +112,34 @@ Abgeleitet je Minute (`abl` im Datensatz):
 | **Quiet-Freigabe** | Quiet ≥ 1 · Verdichter läuft seit ≥ 15 min · ≤ 20 Hz (am Deckel) · Vorlauf ≥ 1,5 K unter Soll · Rücklauf ≥ 1,5 K unter Soll-Rücklauf · Raum unter Minimum *oder* Sollvorlauf in diesem Lauf noch nicht erreicht · alles **10 min am Stück** · keine Sperre | `SetQuietMode = 0` (direkt, nicht schrittweise) | keiner automatisch (0 ist Standard); „Zurücksetzen“ = vorige Stufe |
 | **Laufzeit strecken** | Quiet < 3 · Lauf ≥ 15 min · ≥ 22 Hz · kein Raum unter Minimum und Rücklauf ≤ 1 K unter Soll · Takt-Indiz (Abschaltgrenze in ≤ 45 min, letzter Lauf < 60 min oder ≥ 2 Starts in 3 h) · 10 min am Stück · keine Sperre | `SetQuietMode = 3` | automatisch zurück auf 0 bei Raum unter Minimum, bei Rücklauf ≥ 2,5 K unter Soll seit 15 min, spätestens nach 4 h |
 | **Raumeinfluss ±1 K** | Raumvorschlag der Phase 2 (−1/0/+1) ≠ Verschiebung der Anlage · seit ≥ 60 min unverändert · bei −1: Soll bleibt ≥ 29 °C · kein Wärmeverteilungsproblem · keine Sperre (u. a. Heizkurvenmodus, Wasserfühler, kein Handeingriff am Soll) | `SetZ1HeatRequestTemperature = −1/0/+1` | automatisch auf 0, sobald der Raumvorschlag 15 min am Stück 0 ist, spätestens nach 6 h |
+| **Vorausschau ±1 K** | Gate des Gebäudemodells offen · Vorhersage (Mittel +2…+5 h gegen jetzt) zeigt ≥ 2 K Bedarfsänderung (Außentemperatur-Äquivalent; Sonne/Wind nur mit `coefActivate`) · alle Räume gültig und im Band · Luft im Band ≥ 0,3 K (bei +1 K wärmster Raum unter Maximum, bei −1 K kältester über Minimum) · bei −1 K Soll ≥ 29 °C · Verschiebung steht auf 0 · **30 min am Stück** · keine Sperre, auch nicht „andere Regel“/„Gegenrichtung“ | `SetZ1HeatRequestTemperature = ±1` | automatisch auf 0, wenn die Vorhersage 15 min unter der halben Schwelle liegt, sofort, wenn ein Raum das Band in Gegenrichtung verlässt, spätestens nach 6 h; nicht, solange der Raumeinfluss denselben Wert verlangt |
 | **Heizgrenze-Hinweis** | Heizgrenze > 10 °C · Lauf ≥ 15 min bei Außentemperatur > 10 °C · alle aktiven Räume gültig und ≥ Minimum + 0,5 K · 15 min am Stück | nur Hinweis `SetHeatingOffOutdoorTemp = 10`, **nie per Klick** | Saisoneinstellung von Hand |
 
 **Comfort/Efficiency:** Es gibt keine Regel dafür. Die Whitelist kennt `SetHeatingControl` nicht. Das folgt der Nutzerregel: keine Heizregelung wegen Räumen.
 
 **Pumpe:** Es gibt keine Regel und keinen Befehl. Die Begrenzung ist auf dem Mainboard programmiert. Gemessen wurden ≈ 23,1–23,8 l/min bei 2900–2950 U/min in jeder Startspitze. `Max_Pump_Duty` 254 sagt darüber nichts. `SetMaxPumpDuty` steht nicht auf der Whitelist, ein Test prüft das.
+
+### 4a. Verschiebungs-Arbitrierung (keine Regel beißt eine andere)
+
+Raumeinfluss und Vorausschau stellen dieselbe Größe (Heizkurven-Verschiebung). Damit sie nicht gegeneinander arbeiten, führt der Kern **einen gemeinsamen Zustand** `S.arb` für alle Regeln der Größe `shift`:
+
+| Feld | Bedeutung |
+|---|---|
+| `owner`, `soll`, `von`, `start` | Regel mit dem laufenden Verschiebungs-Vorschlag (höchstens eine) und ihr Zielwert |
+| `applied` | von der Anlage übernommene Verschiebung einer Regel (der Sollwert steht auf ihrem Vorschlag); endet mit der nächsten Änderung der Verschiebung |
+| `last` | letzte beendete Verschiebung: Regel, Richtung, Wert, Ende (solange sie an der Anlage noch steht, gilt „jetzt“ als Ende) |
+
+Regeln:
+1. **Eigentum (`vorrang`):** Solange eine Regel einen Verschiebungs-Vorschlag hat oder ihre Verschiebung an der Anlage steht, schlägt keine andere Regel vor, weder daneben noch dagegen. Gleiche Richtung: „dieselbe Verschiebung schlägt schon … vor“.
+2. **Gemeinsame Mindesthaltezeit (`shiftHaltMin` 60 min):** Die Gegenrichtung zur letzten Verschiebung ist frühestens 60 min nach deren Ende erlaubt, für jede Regel, auch mit Notfall.
+3. **Wartezeit Gegenrichtung (`gegenMin` 240 min):** Zwischen 60 und 240 min nur mit **harter Begründung**: Komfort-Notfall (ein gültiger Raum ≥ `notK` 0,3 K außerhalb des Bandes auf der Seite, die die Gegenrichtung behebt, keiner auf der anderen Seite). Die Vorausschau hat nie einen Notfall und wartet immer 240 min.
+4. **Priorität Komfort vor Vorausschau:** Die Vorausschau läuft nie gegen den aktuellen Raumzustand: kein +1 K bei einem Raum über dem Band, kein −1 K bei einem Raum unter dem Band, und sie verlangt alle Räume im Band. Verlässt ein Raum das Band, endet ihr Vorschlag **in derselben Minute** (harte Bedingung, ohne die sonst üblichen 3 min Nachlauf); den Komfortfall übernimmt der Raumeinfluss.
+5. **Keine Fehlbewertung fremder Verschiebungen:** Steht an der Anlage die Verschiebung einer anderen Regel, ist das für den Raumeinfluss keine Abweichung. Raumvorschlag 0 → „ruht“ (gehört der Vorausschau), Gegenrichtung → Arbitrierung (Regeln 1–3).
+6. **Übergabe statt Hin und Her:** Endet der Vorschlag der Eigentümer-Regel und will die andere Regel dieselbe Richtung, schlägt sie in derselben Minute vor (Neuprüfung nach der Freigabe). In der Übernahme ruhen Rückweg-Grund und Ablauf (`halten`), solange die andere Regel denselben Wert verlangt.
+
+Die Sim prüft das über 6 Fake-Uhr-Tage mit Kälteeinbruch und Milderung (Shadow und „jeder Vorschlag sofort übernommen“): nie zwei Verschiebungs-Vorschläge gleichzeitig, keine Gegenrichtung vor 60 min, ohne Notfall nicht vor 240 min, die Anlage wechselt nie binnen 60 min.
+
+**Vorausschau bei geschlossenem Gate:** Der Wärmefahrplan legt Lernstand, Gate und `coefActivate` in `OPT_plan.model` ab. Ist das Gate zu (Stand 11.10.: 1 von 10 Tagen), ist die Regel „gesperrt: Gebäudemodell noch nicht freigegeben (n von 10 Tagen)“: keine Vorschläge, keine Fälle, keine Punkte. Die Bedingungen laufen zur Anzeige mit („würde schalten, aber gesperrt“ bzw. „…; außerdem …“), die Vergleichslagen für die Basisrate werden schon gesammelt. Ohne `coefActivate` stehen PV-Prognose und Wind gar nicht in der Eingabe (`in.vs`), die Regel rechnet dann nur mit der Temperatur.
 
 Statuswerte je Regel und Minute:
 
@@ -340,6 +363,13 @@ Der Nutzer vergibt keine Punkte. Auch „Verwerfen“ ist keine Bewertung: der B
 - Fälle und Wirkungsmessungen, die vor dem Wechsel begannen, werden mit ihrer Version zu Ende bewertet.
 - Nachrechnen mit den alten Regeln: `cfg.sv = 1` bzw. `node tools/engine_replay.js <Daten> --sv1`. Die Entscheidungen sind in beiden Versionen gleich, nur `sv` im Datensatz und die Bewertung unterscheiden sich (Test).
 
+**Änderung v2 → v3 (11.10., Verschiebungs-Arbitrierung):**
+- Minuten, in denen eine Verschiebungs-Regel nur durch die Gegenregel (`vorrang`, `gegenrichtung`) zurückgehalten wird, zählen wie eigene Sperren (neutral, `verpasst_sperre`), nur mit den Standardwerten; harter Schaden hebt das wie in v2 auf.
+- Schlägt eine andere Verschiebungs-Regel für die Lage dieselbe Richtung vor, gilt die Lage als versorgt.
+- Treffer/Fehlalarm bucht immer die Regel, die vorgeschlagen hat. Die Wirkung einer übernommenen Verschiebung („Soll folgt“) zählt für die Regel, deren Vorschlag übernommen wurde; für alle anderen offenen Fälle ist die Übernahme ein Eingriff (neutral, Urheber im Text).
+- Nachrechnen: `cfg.sv = 2` (Test: dieselbe Lage ist in v2 „verpasst“ −20, in v3 neutral). Raumeinfluss ist jetzt Regel v2, seine Summen beginnen neu.
+- Vorausschau: Problem „der knappste Raum gerät an den Bandrand“ (+1 K: ≤ Minimum + 0,3 K, −1 K: ≥ Maximum − 0,3 K), letzter gültiger Raumwert vor dem Horizont, Horizonte 120/240/360 min, p = 0,6. Kein „verpasst“ (es gibt keine unabhängige strengere Lage).
+
 **Änderung v1 → v2 (Entscheidung des Nutzers 10.10.):** „verpasst“ wird entschuldigt, wenn die Maschine nur wegen ihrer **eigenen**, im Regelwerk dokumentierten Sperren und Wartezeiten keinen Vorschlag machen durfte. Harte Schäden zählen trotzdem, damit Sperren keine Ausrede werden. Einzelheiten unter (4).
 
 **(1) Auslöser-Prognose je Fall.** Ein Fall ist eine Vorschlags- oder Hinweis-Episode einer Regel.
@@ -537,8 +567,8 @@ Aufbau (Neufassung 10.10. abends):
 | Karte | Inhalt |
 |---|---|
 | Entscheidungsmaschine | **Statuszeile** aus Chips: „Maschine läuft · hh:mm“ bzw. „Anlaufsperre bis …“, „keine HeishaMon-Daten“, „Maschine rechnet nicht“; Anlage kurz (Lauf · Hz · Quiet · Vorlauf-Abstand); Übernahme („🔒 Übernahme gesperrt“, „Übernahme frei: …“, „Übernommen …“, „wartet auf Bestätigung“); Warnung; „verworfen: …“. **Vorschlag** nur wenn einer da ist: hervorgehobener Kasten mit Regel, Was, Warum (eine Zeile mit Zahlen), Befehl, seit, gültig bis, Rückweg kurz; Erwartung und Rückweg-Text eingeklappt. **Knöpfe**: Übernehmen (deaktiviert mit Grund als Beschriftung), Verwerfen; Zurücksetzen nur bei aktiver Übernahme; Übernahme sperren nur wenn freigegeben |
-| Regeln | 4 Kacheln: Name, Status-Chip (Vorschlag/Hinweis, wartet, gesperrt, prüft, ruht, keine Daten), je Bedingung ein Segment (grün = erfüllt, Titel = Bedingung), eine Zeile mit dem Engpass und Balken: „Vorlauf-Rückstand 0,5 / 1,5 K“, „Haltezeit 4 / 10 min“, „🔒 Mindestabstand bis 09:38“, „seit 08:36 · gültig bis 09:06“ |
-| Punkte | Diagramm der Summen je Regel (nur wenn es Punkte gibt), 4 Kacheln (Summe, Fälle/Treffer/Fehlalarm, Skill, Wirkung, Schaden/Verpasst rot, Kennzahl „verpasst während Sperre“ (Befehlsregeln), Freigabereife n/m mit Balken, Kriterien eingeklappt), Messaufgabe Comfort/Efficiency als eine Zeile |
+| Regeln | 5 Kacheln (eine Zeile, je ~180 px): Name, Status-Chip (Vorschlag/Hinweis, wartet, gesperrt, prüft, ruht, keine Daten), je Bedingung ein Segment (grün = erfüllt, Titel = Bedingung), eine Zeile mit dem Engpass und Balken: „Vorlauf-Rückstand 0,5 / 1,5 K“, „Haltezeit 4 / 10 min“, „🔒 Mindestabstand bis 09:38“, „seit 08:36 · gültig bis 09:06“ |
+| Punkte | Diagramm der Summen je Regel (nur wenn es Punkte gibt), 5 Kacheln (Summe, Fälle/Treffer/Fehlalarm, Skill, Wirkung, Schaden/Verpasst rot, Kennzahl „verpasst während Sperre“ (Befehlsregeln), Freigabereife n/m mit Balken, Kriterien eingeklappt), Messaufgabe Comfort/Efficiency als eine Zeile |
 | Entscheidungen | **Episoden** statt Minutenzeilen: je Regel von „alle Bedingungen erfüllt“ (wartet, gesperrt, Vorschlag/Hinweis) bis zum Ende, mit Verlauf als Chips und Ende-Grund; Dauerzustände („prüft“, „ruht“) und Datenlücken erzeugen keine Zeile, kurze „wartet“-Episoden unter 5 min ohne Sperre oder Vorschlag werden ausgeblendet; höchstens 12, neueste oben |
 
 **Vorschau ohne Dashboard:** `node tools/engine_ui_preview.js [Datenordner] [Ausgabe.html]` spielt die echten Protokolle durch den Kern und zeichnet vier Schnappschüsse (10.10. 08:38 mit Vorschlag; Replay-Ende; Hauptschalter an mit aktiver Übernahme; 5 Tage Kälte-Szenario mit Punkten) in eine HTML-Datei, die das Dashboard nachbildet (Gruppenbreite 966 px).
@@ -571,8 +601,8 @@ Der Beobachter schreibt nie an Anlage, NAS oder MQTT. Einen MQTT-Befundkanal zur
 
 | Befehl | Ergebnis (10.10.2026) |
 |---|---|
-| `cp "flows (26.5.1 stable).json" /tmp/x.json && python3 tools/optimizer_phase1.py /tmp/x.json && node tools/optimizer_sim.js /tmp/x.json` | **605 OK** (vorher 604; neu: Strukturprüfung des Sendewegs) |
-| `node tools/engine_sim.js /tmp/x.json [Datenordner]` | Kern, Sperren, Mehrtages-Modell, Punktesystem, Nachprüfung, Seite (Karten-Daten, Darstellung, Vorschau), Hüllen im vm, gesperrte Übernahme, Replay: **162 OK** mit Flow-Datei und Daten (ohne Flow-Datei 115; neu in v2: Sperre entschuldigt, Schaden Komfort/Takt zählt, verlängerte Sperre entschuldigt nicht, v1 nachrechenbar, Versionswechsel, Replay v1/v2, Kachel) |
+| `cp "flows (26.5.1 stable).json" /tmp/x.json && python3 tools/optimizer_phase1.py /tmp/x.json && node tools/optimizer_sim.js /tmp/x.json` | **607 OK** (vorher 605; neu: `OPT_plan.model` ohne und mit `coefActivate`) |
+| `node tools/engine_sim.js /tmp/x.json [Datenordner]` | Kern, Sperren, Mehrtages-Modell, Punktesystem, Nachprüfung, Seite (Karten-Daten, Darstellung, Vorschau), Hüllen im vm, gesperrte Übernahme, Replay: **204 OK** mit Flow-Datei und Daten (ohne Flow-Datei 155; neu am 11.10.: 42 Prüfungen Vorausschau/Arbitrierung inkl. 6-Tage-Fake-Uhr, Replay mit Gate zu und testweise offen, Hülle mit Vorhersage; angepasst: Regelzahl 5, `SCORE_VER`, Datensatzgröße 2,7 MB/Tag, 5 Kachelspalten; neu in v2: Sperre entschuldigt, Schaden Komfort/Takt zählt, verlängerte Sperre entschuldigt nicht, v1 nachrechenbar, Versionswechsel, Replay v1/v2, Kachel) |
 | `BEOBACHTER_TMP=<ordner> python3 tools/bonsai_beobachter_test.py [Datenordner]` | **9 OK**, LLM nur als Mock |
 | `node tools/engine_replay.js <Datenordner> [Ausgabe]` und `--md` | Replay der echten Protokolle |
 
@@ -615,5 +645,12 @@ Jeder andere `mqtt out` sowie jeder Link- und HTTP-in-Knoten im Tab bleibt verbo
 - Heizstab- und Heizgrenze-Einstellungen galten nur 30 min nach der letzten HeishaMon-Meldung. Melden sie sich nur bei Änderung, wäre die Heizstab-Sperre still ausgefallen und der Heizgrenze-Hinweis „nicht zuständig“ geworden. Jetzt gilt der letzte Wert 24 h.
 
 **Bewertungsregeln v2 (10.10. abends).** Geänderte Knoten für den Deploy: `opt_engine`, `opt_apply` (Kern) und `opt_t_eng_prop`, `opt_t_eng_rules`, `opt_t_eng_score`, `opt_t_eng_log` (eingebettete Darstellung). Der Zustand bleibt erhalten; die v1-Summen bleiben unter ihrem Schlüssel stehen, Kachel und Diagramm beginnen für v2 bei 0. Die Grenze 1 K für „Komfortverlust über das Maß“ ist eine Annahme.
+
+**Vorausschau (11.10.).** Geänderte Knoten für den Deploy: `opt_plan` (legt `OPT_plan.model` ab, sonst unverändert), `opt_engine`, `opt_apply`, `opt_t_eng_prop`, `opt_t_eng_rules`, `opt_t_eng_score`, `opt_t_eng_log`. Der Zustand bleibt erhalten (`S.arb` wird ergänzt, ein laufender Raum-Vorschlag wird als Eigentümer eingetragen).
+- Schwellen sind **Annahmen**: 2 K Bedarfsänderung, Fenster +2…+5 h, Luft im Band 0,3 K, Haltezeit 30 min, Gültigkeit/Pause 180 min, Mindesthaltezeit 60 min, Wartezeit Gegenrichtung 240 min, Notfall 0,3 K.
+- Der Vergleich „Fenster gegen jetzt“ sieht auch den Tagesgang: in der 6-Tage-Sim schlägt die Regel nachmittags +1 K vor (Abkühlung am Abend), wenn die Räume Luft haben. Das ist Vorheizen in wärmeren Stunden (Lambda-Idee), kann aber häufig sein. Im Replay 07.–10.10. (Gate testweise offen) gab es keinen Vorschlag: höchstens 2,4 K Bedarfsänderung, und dann lag ein Raum außerhalb des Bandes.
+- Replay: Abrufzeit der Vorhersage = Zeile − `wetter_alter_min`, Stützpunkte jetzt/+1/+3/+6 h (Annahme, siehe `ASSUME` in `engine_replay.js`).
+- Datensatz: die Vorhersage steht im Schnappschuss (`in.vs`), damit Minuten nachspielbar bleiben; zusammen mit der fünften Regel ≈ 2,6 MB/Tag (≈ 78 MB/Monat statt 63).
+- Seite: die Neufassung mit fünf Kacheln ist nur als statische Vorschau (Firefox headless, 1100 px) angesehen; lange Regelnamen werden neben dem Status-Chip abgeschnitten.
 
 **Zeitzone.** Wie im übrigen Optimierer ist sie die Ortszeit des Containers. Die Sim läuft mit Europe/Berlin, auch über die Zeitumstellung am 25.10.
