@@ -128,9 +128,12 @@ QUIET = {"testAtRange": 2.0, "thrHigh": 3.0, "thrMid": 1.5, "thrLow": 0.5, "hyst
 
 # Verzoegerungstest (Schalt-Pruefstand, tools/delaytest_core.js): Einmal-Test "+1 K Heizkurvenverschiebung", ob Ausschalten/Einschalten des Verdichters
 # hinausgezoegert bzw. ausgeloest wird. Nur wirksam mit dem Patch tools/delaytest_patch.py UND wenn der Nutzer den Test in der Oberflaeche scharf schaltet.
-DELAYTEST = {"atMin": 7.5, "atMax": 11.5, "fromH": 9, "toH": 19, "maxPerDay": 1, "cooldownMin": 120, "afterMin": 15, "minRunMin": 45, "minStopMin": 20,
-             "ausLow": 2.0, "ausHigh": 2.75, "einLow": -2.75, "einHigh": -2.25, "einNat": -3.0, "einTimer": 7, "einSlopeMin": 0.03, "einSlopeMax": 0.12, "vlMax": 36, "vlOverMax": 4.75, "roomOverK": 1.0, "dwellMin": 2,
-             "confirmMin": 6, "maxMinAus": 90, "maxMinEin": 40, "nachMin": 6, "armTtlH": 14}
+DELAYTEST = {"atMin": 8.5, "atMax": 12.5, "atStableMin": 60, "fromH": 9, "toH": 18, "maxPerDay": 1, "cooldownMin": 120, "afterMin": 15, "dwellMin": 2,
+             "minRunMin": 45, "ausLow": 1.75, "ausHigh": 2.5, "ausRiseMin": 1.2, "ausOverK": 3.5, "ausOverMin": 5, "ausStopNat": 3.25, "ausStopShift": 3.75, "maxMinAus": 100,
+             "minStopMin": 20, "einLow": -1.75, "einHigh": -1.0, "einShiftThr": -2.25, "einNatThr": -3.25, "einTimerMax": 13, "einTolMin": 3,
+             "einSlopeMin": 0.025, "einSlopeMax": 0.07, "einSlopeWinMin": 15, "pumpMin": 1000, "pumpMax": 2600, "maxMinEin": 75,
+             "vlMax": 36, "vlOverMax": 4.75, "roomOverK": 1.0, "roomHotAbortK": 1.5, "roomColdAbortK": 0.3, "roomMaxAgeTestMin": 180,
+             "ignoreRooms": ["ki_oben"], "ignoreRange": [21.0, 25.0], "radQuietMin": 15, "confirmMin": 4, "sollJumpMin": 2, "nachMin": 10, "windowH": 24}
 
 
 # Heat plan (shadow only): every number here is a conservative DEFAULT, not a measured value; measured data moves them only slowly.
@@ -2593,9 +2596,9 @@ return out;
 
 
 DT_WRAP_JS = r"""
-// ---------- Huelle: Anlagenwerte lesen, Kern aufrufen, Verschiebung bereitstellen, protokollieren
-// Der Pruefstand schreibt NUR die Werte OPT_test_shift und OPT_test_ts (Speicher). Sie wirken ausschliesslich ueber den Patch der Summenfunktion
-// (tools/delaytest_patch.py), der sie nur annimmt, wenn der Zeitstempel hoechstens 150 s alt ist und den Betrag auf 1 K begrenzt.
+// ---------- Huelle: Anlagenwerte lesen, Kern aufrufen, Verschiebung bereitstellen, Testfenster setzen, protokollieren
+// Der Pruefstand schreibt NUR OPT_test_shift/OPT_test_ts (wirken ausschliesslich ueber die gepatchte Summenfunktion, frisch <= 150 s, |x| <= 1 K),
+// OPT_dt_window (Testfenster fuer Takt und Rueckstellwaechter im Tab WP Managers, auch als Datei fuer den Neustart) und OPT_dt_status.
 var cfg = global.get('OPT_cfg');
 if (!cfg || !cfg.delaytest) { return null; }
 var C = cfg.delaytest, now = Date.now(), MIN = 60000;
@@ -2603,49 +2606,80 @@ var G = function (k) { var v; try { v = global.get(k, 'file'); } catch (e) { v =
 function num(v) { if (v === null || v === undefined || v === '') { return null; } v = Number(v); return isFinite(v) ? v : null; }
 var HP = G('OPT_hp') || {};
 function hpv(name) { var e = HP[name]; return (e && typeof e.v === 'number' && now - e.ts < 10 * MIN) ? e.v : null; }
-var FILE = '/data/optimizer/delaytest-state.json';
+var FILE = '/data/optimizer/delaytest-state.json', WFILE = '/data/optimizer/delaytest-window.json';
 var ds = flow.get('dt'), restart = false;
 if (!ds) {
-    ds = {S: {}, arm: 'aus', armTs: 0, saved: ''};
-    try { var sj = JSON.parse(fs.readFileSync(FILE, 'utf8')); if (sj && sj.S) { ds.S = sj.S; ds.arm = sj.arm || 'aus'; ds.armTs = sj.armTs || 0; } } catch (e) { /* noch keine Datei */ }
-    if (ds.S.phase && ds.S.phase !== 'idle' && ds.S.phase !== 'nach') { restart = true; }
+    ds = {S: {}, arm: 'aus', armUntil: 0, saved: ''};
+    try { var sj = JSON.parse(fs.readFileSync(FILE, 'utf8')); if (sj && sj.S) { ds.S = sj.S; ds.arm = sj.arm || 'aus'; ds.armUntil = sj.armUntil || 0; } } catch (e) { /* noch keine Datei */ }
+    if (ds.S.phase === 'test') { restart = true; }
     flow.set('dt', ds);
 }
 function pd(x) { return (x < 10 ? '0' : '') + x; }
 function stampL(ts) { var d = new Date(ts); return d.getFullYear() + '-' + pd(d.getMonth() + 1) + '-' + pd(d.getDate()) + ' ' + pd(d.getHours()) + ':' + pd(d.getMinutes()) + ':' + pd(d.getSeconds()); }
-var evPre = [];
+var evPre = [], note = null;
 var ARMS = ['aus', 'ausschalten', 'einschalten'];
+function endOfWindow() { var d0 = new Date(now); d0.setHours(C.toH, 0, 0, 0); return d0.getTime(); }       // Scharfschaltung gilt nur bis zum Ende des Tagesfensters
 if (typeof msg.payload === 'string' && ARMS.indexOf(msg.payload) >= 0) {                      // Schalter in der Oberflaeche
     if (ds.S.phase === 'test' && msg.payload === 'aus') { ds.arm = 'aus'; }                    // Entschaerfen waehrend des Tests: der Kern bricht ab
-    else if (ds.S.phase !== 'idle' && ds.S.phase) { return null; }                             // laufender Test: Wahl ignorieren
-    else { ds.arm = msg.payload; ds.armTs = now; evPre.push(stampL(now) + ',verzoegerungstest_wahl,' + msg.payload); }
+    else if (ds.S.phase === 'test' || ds.S.phase === 'nach') { note = 'Wahl ignoriert: ' + (ds.S.phase === 'test' ? 'Test läuft' : 'Rückstellung läuft noch'); ds.shown = null; }
+    else if (msg.payload !== 'aus' && (new Date(now).getHours() < C.fromH || endOfWindow() <= now)) { note = 'Wahl ignoriert: scharf schalten nur zwischen ' + C.fromH + ' und ' + C.toH + ' Uhr'; ds.shown = null; }
+    else { ds.arm = msg.payload; ds.armUntil = msg.payload === 'aus' ? 0 : endOfWindow(); evPre.push(stampL(now) + ',verzoegerungstest_wahl,' + msg.payload); }
 }
-if (ds.arm !== 'aus' && now - ds.armTs > C.armTtlH * 60 * MIN && ds.S.phase !== 'test') {        // vergessene Scharfschaltung verfaellt
+if (ds.arm !== 'aus' && now >= (ds.armUntil || 0) && ds.S.phase !== 'test') {                    // Scharfschaltung verfaellt am Ende des Tagesfensters
     ds.arm = 'aus'; evPre.push(stampL(now) + ',verzoegerungstest_wahl,aus (abgelaufen)');
 }
 var rooms = [];
 (cfg.rooms || []).forEach(function (rc) {
     if (!rc.active) { return; }
     var st = (G('OPT_rooms') || {})[rc.id] || {};
-    rooms.push({name: rc.name, t: num(st.last), ageMin: st.ts ? (now - st.ts) / MIN : null, maxAgeMin: rc.maxAgeMin, min: rc.min, max: rc.max});
+    rooms.push({id: rc.id, name: rc.name, t: num(st.last), ageMin: st.ts ? (now - st.ts) / MIN : null, maxAgeMin: rc.maxAgeMin, min: num(rc.min), max: num(rc.max)});
 });
+// Verschiebung, die HeishaMoNR OHNE Test berechnet: dieselbe Summe wie die Summenfunktion (Heizkurvenmodus, Zone 1); unbekannt, solange ein Summand fehlt
+function n0(v) { return v === undefined ? 0 : v; }
+var shiftCalc = null, corrActive = false;
+(function () {
+    var b = G('F_CCC.z1.SP_DIRECT_virt'), rtc = G('F_RTC.z1.correction_value'), ss = G('F_SS.correction_value'), nr = G('NightReductionWaterTemp.correction');
+    var sR = n0(G('F_RTC.z1.state')), sS = n0(G('F_SS.state')), sN = n0(G('NightReductionWaterTemp.state'));
+    corrActive = sR !== 0 || sS !== 0 || sN !== 0;
+    if (typeof b !== 'number' || typeof rtc !== 'number' || typeof ss !== 'number' || typeof nr !== 'number') { return; }
+    var v = Math.round((b + (sR === 0 ? 0 : rtc) + (sN === 0 ? 0 : nr) + (sS === 0 ? 0 : ss)) * 10) / 10;
+    shiftCalc = Math.max(-5, Math.min(5, v));
+}());
+var KZ = G('OPT_kz') || {}, KR = KZ.rad || {};
+var rad = {known: typeof KR.on === 'boolean', on: KR.on, chgMin: typeof KR.ts === 'number' ? (now - KR.ts) / MIN : null};
 var lt = new Date(now);
 var o = {now: now, hour: lt.getHours() + lt.getMinutes() / 60, restart: restart, arm: ds.arm, hpFresh: hpv('Compressor_Freq') !== null,
-         hpOn: num(G('TOP0_Heatpump_State')) === 1, ccMode: num(G('TOP76_Heating_Mode')) === 0, zones: num(G('TOP94_Zones_State')),
-         blockActive: num(G('MQTT.block_active')) === 1, hz: num(G('compressor_frequency')) || 0, runMin: num(G('compressor_runtime')), vl: num(G('TOP6_Main_Outlet_Temp')), rl: num(G('TOP5_Main_Inlet_Temp')),
-         soll: num(G('TOP42_Z1_Water_Target_Temp')), shiftHp: num(G('TOP27_Z1_Heat_Request_Temp')), at: num(G('TOP14_Outside_Temp')), pumpRpm: hpv('Pump_Speed'),
+         hpOn: num(G('TOP0_Heatpump_State')) === 1, ccMode: num(G('TOP76_Heating_Mode')) === 0, zones: num(G('TOP94_Zones_State')), sensorZ1: num(G('TOP111_Z1_Sensor_Settings')),
+         blockActive: num(G('MQTT.block_active')) === 1, applyOn: G('OPT_apply_enabled') === true, hz: num(G('compressor_frequency')), runMin: num(G('compressor_runtime')),
+         vl: num(G('TOP6_Main_Outlet_Temp')), rl: num(G('TOP5_Main_Inlet_Temp')), soll: num(G('TOP42_Z1_Water_Target_Temp')), shiftHp: num(G('TOP27_Z1_Heat_Request_Temp')),
+         shiftCalc: shiftCalc, corrActive: corrActive, stateOk: !ds.fileErr, at: num(G('TOP14_Outside_Temp')), pumpRpm: hpv('Pump_Speed'),
          pel: num(G('TOP16_Heat_Energy_Consumption')), defrost: num(G('TOP26_Defrosting_State')) === 1, dhw: num(G('TOP20_ThreeWay_Valve_State')) === 1,
-         heater: (hpv('Internal_Heater_State') || 0) > 0 || (hpv('External_Heater_State') || 0) > 0, hc: hpv('Heating_Control'), quiet: num(G('TOP18_Quiet_Mode_Level')), rooms: rooms};
+         heater: (hpv('Internal_Heater_State') || 0) > 0 || (hpv('External_Heater_State') || 0) > 0, hc: hpv('Heating_Control'), quiet: num(G('TOP18_Quiet_Mode_Level')), rad: rad, rooms: rooms};
 var res;
 try { res = dtStep(ds.S, o, C); }
-catch (e) { res = {S: {phase: 'idle'}, shift: 0, rows: [], ev: [stampL(now) + ',verzoegerungstest_abbruch,Fehler: ' + String(e && e.message).replace(/,/g, ';')], status: 'Fehler im Prüfstand, Verschiebung 0', changed: true, disarm: true}; }
+catch (e) {                                                                                   // Fehler im Kern: Verschiebung 0, Zustand (Tageslimit, letztes Testende) behalten
+    var S0 = ds.S || {}; if (S0.phase === 'test') { S0.phase = 'nach'; S0.nachSince = now; S0.lastEnd = now; if (S0.day) { S0.day.n = (S0.day.n || 0) + 1; } }
+    S0.shift = 0;
+    res = {S: S0, shift: 0, rows: [], ev: [stampL(now) + ',verzoegerungstest_abbruch,Fehler im Prüfstand: ' + String(e && e.message).replace(/,/g, ';')], status: 'Fehler im Prüfstand, Verschiebung 0', changed: true, disarm: true, alarm: ''};
+}
 ds.S = res.S;
-if (res.disarm) { ds.arm = 'aus'; }
+if (res.disarm) { ds.arm = 'aus'; ds.armUntil = 0; }
 // Verschiebung bereitstellen: waehrend des Tests jede Minute frisch; danach einmal 0; im Leerlauf nichts
 if (res.shift !== 0 || ds.wrote || res.changed) { global.set('OPT_test_shift', res.shift); global.set('OPT_test_ts', now); ds.wrote = res.shift !== 0; }
-global.set('OPT_dt_status', res.status);
-var json = JSON.stringify({S: ds.S, arm: ds.arm, armTs: ds.armTs});
-if (json !== ds.saved) { try { fs.writeFileSync(FILE, json, {mode: 0o644}); ds.saved = json; } catch (e) { /* naechster Versuch beim naechsten Aufruf */ } }
+// Testfenster fuer Takt und Rueckstellwaechter: solange scharf/Test/Rueckstellung und bis 24 h nach dem letzten Testende (deckt die Nacht danach ab)
+var act = (ds.arm !== 'aus' || ds.S.phase === 'test' || ds.S.phase === 'nach') ? now : (ds.S.lastEnd || 0);
+var win = act && now - act < C.windowH * 60 * MIN ? {until: act + C.windowH * 60 * MIN} : null;
+var winOld = global.get('OPT_dt_window');
+global.set('OPT_dt_window', win);
+if (JSON.stringify(win === null ? null : Math.round(win.until / (10 * MIN))) !== ds.winSaved) {
+    try { fs.writeFileSync(WFILE, JSON.stringify(win), {mode: 0o644}); ds.winSaved = JSON.stringify(win === null ? null : Math.round(win.until / (10 * MIN))); } catch (e) { ds.fileErr = true; }
+}
+var guard = G('OPT_dt_guard');
+var gTxt = (guard && win && now - guard.ts < 3 * MIN && (guard.alarm || / gesendet|warte|gesperrt|nicht zurück/.test(guard.text))) ? ' · Rückstellwächter: ' + guard.text : '';
+var status = (note ? note + ' · ' : '') + res.status + gTxt;
+global.set('OPT_dt_status', status);
+var json = JSON.stringify({S: ds.S, arm: ds.arm, armUntil: ds.armUntil});
+if (json !== ds.saved || ds.fileErr) { try { fs.writeFileSync(FILE, json, {mode: 0o644}); ds.saved = json; ds.fileErr = false; } catch (e) { ds.fileErr = true; } }      // Fehler: kein Teststart (Kern)
 // Protokoll
 var month = lt.getFullYear() + '-' + pd(lt.getMonth() + 1);
 function withHead(file, head, lines) {
@@ -2656,14 +2690,16 @@ function withHead(file, head, lines) {
 function c(v) { return (v === null || v === undefined || !isFinite(v)) ? '' : String(Math.round(v * 100) / 100); }
 var out0 = null, out1 = null;
 if (res.rows.length) {
-    var HEAD = 'zeit,test,phase,shift_befehl,soll_vl,soll_basis,ist_vl,vl_minus_basis,ist_rl,verdichter_hz,leistung_el_w,pumpe_rpm,aussen,shift_anlage,raum_ueber_max_k,raum_unter_min_k,notiz';
-    out0 = withHead('/data/optimizer/delaytest-' + month + '.csv', HEAD, res.rows.map(function (r) { return r.map(function (v, i) { return (i === 1 || i === 2 || i === 16) ? String(v === undefined || v === null ? '' : v).replace(/,/g, ';') : (i === 0 ? v : c(v)); }).join(','); }));
+    var HEAD = 'zeit,test,phase,shift_befehl,soll_vl,soll_basis,ist_vl,vl_minus_basis,ist_rl,verdichter_hz,leistung_el_w,pumpe_rpm,aussen,shift_anlage,shift_berechnet,raum_ueber_max_k,raum_unter_min_k,rl_beim_stopp,kz_radiator_an,min_ab_bestaetigung,notiz';
+    var TXT = [1, 2, 20];
+    out0 = withHead('/data/optimizer/delaytest-' + month + '.csv', HEAD, res.rows.map(function (r) { return r.map(function (v, i) { return TXT.indexOf(i) >= 0 ? String(v === undefined || v === null ? '' : v).replace(/,/g, ';') : (i === 0 ? v : c(v)); }).join(','); }));
 }
 var evAll = evPre.concat(res.ev);
 if (evAll.length) { out1 = withHead('/data/optimizer/quiet-events-' + month + '.csv', 'zeit,ereignis,wechsel', evAll); }
 var out3 = null;
-if (ds.shown !== ds.arm) { ds.shown = ds.arm; out3 = {payload: ds.arm}; }                // Schalter in der Oberflaeche nachfuehren (nach Test/Ablauf wieder "Aus")
-return [out0, out1, {payload: res.status}, out3];
+if (ds.shown !== ds.arm) { ds.shown = ds.arm; out3 = {payload: ds.arm}; }                // Schalter in der Oberflaeche nachfuehren (nach Test/Ablauf/ignorierter Wahl)
+var out4 = res.alarm ? {payload: res.alarm, topic: 'Verzögerungstest'} : null;
+return [out0, out1, {payload: status}, out3, out4];
 """
 
 # ---------------------------------------------------------------- dashboard
@@ -3160,7 +3196,7 @@ upsert(fn("opt_vrm_save", "VRM-Zugangsdaten speichern", VRM_SAVE_JS, 4,
 
 
 # Verzoegerungstest (Schalt-Pruefstand): Kern + Huelle als eine Funktion; Schalter und Status auf der Seite "Daten & Guete".
-upsert(fn("opt_dt", "Verzögerungstest (Prüfstand)", DT_CORE_JS + DT_WRAP_JS, 4, [["opt_f_dt"], ["opt_f_qev"], ["opt_ui_dt_status"], ["opt_ui_dt_arm"]], 700, 1260, FS))
+upsert(fn("opt_dt", "Verzögerungstest (Prüfstand)", DT_CORE_JS + DT_WRAP_JS, 5, [["opt_f_dt"], ["opt_f_qev"], ["opt_ui_dt_status"], ["opt_ui_dt_arm"], ["opt_ui_toast"]], 700, 1260, FS))
 upsert(inject("opt_i_dt", "jede Minute", 60, 25, ["opt_dt"], 440, 1260))
 upsert({"id": "opt_f_dt", "type": "file", "z": TAB, "name": "Verzögerungstest-Protokoll", "filename": "filename", "filenameType": "msg", "appendNewline": False,
         "createDir": True, "overwriteFile": "false", "encoding": "utf8", "x": 960, "y": 1260, "wires": [[]]})
