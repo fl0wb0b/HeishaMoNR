@@ -110,7 +110,7 @@ var ENGVIEW = (function (E) {
         // Regelkacheln
         var rules = L.res.map(function (r) {
             var R = E.RULE[r.id] || {}, pr = S.rules && S.rules[r.id] ? S.rules[r.id].prop : null, dat = isDaten(r);
-            return {id: r.id, name: R.kurz || r.id, c: COL[r.id] || '#607d8b', st: r.st, chip: dat ? 'keine Daten' : (CHIP[r.st] || r.st), cls: dat ? 'bad' : (CLS[r.st] || 'mute'),
+            return {id: r.id, name: R.kachel || R.kurz || r.id, c: COL[r.id] || '#607d8b', st: r.st, chip: dat ? 'keine Daten' : (CHIP[r.st] || r.st), cls: dat ? 'bad' : (CLS[r.st] || 'mute'),
                     bed: r.st === 'inaktiv' || dat ? [] : (r.bed || []), line: lineOf(r, pr, now), grund: r.st === 'vorschlag' || r.st === 'hinweis' ? '' : r.grund};   // Begruendung des Vorschlags nur in Karte 1
         });
         // Punkte
@@ -130,7 +130,7 @@ var ENGVIEW = (function (E) {
             if (r.art === 'befehl' && r.wirkung.kalib) { more.push(r.wirkung.kalib + ' Kalibrierfall' + (r.wirkung.kalib === 1 ? '' : 'e')); }
             var warn = []; if (r.schaden) { warn.push(r.schaden + ' × Schaden'); } if (r.verpasst) { warn.push(r.verpasst + ' × verpasst'); }
             var ok = r.kriterien.filter(function (k) { return k.ok; }).length;
-            return {id: r.regel, name: (E.RULE[r.regel] || {}).kurz || r.regel, c: COL[r.regel], punkte: E.sg(r.punkte, 1).replace(/^0,0$/, '0'), neg: r.punkte < 0, sub: sub, more: more.join(' · '), warn: warn.join(' · '),
+            return {id: r.regel, name: (E.RULE[r.regel] || {}).kachel || (E.RULE[r.regel] || {}).kurz || r.regel, c: COL[r.regel], punkte: E.sg(r.punkte, 1).replace(/^0,0$/, '0'), neg: r.punkte < 0, sub: sub, more: more.join(' · '), warn: warn.join(' · '),
                     sperre: r.art === 'befehl' ? (r.verpasstSperre || 0) : null,                                     // "verpasst" waehrend eigener Sperre (v2, neutral)
                     reife: r.art === 'befehl' ? {n: ok, m: r.kriterien.length, reif: r.reif} : null, krit: r.kriterien.map(function (k) { return [k.kurz, k.ok ? 1 : 0, k.text]; })};
         });

@@ -3,7 +3,7 @@
  *   optEngUi.html(kind, P)              -> HTML einer Karte (kind: 'card' | 'rules' | 'score' | 'log'), P = Nutzlast aus ENGVIEW.build
  *   optEngUi.mount(el, kind, P, scope)  -> zeichnet in ein Element, Knoepfe schicken nur Aktion + ID + Pruefsumme, Diagramm ueber optChart */
 (function (root) {
-    var VER = 2;                                                                  // 2: fuenf Regeln je Zeile (Vorausschau)
+    var VER = 3;                                                                  // 3: fuenf Regeln je Zeile, Status-Chip unter dem Namen, nichts abgeschnitten
     if (root.optEngUi && root.optEngUi.v === VER) { return; }
     var U = {v: VER};
     function esc(s) { return String(s === undefined || s === null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
@@ -29,12 +29,13 @@
         '.oe-hd{display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:6px}' +
         '.oe-nm{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
         '.oe-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle}' +
+        '.oe-st{display:flex;align-items:center;gap:6px;margin-bottom:6px}.oe-st .oe-seg{flex:1;margin:0}' +
         '.oe-seg{display:flex;gap:3px;margin-bottom:6px}.oe-seg i{flex:1;height:5px;border-radius:2px;background:#cfd8dc}.oe-seg i.on{background:#43a047}' +
         '.oe-ln{display:flex;justify-content:space-between;gap:8px;font-size:12px;color:#546e7a;min-height:17px}' +
-        '.oe-ln span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.oe-ln span.w{white-space:normal}.oe-ln b{white-space:nowrap;color:#263238;font-weight:600}' +
+        '.oe-ln span{white-space:normal;overflow-wrap:anywhere}.oe-ln b{white-space:nowrap;color:#263238;font-weight:600}' +
         '.oe-bar{height:4px;border-radius:2px;background:#e0e0e0;margin-top:4px;overflow:hidden}.oe-bar i{display:block;height:100%;background:#1976d2}' +
         '.oe-pt{font-size:22px;font-weight:600;line-height:1.2}.oe-neg{color:#c62828}' +
-        '.oe-sub{font-size:12px;color:#757575;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:17px}' +
+        '.oe-sub{font-size:12px;color:#757575;min-height:17px}' +
         '.oe-wr{font-size:12px;color:#c62828;min-height:17px}' +
         '.oe-kr{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}' +
         '.oe-line{margin-top:10px;font-size:13px;color:#546e7a;display:flex;gap:8px;align-items:center}' +
@@ -69,9 +70,9 @@
     // ---------------------------------------------------------------- Karte 2: Regelkacheln
     function rules(P) {
         return '<div class="oe-grid">' + (P.rules || []).map(function (r) {
-            var seg = r.bed && r.bed.length ? '<div class="oe-seg">' + r.bed.map(function (b) { return '<i' + (b[1] ? ' class="on"' : '') + ' title="' + esc((b[1] ? '✓ ' : '✗ ') + b[2]) + '"></i>'; }).join('') + '</div>' : '<div class="oe-seg"></div>';
+            var seg = '<div class="oe-st">' + chip(r.chip, r.cls) + '<div class="oe-seg">' + (r.bed || []).map(function (b) { return '<i' + (b[1] ? ' class="on"' : '') + ' title="' + esc((b[1] ? '✓ ' : '✗ ') + b[2]) + '"></i>'; }).join('') + '</div></div>';
             var L = r.line || {}, ln = '<div class="oe-ln" title="' + esc(r.grund) + '"><span' + (L.v ? '' : ' class="w"') + '>' + (L.lock ? '🔒 ' : '') + esc(L.l) + '</span><b>' + esc(L.v) + '</b></div>';
-            return '<div class="oe-tile" style="border-top:3px solid ' + esc(r.c) + '"><div class="oe-hd"><span class="oe-nm">' + esc(r.name) + '</span>' + chip(r.chip, r.cls) + '</div>' + seg + ln +
+            return '<div class="oe-tile" style="border-top:3px solid ' + esc(r.c) + '"><div class="oe-hd"><span class="oe-nm">' + esc(r.name) + '</span></div>' + seg + ln +
                    (L.f !== null && L.f !== undefined ? bar(L.f, r.st === 'vorschlag' || r.st === 'hinweis' ? r.c : '') : '<div class="oe-bar" style="visibility:hidden"></div>') + '</div>';
         }).join('') + '</div>';
     }
