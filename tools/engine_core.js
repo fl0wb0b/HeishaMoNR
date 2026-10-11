@@ -577,7 +577,7 @@ var ENGINE = (function () {
         res.hart = !!e.hart;
         if (e.vorab) {                                                                      // Vorbedingung fehlt (Modell-Gate): nie ein Vorschlag, die Bedingungen laufen nur zur Anzeige mit
             rs.since = 0; rs.failSince = 0; endProp('gesperrt: ' + e.vorab.text);
-            res.st = 'gesperrt'; res.locks = [e.vorab.id];
+            res.st = 'gesperrt'; res.locks = [e.vorab.id]; res.dauer = bad.length > 0;     // Dauerzustand (nur Anzeige), solange auch eine Bedingung fehlt
             res.grund = (bad.length ? 'gesperrt: ' + e.vorab.text + '; außerdem ' + (bad[0].tn || bad[0].t) : 'würde schalten, aber gesperrt: ' + e.vorab.text);
             res.naechste = {b: e.vorab.id, ist: e.vorab.ist, s: e.vorab.s, u: e.vorab.u, text: 'prüft erst, wenn ' + LOCK_TEXT[e.vorab.id].replace('noch nicht ', '') + ' ist'};
             return res;

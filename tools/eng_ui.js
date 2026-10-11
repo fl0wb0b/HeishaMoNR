@@ -3,7 +3,7 @@
  *   optEngUi.html(kind, P)              -> HTML einer Karte (kind: 'card' | 'rules' | 'score' | 'log'), P = Nutzlast aus ENGVIEW.build
  *   optEngUi.mount(el, kind, P, scope)  -> zeichnet in ein Element, Knoepfe schicken nur Aktion + ID + Pruefsumme, Diagramm ueber optChart */
 (function (root) {
-    var VER = 1;
+    var VER = 2;                                                                  // 2: fuenf Regeln je Zeile (Vorausschau)
     if (root.optEngUi && root.optEngUi.v === VER) { return; }
     var U = {v: VER};
     function esc(s) { return String(s === undefined || s === null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
@@ -24,7 +24,7 @@
         '.oe button{font:inherit;font-size:13px;padding:6px 14px;border-radius:4px;border:1px solid #1976d2;background:#1976d2;color:#fff;cursor:pointer}' +
         '.oe button.sec{background:transparent;color:#1976d2}' +
         '.oe button[disabled]{background:#eeeeee;border-color:#bdbdbd;color:#757575;cursor:not-allowed}' +
-        '.oe-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}' +
+        '.oe-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}' +
         '.oe-tile{border:1px solid #e0e0e0;border-radius:6px;background:#fafafa;padding:8px 10px;min-width:0}' +
         '.oe-hd{display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:6px}' +
         '.oe-nm{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +

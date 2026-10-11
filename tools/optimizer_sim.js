@@ -1811,8 +1811,11 @@ check('Dateien: Ist, Vergleich, Schnappschuesse und Zustand unter /data/optimize
   // Standard: Schalter aus -> Kandidat vorhanden, Gate ok, aber keine Wirkung (bit-identisch)
   prep(); { const cf = fstore.plan.learn.coef, P3 = planNow();
     check('S3/S5: mit 12 Tagen Sonneneffekt ist das Gate ok und der Kandidat gerechnet, aber ohne Schalter (plan.coefActivate) bleibt aktiv false: bedarf = bisheriges Modell in jedem Slot, Wirkung auf die Summe 0', cf.n === 12 && cf.gate.ok === true && cf.aktiv === false && P3.slots.every(x => x.bedarf === x.bas && x.solU === 0 && x.winU === 0) && P3.sum.solU === 0 && P3.slots.some(x => x.solK > 0), JSON.stringify({n: cf.n, gate: cf.gate, aktiv: cf.aktiv, bs: cf.bs})); }
+  { const M = (gstore.OPT_plan || {}).model || {};
+    check('Gebaeudemodell fuer die Entscheidungsmaschine (OPT_plan.model): Lernstand 12 Tage, Gate ok, ohne Schalter aktiv false und Sonne/Wind-Koeffizienten 0', M.n === 12 && M.gate === true && M.aktiv === false && M.bs === 0 && M.bw === 0 && M.minDays === 10 && M.tbal === 15, JSON.stringify(M)); }
   // Schalter an: Wirkung nach Formel, Obergrenze, Nichtnegativitaet
-  prep({cfg: {coefActivate: 1}}); { const cf = fstore.plan.learn.coef, P3 = planNow();
+  prep({cfg: {coefActivate: 1}}); { const cf = fstore.plan.learn.coef, P3 = planNow(), M = (gstore.OPT_plan || {}).model || {};
+    check('OPT_plan.model mit Schalter (coefActivate) und Gate: aktiv true, Sonnen-Koeffizient wie der aktive Kandidat', M.aktiv === true && M.gate === true && M.bs === cf.bs && M.bs > 0, JSON.stringify(M));
     check('S3/S5: mit Schalter und bestandenem Gate wird der Kandidat aktiv (aktiv true)', cf.aktiv === true && cf.gate.ok === true, JSON.stringify({aktiv: cf.aktiv, why: cf.gate.why}));
     const bs = cf.bs;
     check('S3 Formel: je Slot bedarf = max(0, Basis − min(βs·Sonne, 0,6·Basis)) auf 1e-12; Sonne mindestens in einigen Slots wirksam, nie negativ, Wirkung ≤ 60 % der Basis', P3.slots.every(x => Math.abs(x.bedarf - Math.max(0, x.bas - Math.min(bs * x.sun, 0.6 * x.bas))) < 1e-12 && x.bedarf >= 0 && x.solU <= 0.6 * x.bas + 1e-12) && P3.slots.some(x => x.solU > 0.001) && P3.slots.some(x => x.solU === 0) && bs > 0.03 && bs < 0.15, 'bs ' + bs.toFixed(4));

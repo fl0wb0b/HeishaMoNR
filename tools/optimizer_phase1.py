@@ -2182,7 +2182,11 @@ if (P.status === 'ok') {                                                        
            {k: 'PV-Fenster', v: wf(sm2.pvWin), s: sm2.pvWin ? 'Ø ' + f(sm2.pvWin.v, 0, 'W') : 'keine Prognose'}];
 }
 out[0] = {payload: {rows: rows, plan: tab, chart: chartD, kpi: kpi}};
-global.set('OPT_plan', {ts: now, s0: P.s0, status: P.status, reserve: P.res || null, slots: P.slots ? P.slots.map(function (x) { return [x.t, x.rec, x.b, x.p, x.cost, x.cA]; }) : null});
+// Gebaeudemodell fuer die Entscheidungsmaschine (Regel Vorausschau): Lernstand, Gate, coefActivate; Sonne/Wind-Koeffizienten nur bei aktivem Modell
+var cfX = pl.learn.coef || {}, cfK = (cfX.aktiv && cfX.n >= 3) ? (cfX.maeWind !== null && cfX.maeWind !== undefined ? {bs: cfX.bsW || 0, bw: cfX.bw || 0} : {bs: cfX.bs || 0, bw: 0}) : {bs: 0, bw: 0};
+global.set('OPT_plan', {ts: now, s0: P.s0, status: P.status, reserve: P.res || null, slots: P.slots ? P.slots.map(function (x) { return [x.t, x.rec, x.b, x.p, x.cost, x.cA]; }) : null,
+                        model: {n: cfX.n || 0, minDays: pn('coefMinDays', 10), gate: !!(cfX.gate && cfX.gate.ok), why: (cfX.gate && cfX.gate.why) || [], aktiv: !!cfX.aktiv, bs: cfK.bs, bw: cfK.bw,
+                                ua: P.model ? P.model.ua : null, tbal: pn('tbalC', 15)}});
 flow.set('plan', pl);
 return out;
 """
@@ -3131,6 +3135,9 @@ var inp = {t: now, hpAge: hpTs ? (now - hpTs) / MIN : null,
            heaterI: hpv('Internal_Heater_State'), heaterE: hpv('External_Heater_State'), htrOnAT: hpSet('Heater_On_Outdoor_Temp'), htrStartDelta: hpSet('Heater_Start_Delta'), heatOffAT: hpSet('Heating_Off_Outdoor_Temp'),
            sollKurve: sollKurve, block: mq.block_active === 1 ? 1 : 0, otherQ: otherQ.length ? otherQ.join(', ') : null, otherShift: otherS.length ? otherS.join(', ') : null,
            kzRad: (KZ.rad && typeof KZ.rad.on === 'boolean') ? (KZ.rad.on ? 1 : 0) : null, rooms: rooms, korr: korr};
+// Vorausschau: OWM-Vorhersage und Gebaeudemodell des Waermefahrplans (Gate, coefActivate); Sonne/Wind nur bei aktivem Modell (sonst nicht in der Eingabe)
+var vsIn = null; try { vsIn = ENGINE.vorschau(G('OPT_weather'), G('OPT_plan'), G('OPT_plan_in'), at, now); } catch (e) { vsIn = null; }
+if (vsIn) { inp.vs = vsIn; }
 // ---------- rechnen (jede Minute), protokollieren
 var files = [], d0 = new Date(now), month = d0.getFullYear() + '-' + p2(d0.getMonth() + 1);
 if (msg.topic !== 'anzeige') {
@@ -3147,7 +3154,7 @@ if (msg.topic !== 'anzeige') {
         try { fs.readFileSync(ef, 'utf8'); } catch (e) { eh = 'zeit,ereignis,wechsel\n'; }
         files.push({filename: ef, payload: eh + evl.map(function (x) { return ENGINE.iso(now) + ',' + x[0] + ',' + String(x[1]).replace(/,/g, ';').replace(/\n/g, ' ') + '\n'; }).join('')});
     }
-    global.set('OPT_engine', {ts: now, ver: ENGINE.VER, prop: o.prop, locks: o.locks, ende: o.ende, rules: o.res.map(function (r) { return {id: r.id, st: r.st}; })});
+    global.set('OPT_engine', {ts: now, ver: ENGINE.VER, prop: o.prop, locks: o.locks, ende: o.ende, halten: o.halten, rules: o.res.map(function (r) { return {id: r.id, st: r.st}; })});
     if (!ST.saved || now - ST.saved >= 10 * MIN || o.scores.length || o.ev.length) {
         try { fs.mkdirSync('/data/optimizer', {recursive: true}); fs.writeFileSync('/data/optimizer/engine-state.json', JSON.stringify({S: ST.S, V: ST.V})); ST.saved = now; } catch (e) { node.warn('engine-state.json: ' + e.message); }
     }
@@ -3181,7 +3188,7 @@ var mq = G('MQTT') || {};
 var plant = {q: pick(hpv('Quiet_Mode_Level'), num(G('TOP18_Quiet_Mode_Level'))), shift: pick(hpv('Z1_Heat_Request_Temp'), num(G('TOP27_Z1_Heat_Request_Temp'))), hpAge: hpTs ? (now - hpTs) / MIN : null,
              block: mq.block_active === 1 ? 1 : 0, heatMode: num(G('TOP76_Heating_Mode')), z1Sensor: num(G('TOP111_Z1_Sensor_Settings'))};
 var eng = global.get('OPT_engine') || {};
-var ctx = {now: now, enabled: AC.enabled, rules: AC.rules, eng: eng, plant: plant, cfg: ENGINE.mergeCfg(((global.get('OPT_cfg') || {}).engine) || {}), endReason: eng.ende || {}};
+var ctx = {now: now, enabled: AC.enabled, rules: AC.rules, eng: eng, plant: plant, cfg: ENGINE.mergeCfg(((global.get('OPT_cfg') || {}).engine) || {}), endReason: eng.ende || {}, halten: eng.halten || {}};
 var t = String(msg.topic || ''), r;
 try { r = t === 'tick' ? ENGINE.applyTick(A, ctx) : ENGINE.applyRequest(A, {topic: t, payload: (msg.payload && typeof msg.payload === 'object') ? {id: String(msg.payload.id || ''), sum: String(msg.payload.sum || '')} : {}}, ctx); }
 catch (e) { node.warn('Übernahme: ' + e.message); return [null, {topic: 'Optimierer', payload: 'Übernahme: Fehler (' + e.message + '). Nichts gesendet.', highlight: 'red'}, null, null]; }

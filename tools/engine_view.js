@@ -7,7 +7,7 @@
 var ENGVIEW = (function (E) {
     var MIN = 60000;
     var STAGE = {wartet: 1, gesperrt: 2, abgelaufen: 3, vorschlag: 3, hinweis: 3};
-    var COL = {quiet_freigabe: '#1976d2', quiet_strecken: '#00897b', raum_offset: '#ef6c00', heizgrenze_hinweis: '#8e24aa'};
+    var COL = {quiet_freigabe: '#1976d2', quiet_strecken: '#00897b', raum_offset: '#ef6c00', heizgrenze_hinweis: '#8e24aa', vorausschau: '#6d4c41'};
     var CHIP = {vorschlag: 'Vorschlag', hinweis: 'Hinweis', wartet: 'wartet', gesperrt: 'gesperrt', bereit: 'prüft', inaktiv: 'ruht', abgelaufen: 'abgelaufen'};
     var CLS = {vorschlag: 'act', hinweis: 'act', wartet: 'warn', gesperrt: 'warn', bereit: 'mute', inaktiv: 'mute', abgelaufen: 'mute'};
     var LK = {}; E.LOCKS.forEach(function (l) { LK[l.id] = l.kurz; });
@@ -26,7 +26,7 @@ var ENGVIEW = (function (E) {
     function track(V, res, rules, now) {
         V.ep = Array.isArray(V.ep) ? V.ep : []; V.open = V.open || {};
         res.forEach(function (r) {
-            var rel = STAGE[r.st] && !isDaten(r), op = V.open[r.id];
+            var rel = STAGE[r.st] && !isDaten(r) && !r.dauer, op = V.open[r.id];          // Modell-Gate mit fehlender Bedingung: Dauerzustand, keine Zeile
             if (rel) {
                 var lock = r.st === 'gesperrt' && r.naechste ? r.naechste.b : '', pr = rules && rules[r.id] && rules[r.id].prop;
                 if (!op) { op = V.open[r.id] = {id: r.id, t0: now, t1: now, st: []}; }
@@ -64,7 +64,7 @@ var ENGVIEW = (function (E) {
         var n = r.naechste || {};
         if (r.st === 'inaktiv') { return {l: short(r.grund), v: '', f: null}; }
         if (isDaten(r)) { return {l: 'keine HeishaMon-Daten', v: '', f: null}; }
-        if (r.st === 'gesperrt') { return {l: LK[n.b] || short(r.grund), v: n.bis ? 'bis ' + hm(n.bis) : '', f: null, lock: true}; }
+        if (r.st === 'gesperrt') { return {l: LK[n.b] || short(r.grund), v: n.bis ? 'bis ' + hm(n.bis) : (have(n.ist) && have(n.s) ? E.de(n.ist, 0) + ' / ' + E.de(n.s, 0) + (n.u ? ' ' + n.u : '') : ''), f: n.bis || !(have(n.ist) && have(n.s)) ? null : clamp(n.ist / n.s), lock: true}; }
         if ((r.st === 'vorschlag' || r.st === 'hinweis') && prop) { return {l: 'seit ' + hm(prop.ts), v: 'gültig bis ' + hm(prop.bis), f: clamp((now - prop.ts) / Math.max(1, prop.bis - prop.ts))}; }
         if (r.st === 'abgelaufen') { return {l: 'abgelaufen', v: '', f: null}; }
         if (have(n.ist) && have(n.s)) {
