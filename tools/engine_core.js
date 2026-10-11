@@ -412,7 +412,7 @@ var ENGINE = (function () {
         // ab v2: eigene Sperren/Wartezeiten der Regel entschuldigen "verpasst" (0 Punkte, als "waehrend Sperre" gezaehlt), aber nur mit den
         // dokumentierten Standardwerten (eine verlaengerte Sperre zaehlt nur bis zum Standard) und nur ohne harten Schaden im Fenster.
         verpasstSperre: {eigene: ['abstand', 'tageslimit', 'abkuehlzeit', 'haltezeit', 'stabil'], gegenregel: ['vorrang', 'gegenrichtung'], komfortK: 1.0,
-                         schaden: {quiet_freigabe: ['komfort'], quiet_strecken: ['takt', 'ueberschwingen'], raum_offset: ['komfort']}},
+                         schaden: {quiet_freigabe: ['komfort'], quiet_strecken: ['takt', 'ueberschwingen'], raum_offset: ['komfort'], vorausschau: ['komfort']}},
         raumAlterMax: 360,         // Bewertung (nicht Entscheidung): ein Raumwert bis 6 h alt zaehlt, weil die Shelly H&T Gen3 nur bei Aenderung >= 0,5 K melden
         lueftungK: 1.0,            // Raum faellt >= 1 K in <= 60 min: Lueftung (Eingriff), danach keine Gegenfaktik fuer Raum-Prognosen (nach dem Replay ergaenzt: 09.10. Wohnzimmer -3,3 K)
         reife: {faelle: 10, tage: 14, skill: 0.2, wirkFaelle: 2, verpasst: 1}
@@ -1026,7 +1026,7 @@ var ENGINE = (function () {
     //     haetten. Gezaehlt werden nur "freie" Minuten (Lage besteht, Regel nicht durch eine eigene Sperre zurueckgehalten); erst wenn diese die
     //     Dauer erreichen, ist es "verpasst" (-20). Lief die Dauer nur wegen eigener Sperren ab, gibt es einen neutralen Eintrag "verpasst_sperre"
     //     (0 Punkte, getrennt gezaehlt). Ein harter Schaden im Fenster (SCORE.verpasstSperre.schaden) hebt die Entschuldigung auf: dann -20.
-    var EXCUSE = ['anlauf', 'daten', 'mqtt_sperre', 'abtauen', 'warmwasser', 'sanftanlauf', 'regler', 'heizstab'];
+    var EXCUSE = ['anlauf', 'daten', 'mqtt_sperre', 'abtauen', 'warmwasser', 'sanftanlauf', 'regler', 'heizstab', 'modell'];
     var OWN_TEXT = {abstand: 'Mindestabstand', tageslimit: 'Tageslimit', abkuehlzeit: 'Wartezeit', haltezeit: 'Haltezeit', stabil: 'Stabilitätszeit', vorrang: 'Verschiebung einer anderen Regel', gegenrichtung: 'Wartezeit Gegenrichtung'};
     var MISS_DMG_TEXT = {komfort: 'Raum mehr als 1 K unter Minimum', takt: 'Verdichter stoppte', ueberschwingen: 'Vorlauf über der Abschaltgrenze (Soll +3,25 K)'};
     function stdOf(R, key) { var x = R.schwellen.filter(function (s) { return s.key === key; })[0]; return x ? x.std : null; }
@@ -1068,6 +1068,7 @@ var ENGINE = (function () {
         var now = d.now;
         RULES.forEach(function (R) {
             if (R.art !== 'befehl') { return; }
+            if (R.id === 'vorausschau') { if (sv >= 3) { missedVs(R, S, sc, d, cfg, res, recs, sv); } return; }
             var G = sc.gt[R.id] = sc.gt[R.id] || {since: 0, prop: false, excused: false, booked: false, lead: ''};
             var r = res.filter(function (x) { return x.id === R.id; })[0], c = cfg.rules[R.id];
             var cond = false, need = 20, lead = '';
@@ -1124,6 +1125,61 @@ var ENGINE = (function () {
                 G.since = 0;
             }
         });
+    }
+ // Verpasst der Vorausschau (seit v3): Lage = Gate offen und alle Bedingungen der Regel erfuellt (Bedarfsaenderung >= Schwelle aus dem Wetter, Raeume
+    // im Band mit Luft), 60 min am Stueck ohne Vorschlag (auch keiner einer anderen Verschiebungs-Regel in dieselbe Richtung) und ohne Sicherheits-/Datensperre.
+    // Bewertet wird erst, ob die Lage WIRKLICH eintrat (bis zum Fensterende +bisH): ein Raum verlaesst das Band in der vorhergesagten Richtung, oder die gemessene
+    // Aussentemperatur (um den Tagesgang bereinigt) zeigt mindestens die halbe Schwelle. Trat nichts ein, gibt es keinen Eintrag. Neutralitaet wie bei den
+    // anderen Regeln: nur eigene/Gegenregel-Sperren mit Standardwerten -> "verpasst_sperre" (0); Raum > 1 K unter Minimum hebt das auf (+1 K).
+    var VS_NEED = 60;
+    function missedVs(R, S, sc, d, cfg, res, recs, sv) {
+        var now = d.now, c = cfg.rules[R.id], G = sc.gt[R.id] = sc.gt[R.id] || {since: 0, pend: []}, r = res.filter(function (x) { return x.id === R.id; })[0];
+        G.pend = G.pend || [];
+        var cond = !!(d.fresh && d.vs && d.vs.gate && have(d.vsDk) && Math.abs(d.vsDk) >= c.deltaK && r && !r.dauer && (r.st === 'wartet' || r.st === 'vorschlag' || r.st === 'abgelaufen' || (r.st === 'gesperrt' && r.locks.indexOf('modell') < 0)));
+        if (cond) {
+            var dir = d.vsDk > 0 ? 1 : -1;
+            if (!G.since || G.dir !== dir) { G.since = now; G.dir = dir; G.prop = false; G.excused = false; G.booked = false; G.last = now; G.frei = 0; G.gesperrt = 0; G.ids = []; G.ext = []; }
+            if (r.st === 'vorschlag' || (S.arb.owner && S.arb.owner !== R.id && sgnOf(S.arb.soll - S.arb.von) === dir)) { G.prop = true; }
+            if (r.locks.some(function (l) { return EXCUSE.indexOf(l) >= 0; })) { G.excused = true; }
+            var dt = Math.min(Math.max(0, now - (G.last || now)), 2 * MIN), ob = ownBlock(R, r, d, S, cfg, sv);
+            G.last = now;
+            if (ob && ob.ids) { G.gesperrt += dt; ob.ids.forEach(function (x) { if (G.ids.indexOf(x) < 0) { G.ids.push(x); } }); }
+            else { G.frei += dt; if (ob && ob.ext) { ob.ext.forEach(function (x) { if (G.ext.indexOf(x) < 0) { G.ext.push(x); } }); } }
+            if (!G.booked && !G.prop && !G.excused && now - G.since >= VS_NEED * MIN) {
+                G.booked = true;
+                var b = d.vsBase, shW = 0; for (var h = c.vonH; h <= c.bisH; h++) { shW += b.at[h]; } shW /= (c.bisH - c.vonH + 1);
+                G.pend.push({win: G.since, t0: now, ab: G.since, dir: dir, dk: d.vsDk, frei: G.frei >= VS_NEED * MIN, ids: G.ids.slice(), ext: G.ext.slice(), at0: d.at, sh0: b.at[0], shW: shW, s: 0, n: 0, raum: '', dmg: [],
+                             tb: have(d.vs.tbal) ? d.vs.tbal : 15});
+            }
+            G.pend.forEach(function (P) { if (P.win === G.since) { P.frei = G.frei >= VS_NEED * MIN; P.ids = G.ids.slice(); P.ext = G.ext.slice(); } });   // die Lage haelt an: freie Minuten zaehlen weiter
+        } else { G.since = 0; }
+        G.pend = G.pend.filter(function (P) {
+            var w0 = P.t0 + c.vonH * HOUR, w1 = P.t0 + c.bisH * HOUR;
+            if (d.fresh && have(d.at) && now >= w0 && now <= w1) { P.s += d.at; P.n++; }
+            d.rooms.forEach(function (x) {
+                if (!roomScore(x)) { return; }
+                if (!P.raum && (P.dir > 0 ? x.t < x.min : x.t > x.max)) { P.raum = x.name + (P.dir > 0 ? ' unter Minimum' : ' über Maximum'); }
+                if (P.dir > 0 && x.t < x.min - SCORE.verpasstSperre.komfortK && P.dmg.indexOf('komfort') < 0) { P.dmg.push('komfort'); }
+            });
+            var ist = null;
+            if (now >= w1 && P.n >= 0.5 * (w1 - w0) / MIN) { var aW = P.s / P.n; ist = r2(Math.max(0, P.tb - (aW - P.shW)) - Math.max(0, P.tb - (P.at0 - P.sh0))); }
+            var real = P.raum || (ist !== null && P.dir * ist >= c.deltaK / 2);
+            if (!real && now < w1) { return true; }
+            if (real) {
+                var why = 'Seit ' + hhmm(P.ab) + ' sagte die Vorhersage ' + sg(P.dk, 1) + ' K Bedarf aus dem Wetter voraus, ohne Vorschlag; eingetreten: ' + (P.raum || 'gemessen ' + sg(ist, 1) + ' K (um den Tagesgang bereinigt)');
+                var T = tot(sc, R.id, R.ver, sv), sp = P.ids.map(function (x) { return OWN_TEXT[x]; }).join(', ');
+                if (P.frei || P.dmg.length) {
+                    T.verpasst++;
+                    book(sc, recs, {t: iso(now), typ: 'verpasst', regel: R.id, v: R.ver, sv: sv, ab: iso(P.ab), punkte: SCORE.verpasst, sperre: P.ids.length ? P.ids : undefined, schaden: P.dmg.length ? P.dmg : undefined,
+                                    text: why + (P.frei ? (P.ext.length ? '; über den Standardwert verlängert: ' + P.ext.map(function (x) { return OWN_TEXT[x] || x; }).join(', ') : '') : ' · während eigener Sperre (' + sp + '), aber Schaden: ' + P.dmg.map(function (k) { return MISS_DMG_TEXT[k]; }).join(', ') + ' → nicht entschuldigt')}, now);
+                } else {
+                    T.verpasstSperre++;
+                    book(sc, recs, {t: iso(now), typ: 'verpasst_sperre', regel: R.id, v: R.ver, sv: sv, ab: iso(P.ab), punkte: 0, sperre: P.ids, text: why + '; die Regel durfte nur wegen eigener Sperre (' + sp + ') keinen machen, kein Schaden: neutral'}, now);
+                }
+            }
+            return false;
+        });
+        if (G.pend.length > 20) { G.pend = G.pend.slice(-20); }
     }
     // Messaufgabe "Comfort gegen Efficiency" (Korrektur 10.10.: ob Efficiency den Verdichter begrenzt, ist ungeklaert, Quiet 3 hat es bisher verdeckt).
     // Sammelt Minuten mit Quiet 0, laufendem Verdichter (ab Minute 15 und 3 min nach einer Quiet-Aenderung) und Vorlauf >= 2 K unter Soll, getrennt nach

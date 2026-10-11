@@ -442,6 +442,29 @@ console.log('--- (d) Sonne/Wind nur mit coefActivate, Bewertung und Neutralitaet
     check('... mit den Bewertungsregeln v2 (cfg.sv = 2) waere dieselbe Lage "verpasst" -20 (Gegenregel-Sperren entschuldigten dort nicht): v3 aendert genau das', sc.some(s0 => s0.typ === 'verpasst' && s0.punkte === -20 && s0.sv === 2), sc.map(s => s.t + ' ' + s.typ + ' ' + s.punkte).join(' | '));
     R = runD(300, i => { const x = neu(i); if (i >= 200) { x.rooms = rooms({ki_oben: 20.8}); } return x; }); sc = allScores(R).filter(s => s.regel === 'raum_offset' && /^verpasst/.test(s.typ));
     check('... Schaden hebt auch die Gegenregel-Entschuldigung auf: Raum 1,2 K unter Minimum -> "verpasst" -20 mit Schaden "komfort"', sc.some(s => s.typ === 'verpasst' && s.punkte === -20 && JSON.stringify(s.schaden) === '["komfort"]'), sc.map(s => s.t + ' ' + s.typ + ' ' + s.punkte).join(' | '));
+    // Verpasst der Vorausschau (v3): Lage 60 min ohne Vorschlag, bewertet erst, wenn sie wirklich eintritt
+    const vsMiss = (o) => i => inp(T0 + i * MIN, Object.assign({vs: vsx(i >= (o.ab || 0) ? VSK.up : VSK.flat), at: 10, korr: kx(o.korr ? (i < (o.korrBis || 999) ? o.korr : 0) : 0, 'Schlafzimmer')}, o.f ? o.f(i) : {}));
+    const vmiss = R => allScores(R).filter(s0 => s0.regel === 'vorausschau' && /^verpasst/.test(s0.typ));
+    let Rm = runD(400, vsMiss({f: i => (i >= 150 ? {rooms: rooms({ki_oben: 21.8})} : {})}), undefined, E.mergeCfg({rules: {vorausschau: {proTag: 0}}}));
+    let vm = vmiss(Rm);
+    check('Verpasst Vorausschau: Lage ab Minute 0, Tageslimit ueber den Standard hinaus auf 0 gesetzt (zaehlt frei), Raum faellt in Minute 150 unter Minimum (vorhergesagter Bedarf trat ein) -> "verpasst" -20',
+          vm.length === 1 && vm[0].typ === 'verpasst' && vm[0].punkte === -20 && vm[0].t === E.iso(T0 + 150 * MIN) && /eingetreten: Kinderzimmer oben unter Minimum/.test(vm[0].text) && /verlängert: Tageslimit/.test(vm[0].text), vm.map(x => x.t + ' ' + x.typ + ' ' + x.text).join(' | '));
+    Rm = runD(400, vsMiss({}), undefined, E.mergeCfg({rules: {vorausschau: {proTag: 0}}}));
+    check('... trat nichts ein (Raum bleibt im Band, gemessene Aussentemperatur bleibt beim Tagesgang): kein Eintrag', vmiss(Rm).length === 0, vmiss(Rm).map(x => x.typ).join(','));
+    Rm = runD(400, vsMiss({f: i => (i >= 120 ? {at: 6.5} : {})}), undefined, E.mergeCfg({rules: {vorausschau: {proTag: 0}}}));
+    vm = vmiss(Rm);
+    check('... eingetreten ueber die Messung: Aussentemperatur im Fenster 3,5 K unter dem Tagesgang (>= halbe Schwelle) -> "verpasst" -20 am Fensterende (Minute 60 + 5 h)', vm.length === 1 && vm[0].typ === 'verpasst' && vm[0].t === E.iso(T0 + 360 * MIN) && /gemessen \+3,5 K/.test(vm[0].text), vm.map(x => x.t + ' ' + x.text).join(' | '));
+    Rm = runD(500, vsMiss({ab: 70, korr: -1, korrBis: 400, f: i => (i >= 200 ? {rooms: rooms({ki_oben: 21.8})} : {})}));
+    vm = vmiss(Rm);
+    check('... Neutralitaet: Vorausschau nur durch Haltezeit und die Gegenregel (Raumeinfluss hat -1 K) zurueckgehalten, Bedarf trat ein -> "verpasst_sperre" 0 Punkte',
+          vm.length === 1 && vm[0].typ === 'verpasst_sperre' && vm[0].punkte === 0 && vm[0].sperre.includes('vorrang') && vm[0].sperre.includes('haltezeit'), vm.map(x => x.t + ' ' + x.typ + ' ' + JSON.stringify(x.sperre)).join(' | '));
+    Rm = runD(500, vsMiss({ab: 70, korr: -1, korrBis: 400, f: i => (i >= 200 ? {rooms: rooms({ki_oben: 20.8})} : {})}));
+    vm = vmiss(Rm);
+    check('... Schaden hebt die Neutralitaet auf: Raum 1,2 K unter Minimum -> "verpasst" -20 mit Schaden "komfort"', vm.length === 1 && vm[0].typ === 'verpasst' && JSON.stringify(vm[0].schaden) === '["komfort"]', vm.map(x => x.t + ' ' + x.typ).join(' | '));
+    Rm = runD(400, vsMiss({f: i => (i >= 150 ? {rooms: rooms({ki_oben: 21.8})} : {})}));
+    check('... mit Vorschlag (Standardwerte): kein "verpasst"; mit Gate zu: nie ein Eintrag; Bewertungsregeln v2: kein "verpasst" der Vorausschau', vmiss(Rm).length === 0 && shiftProps(Rm).length === 1 &&
+          vmiss(runD(400, i => { const x = vsMiss({f: j => (j >= 150 ? {rooms: rooms({ki_oben: 21.8})} : {})})(i); x.vs.gate = 0; return x; }, undefined, E.mergeCfg({rules: {vorausschau: {proTag: 0}}}))).length === 0 &&
+          vmiss(runD(400, vsMiss({f: i => (i >= 150 ? {rooms: rooms({ki_oben: 21.8})} : {})}), undefined, E.mergeCfg({sv: 2, rules: {vorausschau: {proTag: 0}}}))).length === 0, '');
     // Nachspielen mit Vorhersage aus dem Datensatz
     R = runD(80, i => inp(T0 + i * MIN, {vs: vsx(i < 50 ? VSK.up : VSK.down)}));
     const R2 = runD(80, i => E.unsnap(T0 + i * MIN, JSON.parse(JSON.stringify(R.outs[i].rec.in))));
