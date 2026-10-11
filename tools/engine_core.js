@@ -124,6 +124,7 @@ var ENGINE = (function () {
         return v.some(function (r) { return r.t >= r.max + d.notK; }) && !v.some(function (r) { return r.t < r.min; });
     }
     function sgnOf(x) { return x > 0 ? 1 : (x < 0 ? -1 : 0); }
+    function arbEnd(A, d) { return (A.applied && A.last && A.applied.rule === A.last.rule && d.shift === A.applied.w) ? d.now : (A.last ? A.last.end : 0); }   // steht die Verschiebung noch, laeuft sie noch
     function arbLocks(R, e, d, S, cfg, add) {
         var A = S.arb, L = cfg.locks, now = d.now;
         if (!e || !have(e.wert) || !have(e.von)) { return; }
@@ -133,7 +134,7 @@ var ENGINE = (function () {
             else if (shiftOwnedBy(d, R.id)) { add('vorrang', 'Verschiebung ' + sg(d.shift, 0) + ' K gehört „' + RULE[A.applied.rule].kurz + '“'); }
         }
         if (R.sperren.indexOf('gegenrichtung') >= 0 && A.last && dir !== 0 && A.last.dir === -dir) {
-            var ls = A.last, end = (A.applied && A.applied.rule === ls.rule && d.shift === A.applied.w) ? now : ls.end, el = now - end;
+            var ls = A.last, end = arbEnd(A, d), el = now - end;
             var was = 'letzte Verschiebung ' + sg(ls.w, 0) + ' K („' + RULE[ls.rule].kurz + '“) bis ' + hhmm(end);
             if (el < L.shiftHaltMin * MIN) { add('gegenrichtung', was + ', Mindesthaltezeit ' + L.shiftHaltMin + ' min', end + L.shiftHaltMin * MIN); }
             else if (el < L.gegenMin * MIN && !e.hart) { add('gegenrichtung', was + ', ohne Komfort-Notfall erst nach ' + L.gegenMin + ' min', end + L.gegenMin * MIN); }
@@ -660,9 +661,16 @@ var ENGINE = (function () {
             RULES.forEach(function (R) { var p0 = S.rules[R.id].prop; if (R.groesse === 'shift' && p0 && !S.arb.owner) { S.arb.owner = R.id; S.arb.soll = p0.cmd.value; S.arb.von = p0.von; S.arb.start = p0.ts; } });
         }
         var res = [], ev = [], locks = {};
-        RULES.forEach(function (R) {
-            var r = evalRule(R, d, S, cfg, inp);
-            res.push(r); locks[R.id] = r.locks;
+        var owner0 = S.arb.owner;
+        RULES.forEach(function (R) { res.push(evalRule(R, d, S, cfg, inp)); });
+        // Uebergabe ohne Luecke: gab die Eigentuemer-Regel die Verschiebung erst nach einer anderen Verschiebungs-Regel frei (Reihenfolge der Auswertung),
+        // wird diese in derselben Minute noch einmal geprueft (ein Ende-Ereignis der ersten Pruefung bleibt erhalten)
+        if (owner0 && !S.arb.owner) {
+            RULES.forEach(function (R, i) { if (R.groesse === 'shift' && R.id !== owner0 && res[i].locks.indexOf('vorrang') >= 0) { var e0 = res[i].ende; res[i] = evalRule(R, d, S, cfg, inp); if (e0 && !res[i].ende) { res[i].ende = e0; } } });
+        }
+        RULES.forEach(function (R, i) {
+            var r = res[i];
+            locks[R.id] = r.locks;
             if (r.neu) { ev.push([R.art === 'hinweis' ? 'optimierer_hinweis' : 'optimierer_vorschlag', R.id + ' v' + R.ver + ': ' + S.rules[R.id].prop.was + ' · ' + S.rules[R.id].prop.warum]); }
             if (r.ende) { ev.push(['optimierer_ende', R.id + ': ' + r.ende]); }
             S.rules[R.id].last = r.st;
@@ -992,7 +1000,7 @@ var ENGINE = (function () {
                 if (l === 'tageslimit') { std = rs.n >= stdOf(R, 'proTag'); }
                 if (l === 'abkuehlzeit') { std = rs.cool - (c.pauseMin - stdOf(R, 'pauseMin')) * MIN > now; }
                 if (l === 'vorrang') { std = true; }                                        // Eigentum einer anderen Regel: kein Zeitwert
-                if (l === 'gegenrichtung') { var ls = S.arb.last; std = !!ls && now - ls.end < (r.hart ? LOCK_CFG.shiftHaltMin : LOCK_CFG.gegenMin) * MIN; }
+                if (l === 'gegenrichtung') { std = !!S.arb.last && now - arbEnd(S.arb, d) < (r.hart ? LOCK_CFG.shiftHaltMin : LOCK_CFG.gegenMin) * MIN; }
                 (std ? ok : ext).push(l);
             });
             return ext.length ? {ext: ext} : {ids: ok};

@@ -309,6 +309,181 @@ console.log('--- Nachpruefung: Ruecklese-Timeout, Flackern des Raumvorschlags');
     check('Raumvorschlag flackert 1 min auf 0: kein Rueckweg-Grund fuer die Raumregel; 15 min am Stueck 0: Grund gesetzt', !R.outs[5].ende.raum_offset && !R.outs[6].ende.raum_offset && !R.outs[33].ende.raum_offset && /seit 15 min wieder 0 K/.test(R.outs[35].ende.raum_offset || ''), R.outs[35].ende.raum_offset);
 }
 
+// ================================================================== (d) Vorausschau ±1 K und Verschiebungs-Arbitrierung (keine Regel beisst eine andere)
+console.log('--- (d) Vorausschau und Verschiebungs-Arbitrierung');
+const VSK = {up: [10, 10, 9, 8, 7, 7, 7], down: [8, 8, 9, 10.5, 11, 11, 11], flat: [10, 10, 10, 10, 10, 10, 10]};   // Bedarf +2,25 K / -2,38 K / 0 K
+const vsx = (at, o) => Object.assign({age: 10, at: at, n: 12, minDays: 10, gate: 1, ua: 0.22, tbal: 15, aktiv: 0}, o || {});
+const kx = (v, lead) => ({v: v, code: v ? (v > 0 ? 'Raum unter Minimum' : 'Überschreitung') : 'alle im Band', distrib: false, lead: lead || 'Kinderzimmer oben'});
+function runD(n, f, S0, c) {                                                      // wie runSeq, haelt aber je Minute eine Kopie der Verschiebungs-Vorschlaege fest (der Zustand wird fortgeschrieben)
+    const R = {S: S0 || null, outs: []};
+    for (let i = 0; i < n; i++) { const o = E.step(R.S, f(i), c || cfg); R.S = o.S; o.snap = {raum_offset: o.S.rules.raum_offset.prop ? JSON.parse(JSON.stringify(o.S.rules.raum_offset.prop)) : null, vorausschau: o.S.rules.vorausschau.prop ? JSON.parse(JSON.stringify(o.S.rules.vorausschau.prop)) : null}; R.outs.push(o); }
+    return R;
+}
+const shiftProps = R => { const L = []; R.outs.forEach((o, i) => o.res.forEach(r => { if (r.neu && (r.id === 'raum_offset' || r.id === 'vorausschau')) { L.push({i: i, rule: r.id, p: o.snap[r.id]}); } })); return L; };
+const twoShift = R => R.outs.some(o => o.snap.raum_offset && o.snap.vorausschau);
+const stAt = (R, i, id) => r0(R.outs[i], id);
+const allScores = R => [].concat.apply([], R.outs.map(o => o.scores));
+{
+    // Regelwerk
+    const RV = E.RULE.vorausschau;
+    check('Regelwerk: Vorausschau v1 ist Befehlsregel der Groesse "shift" mit Sperren Modell-Gate, Vorrang, Gegenrichtung; Raumeinfluss v2 nimmt an der Arbitrierung teil', RV && RV.groesse === 'shift' && RV.art === 'befehl' && ['modell', 'vorrang', 'gegenrichtung'].every(x => RV.sperren.includes(x)) && E.RULE.raum_offset.ver === 2 && ['vorrang', 'gegenrichtung'].every(x => E.RULE.raum_offset.sperren.includes(x)) && RV.befehl.name === 'SetZ1HeatRequestTemperature', RV.sperren.join(','));
+    // Gate geschlossen: nie ein Vorschlag, nur Anzeige; Vergleichslagen fuer die Basisrate laufen trotzdem mit
+    let R = runD(300, i => inp(T0 + i * MIN, {vs: vsx(VSK.up, {gate: 0, n: 1})}));
+    const rg = stAt(R, 100, 'vorausschau');
+    check('Gate geschlossen (1 von 10 Tagen): 300 min mit Vorhersage +2,3 K und Raeumen im Band -> kein Vorschlag, Status "gesperrt" (modell), Grund nennt die Tage, keine Faelle/Punkte',
+          !R.outs.some(o => o.res.some(r => r.id === 'vorausschau' && r.neu)) && rg.st === 'gesperrt' && JSON.stringify(rg.locks) === '["modell"]' && /^würde schalten, aber gesperrt: Gebäudemodell noch nicht freigegeben \(1 von 10 Tagen\)$/.test(rg.grund) && !allScores(R).some(s => s.regel === 'vorausschau') && !R.S.sc.cases.some(c => c.rule === 'vorausschau'), rg.grund);
+    check('Gate geschlossen: Vergleichslagen (Basisrate) werden trotzdem gesammelt (ohne Wertung), Datensatz traegt die Vorhersage', R.S.sc.cands.some(c => c.rule === 'vorausschau') && R.outs[100].rec.in.vs && R.outs[100].rec.in.vs.gate === 0 && R.outs[100].rec.r[4].sperren[0] === 'modell', JSON.stringify(R.outs[100].rec.in.vs));
+    R = runD(60, i => inp(T0 + i * MIN, {vs: vsx(VSK.up, {gate: 0, n: 1}), rooms: rooms({ki_oben: 23.4})}));
+    check('Gate geschlossen und Bedingung fehlt: Grund nennt beides ("außerdem …")', /^gesperrt: Gebäudemodell .*; außerdem Kinderzimmer oben nur 0,1 K unter Maximum$/.test(stAt(R, 59, 'vorausschau').grund), stAt(R, 59, 'vorausschau').grund);
+    // Gate offen
+    R = runD(60, i => inp(T0 + i * MIN, {vs: vsx(VSK.up)}));
+    const pu = R.outs[30].snap.vorausschau;
+    check('Gate offen, Vorhersage +2,3 K, alle Raeume im Band mit Luft: 30 min Haltezeit, dann Vorschlag +1 K (SetZ1HeatRequestTemperature = 1, von 0)', stAt(R, 20, 'vorausschau').st === 'wartet' && shiftProps(R).length === 1 && shiftProps(R)[0].i === 30 && pu.cmd.value === 1 && pu.von === 0 && pu.dir === 'soll_hoch' && /Bedarf \+2,3 K/.test(pu.warum) && /Soll-Vorlauf 30 → 31/.test(pu.was), pu && (pu.was + ' | ' + pu.warum));
+    R = runD(60, i => inp(T0 + i * MIN, {vs: vsx(VSK.down)}));
+    const pd = shiftProps(R)[0];
+    check('Vorhersage Milderung -2,4 K: Vorschlag -1 K (Soll 30 -> 29 °C, Untergrenze 29 eingehalten)', pd && pd.p.cmd.value === -1 && pd.p.dir === 'soll_runter', pd && pd.p.was);
+    R = runD(60, i => inp(T0 + i * MIN, {vs: vsx(VSK.down), soll: 29.5, sollKurve: 29.5}));
+    check('-1 K nie unter 29 °C Soll-Vorlauf', shiftProps(R).length === 0 && /Soll-Vorlauf würde 28,5|Soll-Vorlauf würde 29 °C|würde 28/.test(stAt(R, 59, 'vorausschau').grund), stAt(R, 59, 'vorausschau').grund);
+    R = runD(60, i => inp(T0 + i * MIN, {vs: vsx(VSK.up), rooms: rooms({ki_oben: 23.3})}));
+    check('+1 K nur mit Luft nach oben: waermster Raum 0,2 K unter Maximum -> kein Vorschlag', shiftProps(R).length === 0 && /Kinderzimmer oben nur 0,2 K unter Maximum/.test(stAt(R, 59, 'vorausschau').grund), stAt(R, 59, 'vorausschau').grund);
+    R = runD(60, i => inp(T0 + i * MIN, {vs: vsx(VSK.down), rooms: rooms({ki_oben: 22.2})}));
+    check('-1 K nur mit Luft nach unten: kaeltester Raum 0,2 K ueber Minimum -> kein Vorschlag', shiftProps(R).length === 0 && /Kinderzimmer oben nur 0,2 K über Minimum/.test(stAt(R, 59, 'vorausschau').grund), stAt(R, 59, 'vorausschau').grund);
+    R = runD(120, i => inp(T0 + i * MIN, {vs: vsx(VSK.up), rooms: rooms({ki_oben: i >= 50 ? 23.6 : 22.6})}));
+    check('Nie gegen den Raumzustand: laufender +1-K-Vorschlag endet in DERSELBEN Minute, in der ein Raum ueber das Maximum steigt (harte Bedingung, keine 3 min Nachlauf)', R.outs[49].snap.vorausschau && R.outs[50].prop === null && R.outs[50].ev.some(e => e[0] === 'optimierer_ende' && /vorausschau: Bedingung entfallen: Kinderzimmer oben außerhalb des Bandes/.test(e[1])) && shiftProps(R).length === 1, R.outs[50].ev.map(e => e[1]).join(' | '));
+    // Prioritaet: Komfort-Notfall des Raums schlaegt die Vorausschau
+    R = runD(150, i => inp(T0 + i * MIN, {vs: vsx(VSK.down), korr: kx(1), rooms: rooms({ki_oben: 21.5})}));
+    check('Prioritaet: Raum unter Minimum (Komfort-Notfall) -> Vorausschau schlaegt nie -1 K vor, der Raumeinfluss +1 K schon (nach 60 min)', shiftProps(R).length === 1 && shiftProps(R)[0].rule === 'raum_offset' && shiftProps(R)[0].i === 60 && shiftProps(R)[0].p.cmd.value === 1 && stAt(R, 100, 'vorausschau').st === 'bereit', JSON.stringify(shiftProps(R).map(x => [x.i, x.rule, x.p.cmd.value])) + ' / ' + stAt(R, 100, 'vorausschau').grund);
+    // Konflikt 1: Vorausschau +1, danach will der Raumeinfluss -1 (ohne Notfall) -> erst nach 240 min Wartezeit
+    const k1 = (i, room) => inp(T0 + i * MIN, {vs: vsx(i < 120 ? VSK.up : VSK.flat), korr: kx(-1, 'Schlafzimmer'), rooms: room ? room(i) : rooms()});
+    R = runD(420, i => k1(i));
+    let sp = shiftProps(R);
+    check('Konflikt +1 (Vorausschau) gegen -1 (Raumeinfluss): waehrend die Vorausschau die Verschiebung hat, ist der Raumeinfluss "gesperrt: andere Regel" - nie zwei Verschiebungs-Vorschlaege gleichzeitig',
+          sp[0].rule === 'vorausschau' && sp[0].i === 30 && stAt(R, 90, 'raum_offset').st === 'gesperrt' && stAt(R, 90, 'raum_offset').locks[0] === 'vorrang' && /vorgeschlagen von „Vorausschau ±1 K“/.test(stAt(R, 90, 'raum_offset').grund) && !twoShift(R), stAt(R, 90, 'raum_offset').grund);
+    check('... Vorausschau endet (Vorhersage flach, 3 min) in Minute 123; Raumeinfluss -1 K: bis 183 Mindesthaltezeit, danach ohne Komfort-Notfall "Gegenrichtung" bis 363, Vorschlag erst in Minute 363',
+          sp.length === 2 && sp[1].rule === 'raum_offset' && sp[1].i === 363 && sp[1].p.cmd.value === -1 && /Mindesthaltezeit 60 min/.test(stAt(R, 150, 'raum_offset').grund) && /ohne Komfort-Notfall erst nach 240 min/.test(stAt(R, 200, 'raum_offset').grund) && stAt(R, 200, 'raum_offset').naechste.bis === T0 + 363 * MIN, JSON.stringify(sp.map(x => [x.i, x.rule, x.p.cmd.value])) + ' | ' + stAt(R, 200, 'raum_offset').grund);
+    // ... mit Komfort-Notfall (Schlafzimmer 0,4 K ueber Maximum): die Vorausschau zieht sofort zurueck, der Raumeinfluss darf nach der Mindesthaltezeit
+    R = runD(300, i => k1(i, j => j >= 100 ? [rooms()[0], rooms()[1], {id: 'schlaf', name: 'Schlafzimmer', t: 22.4, age: 10, min: 20, max: 22, valid: true, active: true}] : rooms()));
+    sp = shiftProps(R);
+    check('Konflikt mit Komfort-Notfall (Raum 0,4 K ueber Maximum): Vorausschau endet sofort (Minute 100), Raumeinfluss -1 K nach der gemeinsamen Mindesthaltezeit (Minute 160), nicht frueher',
+          sp.length === 2 && sp[0].rule === 'vorausschau' && R.outs[100].snap.vorausschau === null && sp[1].rule === 'raum_offset' && sp[1].i === 160 && stAt(R, 159, 'raum_offset').locks.includes('gegenrichtung') && !twoShift(R), JSON.stringify(sp.map(x => [x.i, x.rule, x.p.cmd.value])));
+    // Konflikt 2 (umgekehrt): Raumeinfluss +1, danach will die Vorausschau -1 -> nie mit Notfall, also immer 240 min
+    R = runD(450, i => inp(T0 + i * MIN, {vs: vsx(i >= 70 ? VSK.down : VSK.flat), korr: kx(i < 150 ? 1 : 0)}));
+    sp = shiftProps(R);
+    check('Konflikt +1 (Raumeinfluss) gegen -1 (Vorausschau): erst "andere Regel" (Minute 100), nach dem Ende des Raumeinflusses (Minute 150) "Gegenrichtung", Vorschlag -1 K erst in Minute 390 (240 min, die Vorausschau hat nie einen Notfall)',
+          sp.length === 2 && sp[0].rule === 'raum_offset' && sp[0].i === 60 && stAt(R, 100, 'vorausschau').locks[0] === 'vorrang' && stAt(R, 200, 'vorausschau').locks[0] === 'gegenrichtung' && sp[1].rule === 'vorausschau' && sp[1].i === 390 && sp[1].p.cmd.value === -1 && !twoShift(R), JSON.stringify(sp.map(x => [x.i, x.rule, x.p.cmd.value])) + ' | ' + stAt(R, 200, 'vorausschau').grund);
+    // gleiche Richtung: Uebergabe statt Hin und Her
+    R = runD(200, i => inp(T0 + i * MIN, {vs: vsx(i < 120 ? VSK.up : VSK.flat), korr: kx(1)}));
+    sp = shiftProps(R);
+    check('Gleiche Richtung: Raumeinfluss will +1, die Vorausschau hat +1 schon vorgeschlagen -> "dieselbe Verschiebung"; endet die Vorausschau (Minute 123), uebernimmt der Raumeinfluss +1 sofort (keine Gegenrichtung, keine Luecke)',
+          sp.length === 2 && sp[0].rule === 'vorausschau' && /dieselbe Verschiebung \+1 K schlägt schon „Vorausschau ±1 K“ vor/.test(stAt(R, 90, 'raum_offset').grund) && sp[1].rule === 'raum_offset' && sp[1].i === 123 && sp[1].p.cmd.value === 1 && !twoShift(R), JSON.stringify(sp.map(x => [x.i, x.rule])) + ' | ' + stAt(R, 90, 'raum_offset').grund);
+    // Uebernommene Verschiebung: gehoert der Vorausschau, Raumeinfluss bewertet sie nicht als eigenen Eingriff, Wirkung zaehlt fuer die Vorausschau
+    const ap = (i, o) => inp(T0 + i * MIN, Object.assign({vs: vsx(VSK.up), korr: kx(0), shift: i >= 35 ? 1 : 0, soll: i >= 35 ? 31 : 30}, o || {}));
+    R = runD(200, i => ap(i, {korr: kx(i >= 40 ? -1 : 0, 'Schlafzimmer')}));
+    let sc = allScores(R);
+    check('Vorschlag +1 K uebernommen (Minute 35): Verschiebung gehoert der Vorausschau (applied), Wirkungsfall "Soll folgt" fuer die Vorausschau, keiner fuer den Raumeinfluss',
+          R.S.arb.applied && R.S.arb.applied.rule === 'vorausschau' && sc.some(s => s.typ === 'wirkung' && s.regel === 'vorausschau' && s.punkte === 10) && !sc.some(s => s.typ === 'wirkung' && s.regel === 'raum_offset') && /\(Vorausschau\) steht/.test(stAt(R, 50, 'vorausschau').grund), sc.map(s => s.regel + ':' + s.typ + ':' + s.punkte).join(', '));
+    check('... Raumvorschlag -1 K gegen die uebernommene +1 K: "gesperrt: andere Regel", nie ein Vorschlag 1 -> -1/0 (kein Zurueckstellen der fremden Verschiebung)', !shiftProps(R).some(x => x.rule === 'raum_offset') && stAt(R, 150, 'raum_offset').locks[0] === 'vorrang' && /gehört „Vorausschau ±1 K“/.test(stAt(R, 150, 'raum_offset').grund), stAt(R, 150, 'raum_offset').grund);
+    R = runD(120, i => ap(i));
+    check('... Raumvorschlag 0 bei uebernommener +1 K: Raumeinfluss "ruht" (gehoert der Vorausschau), kein Rueckstellen auf 0', stAt(R, 100, 'raum_offset').st === 'inaktiv' && /gehört der Regel „Vorausschau ±1 K“/.test(stAt(R, 100, 'raum_offset').grund) && !shiftProps(R).some(x => x.rule === 'raum_offset'), stAt(R, 100, 'raum_offset').grund);
+    const cut = allScores(runD(400, i => ap(i))).find(s => s.typ === 'ausloeser');
+    check('... der Ausloeser-Fall der Vorausschau selbst wird ab der Uebernahme neutral (Eingriff mit Urheber im Text), die Wirkung wird bewertet', cut && cut.regel === 'vorausschau' && cut.ergebnis === 'neutral' && /Vorschlag „Vorausschau ±1 K“ übernommen/.test(cut.text), cut && cut.text);
+    // Rueckweg und Uebergabe in der Uebernahme
+    R = runD(80, i => ap(i, {vs: vsx(i < 50 ? VSK.up : VSK.flat)}));
+    check('Rueckweg-Grund der Vorausschau: Vorhersage zeigt die Aenderung 15 min nicht mehr (ab Minute 65), Raum ueber Maximum sofort', !R.outs[60].ende.vorausschau && /seit 15 min nicht mehr/.test(R.outs[65].ende.vorausschau || '') && /über Maximum/.test(E.step(JSON.parse(JSON.stringify(R.S)), ap(80, {rooms: rooms({ki_oben: 23.6})}), cfg).ende.vorausschau || ''), R.outs[65].ende.vorausschau);
+    R = runD(80, i => ap(i, {vs: vsx(i < 50 ? VSK.up : VSK.flat), korr: kx(1)}));
+    check('Uebergabe: Raumvorschlag verlangt dieselbe +1 K -> kein Rueckweg-Grund, "halten" fuer die Vorausschau', !R.outs[79].ende.vorausschau && /Raumeinfluss verlangt dieselbe Verschiebung/.test(R.outs[79].halten.vorausschau || ''), JSON.stringify(R.outs[79].halten));
+    const Av = E.newApply(); Av.aktiv = {id: 'v', rule: 'vorausschau', groesse: 'shift', name: 'SetZ1HeatRequestTemperature', value: 1, von: 0, ts: T0, bis: T0 + 360 * MIN, bestaetigt: true};
+    const tk = h => E.applyTick(JSON.parse(JSON.stringify(Av)), {now: T0 + 361 * MIN, plant: {shift: 1, hpAge: 0.3, block: 0}, halten: h});
+    check('Uebernahme: Ablauf nach 6 h schickt den Rueckweg 0 - ausser die andere Regel verlangt denselben Wert ("halten")', tk({}).send.length === 1 && tk({}).send[0].payload === '0' && tk({vorausschau: 'Raumeinfluss verlangt dieselbe Verschiebung (+1 K)'}).send.length === 0, '');
+}
+console.log('--- (d) Sonne/Wind nur mit coefActivate, Bewertung und Neutralitaet');
+{
+    const H = 3600000, now = T0;
+    const W = {f_ts: now - 10 * MIN, fpts: [[now - 10 * MIN, 10, 80, 20, 6], [now + 3 * H, 8, 85, 90, 9], [now + 6 * H, 6, 90, 100, 11]]};
+    const PI = {pv: [0, 1, 2, 3, 4, 5, 6, 7].map(h => [now + (h - 1) * H, 4000, H])};
+    const PLoff = {model: {n: 12, minDays: 10, gate: true, aktiv: false, bs: 0.4, bw: 0.02, ua: 0.22, tbal: 15}}, PLon = {model: Object.assign({}, PLoff.model, {aktiv: true})};
+    const vOff = E.vorschau(W, PLoff, PI, 11, now), vOn = E.vorschau(W, PLon, PI, 11, now), c = cfg.rules.vorausschau;
+    check('Vorhersage-Eingabe: Fuehler 11 °C, OWM jetzt 10 °C -> an den Fuehler angeglichen (Versatz klingt ab), 7 Stuetzstellen', vOff.at[0] === 11 && Math.abs(vOff.at[1] - (10 - 2 / 3 + Math.exp(-1 / 4))) < 0.06 && vOff.at.length === 7 && vOff.age === 10, JSON.stringify(vOff.at));
+    check('coefActivate aus: Sonne und Wind stehen gar nicht in der Eingabe (kein pv/wind/bs/bw), auch wenn PV-Prognose und Wind vorliegen', !('pv' in vOff) && !('wind' in vOff) && !('bs' in vOff) && !('bw' in vOff) && vOff.aktiv === 0, Object.keys(vOff).join(','));
+    const vInj = Object.assign({}, vOff, {pv: [9000, 9000, 9000, 9000, 9000, 9000, 9000], wind: [15, 15, 15, 15, 15, 15, 15], bs: 0.9, bw: 0.1});
+    check('coefActivate aus: selbst eingeschleuste Sonne/Wind-Werte aendern die Bedarfsaenderung nicht (nur Temperatur)', E.bedarfK(vInj, c) === E.bedarfK(vOff, c), E.bedarfK(vOff, c) + ' / ' + E.bedarfK(vInj, c));
+    check('coefActivate an (Gate offen): Wind und PV-Prognose gehen ein und veraendern die Bedarfsaenderung', vOn.aktiv === 1 && vOn.pv.length === 7 && vOn.pv[3] === 4000 && vOn.wind[3] === 9 && E.bedarfK(vOn, c) !== E.bedarfK(vOff, c), E.bedarfK(vOff, c) + ' -> ' + E.bedarfK(vOn, c));
+    check('Vorhersage alt (> 120 min) oder zu kurz: Vorausschau ruht', /min alt/.test(r0(E.step(null, inp(T0, {vs: vsx(VSK.up, {age: 150})}), cfg), 'vorausschau').grund) && /reicht nicht/.test(r0(E.step(null, inp(T0, {vs: vsx([10, 10, 9, null, null, null, null])}), cfg), 'vorausschau').grund) && E.vorschau({f_ts: now, fpts: []}, PLoff, null, 10, now) === null, '');
+    // Bewertung: Fall der Vorausschau (Treffer / Fehlalarm), nur unter ihrer Regel
+    const drift = (i, end) => Math.round((i < 40 ? 22.6 : Math.max(end, 22.6 - (i - 40) * 0.004)) * 10) / 10;
+    let R = runD(400, i => inp(T0 + i * MIN, {vs: vsx(i < 120 ? VSK.up : VSK.flat), rooms: rooms({ki_oben: drift(i, 22.2)})}));
+    let sc = allScores(R), a = sc.find(s => s.typ === 'ausloeser');
+    check('Bewertung: Vorausschau +1 K, kaeltester Raum (Kinderzimmer oben) sinkt ohne Verschiebung an den Bandrand (22,2 <= Minimum + 0,3) -> Treffer, gebucht unter "vorausschau", nichts fuer den Raumeinfluss',
+          a && a.regel === 'vorausschau' && a.ergebnis === 'treffer' && a.horizonte.length === 3 && !sc.some(s => s.regel === 'raum_offset'), a && a.text);
+    R = runD(400, i => inp(T0 + i * MIN, {vs: vsx(i < 120 ? VSK.up : VSK.flat)}));
+    sc = allScores(R); a = sc.find(s => s.typ === 'ausloeser');
+    check('Bewertung: Raum bleibt mit Luft im Band -> Fehlalarm der Vorausschau (Minuspunkte nur fuer sie)', a && a.regel === 'vorausschau' && a.ergebnis === 'fehlalarm' && a.punkte < 0 && E.report(R.S).find(r => r.regel === 'vorausschau').fehlalarm === 1 && E.report(R.S).find(r => r.regel === 'raum_offset').faelle === 0, a && (a.punkte + ' ' + a.text));
+    // Neutralitaet: Raumeinfluss durch die Gegenregel gesperrt (uebernommene -1 K der Vorausschau), Raum kalt -> v3 "waehrend Sperre" (0), v2 "verpasst" (-20)
+    const neu = i => inp(T0 + i * MIN, {vs: vsx(VSK.down), shift: i >= 32 ? -1 : 0, soll: i >= 32 ? 29 : 30, korr: kx(i >= 40 ? 1 : 0), rooms: rooms({ki_oben: i >= 40 ? 21.4 : 22.6})});
+    R = runD(300, neu); sc = allScores(R).filter(s => s.regel === 'raum_offset' && /^verpasst/.test(s.typ));
+    check('Neutralitaet (v3): Raumeinfluss 180 min lang nur durch die Gegenregel (uebernommene -1 K der Vorausschau) und eigene Wartezeiten gesperrt -> "verpasst_sperre" 0 Punkte mit Sperre "vorrang", kein "verpasst"',
+          sc.length === 1 && sc[0].typ === 'verpasst_sperre' && sc[0].punkte === 0 && sc[0].sperre.includes('vorrang') && !/\bverpasst"/.test(JSON.stringify(sc)) && stAt(R, 150, 'raum_offset').locks[0] === 'vorrang', sc.map(s => s.t + ' ' + s.typ + ' ' + JSON.stringify(s.sperre)).join(' | '));
+    R = runD(300, neu, null, E.mergeCfg({sv: 2})); sc = allScores(R).filter(s => s.regel === 'raum_offset' && /^verpasst/.test(s.typ));
+    check('... mit den Bewertungsregeln v2 (cfg.sv = 2) waere dieselbe Lage "verpasst" -20 (Gegenregel-Sperren entschuldigten dort nicht): v3 aendert genau das', sc.some(s0 => s0.typ === 'verpasst' && s0.punkte === -20 && s0.sv === 2), sc.map(s => s.t + ' ' + s.typ + ' ' + s.punkte).join(' | '));
+    R = runD(300, i => { const x = neu(i); if (i >= 200) { x.rooms = rooms({ki_oben: 20.8}); } return x; }); sc = allScores(R).filter(s => s.regel === 'raum_offset' && /^verpasst/.test(s.typ));
+    check('... Schaden hebt auch die Gegenregel-Entschuldigung auf: Raum 1,2 K unter Minimum -> "verpasst" -20 mit Schaden "komfort"', sc.some(s => s.typ === 'verpasst' && s.punkte === -20 && JSON.stringify(s.schaden) === '["komfort"]'), sc.map(s => s.t + ' ' + s.typ + ' ' + s.punkte).join(' | '));
+    // Nachspielen mit Vorhersage aus dem Datensatz
+    R = runD(80, i => inp(T0 + i * MIN, {vs: vsx(i < 50 ? VSK.up : VSK.down)}));
+    const R2 = runD(80, i => E.unsnap(T0 + i * MIN, JSON.parse(JSON.stringify(R.outs[i].rec.in))));
+    check('Nachspielen aus dem Datensatz (Vorhersage im Schnappschuss): dieselben Entscheidungen der Vorausschau', R2.outs.every((o, i) => JSON.stringify(o.rec.r) === JSON.stringify(R.outs[i].rec.r)) && shiftProps(R).length === 1, '');
+}
+
+// ------------------------------------------------------------------ Mehrtages-Simulation mit Vorhersage und beiden Verschiebungs-Regeln (Fake-Uhr): nie Hin und Her
+function shiftSim(days, opts) {
+    opts = opts || {};
+    const P = {on: false, tw: 31, room: 22.6, room2: 21, over: 0, under: 0, shift: 0, rt: 0}, H = 3600000;
+    let S = null, A = null; const log = {props: [], plantChg: [], errors: 0, conc: 0, ev: [], scores: [], claims: []};
+    const start = new Date(2026, 10, 2, 0, 0, 0).getTime();
+    const atOf = t => { const i = (t - start) / MIN, h = (i % 1440) / 60, day = i / 1440; return 6 + 4 * Math.sin(2 * Math.PI * (h - 9) / 24) - (day > 2 && day < 3.5 ? 5 : 0) + (day > 4.5 ? 4 : 0); };   // Kaelteeinbruch Tag 3, Milderung ab Tag 4,5
+    for (let i = 0; i < days * 1440; i++) {
+        const t = start + i * MIN, at = atOf(t), atI = Math.round(at), kurve = Math.max(29, 29 + 0.375 * (11 - atI)), soll = Math.ceil(kurve) + P.shift;
+        const spread = P.on ? 2.5 : 0, vl = Math.round((P.tw + spread / 2) * 4) / 4, rl = Math.round((P.tw - spread / 2) * 4) / 4;
+        const hz = P.on ? 17 : 0, pth = P.on ? 2100 + (soll - 30) * 150 : 0, qrad = 0.25 * (P.tw - P.room);
+        P.tw += ((pth / 1000) - qrad) / 0.4 / 60; P.room += (qrad - 0.18 * (P.room - at) + 0.9) / 8 / 60; P.room2 = P.room - 1.4;
+        if (P.on) { P.rt++; if (vl >= soll + 3.25) { P.over++; } else { P.over = 0; } if (P.over >= 3) { P.on = false; P.rt = 0; P.over = 0; } }
+        else { if (vl <= soll - 3) { P.under++; } else { P.under = 0; } if (P.under >= 6) { P.on = true; P.under = 0; } }
+        const rr = Math.round(P.room * 10) / 10, korrV = rr < 22 ? 1 : (rr > 23.5 ? -1 : 0);
+        const W = {f_ts: t - 15 * MIN, fpts: [0, 1, 2, 3, 4, 5, 6, 7].map(h => [t - 15 * MIN + h * H, Math.round(atOf(t - 15 * MIN + h * H) * 10) / 10])};
+        const x = {t: t, hpAge: 0.4, hz: hz, vl: vl, rl: rl, soll: soll, dT: 3, pel: P.on ? 300 : 15, pth: pth, flow: 13.5, pump: 1750, q: 3, qPrio: 1, hc: 1, at: atI, defrost: 0, dhw: 0, ss: 0, rt: P.rt, shift: P.shift,
+                   heatMode: 0, z1Sensor: 0, heaterI: 0, heaterE: 0, htrOnAT: 0, htrStartDelta: -3, heatOffAT: 12, sollKurve: kurve, block: 0, otherQ: null, otherShift: null, kzRad: 1,
+                   rooms: [{id: 'ki_oben', name: 'Kinderzimmer oben', t: rr, age: 20, min: 22, max: 23.5, valid: true, active: true}, {id: 'schlaf', name: 'Schlafzimmer', t: Math.round(P.room2 * 10) / 10, age: 20, min: 20, max: 22.5, valid: true, active: true}],
+                   korr: {v: korrV, code: korrV ? 'Raum ausserhalb' : 'alle im Band', distrib: false, lead: 'Kinderzimmer oben'},
+                   vs: E.vorschau(W, {model: {n: 12, minDays: 10, gate: opts.gate !== false, aktiv: false, ua: 0.22, tbal: 15}}, null, atI, t)};
+        try {
+            const o = E.step(S, x, cfg); S = o.S;
+            if (S.rules.raum_offset.prop && S.rules.vorausschau.prop) { log.conc++; }
+            o.res.forEach(r => { if (r.neu && E.RULE[r.id].groesse === 'shift') { log.props.push({t: t, rule: r.id, v: S.rules[r.id].prop.cmd.value, von: S.rules[r.id].prop.von, hart: r.hart}); } });
+            o.scores.forEach(s => log.scores.push(s)); o.ev.forEach(e => log.ev.push([t, e[0], e[1]]));
+            if (opts.apply) {                                                              // "Nutzer klickt jeden Verschiebungs-Vorschlag", Rueckweg wie die Uebernahme (Grund, Ablauf, halten)
+                const p = o.prop && E.RULE[o.prop.rule].groesse === 'shift' ? o.prop : null;
+                if (p && !A && p.von === P.shift) { A = {rule: p.rule, von: P.shift, bis: t + cfg.rules[p.rule].maxDauerMin * MIN}; P.shift = p.cmd.value; log.plantChg.push({t: t, rule: p.rule, v: P.shift}); }
+                else if (A && ((o.ende[A.rule]) || (t >= A.bis && !o.halten[A.rule]))) { P.shift = A.von; log.plantChg.push({t: t, rule: A.rule + ' (Rückweg)', v: P.shift}); A = null; }
+            }
+        } catch (e) { log.errors++; if (log.errors < 3) { console.log(e.stack); } }
+    }
+    log.S = S;
+    return log;
+}
+{
+    // Pruefung "kein Hin und Her" fuer eine Folge von Verschiebungs-Vorschlaegen (Shadow): Gegenrichtung erst 60 min nach dem Ende der vorigen, ohne Notfall 240 min
+    const flips = L => { const bad = []; for (let k = 1; k < L.props.length; k++) { const a = L.props[k - 1], b = L.props[k], da = Math.sign(a.v - a.von), db = Math.sign(b.v - b.von); if (da && db && da === -db) { const end = (L.ev.find(e => e[0] >= a.t && e[1] === 'optimierer_ende' && e[2].indexOf(a.rule + ':') === 0) || [b.t])[0]; const gap = (b.t - end) / MIN; if (gap < 60 || (gap < 240 && !b.hart)) { bad.push(E.iso(b.t) + ' ' + b.rule + ' ' + gap + ' min'); } } } return bad; };
+    const L1 = shiftSim(6, {});
+    const byRule = r => L1.props.filter(p => p.rule === r).length;
+    check('6 Tage (Kaelteeinbruch, Milderung), Gate offen, Shadow: kein Fehler, beide Verschiebungs-Regeln kommen vor, nie zwei Verschiebungs-Vorschlaege gleichzeitig', L1.errors === 0 && byRule('vorausschau') >= 1 && L1.conc === 0, 'Vorausschau ' + byRule('vorausschau') + ', Raumeinfluss ' + byRule('raum_offset') + ': ' + L1.props.map(p => E.iso(p.t).slice(5, 16) + ' ' + p.rule + ' ' + p.v).join(', '));
+    check('... kein Hin und Her: jede Gegenrichtung fruehestens 60 min nach dem Ende der vorigen Verschiebung, ohne Komfort-Notfall erst nach 240 min', flips(L1).length === 0, flips(L1).join(' | ') || (L1.props.length + ' Vorschlaege geprueft'));
+    const L0 = shiftSim(6, {gate: false});
+    check('... dieselben 6 Tage mit geschlossenem Gate: keine Vorausschau, der Raumeinfluss allein', L0.errors === 0 && !L0.props.some(p => p.rule === 'vorausschau'), L0.props.map(p => E.iso(p.t).slice(5, 16) + ' ' + p.rule + ' ' + p.v).join(', '));
+    const L2 = shiftSim(6, {apply: true});
+    const chg = L2.plantChg, rev = []; for (let k = 1; k < chg.length; k++) { if (chg[k].t - chg[k - 1].t < 60 * MIN) { rev.push(E.iso(chg[k].t) + ' ' + chg[k].rule); } }
+    const ap2 = L2.scores.filter(s => s.typ === 'wirkung');
+    check('6 Tage, jeder Verschiebungs-Vorschlag sofort uebernommen (Rueckweg ueber Grund/Ablauf/halten): Anlage wechselt nie binnen 60 min, Wirkung je Regel ihrem Vorschlag zugeordnet', L2.errors === 0 && chg.length >= 2 && rev.length === 0 && ap2.length >= 1 && ap2.every(s => chg.some(c0 => c0.rule === s.regel)) && L2.conc === 0, chg.map(c0 => E.iso(c0.t).slice(5, 16) + ' ' + c0.rule + '=' + c0.v).join(', ') + (rev.length ? ' | zu schnell: ' + rev.join(', ') : ''));
+}
+
 // ================================================================== Seite "Optimierer": Karten-Daten (engine_view.js) und Darstellung (eng_ui.js)
 console.log('--- Seite "Optimierer": Karten-Daten und Darstellung');
 {
@@ -381,6 +556,14 @@ if (fs.existsSync(path.join(dataDir, 'quiet-2026-10.csv'))) {
     const m1 = RP1.scores.filter(s0 => /^verpasst/.test(s0.typ)), m2 = RP.scores.filter(s0 => /^verpasst/.test(s0.typ));
     check('Replay v1 reproduzierbar (cfg.sv = 1): Raumeinfluss -23,73 mit "verpasst" 09.10. 21:47 wie im Bericht v1; Datensaetze ausser sv identisch mit v2', rv1.punkte === -23.73 && rv1.verpasst === 1 && m1.length === 1 && m1[0].typ === 'verpasst' && m1[0].t === '2026-10-09 21:47:00' && RP1.recs.every((l, i) => l.replace('"sv":1', '"sv":' + E.SCORE_VER) === RP.recs[i]), rv1.punkte + ' / ' + m1.map(x => x.t + ' ' + x.typ).join(','));
     check('Replay v2: dieselbe Lage (Kinderzimmer oben ab 18:47) ist "waehrend Sperre" (Stabilitaetszeit des flackernden Raumvorschlags, kein Raum > 1 K unter Minimum) -> 0 Punkte, Raumeinfluss -3,73; sonst gleiche Punkte', rv2.punkte === -3.73 && rv2.verpasst === 0 && rv2.verpasstSperre === 1 && m2.length === 1 && m2[0].typ === 'verpasst_sperre' && JSON.stringify(m2[0].sperre) === '["stabil"]' && JSON.stringify(RP.scores.filter(s0 => !/^verpasst/.test(s0.typ)).map(s0 => [s0.t, s0.typ, s0.punkte])) === JSON.stringify(RP1.scores.filter(s0 => !/^verpasst/.test(s0.typ)).map(s0 => [s0.t, s0.typ, s0.punkte])), rv2.punkte + ' / ' + m2.map(x => x.t + ' ' + x.typ).join(','));
+    // Vorausschau mit den echten Daten (OWM-Vorhersage aus optimizer-v2): Gate zu wie live -> nie ein Vorschlag; Gate testweise offen -> keine Stoerung der anderen Regeln
+    const nVs = RP.inputs.filter(x => x.vs).length, vsSt = {}; RP.perMin.forEach(m => { vsSt[m.st[4]] = (vsSt[m.st[4]] || 0) + 1; });
+    check('Replay Vorausschau, Gate zu (1 Tag, wie live): Vorhersage in fast jeder Minute vorhanden, nie ein Vorschlag, Status "gesperrt" (Modell-Gate)', nVs >= RP.inputs.length - 30 && !RP.props.some(p => p.rule === 'vorausschau') && vsSt.gesperrt >= nVs - 30, nVs + ' Minuten mit Vorhersage, Status ' + JSON.stringify(vsSt));
+    const RPo = replay(dataDir, {model: Object.assign({}, require('./engine_replay.js').ASSUME.model, {gate: true, n: 12})});
+    const dkR = RPo.inputs.filter(x => x.vs).map(x => E.bedarfK(x.vs, cfg.rules.vorausschau)).filter(x => x !== null);
+    const oth = R0 => JSON.stringify(R0.props.filter(p => p.rule !== 'vorausschau').map(p => [p.id, p.cmd.value]));
+    check('Replay Vorausschau, Gate testweise offen: Vorhersage 07.-10.10. zeigt hoechstens ' + E.de(Math.max.apply(null, dkR.map(Math.abs)), 1) + ' K Bedarfsaenderung; Vorschlaege der Vorausschau ' + RPo.props.filter(p => p.rule === 'vorausschau').length + ', alle anderen Vorschlaege identisch mit Gate zu, nie zwei Verschiebungs-Vorschlaege gleichzeitig',
+          oth(RPo) === oth(RP) && !RPo.perMin.some(m => m.st[2] === 'vorschlag' && m.st[4] === 'vorschlag'), RPo.props.filter(p => p.rule === 'vorausschau').map(p => E.iso(p.ts) + ' ' + p.was).join(' | '));
     check('Datensatzgroesse: unter 2,7 MB je Tag (ca. 80 MB/Monat; seit der Vorausschau mit Vorhersage im Schnappschuss und fuenfter Regel)', RP.bytes / (RP.inputs.length / 1440) < 2.7e6, Math.round(RP.bytes / (RP.inputs.length / 1440)) + ' Bytes/Tag');
 }
 
