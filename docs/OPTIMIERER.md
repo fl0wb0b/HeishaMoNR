@@ -145,8 +145,9 @@ Tabellen aus dem Regelwerk, erzeugt mit `node tools/engine_doc.js`. Die Sim prü
 |---|---|---|---|---|---|---|
 | Quiet-Freigabe (`quiet_freigabe`) | 1 | befehl | `SetQuietMode` | mehr_leistung | Ohne Freigabe bleibt der Verdichter am Deckel (≤ 20 Hz) und der Rücklauf-Rückstand ≥ 1 K – p = 0,8, 30/60/120 min | anlauf, daten, mqtt_sperre, abtauen, warmwasser, sanftanlauf, laufbeginn, heizgrenze_aus, regler, abstand, tageslimit, abkuehlzeit, takt |
 | Laufzeit strecken (Quiet 3) (`quiet_strecken`) | 1 | befehl | `SetQuietMode` | weniger_leistung | Ohne Deckel endet der Lauf binnen 60 min (kurzer Lauf) – p = 0,7, 60 min | anlauf, daten, mqtt_sperre, abtauen, warmwasser, sanftanlauf, laufbeginn, heizgrenze_aus, regler, abstand, tageslimit, abkuehlzeit, takt, heizstab |
-| Raumeinfluss (Heizkurve ±1 K) (`raum_offset`) | 1 | befehl | `SetZ1HeatRequestTemperature` | verschiebung | Ohne Verschiebung bleibt der Führungsraum außerhalb seines Bandes – p = 0,7, 60/120/240 min | anlauf, daten, mqtt_sperre, abtauen, warmwasser, sanftanlauf, laufbeginn, heizgrenze_aus, regler, abstand, tageslimit, abkuehlzeit, takt, heizstab |
+| Raumeinfluss (Heizkurve ±1 K) (`raum_offset`) | 2 | befehl | `SetZ1HeatRequestTemperature` | verschiebung | Ohne Verschiebung bleibt der Führungsraum außerhalb seines Bandes – p = 0,7, 60/120/240 min | anlauf, daten, mqtt_sperre, abtauen, warmwasser, sanftanlauf, laufbeginn, heizgrenze_aus, regler, vorrang, gegenrichtung, abstand, tageslimit, abkuehlzeit, takt, heizstab |
 | Heizgrenze 12 → 10 °C (nur Hinweis) (`heizgrenze_hinweis`) | 1 | hinweis | `SetHeatingOffOutdoorTemp` | weniger_waerme | Alle Räume bleiben mindestens Minimum + Reserve (der Lauf war nicht nötig) – p = 0,6, 180 min | anlauf, daten |
+| Vorausschau (Heizkurve ±1 K) (`vorausschau`) | 1 | befehl | `SetZ1HeatRequestTemperature` | verschiebung | Ohne Verschiebung gerät der knappste Raum an den Bandrand (+1 K: höchstens Reserve über Minimum, −1 K: höchstens Reserve unter Maximum) – p = 0,6, 120/240/360 min | anlauf, daten, modell, mqtt_sperre, abtauen, warmwasser, sanftanlauf, laufbeginn, heizgrenze_aus, regler, vorrang, gegenrichtung, abstand, tageslimit, abkuehlzeit, takt, heizstab |
 
 #### Quiet-Freigabe (`quiet_freigabe` v1)
 
@@ -196,11 +197,11 @@ Tabellen aus dem Regelwerk, erzeugt mit `node tools/engine_doc.js`. Die Sim prü
 
 *Rückweg:* Automatisch zurück auf 0, sobald ein Raum unter Minimum fällt, der Rücklauf-Rückstand 15 min ≥ 2,5 K beträgt oder spätestens nach 4 h.
 
-#### Raumeinfluss (Heizkurve ±1 K) (`raum_offset` v1)
+#### Raumeinfluss (Heizkurve ±1 K) (`raum_offset` v2)
 
-*Zweck:* Räume wirken nur als langsamer, kleiner Offset auf die Heizkurve (Lambda-Prinzip). Übernimmt den Raumvorschlag der Phase-2-Logik (korrektur_vorschlag −1/0/+1) erst, wenn er lange stabil ist. Nie Comfort/Efficiency.
+*Zweck:* Räume wirken nur als langsamer, kleiner Offset auf die Heizkurve (Lambda-Prinzip). Übernimmt den Raumvorschlag der Phase-2-Logik (korrektur_vorschlag −1/0/+1) erst, wenn er lange stabil ist. Nie Comfort/Efficiency. Seit v2 Teil der Verschiebungs-Arbitrierung: eine Verschiebung, die einer anderen Regel gehört (Vorausschau), gilt nicht als Abweichung; Gegenrichtung nur nach Wartezeit und mit Komfort-Notfall.
 
-*Eingänge:* Raumvorschlag Phase 2 (korrektur_vorschlag, Führungsraum, Wärmeverteilung), Verschiebung an der Anlage (TOP27), Soll-Vorlauf und Heizkurve, Heizkurvenmodus/Zonenfühler
+*Eingänge:* Raumvorschlag Phase 2 (korrektur_vorschlag, Führungsraum, Wärmeverteilung), Verschiebung an der Anlage (TOP27), Soll-Vorlauf und Heizkurve, Heizkurvenmodus/Zonenfühler, Eigentümer der Verschiebung (Arbitrierung)
 
 | Schwelle | Standard | Einheit | Herkunft |
 |---|---|---|---|
@@ -235,6 +236,30 @@ Tabellen aus dem Regelwerk, erzeugt mit `node tools/engine_doc.js`. Die Sim prü
 
 *Rückweg:* Saisonale Einstellung: der Betreiber setzt sie von Hand (SetHeatingOffOutdoorTemp) und zurück.
 
+#### Vorausschau (Heizkurve ±1 K) (`vorausschau` v1)
+
+*Zweck:* Verschiebt die Heizkurve um ±1 K, bevor sich der Wärmebedarf ändert: +1 K, wenn Wettervorhersage und Gebäudemodell in den nächsten Stunden deutlich mehr Bedarf erwarten und alle Räume noch im Band liegen (mit Luft nach oben); −1 K bei erwartetem Wärmegewinn (Milderung; Sonne und Wind nur mit freigegebenem Modell, coefActivate). Läuft erst mit offenem Gate des Gebäudemodells, nie gegen den aktuellen Raumzustand und nie gegen eine Verschiebung einer anderen Regel (Arbitrierung).
+
+*Eingänge:* Wettervorhersage OWM (+1 … +6 h, an den Außenfühler angeglichen), Gebäudemodell des Wärmefahrplans (UA, Heizgrenze tbal, Gate, coefActivate), Sonne (PV-Prognose) und Wind nur mit coefActivate, Räume (alle gültig, eigenes Band), Verschiebung der Anlage (TOP27) und Eigentümer der Verschiebung, Soll-Vorlauf
+
+| Schwelle | Standard | Einheit | Herkunft |
+|---|---|---|---|
+| `deltaK` | 2 | K | Bedarfsänderung als Außentemperatur-Äquivalent (Mittel des Fensters gegen jetzt); OWM weicht vom Fühler 1,5–1,9 K ab (08.–10.10.), darunter ist die Vorhersage kein Signal; ANNAHME |
+| `vonH` | 2 | h | Fensterbeginn: +1 K wirkt über die Laufzeit erst nach 1–3 h im Raum (Speichermasse 7–10 kWh/K, Opus); ANNAHME |
+| `bisH` | 5 | h | Fensterende: OWM liefert 3-h-Punkte, das Vertrauen fällt mit dem Vorlauf (Fahrplan: 1 − h/48); ANNAHME |
+| `reserveK` | 0,3 | K | Luft im Band: bei +1 K wärmster Raum mindestens 0,3 K unter Maximum, bei −1 K kältester mindestens 0,3 K über Minimum (wie guardK des Fahrplans); ANNAHME |
+| `prognoseMaxMin` | 120 | min | Fahrplan: Vorhersage gilt bis 2 h nach dem Abruf |
+| `haltMin` | 30 | min | Vorhersage muss mindestens einen weiteren Abruf überstehen; ANNAHME |
+| `minVlC` | 29 | °C | Nutzervorgabe 08.10.: Soll-Vorlauf nie unter 29 °C (Heizkörper) |
+| `proTag` | 2 | Vorschläge | Schreibbudget gemeinsam mit dem Raumeinfluss (Opus: höchstens 6 Schreibbefehle/Tag); ANNAHME |
+| `gueltigMin` | 180 | min | Fensterende 5 h minus Fensterbeginn 2 h; ANNAHME |
+| `pauseMin` | 180 | min | ANNAHME |
+| `maxDauerMin` | 360 | min | Rückweg spätestens nach 6 h (wie Raumeinfluss, ANNAHME) |
+
+*Erwartung:* +1 K: Soll-Vorlauf +1 K binnen 3 min, mehr Wärme vor dem erwarteten Bedarf (Strom +2,5–3 %, 8,5 W/K); die Räume bleiben im Band, obwohl der Bedarf steigt. −1 K: umgekehrt bei erwartetem Wärmegewinn. Raumwirkung NICHT gemessen.
+
+*Rückweg:* Automatisch zurück auf 0 K, sobald die Vorhersage die Änderung 15 min am Stück nicht mehr zeigt (halbe Schwelle), sofort, wenn ein Raum das Band in Gegenrichtung verlässt, spätestens nach 6 h; nicht, solange der Raumeinfluss dieselbe Verschiebung verlangt.
+
 ### Sperren, die jede Regel erbt
 
 | Sperre | Text | Herkunft |
@@ -253,8 +278,11 @@ Tabellen aus dem Regelwerk, erzeugt mit `node tools/engine_doc.js`. Die Sim prü
 | `abkuehlzeit` | Wartezeit nach dem letzten Vorschlag | kein Flattern: ein abgelaufener oder zurückgezogener Vorschlag kommt erst nach einer Pause wieder |
 | `takt` | Takt-Gefahr: Vorlauf über Soll | Anlage schaltet bei Vorlauf ≥ Soll +3,25 K nach ~3 min ab (6 Stopps 07.–10.10.); Sperre ab Soll +1 K für Maßnahmen, die den Vorlauf näher an diese Grenze bringen (mehr Leistung, −1 K) |
 | `heizstab` | Heizstab-Nähe | Heizstab ab Außentemperatur < Heater_On_Outdoor_Temp (0 °C) bei Vorlauf < Soll −3 K nach 15 min; ein +1-K-Schritt vergrößert den Rückstand sofort um 1 K |
+| `modell` | Gebäudemodell noch nicht freigegeben | Wärmefahrplan: Gate des Gebäudemodells (≥ 10 Tage, Fehler ≥ 10 % kleiner als der bisherige Schätzer, plausible Koeffizienten); vorher ist eine Bedarfsvorhersage nicht belegt |
+| `vorrang` | Die Heizkurven-Verschiebung gehört einer anderen Regel | Verschiebungs-Arbitrierung: je Zeit hat genau eine Regel die Verschiebung (laufender Vorschlag oder übernommener Wert); keine zweite Regel schlägt daneben oder dagegen vor |
+| `gegenrichtung` | Gegenrichtung zur letzten Verschiebung | Kein Hin und Her: Gegenrichtung frühestens shiftHaltMin (60 min) nach dem Ende der letzten Verschiebung und nur mit Komfort-Notfall (Raum ≥ notK 0,3 K außerhalb des Bandes), ohne Notfall erst nach gegenMin (240 min); ANNAHME |
 
-*Sperr-Parameter (Standard):* `hpMaxAgeMin` 5 · `afterDefrostMin` 10 · `afterDhwMin` 10 · `startLockMin` 15 · `gapMin` 60 · `taktK` 1 · `stopK` 3,25 · `heaterMarginK` 2 · `warmupMin` 10 · `pumpOnRpm` 1000 · `kurveTolK` 1,5
+*Sperr-Parameter (Standard):* `hpMaxAgeMin` 5 · `afterDefrostMin` 10 · `afterDhwMin` 10 · `startLockMin` 15 · `gapMin` 60 · `taktK` 1 · `stopK` 3,25 · `heaterMarginK` 2 · `warmupMin` 10 · `pumpOnRpm` 1000 · `kurveTolK` 1,5 · `shiftHaltMin` 60 · `gegenMin` 240 · `notK` 0,3
 
 ### Whitelist der Übernahme
 
@@ -265,7 +293,7 @@ Tabellen aus dem Regelwerk, erzeugt mit `node tools/engine_doc.js`. Die Sim prü
 
 *Übernahme-Grenzen:* `maxAlterMin` 2,5 · `hpMaxAgeMin` 5 · `abstandMin` 10 · `proTag` 6 · `doppelMs` 120000 · `rueckleseS` 90 · `wiederholungen` 2 · `rueckwegVersuche` 3
 
-### Bewertungsregeln (Version 2)
+### Bewertungsregeln (Version 3)
 
 | Größe | Wert |
 |---|---|
@@ -278,6 +306,8 @@ Tabellen aus dem Regelwerk, erzeugt mit `node tools/engine_doc.js`. Die Sim prü
 | Verpasst | -20 (gezählt werden nur Minuten, in denen die Regel nicht durch eine eigene Sperre zurückgehalten wurde) |
 | Verpasst während eigener Sperre (seit v2) | 0 Punkte, getrennt gezählt (`verpasst_sperre`); eigene Sperren: Mindestabstand (`gapMin`), Tageslimit (`proTag`), Wartezeit (`pauseMin`), Haltezeit (`haltMin`), Stabilitätszeit (`stabilMin`); nur soweit sie auch mit dem Standardwert bestanden hätten |
 | Schaden hebt die Entschuldigung auf (seit v2) | quiet_freigabe: Raum > 1 K unter Minimum; quiet_strecken: Verdichter stoppt, Vorlauf ≥ Soll +3,25 K; raum_offset: Raum > 1 K unter Minimum → verpasst -20 |
+| Gegenregel-Sperren (seit v3) | 0 Punkte wie eigene Sperren: `vorrang`, `gegenrichtung` (Verschiebungs-Arbitrierung; nur mit den Standardwerten `shiftHaltMin`/`gegenMin`); schlägt eine andere Verschiebungs-Regel für die Lage dieselbe Richtung vor, gilt sie als versorgt |
+| Zuordnung (seit v3) | Fälle gehören der Regel, die vorgeschlagen hat; die Wirkung einer übernommenen Verschiebung zählt für die Regel, deren Vorschlag übernommen wurde; für alle anderen offenen Fälle ist die Übernahme ein Eingriff (neutral) |
 | Raumwerte in der Bewertung | bis 360 min alt (Shelly melden nur bei Änderung) |
 | Eingriffe (Bewertung wird ab dort neutral) | Quiet, Verschiebung oder Soll (≥ 2 K) geändert; Komfortband geändert; Lüftungsverdacht (Raum fällt ≥ 1 K in ≤ 60 min) |
 | Freigabereife (nur Anzeige) | ≥ 10 bewertete Fälle, ≥ 14 Tage, Brier-Skill ≥ 0,2, 0 × Schaden, ≤ 1 × verpasst, ≥ 2 Wirkungsfälle mit Punkten > 0 (ohne Kalibrierung) |

@@ -18,7 +18,11 @@ const ASSUME = {
     shift: 0,                   // TOP27 vor 09.10. 20:48 (danach Spalte shift_anlage; alle Sollspruenge melden 0 K)
     maxAgeMin: 90,              // Raum-Datenalter-Limit (config.json: 90 fuer alle Raeume)
     korrMaxAgeMin: 10,          // Raumvorschlag aus optimizer-v2 (5 min) gilt hoechstens 10 min
-    curve: [-13, 11, 29, 38]    // Heizkurve Z1 (live): Aussen -13 °C -> 38 °C, 11 °C -> 29 °C (wie Z1_Heat_Curve_*)
+    curve: [-13, 11, 29, 38],   // Heizkurve Z1 (live): Aussen -13 °C -> 38 °C, 11 °C -> 29 °C (wie Z1_Heat_Curve_*)
+    // Vorausschau: die Vorhersage steht im Protokoll nur als aussen_wetter (jetzt) und prog_1h/3h/6h; ihr Abrufzeitpunkt = Zeile - wetter_alter_min
+    vorhersage: 'Stuetzpunkte jetzt, +1, +3, +6 h ab Zeile - wetter_alter_min',
+    // Gebaeudemodell wie live am 11.10.: 1 Tag, Gate zu, coefActivate aus (Sonne/Wind nicht verwendet); UA/tbal wie Fahrplan-Standard
+    model: {n: 1, minDays: 10, gate: false, why: ['weniger als 10 Tage', 'PV-Tage zu gleichfoermig', 'Fehler nicht um 10 % besser'], aktiv: false, ua: 0.22, tbal: 15}
 };
 const ROOMS = [['ki_oben', 'Kinderzimmer oben'], ['ki_unten', 'Kinderzimmer unten'], ['schlaf', 'Schlafzimmer'], ['wohn', 'Wohnzimmer']];
 
@@ -41,7 +45,7 @@ function readMulti(file) {                                                     /
 function curve(at) { if (at === null) { return null; } if (at <= ASSUME.curve[0]) { return ASSUME.curve[3]; } if (at >= ASSUME.curve[1]) { return ASSUME.curve[2]; } return ASSUME.curve[3] + (ASSUME.curve[2] - ASSUME.curve[3]) * (at - ASSUME.curve[0]) / (ASSUME.curve[1] - ASSUME.curve[0]); }
 function n(x) { if (x === undefined || x === null || x === '') { return null; } const v = Number(x); return isFinite(v) ? v : null; }
 
-function buildInputs(dataDir, month) {
+function buildInputs(dataDir, month, model) {
     const Q = readMulti(path.join(dataDir, 'quiet-' + month + '.csv'));
     const V = readMulti(path.join(dataDir, 'optimizer-v2-' + month + '.csv'));
     if (!Q.length) { throw new Error('keine Daten in ' + dataDir); }
@@ -67,6 +71,11 @@ function buildInputs(dataDir, month) {
                 const ageNow = age === null ? null : age + vAge;
                 inp.rooms.push({id: id, name: name, t: ema, age: ageNow, min: mn, max: mx, active: true, valid: v[id + '_gueltig'] === '1' && ageNow !== null && ageNow <= ASSUME.maxAgeMin && ema !== null});
             });
+            const aw = n(v.aussen_wetter), p1 = n(v.prog_1h), p3 = n(v.prog_3h), p6 = n(v.prog_6h), wa = n(v.wetter_alter_min);
+            if (aw !== null && p1 !== null && p3 !== null && p6 !== null) {
+                const ft = v._t - (wa !== null ? wa : 0) * MIN, H = 3600000;
+                inp.vs = ENGINE.vorschau({f_ts: ft, fpts: [[ft, aw], [ft + H, p1], [ft + 3 * H, p3], [ft + 6 * H, p6]]}, {model: model || ASSUME.model}, null, inp.at, t);
+            }
             if (vAge <= ASSUME.korrMaxAgeMin && n(v.korrektur_vorschlag) !== null) {
                 inp.korr = {v: n(v.korrektur_vorschlag), code: (v.regelung_grund || '').replace(/;/g, ','), distrib: v.waermeverteilung === '1', lead: v.fuehrungsraum || ''};
             }
@@ -79,7 +88,7 @@ function buildInputs(dataDir, month) {
 function replay(dataDir, opts) {
     opts = opts || {};
     const month = opts.month || '2026-10';
-    const inputs = buildInputs(dataDir, month);
+    const inputs = buildInputs(dataDir, month, opts.model);
     const cfg = ENGINE.mergeCfg(opts.cfg || {});
     let S = null;
     const recs = [], scores = [], events = [], props = [], perMin = [];

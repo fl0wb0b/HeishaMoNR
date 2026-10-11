@@ -9,9 +9,12 @@
 //   ENGINE.applyTick(A, ctx)            -> {A, send, toast, log}                         Ruecklesen, begrenzte Wiederholung, Rueckweg (alle 15 s)
 var ENGINE = (function () {
     var VER = 1;                 // Format der Entscheidungsdatensaetze
-    var SCORE_VER = 2;           // Bewertungsregeln (vorab festgelegt; jede Aenderung erhoeht die Version, alte Punkte bleiben getrennt)
+    var SCORE_VER = 3;           // Bewertungsregeln (vorab festgelegt; jede Aenderung erhoeht die Version, alte Punkte bleiben getrennt)
                                  // v2 (10.10.2026): "verpasst" waehrend einer EIGENEN Sperre/Wartezeit (Standardwerte, ohne Schaden) zaehlt neutral und
                                  // getrennt ("waehrend Sperre"). v1 bleibt nachrechenbar: cfg.sv = 1 (Replay alter Datensaetze).
+                                 // v3 (11.10.2026): Verschiebungs-Arbitrierung. Sperren durch eine Gegenregel ("vorrang", "gegenrichtung") entschuldigen
+                                 // "verpasst" wie eigene Sperren; eine Lage, fuer die eine andere Verschiebungs-Regel dieselbe Richtung vorschlaegt, gilt als
+                                 // versorgt; Wirkung einer uebernommenen Verschiebung zaehlt fuer die Regel, deren Vorschlag uebernommen wurde. cfg.sv = 2 rechnet v2 nach.
     var MIN = 60000;
 
     // ------------------------------------------------------------------ Hilfen (ohne Locale, damit jede Umgebung gleich rechnet)
@@ -53,9 +56,89 @@ var ENGINE = (function () {
         {id: 'tageslimit', kurz: 'Tageslimit', text: 'Tageslimit der Regel erreicht', herkunft: 'Schreibbudget (Opus: höchstens 6 Wechsel/Tag), EEPROM-Verschleiß unbekannt'},
         {id: 'abkuehlzeit', kurz: 'Wartezeit', text: 'Wartezeit nach dem letzten Vorschlag', herkunft: 'kein Flattern: ein abgelaufener oder zurückgezogener Vorschlag kommt erst nach einer Pause wieder'},
         {id: 'takt', kurz: 'Takt-Gefahr', text: 'Takt-Gefahr: Vorlauf über Soll', herkunft: 'Anlage schaltet bei Vorlauf ≥ Soll +3,25 K nach ~3 min ab (6 Stopps 07.–10.10.); Sperre ab Soll +1 K für Maßnahmen, die den Vorlauf näher an diese Grenze bringen (mehr Leistung, −1 K)'},
-        {id: 'heizstab', kurz: 'Heizstab-Nähe', text: 'Heizstab-Nähe', herkunft: 'Heizstab ab Außentemperatur < Heater_On_Outdoor_Temp (0 °C) bei Vorlauf < Soll −3 K nach 15 min; ein +1-K-Schritt vergrößert den Rückstand sofort um 1 K'}
+        {id: 'heizstab', kurz: 'Heizstab-Nähe', text: 'Heizstab-Nähe', herkunft: 'Heizstab ab Außentemperatur < Heater_On_Outdoor_Temp (0 °C) bei Vorlauf < Soll −3 K nach 15 min; ein +1-K-Schritt vergrößert den Rückstand sofort um 1 K'},
+        {id: 'modell', kurz: 'Modell-Gate', text: 'Gebäudemodell noch nicht freigegeben', herkunft: 'Wärmefahrplan: Gate des Gebäudemodells (≥ 10 Tage, Fehler ≥ 10 % kleiner als der bisherige Schätzer, plausible Koeffizienten); vorher ist eine Bedarfsvorhersage nicht belegt'},
+        {id: 'vorrang', kurz: 'andere Regel', text: 'Die Heizkurven-Verschiebung gehört einer anderen Regel', herkunft: 'Verschiebungs-Arbitrierung: je Zeit hat genau eine Regel die Verschiebung (laufender Vorschlag oder übernommener Wert); keine zweite Regel schlägt daneben oder dagegen vor'},
+        {id: 'gegenrichtung', kurz: 'Gegenrichtung', text: 'Gegenrichtung zur letzten Verschiebung', herkunft: 'Kein Hin und Her: Gegenrichtung frühestens shiftHaltMin (60 min) nach dem Ende der letzten Verschiebung und nur mit Komfort-Notfall (Raum ≥ notK 0,3 K außerhalb des Bandes), ohne Notfall erst nach gegenMin (240 min); ANNAHME'}
     ];
     var LOCK_TEXT = {}; LOCKS.forEach(function (l) { LOCK_TEXT[l.id] = l.text; });
+
+    // ------------------------------------------------------------------ Vorausschau: Eingabe aus Wetter und Gebaeudemodell (rein; die Huelle und das Replay rufen sie auf)
+    // W  = OPT_weather {f_ts, fpts: [[t, Temperatur, Feuchte, Bewoelkung, Wind m/s], ...]}
+    // PL = OPT_plan {model: {n, minDays, gate, why, aktiv, bs, bw, ua, tbal}}  (Gate und coefActivate des Waermefahrplans)
+    // PI = OPT_plan_in {pv: [[Beginn, W, Dauer ms], ...]}                       (PV-Prognose; nur mit aktivem Modell verwendet)
+    // -> {age, at: [jetzt, +1 h ... +6 h] (an den Fuehler angeglichen, wie der Fahrplan: Versatz klingt mit 4 h ab), n, minDays, gate, ua, tbal, aktiv
+    //     [, bs, bw, wind[], pv[]]}  Sonne und Wind stehen NUR mit aktivem Modell im Datensatz; ohne coefActivate kann die Regel sie nicht verwenden.
+    var VS_H = 6;
+    function vorschau(W, PL, PI, at, now) {
+        W = W || {};
+        var pts = (Array.isArray(W.fpts) ? W.fpts : []).filter(function (p) { return p && have(num(p[0])) && have(num(p[1])); }).sort(function (a, b) { return a[0] - b[0]; });
+        if (!have(num(W.f_ts)) || pts.length < 2) { return null; }
+        function ip(t, i) {
+            if (t < pts[0][0] - 30 * MIN || t > pts[pts.length - 1][0]) { return null; }
+            if (t <= pts[0][0]) { return num(pts[0][i]); }
+            for (var k = 1; k < pts.length; k++) { if (pts[k][0] >= t) { var a = num(pts[k - 1][i]), b = num(pts[k][i]); return (a === null || b === null) ? null : a + (b - a) * (t - pts[k - 1][0]) / (pts[k][0] - pts[k - 1][0]); } }
+            return null;
+        }
+        var owmNow = ip(now, 1), atN = num(at), anchor = (have(atN) && have(owmNow)) ? Math.max(-5, Math.min(5, atN - owmNow)) : 0;
+        var M = (PL && PL.model) || {}, aktiv = M.aktiv === true || M.aktiv === 1;
+        var o = {age: Math.round((now - num(W.f_ts)) / MIN), at: [], n: have(num(M.n)) ? num(M.n) : 0, minDays: have(num(M.minDays)) ? num(M.minDays) : 10, gate: (M.gate === true || M.gate === 1) ? 1 : 0,
+                 ua: have(num(M.ua)) ? r2(num(M.ua)) : null, tbal: have(num(M.tbal)) ? num(M.tbal) : null, aktiv: aktiv ? 1 : 0};
+        for (var h = 0; h <= VS_H; h++) { var x = h === 0 && have(atN) ? atN : ip(now + h * 3600000, 1); o.at.push(have(x) ? Math.round((h === 0 ? x : x + anchor * Math.exp(-h / 4)) * 10) / 10 : null); }
+        if (aktiv) {                                                                // Sonne/Wind nur mit coefActivate (und offenem Gate, das prueft der Fahrplan)
+            o.bs = have(num(M.bs)) ? num(M.bs) : 0; o.bw = have(num(M.bw)) ? num(M.bw) : 0; o.wind = []; o.pv = [];
+            var pv = PI && Array.isArray(PI.pv) ? PI.pv : [];
+            for (var j = 0; j <= VS_H; j++) {
+                var w = ip(now + j * 3600000, 4); o.wind.push(have(w) ? Math.round(w * 10) / 10 : null);
+                var a0 = now + j * 3600000 - 1800000, a1 = a0 + 3600000, sw = 0, dt = 0;
+                pv.forEach(function (p) { var q0 = num(p[0]), q1 = q0 + num(p[2]), ov = Math.min(q1, a1) - Math.max(q0, a0); if (have(q0) && have(num(p[1])) && ov > 0) { sw += num(p[1]) * ov; dt += ov; } });
+                o.pv.push(dt >= 0.9 * 3600000 ? Math.round(sw / dt) : null);
+            }
+        }
+        return o;
+    }
+    // Waermebedarf je Stunde (kW) aus dem Gebaeudemodell: UA x (tbal - Aussen), mit aktivem Modell + Wind x Heizgrad - Sonne (hoechstens 60 % wie im Fahrplan)
+    function vsQ(v, i) {
+        var T = v.at[i]; if (!have(T)) { return null; }
+        var ua = have(v.ua) && v.ua > 0 ? v.ua : 0.22, tb = have(v.tbal) ? v.tbal : 15, dK = Math.max(0, tb - T), q = ua * dK;
+        if (v.aktiv) { var w = v.wind && have(v.wind[i]) ? v.wind[i] : 0, s = v.pv && have(v.pv[i]) ? v.pv[i] / 1000 : 0; q = Math.max(0, q + (v.bw || 0) * dK * w - Math.min((v.bs || 0) * s, 0.6 * q)); }
+        return q;
+    }
+    function vsFenster(v, c) {                                                       // Mittel ueber das Fenster +vonH ... +bisH (jede Stunde muss da sein)
+        var q = 0, t = 0, n = 0;
+        for (var h = c.vonH; h <= c.bisH; h++) { var qi = vsQ(v, h); if (qi === null) { return null; } q += qi; t += v.at[h]; n++; }
+        return n ? {q: q / n, at: t / n} : null;
+    }
+    // Bedarfsaenderung als Aussentemperatur-Aequivalent in K (> 0: mehr Bedarf erwartet), null = Vorhersage reicht nicht
+    function bedarfK(v, c) {
+        if (!v || !Array.isArray(v.at)) { return null; }
+        var q0 = vsQ(v, 0), f = vsFenster(v, c), ua = have(v.ua) && v.ua > 0 ? v.ua : 0.22;
+        return (q0 === null || f === null) ? null : r2((f.q - q0) / ua);
+    }
+    // Arbitrierung der Heizkurven-Verschiebung (alle Regeln der Groesse "shift"). Gemeinsamer Zustand S.arb:
+    //   owner/soll/von/start  laufender Vorschlag (genau einer)   applied  von der Anlage uebernommene Verschiebung einer Regel   last  letzte beendete Verschiebung
+    function shiftOwnedBy(d, self) { var ap = d.arb && d.arb.applied; return (ap && ap.rule !== self && have(d.shift) && d.shift !== 0 && d.shift === ap.w) ? ap.rule : null; }
+    function komfortNot(d, dir) {                                                    // Komfort-Notfall: ein gueltiger Raum >= notK ausserhalb des Bandes in der Richtung, die die Massnahme behebt, keiner auf der anderen Seite
+        var v = d.rooms.filter(function (r) { return r.active && r.valid && have(r.min) && have(r.max); });
+        if (dir > 0) { return v.some(function (r) { return r.t <= r.min - d.notK; }) && !v.some(function (r) { return r.t > r.max; }); }
+        return v.some(function (r) { return r.t >= r.max + d.notK; }) && !v.some(function (r) { return r.t < r.min; });
+    }
+    function sgnOf(x) { return x > 0 ? 1 : (x < 0 ? -1 : 0); }
+    function arbLocks(R, e, d, S, cfg, add) {
+        var A = S.arb, L = cfg.locks, now = d.now;
+        if (!e || !have(e.wert) || !have(e.von)) { return; }
+        var dir = sgnOf(e.wert - e.von);
+        if (R.sperren.indexOf('vorrang') >= 0) {
+            if (A.owner && A.owner !== R.id) { add('vorrang', (A.soll === e.wert ? 'dieselbe Verschiebung ' + sg(A.soll, 0) + ' K schlägt schon „' : 'Verschiebung ' + sg(A.soll, 0) + ' K vorgeschlagen von „') + RULE[A.owner].kurz + (A.soll === e.wert ? '“ vor' : '“')); }
+            else if (shiftOwnedBy(d, R.id)) { add('vorrang', 'Verschiebung ' + sg(d.shift, 0) + ' K gehört „' + RULE[A.applied.rule].kurz + '“'); }
+        }
+        if (R.sperren.indexOf('gegenrichtung') >= 0 && A.last && dir !== 0 && A.last.dir === -dir) {
+            var ls = A.last, end = (A.applied && A.applied.rule === ls.rule && d.shift === A.applied.w) ? now : ls.end, el = now - end;
+            var was = 'letzte Verschiebung ' + sg(ls.w, 0) + ' K („' + RULE[ls.rule].kurz + '“) bis ' + hhmm(end);
+            if (el < L.shiftHaltMin * MIN) { add('gegenrichtung', was + ', Mindesthaltezeit ' + L.shiftHaltMin + ' min', end + L.shiftHaltMin * MIN); }
+            else if (el < L.gegenMin * MIN && !e.hart) { add('gegenrichtung', was + ', ohne Komfort-Notfall erst nach ' + L.gegenMin + ' min', end + L.gegenMin * MIN); }
+        }
+    }
 
     // ------------------------------------------------------------------ Regelwerk als Daten. Jede Schwelle: Standard, Einheit, Herkunft (Messung / Nutzerregel / ANNAHME)
     var RULES = [
@@ -140,10 +223,10 @@ var ENGINE = (function () {
             }
         },
         {
-            id: 'raum_offset', ver: 1, kurz: 'Raumeinfluss ±1 K', name: 'Raumeinfluss (Heizkurve ±1 K)', art: 'befehl', groesse: 'shift', richtung: 'verschiebung', prio: 3,
-            zweck: 'Räume wirken nur als langsamer, kleiner Offset auf die Heizkurve (Lambda-Prinzip). Übernimmt den Raumvorschlag der Phase-2-Logik (korrektur_vorschlag −1/0/+1) erst, wenn er lange stabil ist. Nie Comfort/Efficiency.',
-            eingaenge: ['Raumvorschlag Phase 2 (korrektur_vorschlag, Führungsraum, Wärmeverteilung)', 'Verschiebung an der Anlage (TOP27)', 'Soll-Vorlauf und Heizkurve', 'Heizkurvenmodus/Zonenfühler'],
-            sperren: ['anlauf', 'daten', 'mqtt_sperre', 'abtauen', 'warmwasser', 'sanftanlauf', 'laufbeginn', 'heizgrenze_aus', 'regler', 'abstand', 'tageslimit', 'abkuehlzeit', 'takt', 'heizstab'],
+            id: 'raum_offset', ver: 2, kurz: 'Raumeinfluss ±1 K', name: 'Raumeinfluss (Heizkurve ±1 K)', art: 'befehl', groesse: 'shift', richtung: 'verschiebung', prio: 3,
+            zweck: 'Räume wirken nur als langsamer, kleiner Offset auf die Heizkurve (Lambda-Prinzip). Übernimmt den Raumvorschlag der Phase-2-Logik (korrektur_vorschlag −1/0/+1) erst, wenn er lange stabil ist. Nie Comfort/Efficiency. Seit v2 Teil der Verschiebungs-Arbitrierung: eine Verschiebung, die einer anderen Regel gehört (Vorausschau), gilt nicht als Abweichung; Gegenrichtung nur nach Wartezeit und mit Komfort-Notfall.',
+            eingaenge: ['Raumvorschlag Phase 2 (korrektur_vorschlag, Führungsraum, Wärmeverteilung)', 'Verschiebung an der Anlage (TOP27)', 'Soll-Vorlauf und Heizkurve', 'Heizkurvenmodus/Zonenfühler', 'Eigentümer der Verschiebung (Arbitrierung)'],
+            sperren: ['anlauf', 'daten', 'mqtt_sperre', 'abtauen', 'warmwasser', 'sanftanlauf', 'laufbeginn', 'heizgrenze_aus', 'regler', 'vorrang', 'gegenrichtung', 'abstand', 'tageslimit', 'abkuehlzeit', 'takt', 'heizstab'],
             befehl: {name: 'SetZ1HeatRequestTemperature', topic: 'panasonic_heat_pump/commands/SetZ1HeatRequestTemperature'},
             schwellen: [
                 {key: 'stabilMin', std: 60, einheit: 'min', herkunft: 'lange Haltezeit (Auftrag); Phase 2 wartet selbst 45–60 min. Räume reagieren träge, Shelly melden erst ab 0,5 K'},
@@ -163,6 +246,11 @@ var ENGINE = (function () {
                 if (!have(d.shift)) { return {inaktiv: 'Verschiebung der Anlage (TOP27) unbekannt'}; }
                 var kv = num(k.v);
                 if (kv === d.shift) { return {inaktiv: 'Raumvorschlag ' + sg(kv, 0) + ' K = Verschiebung der Anlage'}; }
+                // Arbitrierung (v2): eine uebernommene Verschiebung einer anderen Regel (z. B. Vorausschau +1 K) ist kein Grund, sie auf den Raumvorschlag
+                // zurueckzustellen. Raumvorschlag 0 = "Raeume brauchen nichts": nicht dagegen arbeiten; nur die Gegenrichtung (-1 gegen +1) geht weiter in die
+                // Arbitrierung (Sperren "vorrang"/"gegenrichtung", Komfort-Notfall).
+                var fr = shiftOwnedBy(d, 'raum_offset');
+                if (fr && kv === 0) { return {inaktiv: 'Verschiebung ' + sg(d.shift, 0) + ' K gehört der Regel „' + RULE[fr].kurz + '“'}; }
                 var stab = rs.korrSince ? mins(d.now - rs.korrSince) : 0, down = kv < d.shift;
                 var sollNeu = have(d.soll) ? d.soll + (kv - d.shift) : null;
                 var cond = [
@@ -170,7 +258,7 @@ var ENGINE = (function () {
                     {k: 'untergrenze', kz: 'Soll-Vorlauf neu', t: 'Soll-Vorlauf bleibt mindestens ' + de(c.minVlC, 0) + ' °C', tn: 'Soll-Vorlauf würde ' + de(sollNeu, 0) + ' °C (Untergrenze ' + de(c.minVlC, 0) + ' °C)', ok: !down || (have(sollNeu) && sollNeu >= c.minVlC - 1e-9), ist: r2(sollNeu), soll: c.minVlC, op: '>=', u: '°C', dyn: true},
                     {k: 'verteilung', kz: 'Wärmeverteilung', t: 'kein Wärmeverteilungsproblem', tn: 'Wärmeverteilungsproblem (ein Raum zu kalt, einer zu warm)', ok: !k.distrib}
                 ];
-                return {cond: cond, halt: 0, wert: kv, von: d.shift, dir: kv > d.shift ? 'soll_hoch' : 'soll_runter', lead: k.lead || '',
+                return {cond: cond, halt: 0, wert: kv, von: d.shift, dir: kv > d.shift ? 'soll_hoch' : 'soll_runter', lead: k.lead || '', hart: komfortNot(d, kv > d.shift ? 1 : -1),
                         was: 'Heizkurve ' + sg(d.shift, 0) + ' → ' + sg(kv, 0) + ' K (Soll-Vorlauf ' + de(d.soll, 0) + ' → ' + de(sollNeu, 0) + ' °C)',
                         warum: 'Raumvorschlag ' + sg(kv, 0) + ' K seit ' + stab + ' min: ' + (k.code || '') + (k.lead ? ' (Führungsraum ' + k.lead + ')' : '')};
             }
@@ -210,6 +298,61 @@ var ENGINE = (function () {
                         was: 'Heizgrenze ' + de(d.heatOffAT, 0) + ' → ' + de(c.zielC, 0) + ' °C (nur Hinweis)',
                         warum: 'Lauf bei ' + de(d.at, 0) + ' °C Außentemperatur, knappster Raum ' + (tight ? tight.name + ' ' + sg(tight.t - tight.min, 1) + ' K über Minimum' : '–')};
             }
+        },
+        {
+            id: 'vorausschau', ver: 1, kurz: 'Vorausschau ±1 K', name: 'Vorausschau (Heizkurve ±1 K)', art: 'befehl', groesse: 'shift', richtung: 'verschiebung', prio: 5,
+            zweck: 'Verschiebt die Heizkurve um ±1 K, bevor sich der Wärmebedarf ändert: +1 K, wenn Wettervorhersage und Gebäudemodell in den nächsten Stunden deutlich mehr Bedarf erwarten und alle Räume noch im Band liegen (mit Luft nach oben); −1 K bei erwartetem Wärmegewinn (Milderung; Sonne und Wind nur mit freigegebenem Modell, coefActivate). Läuft erst mit offenem Gate des Gebäudemodells, nie gegen den aktuellen Raumzustand und nie gegen eine Verschiebung einer anderen Regel (Arbitrierung).',
+            eingaenge: ['Wettervorhersage OWM (+1 … +6 h, an den Außenfühler angeglichen)', 'Gebäudemodell des Wärmefahrplans (UA, Heizgrenze tbal, Gate, coefActivate)', 'Sonne (PV-Prognose) und Wind nur mit coefActivate', 'Räume (alle gültig, eigenes Band)', 'Verschiebung der Anlage (TOP27) und Eigentümer der Verschiebung', 'Soll-Vorlauf'],
+            sperren: ['anlauf', 'daten', 'modell', 'mqtt_sperre', 'abtauen', 'warmwasser', 'sanftanlauf', 'laufbeginn', 'heizgrenze_aus', 'regler', 'vorrang', 'gegenrichtung', 'abstand', 'tageslimit', 'abkuehlzeit', 'takt', 'heizstab'],
+            befehl: {name: 'SetZ1HeatRequestTemperature', topic: 'panasonic_heat_pump/commands/SetZ1HeatRequestTemperature'},
+            schwellen: [
+                {key: 'deltaK', std: 2, einheit: 'K', herkunft: 'Bedarfsänderung als Außentemperatur-Äquivalent (Mittel des Fensters gegen jetzt); OWM weicht vom Fühler 1,5–1,9 K ab (08.–10.10.), darunter ist die Vorhersage kein Signal; ANNAHME'},
+                {key: 'vonH', std: 2, einheit: 'h', herkunft: 'Fensterbeginn: +1 K wirkt über die Laufzeit erst nach 1–3 h im Raum (Speichermasse 7–10 kWh/K, Opus); ANNAHME'},
+                {key: 'bisH', std: 5, einheit: 'h', herkunft: 'Fensterende: OWM liefert 3-h-Punkte, das Vertrauen fällt mit dem Vorlauf (Fahrplan: 1 − h/48); ANNAHME'},
+                {key: 'reserveK', std: 0.3, einheit: 'K', herkunft: 'Luft im Band: bei +1 K wärmster Raum mindestens 0,3 K unter Maximum, bei −1 K kältester mindestens 0,3 K über Minimum (wie guardK des Fahrplans); ANNAHME'},
+                {key: 'prognoseMaxMin', std: 120, einheit: 'min', herkunft: 'Fahrplan: Vorhersage gilt bis 2 h nach dem Abruf'},
+                {key: 'haltMin', std: 30, einheit: 'min', herkunft: 'Vorhersage muss mindestens einen weiteren Abruf überstehen; ANNAHME'},
+                {key: 'minVlC', std: 29, einheit: '°C', herkunft: 'Nutzervorgabe 08.10.: Soll-Vorlauf nie unter 29 °C (Heizkörper)'},
+                {key: 'proTag', std: 2, einheit: 'Vorschläge', herkunft: 'Schreibbudget gemeinsam mit dem Raumeinfluss (Opus: höchstens 6 Schreibbefehle/Tag); ANNAHME'},
+                {key: 'gueltigMin', std: 180, einheit: 'min', herkunft: 'Fensterende 5 h minus Fensterbeginn 2 h; ANNAHME'},
+                {key: 'pauseMin', std: 180, einheit: 'min', herkunft: 'ANNAHME'},
+                {key: 'maxDauerMin', std: 360, einheit: 'min', herkunft: 'Rückweg spätestens nach 6 h (wie Raumeinfluss, ANNAHME)'}
+            ],
+            erwartung: '+1 K: Soll-Vorlauf +1 K binnen 3 min, mehr Wärme vor dem erwarteten Bedarf (Strom +2,5–3 %, 8,5 W/K); die Räume bleiben im Band, obwohl der Bedarf steigt. −1 K: umgekehrt bei erwartetem Wärmegewinn. Raumwirkung NICHT gemessen.',
+            rueckweg: 'Automatisch zurück auf 0 K, sobald die Vorhersage die Änderung 15 min am Stück nicht mehr zeigt (halbe Schwelle), sofort, wenn ein Raum das Band in Gegenrichtung verlässt, spätestens nach 6 h; nicht, solange der Raumeinfluss dieselbe Verschiebung verlangt.',
+            prognose: {p: 0.6, h: [120, 240, 360], text: 'Ohne Verschiebung gerät der knappste Raum an den Bandrand (+1 K: höchstens Reserve über Minimum, −1 K: höchstens Reserve unter Maximum)'},
+            kalibriert: [],
+            eval: function (d, c, rs) {
+                var v = d.vs;
+                if (!v) { return {inaktiv: 'Wettervorhersage fehlt'}; }
+                if (!have(d.shift)) { return {inaktiv: 'Verschiebung der Anlage (TOP27) unbekannt'}; }
+                var ap = d.arb && d.arb.applied;
+                if (ap && ap.rule === 'vorausschau' && d.shift === ap.w) { return {inaktiv: 'Verschiebung ' + sg(d.shift, 0) + ' K (Vorausschau) steht'}; }
+                if (d.shift !== 0) { return {inaktiv: 'Verschiebung steht auf ' + sg(d.shift, 0) + ' K (Vorausschau nur von 0 K aus)'}; }
+                if (!have(v.age) || v.age > c.prognoseMaxMin) { return {inaktiv: 'Wettervorhersage ' + (have(v.age) ? de(v.age, 0) + ' min alt' : 'ohne Zeitstempel')}; }
+                var dk = bedarfK(v, c);
+                if (dk === null) { return {inaktiv: 'Wettervorhersage reicht nicht bis +' + c.bisH + ' h'}; }
+                var up = rs.prop ? rs.prop.cmd.value > 0 : dk >= 0, sgn = up ? 1 : -1;
+                var thr = rs.prop ? c.deltaK / 2 : c.deltaK;                                   // laufender Vorschlag: Hysterese (halbe Schwelle), kein Flattern
+                var act = d.rooms.filter(function (r) { return r.active; }), allValid = act.length > 0 && act.every(function (r) { return r.valid && have(r.min) && have(r.max); });
+                var out = act.filter(function (r) { return r.valid && ((have(r.min) && r.t < r.min) || (have(r.max) && r.t > r.max)); });
+                var cold = null, warm = null;
+                act.forEach(function (r) { if (!r.valid) { return; } if (cold === null || r.t - r.min < cold.t - cold.min) { cold = r; } if (warm === null || r.max - r.t < warm.max - warm.t) { warm = r; } });
+                var resv = up ? (warm ? warm.max - warm.t : null) : (cold ? cold.t - cold.min : null), sollNeu = have(d.soll) ? d.soll + sgn : null;
+                var cond = [
+                    {k: 'bedarf', kz: 'Bedarfsänderung', t: 'Vorhersage: Bedarf ' + (up ? 'steigt' : 'sinkt') + ' um mindestens ' + de(thr, 1) + ' K', tn: 'Vorhersage: Bedarf ' + sg(dk, 1) + ' K (Schwelle ' + (up ? '+' : '−') + de(thr, 1) + ' K)', ok: sgn * dk >= thr, ist: r2(sgn * dk), soll: thr, op: '>=', u: 'K', dyn: true},
+                    {k: 'raeume', kz: 'Räume gültig', t: 'alle aktiven Räume gültig', tn: 'nicht alle Räume gültig', ok: allValid},
+                    {k: 'band', kz: 'Räume im Band', hart: true, t: 'alle Räume im Komfortband', tn: out.length ? out[0].name + ' außerhalb des Bandes (' + de(out[0].t, 1) + ' °C)' : 'Raumlage unbekannt', ok: allValid && out.length === 0},
+                    {k: 'reserve', kz: 'Luft im Band', t: (up ? 'wärmster Raum mindestens ' + de(c.reserveK, 1) + ' K unter Maximum' : 'kältester Raum mindestens ' + de(c.reserveK, 1) + ' K über Minimum'), tn: (up ? (warm ? warm.name + ' nur ' + de(resv, 1) + ' K unter Maximum' : 'kein Raum') : (cold ? cold.name + ' nur ' + de(resv, 1) + ' K über Minimum' : 'kein Raum')), ok: have(resv) && resv >= c.reserveK - 1e-9, ist: r2(resv), soll: c.reserveK, op: '>=', u: 'K', dyn: true}
+                ];
+                if (!up) { cond.push({k: 'untergrenze', kz: 'Soll-Vorlauf neu', t: 'Soll-Vorlauf bleibt mindestens ' + de(c.minVlC, 0) + ' °C', tn: 'Soll-Vorlauf würde ' + de(sollNeu, 0) + ' °C (Untergrenze ' + de(c.minVlC, 0) + ' °C)', ok: have(sollNeu) && sollNeu >= c.minVlC - 1e-9, ist: r2(sollNeu), soll: c.minVlC, op: '>=', u: '°C', dyn: true}); }
+                var lead = up ? cold : warm, f = vsFenster(v, c);
+                var e = {cond: cond, halt: c.haltMin, wert: sgn, von: d.shift, dir: up ? 'soll_hoch' : 'soll_runter', lead: lead ? lead.name : '',
+                         was: 'Heizkurve 0 → ' + sg(sgn, 0) + ' K (Soll-Vorlauf ' + de(d.soll, 0) + ' → ' + de(sollNeu, 0) + ' °C)',
+                         warum: 'Vorhersage +' + c.vonH + '…+' + c.bisH + ' h: Außen Ø ' + de(f.at, 1) + ' °C statt ' + de(v.at[0], 1) + ' °C jetzt, Bedarf ' + sg(dk, 1) + ' K' + (v.aktiv ? ' (mit Sonne/Wind)' : '') + '; ' + (lead ? lead.name + ' ' + (up ? de(lead.t - lead.min, 1) + ' K über Minimum' : de(lead.max - lead.t, 1) + ' K unter Maximum') : '')};
+                if (!v.gate) { e.vorab = {id: 'modell', text: LOCK_TEXT.modell + ' (' + (v.n || 0) + ' von ' + (v.minDays || 10) + ' Tagen)', ist: v.n || 0, s: v.minDays || 10, u: 'Tage'}; }
+                return e;
+            }
         }
     ];
     var RULE = {}; RULES.forEach(function (r) { RULE[r.id] = r; });
@@ -225,7 +368,7 @@ var ENGINE = (function () {
         verpasst: -20,
         // ab v2: eigene Sperren/Wartezeiten der Regel entschuldigen "verpasst" (0 Punkte, als "waehrend Sperre" gezaehlt), aber nur mit den
         // dokumentierten Standardwerten (eine verlaengerte Sperre zaehlt nur bis zum Standard) und nur ohne harten Schaden im Fenster.
-        verpasstSperre: {eigene: ['abstand', 'tageslimit', 'abkuehlzeit', 'haltezeit', 'stabil'], komfortK: 1.0,
+        verpasstSperre: {eigene: ['abstand', 'tageslimit', 'abkuehlzeit', 'haltezeit', 'stabil'], gegenregel: ['vorrang', 'gegenrichtung'], komfortK: 1.0,
                          schaden: {quiet_freigabe: ['komfort'], quiet_strecken: ['takt', 'ueberschwingen'], raum_offset: ['komfort']}},
         raumAlterMax: 360,         // Bewertung (nicht Entscheidung): ein Raumwert bis 6 h alt zaehlt, weil die Shelly H&T Gen3 nur bei Aenderung >= 0,5 K melden
         lueftungK: 1.0,            // Raum faellt >= 1 K in <= 60 min: Lueftung (Eingriff), danach keine Gegenfaktik fuer Raum-Prognosen (nach dem Replay ergaenzt: 09.10. Wohnzimmer -3,3 K)
@@ -233,7 +376,8 @@ var ENGINE = (function () {
     };
 
     // ------------------------------------------------------------------ Standardwerte (aus dem Regelwerk)
-    var LOCK_CFG = {hpMaxAgeMin: 5, afterDefrostMin: 10, afterDhwMin: 10, startLockMin: 15, gapMin: 60, taktK: 1.0, stopK: 3.25, heaterMarginK: 2, warmupMin: 10, pumpOnRpm: 1000, kurveTolK: 1.5};
+    var LOCK_CFG = {hpMaxAgeMin: 5, afterDefrostMin: 10, afterDhwMin: 10, startLockMin: 15, gapMin: 60, taktK: 1.0, stopK: 3.25, heaterMarginK: 2, warmupMin: 10, pumpOnRpm: 1000, kurveTolK: 1.5,
+                    shiftHaltMin: 60, gegenMin: 240, notK: 0.3};     // Verschiebungs-Arbitrierung (alle Regeln der Groesse "shift"): gemeinsame Mindesthaltezeit, Wartezeit Gegenrichtung, Komfort-Notfall
     function defaults() {
         var c = {locks: JSON.parse(JSON.stringify(LOCK_CFG)), rules: {}};
         RULES.forEach(function (r) { var o = {}; r.schwellen.forEach(function (s) { o[s.key] = s.std; }); c.rules[r.id] = o; });
@@ -244,7 +388,7 @@ var ENGINE = (function () {
         if (over && typeof over === 'object') {
             if (over.locks) { Object.keys(c.locks).forEach(function (k) { if (have(num(over.locks[k]))) { c.locks[k] = num(over.locks[k]); } }); }
             if (over.rules) { Object.keys(c.rules).forEach(function (id) { var o = over.rules[id]; if (o) { Object.keys(c.rules[id]).forEach(function (k) { if (have(num(o[k]))) { c.rules[id][k] = num(o[k]); } }); } }); }
-            if (num(over.sv) === 1) { c.sv = 1; }                                  // Bewertungsregeln v1 nachrechnen (nur Replay/Tests)
+            if (num(over.sv) === 1 || num(over.sv) === 2) { c.sv = num(over.sv); }     // Bewertungsregeln v1/v2 nachrechnen (nur Replay/Tests)
         }
         return c;
     }
@@ -252,8 +396,8 @@ var ENGINE = (function () {
     // ------------------------------------------------------------------ Zustand (ueberlebt Neustarts per Datei)
     function newState(now) {
         var S = {mv: VER, born: now, last: now, run: {on: null, start: 0, reached: false, reachN: 0, sollTop: null}, lastStop: 0, lastStart: 0, runs: [], starts: [],
-                 defrostEnd: 0, dhwEnd: 0, defrostWas: false, dhwWas: false, q: null, qChg: 0, shift: null, shiftChg: 0, soll: null, handWas: false, vlHist: [], needSince: 0, korr0Since: 0,
-                 rules: {}, sc: newScore()};
+                 defrostEnd: 0, dhwEnd: 0, defrostWas: false, dhwWas: false, q: null, qChg: 0, shift: null, shiftChg: 0, soll: null, handWas: false, vlHist: [], needSince: 0, korr0Since: 0, vsEndSince: 0,
+                 arb: {owner: null, soll: null, von: null, start: 0, applied: null, last: null}, rules: {}, sc: newScore()};
         RULES.forEach(function (r) { S.rules[r.id] = {since: 0, failSince: 0, prop: null, cool: 0, n: 0, day: '', korrV: null, korrSince: 0, last: null}; });
         return S;
     }
@@ -271,7 +415,8 @@ var ENGINE = (function () {
     function derive(S, inp, cfg) {
         var L = cfg.locks, now = inp.t;
         var d = {now: now, hz: num(inp.hz), vl: num(inp.vl), rl: num(inp.rl), soll: num(inp.soll), dT: num(inp.dT), at: num(inp.at), q: num(inp.q), shift: num(inp.shift),
-                 pump: num(inp.pump), pel: num(inp.pel), heatOffAT: num(inp.heatOffAT), korr: inp.korr || null};
+                 pump: num(inp.pump), pel: num(inp.pel), heatOffAT: num(inp.heatOffAT), korr: inp.korr || null, notK: L.notK, arb: S.arb,
+                 vs: (inp.vs && typeof inp.vs === 'object' && Array.isArray(inp.vs.at)) ? inp.vs : null};
         d.fresh = have(num(inp.hpAge)) && num(inp.hpAge) <= L.hpMaxAgeMin && have(d.hz) && have(d.vl) && have(d.soll);
         d.running = have(d.hz) && d.hz > 0;
         d.zustand = d.running ? 'lauf' : (!have(d.pump) ? '?' : (d.pump >= L.pumpOnRpm ? 'pause' : 'heizgrenze'));
@@ -319,6 +464,13 @@ var ENGINE = (function () {
         d.qChanged = false; d.shiftChanged = false; d.sollJump = 0;
         if (have(d.q)) { if (have(S.q) && S.q !== d.q) { S.qChg = now; d.qChanged = true; d.qFrom = S.q; } S.q = d.q; }
         if (have(d.shift)) { if (have(S.shift) && S.shift !== d.shift) { S.shiftChg = now; d.shiftChanged = true; d.shiftFrom = S.shift; } S.shift = d.shift; }
+        // Arbitrierung: uebernimmt die Anlage den laufenden Vorschlag einer Verschiebungs-Regel, gehoert die Verschiebung dieser Regel ("applied"), bis sie
+        // sich wieder aendert; jede andere Aenderung (Hand, HeishaMoNR, Rueckweg) loest die Zuordnung
+        if (d.shiftChanged) {
+            var A = S.arb;
+            if (A.applied && A.applied.w !== d.shift) { A.last = {rule: A.applied.rule, dir: sgnOf(A.applied.w - A.applied.von), w: A.applied.w, von: A.applied.von, start: A.applied.ts, end: now}; A.applied = null; }
+            if (A.owner && d.shift === A.soll && d.shift !== 0) { A.applied = {rule: A.owner, w: d.shift, von: d.shiftFrom, ts: now}; d.shiftBy = A.owner; }
+        }
         if (have(d.soll)) { if (have(S.soll) && S.soll !== d.soll) { d.sollJump = d.soll - S.soll; } S.soll = d.soll; }
         // Handeingriff am Soll (Soll weicht von der Heizkurve ab, z. B. Boost): sein Ende zaehlt fuer den Mindestabstand wie eine Aenderung der Verschiebung
         var sk = num(inp.sollKurve);
@@ -341,7 +493,7 @@ var ENGINE = (function () {
     }
 
     // ------------------------------------------------------------------ Sperren je Regel (Reihenfolge = Prioritaet des angezeigten Grundes)
-    function locksFor(R, d, S, cfg, inp, dirNow) {
+    function locksFor(R, d, S, cfg, inp, dirNow, e) {
         var L = cfg.locks, c = cfg.rules[R.id], rs = S.rules[R.id], now = d.now, out = [];
         function add(id, extra, until) { out.push({id: id, text: LOCK_TEXT[id] + (extra ? ' (' + extra + ')' : ''), bis: until || null}); }
         R.sperren.forEach(function (id) {
@@ -353,6 +505,8 @@ var ENGINE = (function () {
             if (id === 'sanftanlauf' && num(inp.ss) === 1) { add(id); }
             if (id === 'laufbeginn' && d.running && d.runMin < L.startLockMin) { add(id, de(d.runMin, 0) + ' von ' + L.startLockMin + ' min', S.run.start + L.startLockMin * MIN); }
             if (id === 'heizgrenze_aus' && !d.running && d.zustand === 'heizgrenze') { add(id); }
+            if (id === 'modell' && !(d.vs && d.vs.gate)) { add(id, d.vs ? (d.vs.n || 0) + ' von ' + (d.vs.minDays || 10) + ' Tagen' : 'keine Vorhersage'); }
+            if (id === 'vorrang' || id === 'gegenrichtung') { if (id === 'vorrang' || R.sperren.indexOf('vorrang') < 0) { arbLocks(R, e, d, S, cfg, add); } }
             if (id === 'regler') {
                 if (R.groesse === 'quiet' && inp.otherQ) { add(id, inp.otherQ); }
                 if (R.groesse === 'shift') {
@@ -401,7 +555,14 @@ var ENGINE = (function () {
         if (rs.day !== day) { rs.day = day; rs.n = 0; }
         if (R.id === 'raum_offset') { var kv = d.korr && have(num(d.korr.v)) ? num(d.korr.v) : null; if (kv !== rs.korrV) { rs.korrV = kv; rs.korrSince = kv === null ? 0 : now; } }
         var res = {id: R.id, v: R.ver, st: '', grund: '', naechste: null, p: null, locks: []};
-        function endProp(why) { if (rs.prop) { rs.prop = null; rs.cool = now + c.pauseMin * MIN; res.ende = why; } }
+        function endProp(why) {
+            if (!rs.prop) { return; }
+            if (R.groesse === 'shift' && S.arb.owner === R.id) {                         // Arbitrierung: Verschiebung freigeben, Richtung und Ende merken (Gegenrichtung)
+                S.arb.last = {rule: R.id, dir: sgnOf(S.arb.soll - S.arb.von), w: S.arb.soll, von: S.arb.von, start: S.arb.start, end: now};
+                S.arb.owner = null; S.arb.soll = null; S.arb.von = null; S.arb.start = 0;
+            }
+            rs.prop = null; rs.cool = now + c.pauseMin * MIN; res.ende = why;
+        }
         if (!d.fresh && R.sperren.indexOf('daten') >= 0) {                                 // ohne frische Anlagendaten wird keine Bedingung bewertet
             var ld = locksFor(R, d, S, cfg, inp, null).filter(function (l) { return l.id === 'daten'; });
             rs.since = 0; rs.failSince = 0; endProp('gesperrt: ' + ld[0].text);
@@ -412,6 +573,18 @@ var ENGINE = (function () {
         if (e.inaktiv) { rs.since = 0; rs.failSince = 0; endProp(e.inaktiv); res.st = 'inaktiv'; res.grund = e.inaktiv; return res; }
         var bad = e.cond.filter(function (x) { return !x.ok; });
         res.bed = e.cond.map(function (x) { return [x.kz || x.k, x.ok ? 1 : 0, x.t]; });        // Bedingungen fuer die Anzeige (nicht im Datensatz)
+        res.hart = !!e.hart;
+        if (e.vorab) {                                                                      // Vorbedingung fehlt (Modell-Gate): nie ein Vorschlag, die Bedingungen laufen nur zur Anzeige mit
+            rs.since = 0; rs.failSince = 0; endProp('gesperrt: ' + e.vorab.text);
+            res.st = 'gesperrt'; res.locks = [e.vorab.id];
+            res.grund = (bad.length ? 'gesperrt: ' + e.vorab.text + '; außerdem ' + (bad[0].tn || bad[0].t) : 'würde schalten, aber gesperrt: ' + e.vorab.text);
+            res.naechste = {b: e.vorab.id, ist: e.vorab.ist, s: e.vorab.s, u: e.vorab.u, text: 'prüft erst, wenn ' + LOCK_TEXT[e.vorab.id].replace('noch nicht ', '') + ' ist'};
+            return res;
+        }
+        if (rs.prop && bad.some(function (x) { return x.hart; })) {                         // harte Bedingung (z. B. Raum ausserhalb des Bandes): sofort zurueckziehen
+            var hb = bad.filter(function (x) { return x.hart; })[0];
+            endProp('Bedingung entfallen: ' + (hb.tn || hb.t)); rs.since = 0; rs.failSince = 0;
+        }
         if (bad.length) {
             if (rs.prop) {                                                                  // laufender Vorschlag: erst nach 3 min am Stueck zurueckziehen (kein Flattern)
                 rs.failSince = rs.failSince || now;
@@ -433,7 +606,7 @@ var ENGINE = (function () {
                 return res;
             }
         }
-        var lk = locksFor(R, d, S, cfg, inp, e.dir);
+        var lk = locksFor(R, d, S, cfg, inp, e.dir, e);
         res.locks = lk.map(function (l) { return l.id; });
         if (lk.length) {
             if (rs.prop) { endProp('gesperrt: ' + lk[0].text); }
@@ -449,6 +622,7 @@ var ENGINE = (function () {
                      was: e.was, warum: e.warum, erwartung: R.erwartung, rueckweg: R.rueckweg, wann: 'ausgelöst ' + hhmm(now) + (e.halt ? ' nach ' + e.halt + ' min über allen Schwellen' : '')};
             p.sum = checksum(p);
             rs.prop = p; res.neu = true;
+            if (R.groesse === 'shift') { S.arb.owner = R.id; S.arb.soll = e.wert; S.arb.von = e.von; S.arb.start = now; }      // Arbitrierung: diese Regel hat jetzt die Verschiebung
         }
         res.st = R.art === 'hinweis' ? 'hinweis' : 'vorschlag'; res.p = rs.prop.id; res.grund = rs.prop.warum;
         return res;
@@ -462,6 +636,7 @@ var ENGINE = (function () {
         SNAP_KEYS.forEach(function (k) { var v = inp[k]; if (v === undefined || v === null || v === '') { return; } o[k] = typeof v === 'number' ? r2(v) : v; });
         if (inp.rooms) { o.rooms = inp.rooms.map(function (r) { return [r.id, r2(num(r.t)), r2(num(r.age)), r.valid ? 1 : 0, r2(num(r.min)), r2(num(r.max)), r.active === false ? 0 : 1, r.name || r.id]; }); }
         if (inp.korr) { o.korr = {v: num(inp.korr.v), code: inp.korr.code || '', distrib: inp.korr.distrib ? 1 : 0, lead: inp.korr.lead || ''}; }
+        if (inp.vs && Array.isArray(inp.vs.at)) { o.vs = {}; Object.keys(inp.vs).forEach(function (k) { var v = inp.vs[k]; if (v !== null && v !== undefined && v !== '') { o.vs[k] = typeof v === 'number' ? r2(v) : v; } }); }
         return o;
     }
     function unsnap(t, o) {                                                       // Gegenstueck: aus einem Datensatz wieder eine Eingabe machen (Nachspielen)
@@ -469,6 +644,7 @@ var ENGINE = (function () {
         SNAP_KEYS.forEach(function (k) { if (o[k] !== undefined) { inp[k] = o[k]; } });
         inp.rooms = (o.rooms || []).map(function (a) { return {id: a[0], name: a[7] || a[0], t: a[1], age: a[2], valid: a[3] === 1, min: a[4], max: a[5], active: a[6] !== 0}; });
         if (o.korr) { inp.korr = o.korr; }
+        if (o.vs) { inp.vs = o.vs; }
         return inp;
     }
 
@@ -480,6 +656,9 @@ var ENGINE = (function () {
         S = fixState(S, now);
         var d = derive(S, inp, cfg);
         track(S, d, inp, cfg);
+        if (!S.arb.owner) {                                                          // Arbitrierung nach dem Laden eines aelteren Zustands: laufenden Vorschlag als Eigentuemer eintragen
+            RULES.forEach(function (R) { var p0 = S.rules[R.id].prop; if (R.groesse === 'shift' && p0 && !S.arb.owner) { S.arb.owner = R.id; S.arb.soll = p0.cmd.value; S.arb.von = p0.von; S.arb.start = p0.ts; } });
+        }
         var res = [], ev = [], locks = {};
         RULES.forEach(function (R) {
             var r = evalRule(R, d, S, cfg, inp);
@@ -501,12 +680,27 @@ var ENGINE = (function () {
         // 60 min lang abgewartete Verschiebung nicht zuruecknehmen
         S.korr0Since = (d.korr && num(d.korr.v) === 0) ? (S.korr0Since || now) : 0;
         if (S.korr0Since && now - S.korr0Since >= KORR0_MIN * MIN) { ende.raum_offset = 'Raumvorschlag seit ' + KORR0_MIN + ' min wieder 0 K'; }
+        // Vorausschau: Rueckweg sofort, wenn ein Raum das Band in Gegenrichtung verlaesst; sonst, wenn die Vorhersage 15 min am Stueck nicht mehr die halbe Schwelle zeigt
+        var cv = cfg.rules.vorausschau, sh = have(d.shift) ? sgnOf(d.shift) : 0, dkv = bedarfK(d.vs, cv);
+        if (sh !== 0) {
+            var gegen = sh > 0 ? d.roomAbove[0] : d.roomBelow[0];
+            if (gegen) { ende.vorausschau = gegen.name + (sh > 0 ? ' über Maximum' : ' unter Minimum'); S.vsEndSince = 0; }
+            else {
+                S.vsEndSince = (dkv === null || sh * dkv < cv.deltaK / 2) ? (S.vsEndSince || now) : 0;
+                if (S.vsEndSince && now - S.vsEndSince >= KORR0_MIN * MIN) { ende.vorausschau = 'Vorhersage zeigt die Bedarfsänderung seit ' + KORR0_MIN + ' min nicht mehr'; }
+            }
+        } else { S.vsEndSince = 0; }
+        // Uebergabe statt Hin und Her: verlangt die andere Verschiebungs-Regel genau die stehende Verschiebung, gibt es keinen Rueckweg (Ablauf und Grund ruhen)
+        var halten = {}, kvNow = d.korr && have(num(d.korr.v)) ? num(d.korr.v) : null, rV = res.filter(function (x) { return x.id === 'vorausschau'; })[0];
+        if (sh !== 0 && kvNow === d.shift) { halten.vorausschau = 'Raumeinfluss verlangt dieselbe Verschiebung (' + sg(d.shift, 0) + ' K)'; }
+        if (sh !== 0 && d.vs && d.vs.gate && dkv !== null && sh * dkv >= cv.deltaK && rV && rV.locks.indexOf('modell') < 0 && !(sh > 0 ? d.roomAbove.length : d.roomBelow.length)) { halten.raum_offset = 'Vorausschau verlangt dieselbe Verschiebung (' + sg(d.shift, 0) + ' K)'; }
+        Object.keys(halten).forEach(function (k) { delete ende[k]; });
         S.last = now;
         var rec = {t: iso(now), mv: VER, sv: svOf(cfg), in: snapshot(inp),
                    abl: {z: d.zustand, lauf_min: r2(d.runMin), vl_rueck: r2(d.vlRueck), rl_rueck: r2(d.rlRueck), erreicht: d.reached ? 1 : 0, vl_k_h: r2(d.vlSlope), stopp_in_min: r2(d.stopEtaMin), starts_3h: d.starts3h},
                    r: res.map(function (x) { var o = {id: x.id, v: x.v, st: x.st, grund: x.grund}; if (x.naechste) { o.naechste = recNext(x.naechste); } if (x.p) { o.p = x.p; } if (x.locks.length) { o.sperren = x.locks; } return o; }),
                    vorschlag: prop ? prop.id : null};
-        return {S: S, d: d, res: res, prop: prop, rec: rec, ev: ev, scores: sc, ende: ende, locks: locks};
+        return {S: S, d: d, res: res, prop: prop, rec: rec, ev: ev, scores: sc, ende: ende, halten: halten, locks: locks};
     }
     function recNext(nx) { var o = {}; ['b', 'ist', 's', 'abstand', 'u', 'weitere', 'halt', 'bis'].forEach(function (k) { if (nx[k] !== undefined && nx[k] !== null && nx[k] !== '') { o[k] = nx[k]; } }); return o; }
 
@@ -524,6 +718,11 @@ var ENGINE = (function () {
             if (!r || !roomScore(r)) { return null; }
             return ctx.dir === 'soll_runter' ? (r.t > r.max ? 1 : 0) : (r.t < r.min ? 1 : 0);
         }
+        if (rule === 'vorausschau') {                                               // Problem: der knappste Raum (bei t0) steht hoechstens reserveK am Bandrand
+            var rv = d.rooms.filter(function (x) { return x.name === ctx.lead || x.id === ctx.lead; })[0];
+            if (!rv || !roomScore(rv)) { return null; }
+            return ctx.dir === 'soll_runter' ? (rv.t >= rv.max - c.reserveK ? 1 : 0) : (rv.t <= rv.min + c.reserveK ? 1 : 0);
+        }
         if (rule === 'heizgrenze_hinweis') {
             var act = d.rooms.filter(function (x) { return x.active; });
             if (!act.length || act.some(function (x) { return !roomScore(x); })) { return null; }
@@ -532,14 +731,15 @@ var ENGINE = (function () {
         }
         return null;
     }
+    function roomRule(rule) { return rule === 'raum_offset' || rule === 'heizgrenze_hinweis' || rule === 'vorausschau'; }
     function bandsOf(d) { var o = {}; d.rooms.forEach(function (r) { o[r.id] = [r.min, r.max, r.active ? 1 : 0]; }); return o; }
     function newTracker(rule, now, ctx, d) { ctx.bands = bandsOf(d); return {rule: rule, t0: now, ctx: ctx, cut: 0, stop: 0, stopVlStop: false, wasRun: false, ser: []}; }
     function trackerUpdate(T, d, cfg) {
         var now = d.now, H = Math.max.apply(null, RULE[T.rule].prognose.h) * MIN;
         if (now - T.t0 > H || T.cut) { return; }
-        if (now > T.t0 && (d.qChanged || d.shiftChanged || Math.abs(d.sollJump) >= 2)) { T.cut = now; T.cutWhy = d.qChanged ? 'Quiet geändert' : (d.shiftChanged ? 'Verschiebung geändert' : 'Soll von Hand geändert'); return; }   // Eingriff von aussen: ab hier keine Gegenfaktik mehr
-        if ((T.rule === 'raum_offset' || T.rule === 'heizgrenze_hinweis') && JSON.stringify(bandsOf(d)) !== JSON.stringify(T.ctx.bands)) { T.cut = now; T.cutWhy = 'Komfortband geändert'; return; }   // Komfortband geaendert = Eingriff
-        if (T.rule === 'raum_offset' || T.rule === 'heizgrenze_hinweis') {                // Lueftungsverdacht: Raum faellt >= 1 K in <= 60 min (Heizung kann das nicht) = Eingriff von aussen
+        if (now > T.t0 && (d.qChanged || d.shiftChanged || Math.abs(d.sollJump) >= 2)) { T.cut = now; T.cutWhy = d.qChanged ? 'Quiet geändert' : (d.shiftChanged ? 'Verschiebung geändert' + (d.shiftBy ? ' (Vorschlag „' + RULE[d.shiftBy].kurz + '“ übernommen)' : '') : 'Soll von Hand geändert'); return; }   // Eingriff von aussen: ab hier keine Gegenfaktik mehr
+        if (roomRule(T.rule) && JSON.stringify(bandsOf(d)) !== JSON.stringify(T.ctx.bands)) { T.cut = now; T.cutWhy = 'Komfortband geändert'; return; }   // Komfortband geaendert = Eingriff
+        if (roomRule(T.rule)) {                // Lueftungsverdacht: Raum faellt >= 1 K in <= 60 min (Heizung kann das nicht) = Eingriff von aussen
             T.rh = T.rh || {};
             var vent = null;
             d.rooms.forEach(function (r) {
@@ -568,10 +768,11 @@ var ENGINE = (function () {
         }
         var ser = T.ser.filter(function (p) { return p[0] <= H; });
         if (T.rule === 'quiet_freigabe' && T.stop && T.stop - T.t0 <= H && T.stopVlStop) { return {o: 0, why: 'Verdichter holte auf und schaltete ab'}; }
-        if (T.rule === 'raum_offset') {                                              // Raum: letzter gueltiger Wert in den letzten 30 min vor dem Horizont
+        if (T.rule === 'raum_offset' || T.rule === 'vorausschau') {                  // Raum: letzter gueltiger Wert in den letzten 30 min vor dem Horizont
             if (T.cut && T.cut < T.t0 + H) { return {o: null, why: 'Eingriff nach ' + mins(T.cut - T.t0) + ' min: ' + (T.cutWhy || '')}; }
             var lastP = ser.filter(function (p) { return p[0] >= H - 30 * MIN; });
             if (!lastP.length) { return {o: null, why: 'Raumwert am Horizont ungültig'}; }
+            if (T.rule === 'vorausschau') { return {o: lastP[lastP.length - 1][1], why: lastP[lastP.length - 1][1] ? 'Raum am Bandrand' : 'Raum mit Luft im Band'}; }
             return {o: lastP[lastP.length - 1][1], why: lastP[lastP.length - 1][1] ? 'Raum weiter außerhalb des Bandes' : 'Raum wieder im Band'};
         }
         if (ser.length < SCORE.teilMin * h * (T.rule === 'quiet_freigabe' ? 0.5 : 0.3)) { return {o: null, why: 'zu wenige gültige Minuten (' + ser.length + ')'}; }
@@ -589,10 +790,16 @@ var ENGINE = (function () {
         if (rule === 'quiet_freigabe') { return (have(d.q) && d.q >= 1 && d.running && d.runMin >= c.laufMin && have(d.hz) && d.hz <= c.capHz && have(d.rlRueck) && d.rlRueck >= 1.0) ? {} : null; }
         if (rule === 'quiet_strecken') { return (have(d.q) && d.q < 3 && d.running && d.runMin >= c.laufMin && have(d.hz) && d.hz >= c.hzHoch) ? {} : null; }
         if (rule === 'raum_offset') { if (d.roomBelow.length) { return {lead: d.roomBelow[0].id, dir: 'soll_hoch'}; } if (d.roomAbove.length) { return {lead: d.roomAbove[0].id, dir: 'soll_runter'}; } return null; }
+        if (rule === 'vorausschau') {                                                // Vergleichslage: Vorhersage zeigt mindestens die halbe Schwelle, alle Raeume gueltig im Band (unabhaengig vom Gate)
+            var dk = bedarfK(d.vs, c), act = d.rooms.filter(function (x) { return x.active; });
+            if (dk === null || Math.abs(dk) < c.deltaK / 2 || !act.length || act.some(function (x) { return !x.valid || !have(x.min) || !have(x.max) || x.t < x.min || x.t > x.max; })) { return null; }
+            var ld = null; act.forEach(function (x) { var m = dk > 0 ? x.t - x.min : x.max - x.t; if (ld === null || m < ld.m) { ld = {id: x.id, m: m}; } });
+            return {lead: ld.id, dir: dk > 0 ? 'soll_hoch' : 'soll_runter'};
+        }
         if (rule === 'heizgrenze_hinweis') { return (have(d.heatOffAT) && d.heatOffAT > c.zielC && d.running && d.runMin >= c.laufMin && have(d.at) && d.at > c.zielC) ? {} : null; }
         return null;
     }
-    function svOf(cfg) { return cfg && cfg.sv === 1 ? 1 : SCORE_VER; }
+    function svOf(cfg) { return cfg && (cfg.sv === 1 || cfg.sv === 2) ? cfg.sv : SCORE_VER; }
     // Summen je Regel, Regelversion und Bewertungsversion (v1 behaelt den alten Schluessel "regel|vN", damit alte Punkte unveraendert getrennt bleiben)
     function tot(sc, rule, ver, sv) { var k = rule + '|v' + ver + (sv > 1 ? '|s' + sv : ''); return sc.tot[k] = sc.tot[k] || {rule: rule, ver: ver, sv: sv, since: 0, punkte: 0, faelle: 0, bewertet: 0, treffer: 0, fehlalarm: 0, neutral: 0, bs: 0, bsRef: 0, schaden: 0, verpasst: 0, verpasstSperre: 0, wirkN: 0, wirkP: 0, kalib: 0}; }
     function book(sc, recs, rec, now) {
@@ -657,7 +864,7 @@ var ENGINE = (function () {
         sc.cases = sc.cases.filter(function (C) { return !C.closed; });
         // Vergleichslagen fuer die Basisrate: je Regel hoechstens eine je 15 min (Raum/Heizgrenze: je 60 min), damit sich Faelle kaum ueberlappen
         RULES.forEach(function (R) {
-            var slot = (R.id === 'raum_offset' || R.id === 'heizgrenze_hinweis') ? 60 : 15, sk = Math.floor(now / (slot * MIN));
+            var slot = roomRule(R.id) ? 60 : 15, sk = Math.floor(now / (slot * MIN));
             if (sc.lastSlot[R.id] === sk) { return; }
             var cn = candidateNow(R.id, d, cfg);
             if (cn) { sc.lastSlot[R.id] = sk; sc.cands.push({rule: R.id, t0: now, h: R.prognose.h.slice(), done: [], tr: newTracker(R.id, now, {lead: cn.lead, dir: cn.dir}, d)}); }
@@ -719,7 +926,8 @@ var ENGINE = (function () {
             }
         }
         if (d.shiftChanged && have(d.shiftFrom) && Math.abs(d.shift - d.shiftFrom) === 1 && d.fresh) {
-            sc.eff.push({rule: 'raum_offset', t0: now, art: 'verschiebung', soll0: S._sollPrev, dshift: d.shift - d.shiftFrom, kal: isKal('raum_offset', now), m: {}, text: 'Verschiebung ' + sg(d.shiftFrom, 0) + ' → ' + sg(d.shift, 0) + ' K'});
+            var er = d.shiftBy && (sc.sv || SCORE_VER) >= 3 ? d.shiftBy : 'raum_offset';                // v3: die Regel, deren Vorschlag uebernommen wurde (sonst wie bisher Raumeinfluss)
+            sc.eff.push({rule: er, t0: now, art: 'verschiebung', soll0: S._sollPrev, dshift: d.shift - d.shiftFrom, kal: isKal(er, now), m: {}, text: 'Verschiebung ' + sg(d.shiftFrom, 0) + ' → ' + sg(d.shift, 0) + ' K'});
         }
         if (d.fresh) { S._pelPrev = have(d.pel) ? d.pel : S._pelPrev; S._vlPrev = d.vl; S._hzPrev = d.hz; S._sollPrev = d.soll; }
     }
@@ -768,13 +976,13 @@ var ENGINE = (function () {
     //     Dauer erreichen, ist es "verpasst" (-20). Lief die Dauer nur wegen eigener Sperren ab, gibt es einen neutralen Eintrag "verpasst_sperre"
     //     (0 Punkte, getrennt gezaehlt). Ein harter Schaden im Fenster (SCORE.verpasstSperre.schaden) hebt die Entschuldigung auf: dann -20.
     var EXCUSE = ['anlauf', 'daten', 'mqtt_sperre', 'abtauen', 'warmwasser', 'sanftanlauf', 'regler', 'heizstab'];
-    var OWN_TEXT = {abstand: 'Mindestabstand', tageslimit: 'Tageslimit', abkuehlzeit: 'Wartezeit', haltezeit: 'Haltezeit', stabil: 'Stabilitätszeit'};
+    var OWN_TEXT = {abstand: 'Mindestabstand', tageslimit: 'Tageslimit', abkuehlzeit: 'Wartezeit', haltezeit: 'Haltezeit', stabil: 'Stabilitätszeit', vorrang: 'Verschiebung einer anderen Regel', gegenrichtung: 'Wartezeit Gegenrichtung'};
     var MISS_DMG_TEXT = {komfort: 'Raum mehr als 1 K unter Minimum', takt: 'Verdichter stoppte', ueberschwingen: 'Vorlauf über der Abschaltgrenze (Soll +3,25 K)'};
     function stdOf(R, key) { var x = R.schwellen.filter(function (s) { return s.key === key; })[0]; return x ? x.std : null; }
     // Haelt die Regel in dieser Minute NUR eine eigene Sperre/Wartezeit zurueck? -> {ids: [...]} (mit Standardwerten gueltig), {ext: [...]} (nur wegen
     // verlaengerter Werte) oder null (andere Gruende: Bedingung fehlt, fremde Sperre, Vorschlag ...)
-    function ownBlock(R, r, d, S, cfg) {
-        var own = SCORE.verpasstSperre.eigene, rs = S.rules[R.id], c = cfg.rules[R.id], now = d.now, ok = [], ext = [];
+    function ownBlock(R, r, d, S, cfg, sv) {
+        var own = SCORE.verpasstSperre.eigene.concat(sv >= 3 ? SCORE.verpasstSperre.gegenregel : []), rs = S.rules[R.id], c = cfg.rules[R.id], now = d.now, ok = [], ext = [];
         if (!r) { return null; }
         if (r.st === 'gesperrt' && r.locks.length) {
             if (!r.locks.every(function (l) { return own.indexOf(l) >= 0; })) { return null; }
@@ -783,6 +991,8 @@ var ENGINE = (function () {
                 if (l === 'abstand') { var chg = R.groesse === 'quiet' ? S.qChg : (R.groesse === 'shift' ? S.shiftChg : 0); std = !!chg && now - chg < LOCK_CFG.gapMin * MIN; }
                 if (l === 'tageslimit') { std = rs.n >= stdOf(R, 'proTag'); }
                 if (l === 'abkuehlzeit') { std = rs.cool - (c.pauseMin - stdOf(R, 'pauseMin')) * MIN > now; }
+                if (l === 'vorrang') { std = true; }                                        // Eigentum einer anderen Regel: kein Zeitwert
+                if (l === 'gegenrichtung') { var ls = S.arb.last; std = !!ls && now - ls.end < (r.hart ? LOCK_CFG.shiftHaltMin : LOCK_CFG.gegenMin) * MIN; }
                 (std ? ok : ext).push(l);
             });
             return ext.length ? {ext: ext} : {ids: ok};
@@ -833,7 +1043,9 @@ var ENGINE = (function () {
                     }
                     return;
                 }
-                var dt = Math.min(Math.max(0, now - (G.last || now)), 2 * MIN), ob = ownBlock(R, r, d, S, cfg);
+                // v3: schlaegt eine andere Verschiebungs-Regel fuer diese Lage dieselbe Richtung vor, ist die Lage versorgt
+                if (sv >= 3 && R.groesse === 'shift' && S.arb.owner && S.arb.owner !== R.id && sgnOf(S.arb.soll - S.arb.von) === 1) { G.prop = true; G.durch = S.arb.owner; }
+                var dt = Math.min(Math.max(0, now - (G.last || now)), 2 * MIN), ob = ownBlock(R, r, d, S, cfg, sv);
                 G.last = now; G.ids = G.ids || []; G.ext = G.ext || []; G.dmg = G.dmg || [];
                 if (ob && ob.ids) { G.gesperrt = (G.gesperrt || 0) + dt; ob.ids.forEach(function (x) { if (G.ids.indexOf(x) < 0) { G.ids.push(x); } }); }
                 else { G.frei = (G.frei || 0) + dt; if (ob && ob.ext) { ob.ext.forEach(function (x) { if (G.ext.indexOf(x) < 0) { G.ext.push(x); } }); } }
@@ -919,7 +1131,7 @@ var ENGINE = (function () {
     function cmdOk(name, value) { var W = WHITELIST[name]; if (!W) { return 'Befehl ' + name + ' steht nicht auf der Whitelist'; } if (W.werte.indexOf(value) < 0) { return 'Wert ' + value + ' für ' + name + ' nicht erlaubt (' + W.werte.join(', ') + ')'; } return null; }
     function cmdMsg(name, value, source) { return {topic: WHITELIST[name].topic, payload: String(value), source: source}; }
     function fresh(plant) { return have(num(plant.hpAge)) && num(plant.hpAge) <= APPLY.hpMaxAgeMin; }
-    // ctx: {now, enabled (Hauptschalter), rules (freigegebene Regel-IDs), eng (OPT_engine: {ts, prop, locks}), plant ({q, shift, hpAge, block, heatMode, z1Sensor}), cfg, endReason}
+    // ctx: {now, enabled (Hauptschalter), rules (freigegebene Regel-IDs), eng (OPT_engine: {ts, prop, locks}), plant ({q, shift, hpAge, block, heatMode, z1Sensor}), cfg, endReason, halten}
     function applyRequest(A, req, ctx) {
         A = (A && A.mv === VER) ? A : newApply();
         var now = ctx.now, out = {A: A, send: [], toast: null, log: []}, act = req && req.topic, pl = (req && req.payload) || {}, plant = ctx.plant || {};
@@ -1020,14 +1232,15 @@ var ENGINE = (function () {
         }
         if (blocked) { return out; }                                                     // Notbremse: warten, nicht zaehlen
         var why = null;
-        if (a.bis && now >= a.bis) { why = 'Rückweg nach Ablauf (' + hhmm(a.bis) + ')'; }
+        var halt = ctx.halten && ctx.halten[a.rule];                                     // Uebergabe: die andere Verschiebungs-Regel verlangt denselben Wert -> kein Rueckweg (kein Hin und Her)
+        if (a.bis && now >= a.bis && !halt) { why = 'Rückweg nach Ablauf (' + hhmm(a.bis) + ')'; }
         else if (a.bestaetigt && ctx.endReason && ctx.endReason[a.rule]) { why = 'Rückweg: ' + ctx.endReason[a.rule]; }
         if (why && fresh(plant)) { return startReturn(A, ctx, out, why); }
         return out;
     }
 
     return {VER: VER, SCORE_VER: SCORE_VER, RULES: RULES, RULE: RULE, LOCKS: LOCKS, LOCK_CFG: LOCK_CFG, SCORE: SCORE, WHITELIST: WHITELIST, APPLY: APPLY,
-            brier: brier, defaults: defaults, mergeCfg: mergeCfg, newState: newState, fixState: fixState, step: step, report: report, messStatus: messStatus, MESS: MESS, snapshot: snapshot, unsnap: unsnap,
+            brier: brier, vorschau: vorschau, bedarfK: bedarfK, defaults: defaults, mergeCfg: mergeCfg, newState: newState, fixState: fixState, step: step, report: report, messStatus: messStatus, MESS: MESS, snapshot: snapshot, unsnap: unsnap,
             checksum: checksum, newApply: newApply, applyRequest: applyRequest, applyTick: applyTick, iso: iso, hhmm: hhmm, isoWeek: isoWeek, de: de, sg: sg};
 })();
 if (typeof module !== 'undefined' && module.exports) { module.exports = ENGINE; }
