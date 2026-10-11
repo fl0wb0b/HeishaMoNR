@@ -311,11 +311,16 @@ console.log('--- Nachpruefung: Ruecklese-Timeout, Flackern des Raumvorschlags');
 
 // ================================================================== (d) Vorausschau ±1 K und Verschiebungs-Arbitrierung (keine Regel beisst eine andere)
 console.log('--- (d) Vorausschau und Verschiebungs-Arbitrierung');
-const VSK = {up: [10, 10, 9, 8, 7, 7, 7], down: [8, 8, 9, 10.5, 11, 11, 11], flat: [10, 10, 10, 10, 10, 10, 10]};   // Bedarf +2,25 K / -2,38 K / 0 K
+const VSK = {up: [10, 10, 9, 8, 7, 7, 7], down: [8, 8, 9, 10.5, 11, 11, 11], flat: [10, 10, 10, 10, 10, 10, 10]};   // gegen den Tagesgang 10 °C: Bedarf +2,25 K / -2,38 K / 0 K
 const vsx = (at, o) => Object.assign({age: 10, at: at, n: 12, minDays: 10, gate: 1, ua: 0.22, tbal: 15, aktiv: 0}, o || {});
 const kx = (v, lead) => ({v: v, code: v ? (v > 0 ? 'Raum unter Minimum' : 'Überschreitung') : 'alle im Band', distrib: false, lead: lead || 'Kinderzimmer oben'});
-function runD(n, f, S0, c) {                                                      // wie runSeq, haelt aber je Minute eine Kopie der Verschiebungs-Vorschlaege fest (der Zustand wird fortgeschrieben)
-    const R = {S: S0 || null, outs: []};
+function seedS(val, t) {                                                         // Zustand mit 8 Tagen gemessenem Tagesgang (konstant val °C, bzw. val(Stunde)), Maschine "neu gestartet" zu t
+    t = t || T0; const S = E.newState(t), H = 3600000;
+    for (let k = 8 * 24; k >= 1; k--) { const hs = Math.floor((t - k * H) / H) * H, v = typeof val === 'function' ? val(hs) : val; S.atH.push([hs, v * 60, 60, 0, 0]); }
+    return S;
+}
+function runD(n, f, S0, c) {                                                      // wie runSeq (mit Tagesgang 10 °C), haelt aber je Minute eine Kopie der Verschiebungs-Vorschlaege fest
+    const R = {S: S0 === undefined ? seedS(10) : S0, outs: []};
     for (let i = 0; i < n; i++) { const o = E.step(R.S, f(i), c || cfg); R.S = o.S; o.snap = {raum_offset: o.S.rules.raum_offset.prop ? JSON.parse(JSON.stringify(o.S.rules.raum_offset.prop)) : null, vorausschau: o.S.rules.vorausschau.prop ? JSON.parse(JSON.stringify(o.S.rules.vorausschau.prop)) : null}; R.outs.push(o); }
     return R;
 }
@@ -405,10 +410,20 @@ console.log('--- (d) Sonne/Wind nur mit coefActivate, Bewertung und Neutralitaet
     const vOff = E.vorschau(W, PLoff, PI, 11, now), vOn = E.vorschau(W, PLon, PI, 11, now), c = cfg.rules.vorausschau;
     check('Vorhersage-Eingabe: Fuehler 11 °C, OWM jetzt 10 °C -> an den Fuehler angeglichen (Versatz klingt ab), 7 Stuetzstellen', vOff.at[0] === 11 && Math.abs(vOff.at[1] - (10 - 2 / 3 + Math.exp(-1 / 4))) < 0.06 && vOff.at.length === 7 && vOff.age === 10, JSON.stringify(vOff.at));
     check('coefActivate aus: Sonne und Wind stehen gar nicht in der Eingabe (kein pv/wind/bs/bw), auch wenn PV-Prognose und Wind vorliegen', !('pv' in vOff) && !('wind' in vOff) && !('bs' in vOff) && !('bw' in vOff) && vOff.aktiv === 0, Object.keys(vOff).join(','));
-    const vInj = Object.assign({}, vOff, {pv: [9000, 9000, 9000, 9000, 9000, 9000, 9000], wind: [15, 15, 15, 15, 15, 15, 15], bs: 0.9, bw: 0.1});
-    check('coefActivate aus: selbst eingeschleuste Sonne/Wind-Werte aendern die Bedarfsaenderung nicht (nur Temperatur)', E.bedarfK(vInj, c) === E.bedarfK(vOff, c), E.bedarfK(vOff, c) + ' / ' + E.bedarfK(vInj, c));
-    check('coefActivate an (Gate offen): Wind und PV-Prognose gehen ein und veraendern die Bedarfsaenderung', vOn.aktiv === 1 && vOn.pv.length === 7 && vOn.pv[3] === 4000 && vOn.wind[3] === 9 && E.bedarfK(vOn, c) !== E.bedarfK(vOff, c), E.bedarfK(vOff, c) + ' -> ' + E.bedarfK(vOn, c));
-    check('Vorhersage alt (> 120 min) oder zu kurz: Vorausschau ruht', /min alt/.test(r0(E.step(null, inp(T0, {vs: vsx(VSK.up, {age: 150})}), cfg), 'vorausschau').grund) && /reicht nicht/.test(r0(E.step(null, inp(T0, {vs: vsx([10, 10, 9, null, null, null, null])}), cfg), 'vorausschau').grund) && E.vorschau({f_ts: now, fpts: []}, PLoff, null, 10, now) === null, '');
+    const vInj = Object.assign({}, vOff, {pv: [9000, 9000, 9000, 9000, 9000, 9000, 9000], wind: [15, 15, 15, 15, 15, 15, 15], bs: 0.9, bw: 0.1}), B10 = {at: [0, 0, 0, 0, 0, 0, 0], pv: [0, 0, 0, 0, 0, 0, 0]};
+    check('coefActivate aus: selbst eingeschleuste Sonne/Wind-Werte aendern die Bedarfsaenderung nicht (nur Temperatur)', E.bedarfK(vInj, c, B10) === E.bedarfK(vOff, c, B10) && E.bedarfK(vOff, c, B10) !== null, E.bedarfK(vOff, c, B10) + ' / ' + E.bedarfK(vInj, c, B10));
+    check('coefActivate an (Gate offen): Wind und PV-Prognose gehen ein und veraendern die Bedarfsaenderung', vOn.aktiv === 1 && vOn.pv.length === 7 && vOn.pv[3] === 4000 && vOn.wind[3] === 9 && E.bedarfK(vOn, c, B10) !== E.bedarfK(vOff, c, B10), E.bedarfK(vOff, c, B10) + ' -> ' + E.bedarfK(vOn, c, B10));
+    // Tagesgang herausgerechnet: ein gewoehnlicher Tag (Vorhersage = gestern zur selben Uhrzeit) ergibt 0, Wetter ergibt die Aenderung
+    const day = hs => 6 + 4 * Math.sin(2 * Math.PI * ((new Date(hs).getHours() + 0.5) - 9) / 24), t15 = new Date(2026, 9, 12, 15, 30).getTime();
+    const Sd = seedS(day, t15), base = E.tagesgang(Sd, t15), fc = off => vsx([0, 1, 2, 3, 4, 5, 6].map(h => Math.round((day(t15 + h * H) + (h >= 2 ? off : 0)) * 10) / 10));
+    check('Tagesgang herausgerechnet: Vorhersage 15:30 wie gestern (abends ~4 K kaelter, Tagesgang ±4 K) -> Bedarfsaenderung ~0, kein Vorschlag; derselbe Abend 3 K kaelter als gestern -> ~+3 K',
+          Math.abs(E.bedarfK(fc(0), c, base)) < 0.3 && Math.abs(E.bedarfK(fc(-3), c, base) - 3) < 0.3 && E.bedarfK(fc(0), c, {at: [null, null, null, null, null, null, null]}) === null && (fc(0).at[0] - fc(0).at[5]) >= 3.5,
+          'gleich wie gestern ' + E.bedarfK(fc(0), c, base) + ' K, 3 K kaelter ' + E.bedarfK(fc(-3), c, base) + ' K; ohne Tagesgang-Abzug waeren es ' + E.bedarfK(fc(0), c, B10) + ' K');
+    { let Rn = runD(90, i => inp(t15 + i * MIN, {vs: fc(0)}), seedS(day, t15)); const Rk = runD(90, i => inp(t15 + i * MIN, {vs: fc(-3)}), seedS(day, t15));
+      check('... in der Maschine: gewoehnlicher Nachmittag -> kein Vorschlag, kaelterer Abend als gestern -> +1 K', shiftProps(Rn).length === 0 && shiftProps(Rk).length === 1 && shiftProps(Rk)[0].p.cmd.value === 1 && /aus dem Wetter/.test(shiftProps(Rk)[0].p.warum), shiftProps(Rk).map(x => x.p.warum).join(' | ') + ' / ohne: ' + r0(Rn.outs[89], 'vorausschau').grund);
+      Rn = runD(30, i => inp(T0 + i * MIN, {vs: vsx(VSK.up)}), null);
+      check('Ohne 24 h gemessenen Tagesgang (frischer Zustand): Vorausschau ruht ("Tagesgang noch nicht bekannt"), bei geschlossenem Gate "gesperrt" mit diesem Zusatz', /^Tagesgang noch nicht bekannt \(\d+ h gemessen, mindestens 36 h\)$/.test(r0(Rn.outs[29], 'vorausschau').grund) && /Gebäudemodell.*; außerdem Tagesgang noch nicht bekannt/.test(r0(E.step(null, inp(T0, {vs: vsx(VSK.up, {gate: 0})}), cfg), 'vorausschau').grund), r0(Rn.outs[29], 'vorausschau').grund); }
+    check('Vorhersage alt (> 120 min) oder zu kurz: Vorausschau ruht', /min alt/.test(r0(E.step(null, inp(T0, {vs: vsx(VSK.up, {age: 150})}), cfg), 'vorausschau').grund) && /reicht nicht/.test(r0(E.step(seedS(10), inp(T0, {vs: vsx([10, 10, 9, null, null, null, null])}), cfg), 'vorausschau').grund) && E.vorschau({f_ts: now, fpts: []}, PLoff, null, 10, now) === null, '');
     // Bewertung: Fall der Vorausschau (Treffer / Fehlalarm), nur unter ihrer Regel
     const drift = (i, end) => Math.round((i < 40 ? 22.6 : Math.max(end, 22.6 - (i - 40) * 0.004)) * 10) / 10;
     let R = runD(400, i => inp(T0 + i * MIN, {vs: vsx(i < 120 ? VSK.up : VSK.flat), rooms: rooms({ki_oben: drift(i, 22.2)})}));
@@ -423,7 +438,7 @@ console.log('--- (d) Sonne/Wind nur mit coefActivate, Bewertung und Neutralitaet
     R = runD(300, neu); sc = allScores(R).filter(s => s.regel === 'raum_offset' && /^verpasst/.test(s.typ));
     check('Neutralitaet (v3): Raumeinfluss 180 min lang nur durch die Gegenregel (uebernommene -1 K der Vorausschau) und eigene Wartezeiten gesperrt -> "verpasst_sperre" 0 Punkte mit Sperre "vorrang", kein "verpasst"',
           sc.length === 1 && sc[0].typ === 'verpasst_sperre' && sc[0].punkte === 0 && sc[0].sperre.includes('vorrang') && !/\bverpasst"/.test(JSON.stringify(sc)) && stAt(R, 150, 'raum_offset').locks[0] === 'vorrang', sc.map(s => s.t + ' ' + s.typ + ' ' + JSON.stringify(s.sperre)).join(' | '));
-    R = runD(300, neu, null, E.mergeCfg({sv: 2})); sc = allScores(R).filter(s => s.regel === 'raum_offset' && /^verpasst/.test(s.typ));
+    R = runD(300, neu, undefined, E.mergeCfg({sv: 2})); sc = allScores(R).filter(s => s.regel === 'raum_offset' && /^verpasst/.test(s.typ));
     check('... mit den Bewertungsregeln v2 (cfg.sv = 2) waere dieselbe Lage "verpasst" -20 (Gegenregel-Sperren entschuldigten dort nicht): v3 aendert genau das', sc.some(s0 => s0.typ === 'verpasst' && s0.punkte === -20 && s0.sv === 2), sc.map(s => s.t + ' ' + s.typ + ' ' + s.punkte).join(' | '));
     R = runD(300, i => { const x = neu(i); if (i >= 200) { x.rooms = rooms({ki_oben: 20.8}); } return x; }); sc = allScores(R).filter(s => s.regel === 'raum_offset' && /^verpasst/.test(s.typ));
     check('... Schaden hebt auch die Gegenregel-Entschuldigung auf: Raum 1,2 K unter Minimum -> "verpasst" -20 mit Schaden "komfort"', sc.some(s => s.typ === 'verpasst' && s.punkte === -20 && JSON.stringify(s.schaden) === '["komfort"]'), sc.map(s => s.t + ' ' + s.typ + ' ' + s.punkte).join(' | '));
@@ -439,7 +454,7 @@ function shiftSim(days, opts) {
     const P = {on: false, tw: 31, room: 22.6, room2: 21, over: 0, under: 0, shift: 0, rt: 0}, H = 3600000;
     let S = null, A = null; const log = {props: [], plantChg: [], errors: 0, conc: 0, ev: [], scores: [], claims: []};
     const start = new Date(2026, 10, 2, 0, 0, 0).getTime();
-    const atOf = t => { const i = (t - start) / MIN, h = (i % 1440) / 60, day = i / 1440; return 6 + 4 * Math.sin(2 * Math.PI * (h - 9) / 24) - (day > 2 && day < 3.5 ? 5 : 0) + (day > 4.5 ? 4 : 0); };   // Kaelteeinbruch Tag 3, Milderung ab Tag 4,5
+    const atOf = t => { const i = (t - start) / MIN, h = (i % 1440) / 60, day = i / 1440; return 6 + 4 * Math.sin(2 * Math.PI * (h - 9) / 24) - (day > 4 && day < 5.5 ? 5 : 0) + (day > 6.5 ? 4 : 0); };   // 4 gewoehnliche Tage (Tagesgang lernen), Kaelteeinbruch Tag 5, Milderung ab Tag 6,5
     for (let i = 0; i < days * 1440; i++) {
         const t = start + i * MIN, at = atOf(t), atI = Math.round(at), kurve = Math.max(29, 29 + 0.375 * (11 - atI)), soll = Math.ceil(kurve) + P.shift;
         const spread = P.on ? 2.5 : 0, vl = Math.round((P.tw + spread / 2) * 4) / 4, rl = Math.round((P.tw - spread / 2) * 4) / 4;
@@ -472,16 +487,16 @@ function shiftSim(days, opts) {
 {
     // Pruefung "kein Hin und Her" fuer eine Folge von Verschiebungs-Vorschlaegen (Shadow): Gegenrichtung erst 60 min nach dem Ende der vorigen, ohne Notfall 240 min
     const flips = L => { const bad = []; for (let k = 1; k < L.props.length; k++) { const a = L.props[k - 1], b = L.props[k], da = Math.sign(a.v - a.von), db = Math.sign(b.v - b.von); if (da && db && da === -db) { const end = (L.ev.find(e => e[0] >= a.t && e[1] === 'optimierer_ende' && e[2].indexOf(a.rule + ':') === 0) || [b.t])[0]; const gap = (b.t - end) / MIN; if (gap < 60 || (gap < 240 && !b.hart)) { bad.push(E.iso(b.t) + ' ' + b.rule + ' ' + gap + ' min'); } } } return bad; };
-    const L1 = shiftSim(6, {});
+    const L1 = shiftSim(8, {});
     const byRule = r => L1.props.filter(p => p.rule === r).length;
-    check('6 Tage (Kaelteeinbruch, Milderung), Gate offen, Shadow: kein Fehler, beide Verschiebungs-Regeln kommen vor, nie zwei Verschiebungs-Vorschlaege gleichzeitig', L1.errors === 0 && byRule('vorausschau') >= 1 && L1.conc === 0, 'Vorausschau ' + byRule('vorausschau') + ', Raumeinfluss ' + byRule('raum_offset') + ': ' + L1.props.map(p => E.iso(p.t).slice(5, 16) + ' ' + p.rule + ' ' + p.v).join(', '));
+    check('8 Tage (4 gewoehnliche Tage mit Tagesgang ±4 K, dann Kaelteeinbruch und Milderung), Gate offen, Shadow: kein Fehler, beide Verschiebungs-Regeln kommen vor, nie zwei Verschiebungs-Vorschlaege gleichzeitig', L1.errors === 0 && byRule('vorausschau') >= 1 && L1.conc === 0 && L1.props.filter(p => p.rule === 'vorausschau').every(p => (p.t - new Date(2026, 10, 2).getTime()) / 86400000 > 3.5), 'Vorausschau ' + byRule('vorausschau') + ', Raumeinfluss ' + byRule('raum_offset') + ': ' + L1.props.map(p => E.iso(p.t).slice(5, 16) + ' ' + p.rule + ' ' + p.v).join(', '));
     check('... kein Hin und Her: jede Gegenrichtung fruehestens 60 min nach dem Ende der vorigen Verschiebung, ohne Komfort-Notfall erst nach 240 min', flips(L1).length === 0, flips(L1).join(' | ') || (L1.props.length + ' Vorschlaege geprueft'));
-    const L0 = shiftSim(6, {gate: false});
-    check('... dieselben 6 Tage mit geschlossenem Gate: keine Vorausschau, der Raumeinfluss allein', L0.errors === 0 && !L0.props.some(p => p.rule === 'vorausschau'), L0.props.map(p => E.iso(p.t).slice(5, 16) + ' ' + p.rule + ' ' + p.v).join(', '));
-    const L2 = shiftSim(6, {apply: true});
+    const L0 = shiftSim(8, {gate: false});
+    check('... dieselben 8 Tage mit geschlossenem Gate: keine Vorausschau, der Raumeinfluss allein', L0.errors === 0 && !L0.props.some(p => p.rule === 'vorausschau'), L0.props.map(p => E.iso(p.t).slice(5, 16) + ' ' + p.rule + ' ' + p.v).join(', '));
+    const L2 = shiftSim(8, {apply: true});
     const chg = L2.plantChg, rev = []; for (let k = 1; k < chg.length; k++) { if (chg[k].t - chg[k - 1].t < 60 * MIN) { rev.push(E.iso(chg[k].t) + ' ' + chg[k].rule); } }
     const ap2 = L2.scores.filter(s => s.typ === 'wirkung');
-    check('6 Tage, jeder Verschiebungs-Vorschlag sofort uebernommen (Rueckweg ueber Grund/Ablauf/halten): Anlage wechselt nie binnen 60 min, Wirkung je Regel ihrem Vorschlag zugeordnet', L2.errors === 0 && chg.length >= 2 && rev.length === 0 && ap2.length >= 1 && ap2.every(s => chg.some(c0 => c0.rule === s.regel)) && L2.conc === 0, chg.map(c0 => E.iso(c0.t).slice(5, 16) + ' ' + c0.rule + '=' + c0.v).join(', ') + (rev.length ? ' | zu schnell: ' + rev.join(', ') : ''));
+    check('8 Tage, jeder Verschiebungs-Vorschlag sofort uebernommen (Rueckweg ueber Grund/Ablauf/halten): Anlage wechselt nie binnen 60 min, Wirkung je Regel ihrem Vorschlag zugeordnet', L2.errors === 0 && chg.length >= 2 && rev.length === 0 && ap2.length >= 1 && ap2.every(s => chg.some(c0 => c0.rule === s.regel)) && L2.conc === 0, chg.map(c0 => E.iso(c0.t).slice(5, 16) + ' ' + c0.rule + '=' + c0.v).join(', ') + (rev.length ? ' | zu schnell: ' + rev.join(', ') : ''));
 }
 
 // ================================================================== Seite "Optimierer": Karten-Daten (engine_view.js) und Darstellung (eng_ui.js)
@@ -560,10 +575,13 @@ if (fs.existsSync(path.join(dataDir, 'quiet-2026-10.csv'))) {
     const nVs = RP.inputs.filter(x => x.vs).length, vsSt = {}; RP.perMin.forEach(m => { vsSt[m.st[4]] = (vsSt[m.st[4]] || 0) + 1; });
     check('Replay Vorausschau, Gate zu (1 Tag, wie live): Vorhersage in fast jeder Minute vorhanden, nie ein Vorschlag, Status "gesperrt" (Modell-Gate)', nVs >= RP.inputs.length - 30 && !RP.props.some(p => p.rule === 'vorausschau') && vsSt.gesperrt >= nVs - 30, nVs + ' Minuten mit Vorhersage, Status ' + JSON.stringify(vsSt));
     const RPo = replay(dataDir, {model: Object.assign({}, require('./engine_replay.js').ASSUME.model, {gate: true, n: 12})});
-    const dkR = RPo.inputs.filter(x => x.vs).map(x => E.bedarfK(x.vs, cfg.rules.vorausschau)).filter(x => x !== null);
+    const dkOf = R0 => R0.recs.map(l => JSON.parse(l).abl.vs_dk).filter(x => typeof x === 'number');
     const oth = R0 => JSON.stringify(R0.props.filter(p => p.rule !== 'vorausschau').map(p => [p.id, p.cmd.value]));
-    check('Replay Vorausschau, Gate testweise offen: Vorhersage 07.-10.10. zeigt hoechstens ' + E.de(Math.max.apply(null, dkR.map(Math.abs)), 1) + ' K Bedarfsaenderung; Vorschlaege der Vorausschau ' + RPo.props.filter(p => p.rule === 'vorausschau').length + ', alle anderen Vorschlaege identisch mit Gate zu, nie zwei Verschiebungs-Vorschlaege gleichzeitig',
-          oth(RPo) === oth(RP) && !RPo.perMin.some(m => m.st[2] === 'vorschlag' && m.st[4] === 'vorschlag'), RPo.props.filter(p => p.rule === 'vorausschau').map(p => E.iso(p.ts) + ' ' + p.was).join(' | '));
+    check('Replay Vorausschau, Gate testweise offen: die Daten reichen fuer keinen sicheren Tagesgang (3 Vortage) -> keine Bedarfsaenderung, kein Vorschlag, alle anderen Vorschlaege identisch, nie zwei Verschiebungs-Vorschlaege gleichzeitig',
+          dkOf(RPo).length === 0 && !RPo.props.some(p => p.rule === 'vorausschau') && oth(RPo) === oth(RP) && !RPo.perMin.some(m => m.st[2] === 'vorschlag' && m.st[4] === 'vorschlag') && /Tagesgang noch nicht sicher \([12] von 3 Vortagen\)/.test(RPo.recs[RPo.recs.length - 1]), JSON.parse(RPo.recs[RPo.recs.length - 1]).r[4].grund);
+    const RP1t = replay(dataDir, {model: Object.assign({}, require('./engine_replay.js').ASSUME.model, {gate: true, n: 12}), cfg: {rules: {vorausschau: {tagesgangTage: 1}}}}), dk1 = dkOf(RP1t);
+    check('... testweise mit einem Vortag als Tagesgang: die Kaltfront vom 08.10. abends erscheint am 09.10. als bis zu ' + E.de(Math.max.apply(null, dk1.map(Math.abs)), 1) + ' K (Begruendung fuer 3 Vortage); Vorschlaege trotzdem ' + RP1t.props.filter(p => p.rule === 'vorausschau').length + ' (Raeume ausserhalb des Bandes oder ungueltig), andere Vorschlaege identisch',
+          dk1.length > 1000 && Math.max.apply(null, dk1.map(Math.abs)) >= 4 && oth(RP1t) === oth(RP) && !RP1t.perMin.some(m => m.st[2] === 'vorschlag' && m.st[4] === 'vorschlag'), RP1t.props.filter(p => p.rule === 'vorausschau').map(p => E.iso(p.ts) + ' ' + p.was).join(' | '));
     check('Datensatzgroesse: unter 2,7 MB je Tag (ca. 80 MB/Monat; seit der Vorausschau mit Vorhersage im Schnappschuss und fuenfter Regel)', RP.bytes / (RP.inputs.length / 1440) < 2.7e6, Math.round(RP.bytes / (RP.inputs.length / 1440)) + ' Bytes/Tag');
 }
 

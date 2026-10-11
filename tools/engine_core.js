@@ -97,23 +97,60 @@ var ENGINE = (function () {
         }
         return o;
     }
-    // Waermebedarf je Stunde (kW) aus dem Gebaeudemodell: UA x (tbal - Aussen), mit aktivem Modell + Wind x Heizgrad - Sonne (hoechstens 60 % wie im Fahrplan)
-    function vsQ(v, i) {
-        var T = v.at[i]; if (!have(T)) { return null; }
-        var ua = have(v.ua) && v.ua > 0 ? v.ua : 0.22, tb = have(v.tbal) ? v.tbal : 15, dK = Math.max(0, tb - T), q = ua * dK;
-        if (v.aktiv) { var w = v.wind && have(v.wind[i]) ? v.wind[i] : 0, s = v.pv && have(v.pv[i]) ? v.pv[i] / 1000 : 0; q = Math.max(0, q + (v.bw || 0) * dK * w - Math.min((v.bs || 0) * s, 0.6 * q)); }
-        return q;
+    // Bedarfsaenderung aus dem WETTER (nicht aus der Uhrzeit) als Aussentemperatur-Aequivalent in K, > 0: mehr Bedarf erwartet.
+    // Von Vorhersage und jetzt wird zuerst der gewoehnliche Tagesgang abgezogen (base.at = mittlere Abweichung dieser Uhrzeit vom Tagesmittel, gemessen an
+    // bis zu 7 Vortagen); verglichen werden die so bereinigten Werte: Fenster gegen jetzt. Ein gewoehnlicher Abend (kaelter als der Nachmittag) ergibt ~0,
+    // ein Kaelteeinbruch oder eine Milderung die Aenderung. Sonne (nur mit aktivem Modell) ebenso gegen ihren Tagesgang. null = Vorhersage/Tagesgang reicht nicht.
+    function bedarfK(v, c, base) {
+        if (!v || !Array.isArray(v.at) || !base || !Array.isArray(base.at) || (have(base.n) && base.n < (c.tagesgangTage || 0))) { return null; }
+        var ua = have(v.ua) && v.ua > 0 ? v.ua : 0.22, tb = have(v.tbal) ? v.tbal : 15;
+        function q(i) {
+            if (!have(v.at[i]) || !have(base.at[i])) { return null; }
+            var T = v.at[i] - base.at[i], dK = Math.max(0, tb - T), x = ua * dK;
+            if (v.aktiv) {
+                var w = v.wind && have(v.wind[i]) ? v.wind[i] : 0, sp = v.pv && have(v.pv[i]) ? (v.pv[i] - (base.pv && have(base.pv[i]) ? base.pv[i] : 0)) / 1000 : 0;
+                x = Math.max(0, x + (v.bw || 0) * dK * w - Math.max(-0.6 * x, Math.min((v.bs || 0) * sp, 0.6 * x)));
+            }
+            return x;
+        }
+        var q0 = q(0), s = 0, n = 0;
+        for (var h = c.vonH; h <= c.bisH; h++) { var qi = q(h); if (qi === null) { return null; } s += qi; n++; }
+        return (q0 === null || !n) ? null : r2((s / n - q0) / ua);
     }
-    function vsFenster(v, c) {                                                       // Mittel ueber das Fenster +vonH ... +bisH (jede Stunde muss da sein)
-        var q = 0, t = 0, n = 0;
-        for (var h = c.vonH; h <= c.bisH; h++) { var qi = vsQ(v, h); if (qi === null) { return null; } q += qi; t += v.at[h]; n++; }
-        return n ? {q: q / n, at: t / n} : null;
+    function vsFenster(v, c) {                                                       // Mittel der Vorhersage ueber das Fenster +vonH ... +bisH (Text)
+        var t = 0, n = 0;
+        for (var h = c.vonH; h <= c.bisH; h++) { if (!have(v.at[h])) { return null; } t += v.at[h]; n++; }
+        return n ? {at: t / n} : null;
     }
-    // Bedarfsaenderung als Aussentemperatur-Aequivalent in K (> 0: mehr Bedarf erwartet), null = Vorhersage reicht nicht
-    function bedarfK(v, c) {
-        if (!v || !Array.isArray(v.at)) { return null; }
-        var q0 = vsQ(v, 0), f = vsFenster(v, c), ua = have(v.ua) && v.ua > 0 ? v.ua : 0.22;
-        return (q0 === null || f === null) ? null : r2((f.q - q0) / ua);
+    // Tagesgang: stuendliche Mittel der gemessenen Aussentemperatur (Fuehler; mit aktivem Modell auch PV) der letzten 8 Tage im Zustand.
+    // Fuer jetzt und +1 ... +6 h: mittlere Abweichung derselben Uhrzeit vom zentrierten 24-h-Mittel an bis zu 7 Vortagen (je Tag mindestens 20 Stunden mit
+    // mindestens 30 Minuten Daten); fehlt jeder Vortag, null. n = Zahl der verwendeten Vortage (kleinster Wert ueber die Stunden).
+    var HOUR = 3600000, TG_MINN = 30, TG_TAGE = 7;
+    function tgUpdate(S, d) {
+        var now = d.now, hs = Math.floor(now / HOUR) * HOUR, L = S.atH = Array.isArray(S.atH) ? S.atH : [];
+        if (have(d.at)) {
+            var e = L[L.length - 1];
+            if (!e || e[0] !== hs) { e = [hs, 0, 0, 0, 0]; L.push(e); }
+            e[1] += d.at; e[2]++;
+            var v = d.vs; if (v && v.aktiv && v.pv && have(v.pv[0])) { e[3] += v.pv[0]; e[4]++; }
+        }
+        while (L.length && now - L[0][0] > (TG_TAGE + 1) * 24 * HOUR + 2 * HOUR) { L.shift(); }
+    }
+    function tagesgang(S, now) {
+        var L = Array.isArray(S.atH) ? S.atH : [], M = {}, o = {at: [], pv: [], n: null, h: 0};
+        L.forEach(function (e) { if (e[2] >= TG_MINN) { M[e[0]] = e; o.h++; } });
+        function dev(t, i, cnt) {                                                    // Abweichung der Stunde t vom zentrierten 24-h-Mittel (Spalte i: 1 Temperatur, 3 PV)
+            var c = M[Math.floor(t / HOUR) * HOUR]; if (!c || !c[cnt]) { return null; }
+            var s = 0, n = 0; for (var j = -12; j < 12; j++) { var e = M[Math.floor(t / HOUR) * HOUR + j * HOUR]; if (e && e[cnt]) { s += e[i] / e[cnt]; n++; } }
+            return n >= 20 ? c[i] / c[cnt] - s / n : null;
+        }
+        for (var h = 0; h <= VS_H; h++) {
+            var sa = 0, na = 0, sp = 0, np = 0;
+            for (var k = 1; k <= TG_TAGE; k++) { var t = now + h * HOUR - k * 24 * HOUR, a = dev(t, 1, 2), p = dev(t, 3, 4); if (a !== null) { sa += a; na++; } if (p !== null) { sp += p; np++; } }
+            o.at.push(na ? Math.round(sa / na * 100) / 100 : null); o.pv.push(np ? Math.round(sp / np) : null);
+            o.n = o.n === null ? na : Math.min(o.n, na);
+        }
+        return o;
     }
     // Arbitrierung der Heizkurven-Verschiebung (alle Regeln der Groesse "shift"). Gemeinsamer Zustand S.arb:
     //   owner/soll/von/start  laufender Vorschlag (genau einer)   applied  von der Anlage uebernommene Verschiebung einer Regel   last  letzte beendete Verschiebung
@@ -302,12 +339,13 @@ var ENGINE = (function () {
         },
         {
             id: 'vorausschau', ver: 1, kurz: 'Vorausschau ±1 K', name: 'Vorausschau (Heizkurve ±1 K)', art: 'befehl', groesse: 'shift', richtung: 'verschiebung', prio: 5,
-            zweck: 'Verschiebt die Heizkurve um ±1 K, bevor sich der Wärmebedarf ändert: +1 K, wenn Wettervorhersage und Gebäudemodell in den nächsten Stunden deutlich mehr Bedarf erwarten und alle Räume noch im Band liegen (mit Luft nach oben); −1 K bei erwartetem Wärmegewinn (Milderung; Sonne und Wind nur mit freigegebenem Modell, coefActivate). Läuft erst mit offenem Gate des Gebäudemodells, nie gegen den aktuellen Raumzustand und nie gegen eine Verschiebung einer anderen Regel (Arbitrierung).',
-            eingaenge: ['Wettervorhersage OWM (+1 … +6 h, an den Außenfühler angeglichen)', 'Gebäudemodell des Wärmefahrplans (UA, Heizgrenze tbal, Gate, coefActivate)', 'Sonne (PV-Prognose) und Wind nur mit coefActivate', 'Räume (alle gültig, eigenes Band)', 'Verschiebung der Anlage (TOP27) und Eigentümer der Verschiebung', 'Soll-Vorlauf'],
+            zweck: 'Verschiebt die Heizkurve um ±1 K, bevor sich der Wärmebedarf WETTERBEDINGT ändert (der gewöhnliche Tagesgang ist herausgerechnet, die Uhrzeit allein löst nichts aus): +1 K, wenn Wettervorhersage und Gebäudemodell in den nächsten Stunden deutlich mehr Bedarf erwarten und alle Räume noch im Band liegen (mit Luft nach oben); −1 K bei erwartetem Wärmegewinn (Milderung; Sonne und Wind nur mit freigegebenem Modell, coefActivate). Läuft erst mit offenem Gate des Gebäudemodells, nie gegen den aktuellen Raumzustand und nie gegen eine Verschiebung einer anderen Regel (Arbitrierung).',
+            eingaenge: ['Wettervorhersage OWM (+1 … +6 h, an den Außenfühler angeglichen)', 'gewöhnlicher Tagesgang (gemessene Außentemperatur bis 7 Vortage)', 'Gebäudemodell des Wärmefahrplans (UA, Heizgrenze tbal, Gate, coefActivate)', 'Sonne (PV-Prognose) und Wind nur mit coefActivate', 'Räume (alle gültig, eigenes Band)', 'Verschiebung der Anlage (TOP27) und Eigentümer der Verschiebung', 'Soll-Vorlauf'],
             sperren: ['anlauf', 'daten', 'modell', 'mqtt_sperre', 'abtauen', 'warmwasser', 'sanftanlauf', 'laufbeginn', 'heizgrenze_aus', 'regler', 'vorrang', 'gegenrichtung', 'abstand', 'tageslimit', 'abkuehlzeit', 'takt', 'heizstab'],
             befehl: {name: 'SetZ1HeatRequestTemperature', topic: 'panasonic_heat_pump/commands/SetZ1HeatRequestTemperature'},
             schwellen: [
-                {key: 'deltaK', std: 2, einheit: 'K', herkunft: 'Bedarfsänderung als Außentemperatur-Äquivalent (Mittel des Fensters gegen jetzt); OWM weicht vom Fühler 1,5–1,9 K ab (08.–10.10.), darunter ist die Vorhersage kein Signal; ANNAHME'},
+                {key: 'deltaK', std: 2, einheit: 'K', herkunft: 'Bedarfsänderung aus dem Wetter als Außentemperatur-Äquivalent (Mittel des Fensters gegen jetzt, beide um den gewöhnlichen Tagesgang bereinigt); OWM weicht vom Fühler 1,5–1,9 K ab (08.–10.10.), darunter ist die Vorhersage kein Signal; ANNAHME'},
+                {key: 'tagesgangTage', std: 3, einheit: 'Vortage', herkunft: 'Der gewöhnliche Tagesgang wird aus den Vortagen gelernt (Abweichung jeder Uhrzeit vom 24-h-Mittel); mit nur einem Vortag steckt dessen Wetter darin (Replay: Kaltfront 08.10. abends erschien am 09.10. als −5 K); ANNAHME'},
                 {key: 'vonH', std: 2, einheit: 'h', herkunft: 'Fensterbeginn: +1 K wirkt über die Laufzeit erst nach 1–3 h im Raum (Speichermasse 7–10 kWh/K, Opus); ANNAHME'},
                 {key: 'bisH', std: 5, einheit: 'h', herkunft: 'Fensterende: OWM liefert 3-h-Punkte, das Vertrauen fällt mit dem Vorlauf (Fahrplan: 1 − h/48); ANNAHME'},
                 {key: 'reserveK', std: 0.3, einheit: 'K', herkunft: 'Luft im Band: bei +1 K wärmster Raum mindestens 0,3 K unter Maximum, bei −1 K kältester mindestens 0,3 K über Minimum (wie guardK des Fahrplans); ANNAHME'},
@@ -331,8 +369,12 @@ var ENGINE = (function () {
                 if (ap && ap.rule === 'vorausschau' && d.shift === ap.w) { return {inaktiv: 'Verschiebung ' + sg(d.shift, 0) + ' K (Vorausschau) steht'}; }
                 if (d.shift !== 0) { return {inaktiv: 'Verschiebung steht auf ' + sg(d.shift, 0) + ' K (Vorausschau nur von 0 K aus)'}; }
                 if (!have(v.age) || v.age > c.prognoseMaxMin) { return {inaktiv: 'Wettervorhersage ' + (have(v.age) ? de(v.age, 0) + ' min alt' : 'ohne Zeitstempel')}; }
-                var dk = bedarfK(v, c);
-                if (dk === null) { return {inaktiv: 'Wettervorhersage reicht nicht bis +' + c.bisH + ' h'}; }
+                var dk = d.vsDk, gv = !v.gate ? {id: 'modell', text: LOCK_TEXT.modell + ' (' + (v.n || 0) + ' von ' + (v.minDays || 10) + ' Tagen)', ist: v.n || 0, s: v.minDays || 10, u: 'Tage'} : null;
+                if (dk === null) {
+                    var tgw = vsFenster(v, c) === null ? 'Wettervorhersage reicht nicht bis +' + c.bisH + ' h' : (d.vsBase && d.vsBase.n > 0 ? 'Tagesgang noch nicht sicher (' + d.vsBase.n + ' von ' + c.tagesgangTage + ' Vortagen)' : 'Tagesgang noch nicht bekannt (' + (d.vsBase ? d.vsBase.h : 0) + ' h gemessen, mindestens 36 h)');
+                    if (gv) { return {cond: [{k: 'bedarf', kz: 'Bedarfsänderung', t: 'Vorhersage und Tagesgang vorhanden', tn: tgw, ok: false}], halt: 0, vorab: gv}; }
+                    return {inaktiv: tgw};
+                }
                 var up = rs.prop ? rs.prop.cmd.value > 0 : dk >= 0, sgn = up ? 1 : -1;
                 var thr = rs.prop ? c.deltaK / 2 : c.deltaK;                                   // laufender Vorschlag: Hysterese (halbe Schwelle), kein Flattern
                 var act = d.rooms.filter(function (r) { return r.active; }), allValid = act.length > 0 && act.every(function (r) { return r.valid && have(r.min) && have(r.max); });
@@ -347,11 +389,11 @@ var ENGINE = (function () {
                     {k: 'reserve', kz: 'Luft im Band', t: (up ? 'wärmster Raum mindestens ' + de(c.reserveK, 1) + ' K unter Maximum' : 'kältester Raum mindestens ' + de(c.reserveK, 1) + ' K über Minimum'), tn: (up ? (warm ? warm.name + ' nur ' + de(resv, 1) + ' K unter Maximum' : 'kein Raum') : (cold ? cold.name + ' nur ' + de(resv, 1) + ' K über Minimum' : 'kein Raum')), ok: have(resv) && resv >= c.reserveK - 1e-9, ist: r2(resv), soll: c.reserveK, op: '>=', u: 'K', dyn: true}
                 ];
                 if (!up) { cond.push({k: 'untergrenze', kz: 'Soll-Vorlauf neu', t: 'Soll-Vorlauf bleibt mindestens ' + de(c.minVlC, 0) + ' °C', tn: 'Soll-Vorlauf würde ' + de(sollNeu, 0) + ' °C (Untergrenze ' + de(c.minVlC, 0) + ' °C)', ok: have(sollNeu) && sollNeu >= c.minVlC - 1e-9, ist: r2(sollNeu), soll: c.minVlC, op: '>=', u: '°C', dyn: true}); }
-                var lead = up ? cold : warm, f = vsFenster(v, c);
+                var lead = up ? cold : warm, f = vsFenster(v, c), tg = 0; for (var hh = c.vonH; hh <= c.bisH; hh++) { tg += d.vsBase.at[hh]; } tg = tg / (c.bisH - c.vonH + 1);
                 var e = {cond: cond, halt: c.haltMin, wert: sgn, von: d.shift, dir: up ? 'soll_hoch' : 'soll_runter', lead: lead ? lead.name : '',
                          was: 'Heizkurve 0 → ' + sg(sgn, 0) + ' K (Soll-Vorlauf ' + de(d.soll, 0) + ' → ' + de(sollNeu, 0) + ' °C)',
-                         warum: 'Vorhersage +' + c.vonH + '…+' + c.bisH + ' h: Außen Ø ' + de(f.at, 1) + ' °C statt ' + de(v.at[0], 1) + ' °C jetzt, Bedarf ' + sg(dk, 1) + ' K' + (v.aktiv ? ' (mit Sonne/Wind)' : '') + '; ' + (lead ? lead.name + ' ' + (up ? de(lead.t - lead.min, 1) + ' K über Minimum' : de(lead.max - lead.t, 1) + ' K unter Maximum') : '')};
-                if (!v.gate) { e.vorab = {id: 'modell', text: LOCK_TEXT.modell + ' (' + (v.n || 0) + ' von ' + (v.minDays || 10) + ' Tagen)', ist: v.n || 0, s: v.minDays || 10, u: 'Tage'}; }
+                         warum: 'Vorhersage +' + c.vonH + '…+' + c.bisH + ' h Ø ' + de(f.at, 1) + ' °C statt ' + de(v.at[0], 1) + ' °C jetzt, gewöhnlicher Tagesgang ' + sg(tg - d.vsBase.at[0], 1) + ' K: Bedarf ' + sg(dk, 1) + ' K aus dem Wetter' + (v.aktiv ? ' (mit Sonne/Wind)' : '') + '; ' + (lead ? lead.name + ' ' + (up ? de(lead.t - lead.min, 1) + ' K über Minimum' : de(lead.max - lead.t, 1) + ' K unter Maximum') : '')};
+                if (gv) { e.vorab = gv; }
                 return e;
             }
         }
@@ -397,7 +439,7 @@ var ENGINE = (function () {
     // ------------------------------------------------------------------ Zustand (ueberlebt Neustarts per Datei)
     function newState(now) {
         var S = {mv: VER, born: now, last: now, run: {on: null, start: 0, reached: false, reachN: 0, sollTop: null}, lastStop: 0, lastStart: 0, runs: [], starts: [],
-                 defrostEnd: 0, dhwEnd: 0, defrostWas: false, dhwWas: false, q: null, qChg: 0, shift: null, shiftChg: 0, soll: null, handWas: false, vlHist: [], needSince: 0, korr0Since: 0, vsEndSince: 0,
+                 defrostEnd: 0, dhwEnd: 0, defrostWas: false, dhwWas: false, q: null, qChg: 0, shift: null, shiftChg: 0, soll: null, handWas: false, vlHist: [], needSince: 0, korr0Since: 0, vsEndSince: 0, atH: [],
                  arb: {owner: null, soll: null, von: null, start: 0, applied: null, last: null}, rules: {}, sc: newScore()};
         RULES.forEach(function (r) { S.rules[r.id] = {since: 0, failSince: 0, prop: null, cool: 0, n: 0, day: '', korrV: null, korrSince: 0, last: null}; });
         return S;
@@ -657,6 +699,7 @@ var ENGINE = (function () {
         S = fixState(S, now);
         var d = derive(S, inp, cfg);
         track(S, d, inp, cfg);
+        tgUpdate(S, d); d.vsBase = tagesgang(S, now); d.vsDk = bedarfK(d.vs, cfg.rules.vorausschau, d.vsBase);
         if (!S.arb.owner) {                                                          // Arbitrierung nach dem Laden eines aelteren Zustands: laufenden Vorschlag als Eigentuemer eintragen
             RULES.forEach(function (R) { var p0 = S.rules[R.id].prop; if (R.groesse === 'shift' && p0 && !S.arb.owner) { S.arb.owner = R.id; S.arb.soll = p0.cmd.value; S.arb.von = p0.von; S.arb.start = p0.ts; } });
         }
@@ -689,7 +732,7 @@ var ENGINE = (function () {
         S.korr0Since = (d.korr && num(d.korr.v) === 0) ? (S.korr0Since || now) : 0;
         if (S.korr0Since && now - S.korr0Since >= KORR0_MIN * MIN) { ende.raum_offset = 'Raumvorschlag seit ' + KORR0_MIN + ' min wieder 0 K'; }
         // Vorausschau: Rueckweg sofort, wenn ein Raum das Band in Gegenrichtung verlaesst; sonst, wenn die Vorhersage 15 min am Stueck nicht mehr die halbe Schwelle zeigt
-        var cv = cfg.rules.vorausschau, sh = have(d.shift) ? sgnOf(d.shift) : 0, dkv = bedarfK(d.vs, cv);
+        var cv = cfg.rules.vorausschau, sh = have(d.shift) ? sgnOf(d.shift) : 0, dkv = d.vsDk;
         if (sh !== 0) {
             var gegen = sh > 0 ? d.roomAbove[0] : d.roomBelow[0];
             if (gegen) { ende.vorausschau = gegen.name + (sh > 0 ? ' über Maximum' : ' unter Minimum'); S.vsEndSince = 0; }
@@ -705,7 +748,7 @@ var ENGINE = (function () {
         Object.keys(halten).forEach(function (k) { delete ende[k]; });
         S.last = now;
         var rec = {t: iso(now), mv: VER, sv: svOf(cfg), in: snapshot(inp),
-                   abl: {z: d.zustand, lauf_min: r2(d.runMin), vl_rueck: r2(d.vlRueck), rl_rueck: r2(d.rlRueck), erreicht: d.reached ? 1 : 0, vl_k_h: r2(d.vlSlope), stopp_in_min: r2(d.stopEtaMin), starts_3h: d.starts3h},
+                   abl: {z: d.zustand, lauf_min: r2(d.runMin), vl_rueck: r2(d.vlRueck), rl_rueck: r2(d.rlRueck), erreicht: d.reached ? 1 : 0, vl_k_h: r2(d.vlSlope), stopp_in_min: r2(d.stopEtaMin), starts_3h: d.starts3h, vs_dk: d.vsDk},
                    r: res.map(function (x) { var o = {id: x.id, v: x.v, st: x.st, grund: x.grund}; if (x.naechste) { o.naechste = recNext(x.naechste); } if (x.p) { o.p = x.p; } if (x.locks.length) { o.sperren = x.locks; } return o; }),
                    vorschlag: prop ? prop.id : null};
         return {S: S, d: d, res: res, prop: prop, rec: rec, ev: ev, scores: sc, ende: ende, halten: halten, locks: locks};
@@ -799,7 +842,7 @@ var ENGINE = (function () {
         if (rule === 'quiet_strecken') { return (have(d.q) && d.q < 3 && d.running && d.runMin >= c.laufMin && have(d.hz) && d.hz >= c.hzHoch) ? {} : null; }
         if (rule === 'raum_offset') { if (d.roomBelow.length) { return {lead: d.roomBelow[0].id, dir: 'soll_hoch'}; } if (d.roomAbove.length) { return {lead: d.roomAbove[0].id, dir: 'soll_runter'}; } return null; }
         if (rule === 'vorausschau') {                                                // Vergleichslage: Vorhersage zeigt mindestens die halbe Schwelle, alle Raeume gueltig im Band (unabhaengig vom Gate)
-            var dk = bedarfK(d.vs, c), act = d.rooms.filter(function (x) { return x.active; });
+            var dk = d.vsDk, act = d.rooms.filter(function (x) { return x.active; });
             if (dk === null || Math.abs(dk) < c.deltaK / 2 || !act.length || act.some(function (x) { return !x.valid || !have(x.min) || !have(x.max) || x.t < x.min || x.t > x.max; })) { return null; }
             var ld = null; act.forEach(function (x) { var m = dk > 0 ? x.t - x.min : x.max - x.t; if (ld === null || m < ld.m) { ld = {id: x.id, m: m}; } });
             return {lead: ld.id, dir: dk > 0 ? 'soll_hoch' : 'soll_runter'};
@@ -1248,7 +1291,7 @@ var ENGINE = (function () {
     }
 
     return {VER: VER, SCORE_VER: SCORE_VER, RULES: RULES, RULE: RULE, LOCKS: LOCKS, LOCK_CFG: LOCK_CFG, SCORE: SCORE, WHITELIST: WHITELIST, APPLY: APPLY,
-            brier: brier, vorschau: vorschau, bedarfK: bedarfK, defaults: defaults, mergeCfg: mergeCfg, newState: newState, fixState: fixState, step: step, report: report, messStatus: messStatus, MESS: MESS, snapshot: snapshot, unsnap: unsnap,
+            brier: brier, vorschau: vorschau, bedarfK: bedarfK, tagesgang: tagesgang, defaults: defaults, mergeCfg: mergeCfg, newState: newState, fixState: fixState, step: step, report: report, messStatus: messStatus, MESS: MESS, snapshot: snapshot, unsnap: unsnap,
             checksum: checksum, newApply: newApply, applyRequest: applyRequest, applyTick: applyTick, iso: iso, hhmm: hhmm, isoWeek: isoWeek, de: de, sg: sg};
 })();
 if (typeof module !== 'undefined' && module.exports) { module.exports = ENGINE; }
