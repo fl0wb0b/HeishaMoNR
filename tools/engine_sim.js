@@ -1,0 +1,822 @@
+// Offline-Pruefung der Entscheidungsmaschine (tools/engine_core.js) mit Fake-Uhr: Regeln, Sperren, Datensaetze, Punktesystem, Klick-Uebernahme,
+// Mehrtages-Szenarien mit einem einfachen Anlagenmodell, Replay der echten Daten (wenn vorhanden) und - mit Flow-Datei - die Node-RED-Huellen.
+// Usage: node tools/engine_sim.js [flows.json] [Datenordner]
+//   ohne flows.json: nur Kern + Replay; Datenordner Standard: ../engine_brief/data (fehlt er, werden die Replay-Pruefungen uebersprungen)
+process.env.TZ = process.env.TZ_SIM || 'Europe/Berlin';
+const fs = require('fs');
+const path = require('path');
+const E = require('./engine_core.js');
+const flowsFile = process.argv[2] && process.argv[2] !== '-' ? process.argv[2] : null;
+const dataDir = process.argv[3] || path.join(__dirname, '..', '..', 'engine_brief', 'data');
+let fails = 0, oks = 0;
+function check(name, cond, info) { console.log((cond ? 'OK   ' : 'FAIL ') + name + (info !== undefined && info !== '' ? '  -> ' + info : '')); if (cond) { oks++; } else { fails++; } }
+const MIN = 60000;
+const T0 = new Date(2026, 9, 12, 6, 0, 0).getTime();
+const cfg = E.defaults();
+
+// ------------------------------------------------------------------ Hilfen: Eingabe bauen
+function rooms(o) {
+    o = o || {};
+    return [
+        {id: 'ki_oben', name: 'Kinderzimmer oben', t: o.ki_oben !== undefined ? o.ki_oben : 22.6, age: o.age !== undefined ? o.age : 10, min: 22, max: 23.5, valid: o.valid !== false, active: true},
+        {id: 'ki_unten', name: 'Kinderzimmer unten', t: 21, age: 10, min: 20, max: 22, valid: true, active: true},
+        {id: 'schlaf', name: 'Schlafzimmer', t: 21, age: 10, min: 20, max: 22, valid: true, active: true}
+    ];
+}
+function inp(t, o) {
+    const b = {t: t, hpAge: 0.5, hz: 17, vl: 30, rl: 28, soll: 30, dT: 3, pel: 300, pth: 2100, flow: 13.5, pump: 1750, q: 3, qPrio: 1, hc: 1, at: 9, defrost: 0, dhw: 0, ss: 0,
+               rt: 60, shift: 0, heatMode: 0, z1Sensor: 0, heaterI: 0, heaterE: 0, htrOnAT: 0, htrStartDelta: -3, heatOffAT: 12, sollKurve: 29.75, block: 0, otherQ: null, otherShift: null, kzRad: 1,
+               rooms: rooms(), korr: {v: 0, code: 'alle im Band', distrib: false, lead: ''}};
+    return Object.assign(b, o || {});
+}
+function runSeq(n, f, S0, c) {                                                  // n Minuten, f(i) liefert die Eingabe
+    let S = S0 || null; const outs = [];
+    for (let i = 0; i < n; i++) { const o = E.step(S, f(i), c || cfg); S = o.S; outs.push(o); }
+    return {S: S, outs: outs};
+}
+const r0 = (o, id) => o.res.find(r => r.id === id);
+
+// ================================================================== (a) Regeln, Sperren, Datensaetze
+console.log('--- (a) Regelwerk als Daten');
+check('Regelwerk: 5 Regeln mit ID, Version, Zweck, Eingaengen, Schwellen (Standard, Einheit, Herkunft), Sperren, Befehl, Erwartung, Rueckweg, Prognose',
+      E.RULES.length === 5 && E.RULES.every(R => R.id && R.ver >= 1 && R.zweck && R.eingaenge.length && R.schwellen.length && R.schwellen.every(s => s.key && typeof s.std === 'number' && s.einheit && s.herkunft) && R.sperren.length && R.befehl.topic && R.erwartung && R.rueckweg && R.prognose.p > 0 && R.prognose.h.length),
+      E.RULES.map(R => R.id + ' v' + R.ver).join(', '));
+check('Regelwerk: keine Regel stellt die Heizregelung (Comfort/Efficiency); kein Befehl SetHeatingControl im Kern', !E.RULES.some(R => /HeatingControl/.test(R.befehl.name)) && !/SetHeatingControl/.test(fs.readFileSync(path.join(__dirname, 'engine_core.js'), 'utf8')), '');
+check('Regelwerk: jede Sperre der Regeln ist definiert und hat eine Herkunft', E.RULES.every(R => R.sperren.every(id => E.LOCKS.some(l => l.id === id && l.herkunft))), '');
+check('Standardwerte entstehen aus dem Regelwerk (eine Quelle)', E.defaults().rules.quiet_freigabe.capHz === 20 && E.defaults().rules.raum_offset.minVlC === 29 && E.defaults().locks.stopK === 3.25, '');
+check('Konfiguration: nur bekannte Schwellen, Zahlen werden uebernommen, Unsinn verworfen', (() => { const c = E.mergeCfg({rules: {quiet_freigabe: {capHz: '18', foo: 1, haltMin: 'x'}}, locks: {gapMin: 30}}); return c.rules.quiet_freigabe.capHz === 18 && c.rules.quiet_freigabe.foo === undefined && c.rules.quiet_freigabe.haltMin === 10 && c.locks.gapMin === 30; })(), '');
+check('Doku aktuell: docs/OPTIMIERER.md enthaelt die aus dem Regelwerk erzeugten Tabellen unveraendert (node tools/engine_doc.js)', (() => { const doc = fs.readFileSync(path.join(__dirname, '..', 'docs', 'OPTIMIERER.md'), 'utf8'), m = /<!-- ENGINE-TABELLEN -->\n([\s\S]*?)\n<!-- \/ENGINE-TABELLEN -->/.exec(doc); return !!m && m[1] === require('./engine_doc.js').tabellen(); })(), '');
+check('Kern ist rein: kein Date.now, kein Math.random, kein require/fs/global/flow/node im Code', (() => { const src = fs.readFileSync(path.join(__dirname, 'engine_core.js'), 'utf8').replace(/\/\/.*$/gm, ''); return !/Date\.now|Math\.random|require\(|\bfs\.|global\.(get|set)|flow\.(get|set)|node\.(send|warn)/.test(src); })(), '');
+
+console.log('--- (a) Quiet-Freigabe: Ablauf bereit -> wartet -> Vorschlag, mit Gruenden und naechster Schwelle');
+{
+    // 70 min Lauf; ab Minute 30 Soll 38 (Boost von Hand), Quiet 3 haelt 16 Hz
+    const f = i => inp(T0 + i * MIN, {rt: 20 + i, soll: i >= 30 ? 38 : 30, vl: i >= 30 ? 30 : 29.5, rl: i >= 30 ? 28.25 : 28, sollKurve: 29.75, rooms: rooms({ki_oben: 21.2}), q: 3, hz: 16});
+    const R = runSeq(70, f);
+    const st = R.outs.map(o => r0(o, 'quiet_freigabe').st);
+    const firstProp = st.indexOf('vorschlag');
+    check('vor dem Boost: "bereit", Grund nennt den knappsten Grund in Worten, naechste Schwelle mit Abstand', st[20] === 'bereit' && /kein Vorschlag: Vorlauf 0,50 K darunter/.test(r0(R.outs[20], 'quiet_freigabe').grund) && r0(R.outs[20], 'quiet_freigabe').naechste.abstand === 1 && /würde schalten, sobald Vorlauf mindestens 1,5 K unter Soll/.test(r0(R.outs[20], 'quiet_freigabe').naechste.text), r0(R.outs[20], 'quiet_freigabe').grund + ' | ' + r0(R.outs[20], 'quiet_freigabe').naechste.text);
+    check('nach dem Sollsprung: 10 min "wartet" (Haltezeit), dann Vorschlag in Minute 40', st.slice(30, 40).every(s => s === 'wartet') && firstProp === 40, 'erster Vorschlag in Minute ' + firstProp);
+    const p = R.outs[40].prop;
+    check('Vorschlag: Befehl SetQuietMode = 0 (nicht schrittweise), von 3, Begruendung mit Zahlen, Erwartung, Gueltig bis, Rueckweg, Pruefsumme', p && p.cmd.name === 'SetQuietMode' && p.cmd.value === 0 && p.von === 3 && /16 Hz am Quiet-Deckel, Vorlauf 8,0 K und Rücklauf 6,8 K unter Soll/.test(p.warum) && /Kinderzimmer oben 0,8 K unter Minimum/.test(p.warum) && /≥ 25 Hz binnen 5 min/.test(p.erwartung) && p.bis === p.ts + 30 * MIN && /Kein automatischer Rückweg/.test(p.rueckweg) && p.sum === E.checksum(p), p && (p.was + ' | ' + p.warum));
+    check('Vorschlag bleibt stabil (gleiche ID) solange die Lage gilt', R.outs.slice(40, 69).every(o => o.prop && o.prop.id === p.id), '');
+    check('Ereignis "optimierer_vorschlag" genau einmal', R.outs.reduce((a, o) => a + o.ev.filter(e => e[0] === 'optimierer_vorschlag').length, 0) === 1, '');
+    // Datensatz
+    const rec = R.outs[40].rec;
+    check('Datensatz je Minute: Zeit, Versionen, Eingabe-Schnappschuss, Ableitungen, je Regel Status+Grund, Vorschlag-ID', rec.t === E.iso(T0 + 40 * MIN) && rec.mv === E.VER && rec.sv === E.SCORE_VER && rec.in.soll === 38 && rec.in.rooms.length === 3 && rec.abl.z === 'lauf' && rec.r.length === 5 && rec.r.every(x => x.id && x.v && x.st && x.grund) && rec.vorschlag === p.id, JSON.stringify(rec.r.map(x => x.st)));
+    check('Datensatz: "bereit" traegt die naechste Schwelle als Felder (b, ist, s, abstand), ohne Fliesstext', (() => { const x = R.outs[20].rec.r[0]; return x.naechste && x.naechste.b === 'vlRueck' && x.naechste.ist === 0.5 && x.naechste.s === 1.5 && x.naechste.abstand === 1 && x.naechste.text === undefined; })(), JSON.stringify(R.outs[20].rec.r[0].naechste));
+    check('Nachspielen aus dem Datensatz: unsnap(snapshot) liefert dieselbe Entscheidung', (() => { const R2 = runSeq(70, i => E.unsnap(T0 + i * MIN, JSON.parse(JSON.stringify(R.outs[i].rec.in)))); return R2.outs.every((o, i) => JSON.stringify(o.rec.r) === JSON.stringify(R.outs[i].rec.r)); })(), '');
+}
+console.log('--- (a) Sperren (jede Regel erbt sie)');
+{
+    const boost = (i, extra) => inp(T0 + i * MIN, Object.assign({rt: 30 + i, soll: 38, vl: 30, rl: 28.25, rooms: rooms({ki_oben: 21.2}), q: 3, hz: 16}, extra || {}));
+    // Sperre ab Minute 15 (vorher kann schon ein Vorschlag stehen): ab dann nie ein Vorschlag, Grund nennt die Sperre
+    const lockCase = (name, extra, rx, n) => { const R = runSeq(n || 25, i => boost(i, typeof extra === 'function' ? extra(i) : (i >= 15 ? extra : {}))); const r = r0(R.outs[R.outs.length - 1], 'quiet_freigabe'); check('Sperre ' + name, r.st === 'gesperrt' && rx.test(r.grund) && !R.outs.slice(15).some(o => o.prop && o.prop.rule === 'quiet_freigabe'), r.st + ': ' + r.grund); };
+    lockCase('Daten: HeishaMon 8 min alt -> gesperrt, ein laufender Vorschlag wird zurueckgezogen', {hpAge: 8}, /HeishaMon-Daten fehlen oder sind veraltet \(letzte Meldung vor 8 min\)/);
+    lockCase('Daten: Verdichterwert fehlt', {hz: null}, /HeishaMon-Daten/);
+    lockCase('MQTT.block_active', {block: 1}, /MQTT-Befehle sind gesperrt/);
+    lockCase('Abtauen laeuft', i => ({defrost: i >= 15 ? 1 : 0}), /Abtauen oder kurz danach \(läuft\)/);
+    lockCase('nach dem Abtauen (10 min)', i => ({defrost: i >= 12 && i < 20 ? 1 : 0}), /Abtauen oder kurz danach \(noch \d+ min\)/);
+    lockCase('Warmwasser', {dhw: 1}, /Warmwasser/);
+    lockCase('Sanftanlauf', {ss: 1}, /Sanftanlauf/);
+    lockCase('anderer Regler stellt Quiet (HeishaMoNR-Quiet-Logik)', {otherQ: 'HeishaMoNR-Quiet-Logik AN'}, /anderer Regler.*Quiet-Logik/);
+    { const c0 = E.mergeCfg({rules: {quiet_freigabe: {haltMin: 0}}}); const R = runSeq(5, i => boost(i), null, c0); const r = r0(R.outs[4], 'quiet_freigabe'); check('Sperre Neustart der Maschine (erste 10 min, Haltezeit hier 0)', r.st === 'gesperrt' && /beobachtet erst seit kurzem \(Neustart\) \(noch 6 min\)/.test(r.grund) && !R.outs.some(o => o.prop), r.grund); }
+    { const R = runSeq(25, i => boost(i, {q: i < 5 ? 2 : 3})); const r = r0(R.outs[24], 'quiet_freigabe'); check('Sperre Mindestabstand: Quiet wurde vor 20 min geaendert (60 min Abstand)', r.st === 'gesperrt' && /Mindestabstand.*letzte Änderung/.test(r.grund) && r.naechste.bis === T0 + 5 * MIN + 60 * MIN, r.grund); }
+    { const R = runSeq(25, i => boost(i, {vl: 30, soll: 28.5, rl: 28.25})); const r = r0(R.outs[24], 'quiet_freigabe'); check('Takt-Gefahr: Vorlauf ueber Soll -> keine Freigabe (Bedingung Rueckstand fehlt sowieso)', r.st === 'bereit', r.grund); }
+    // Lauf seit 5 min: laufbeginn ist zugleich Bedingung
+    { const R = runSeq(25, i => boost(i, {rt: 2 + i * 0})); const r = r0(R.outs[24], 'quiet_freigabe'); check('Startphase: Lauf erst 2 min -> "bereit: Startphase", keine Haltezeit', r.st === 'bereit' && /Startphase: Lauf erst 2 von 15 min/.test(r.grund), r.grund); }
+    // Heizgrenze-Aus fuer Raumregel
+    { const R = runSeq(75, i => inp(T0 + i * MIN, {hz: 0, pump: 0, rt: 0, korr: {v: 1, code: 'Raum unter Minimum', distrib: false, lead: 'Kinderzimmer oben'}, rooms: rooms({ki_oben: 21.2})})); const r = r0(R.outs[74], 'raum_offset'); check('Raumregel: Heizgrenze-Aus (Pumpe 0) sperrt die Verschiebung', r.st === 'gesperrt' && /Heizgrenze-Aus/.test(r.grund), r.grund); }
+    // Takt-Gefahr richtungsabhaengig: -1 K bei Vorlauf +0,5 K gesperrt (nach -1 K +1,5 K), +1 K nicht
+    { const R = runSeq(75, i => inp(T0 + i * MIN, {soll: 31, sollKurve: 30.5, vl: 31.5, korr: {v: -1, code: 'Überschreitung', distrib: false, lead: 'Schlafzimmer'}})); const r = r0(R.outs[74], 'raum_offset'); check('Takt-Gefahr richtungsabhaengig: -1 K bei Vorlauf +0,5 K ueber Soll -> gesperrt (nach -1 K +1,5 K)', r.st === 'gesperrt' && /Takt-Gefahr.*nach −1 K \+1,50 K/.test(r.grund), r.grund); }
+    { const R = runSeq(75, i => inp(T0 + i * MIN, {soll: 31, sollKurve: 30.5, vl: 33, korr: {v: 1, code: 'Raum unter Minimum', distrib: false, lead: 'Kinderzimmer oben'}, rooms: rooms({ki_oben: 21.5})})); const r = r0(R.outs[74], 'raum_offset'); check('Takt-Gefahr gilt nicht fuer +1 K (hebt den Abstand zur Abschaltgrenze): Vorschlag trotz Vorlauf +2 K', r.st === 'vorschlag', r.grund); }
+    { const R = runSeq(75, i => inp(T0 + i * MIN, {at: 0, soll: 33, sollKurve: 33.1, vl: 31, korr: {v: 1, code: 'Raum unter Minimum', distrib: false, lead: 'Kinderzimmer oben'}, rooms: rooms({ki_oben: 21.5})})); const r = r0(R.outs[74], 'raum_offset'); check('Heizstab-Naehe: +1 K bei 0 °C und Vorlauf 2 K unter Soll -> gesperrt (nach +1 K 3 K unter Soll)', r.st === 'gesperrt' && /Heizstab-Nähe/.test(r.grund), r.grund); }
+    { const R = runSeq(75, i => inp(T0 + i * MIN, {soll: 38, sollKurve: 29.75, korr: {v: 1, code: 'Raum unter Minimum', distrib: false, lead: 'Kinderzimmer oben'}, rooms: rooms({ki_oben: 21.5})})); const r = r0(R.outs[74], 'raum_offset'); check('Handeingriff am Soll (38 statt Kurve 29,75 °C): Raumregel gesperrt', r.st === 'gesperrt' && /Handeingriff/.test(r.grund), r.grund); }
+    { const R = runSeq(75, i => inp(T0 + i * MIN, {heatMode: 1, korr: {v: 1, code: 'x', distrib: false, lead: 'Kinderzimmer oben'}})); check('kein Heizkurvenmodus (TOP76 != 0): Raumregel gesperrt', /kein Heizkurvenmodus/.test(r0(R.outs[74], 'raum_offset').grund), r0(R.outs[74], 'raum_offset').grund); }
+    { const R = runSeq(75, i => inp(T0 + i * MIN, {z1Sensor: 1, korr: {v: 1, code: 'x', distrib: false, lead: 'Kinderzimmer oben'}})); check('Zonenfuehler nicht Wasser (TOP111 != 0): Raumregel gesperrt (sonst ginge ein Befehl ueber SetCurves)', /nicht über Wassertemperatur/.test(r0(R.outs[74], 'raum_offset').grund), r0(R.outs[74], 'raum_offset').grund); }
+    { const R = runSeq(75, i => inp(T0 + i * MIN, {soll: 29, sollKurve: 28.5, korr: {v: -1, code: 'Überschreitung', distrib: false, lead: 'Schlafzimmer'}})); const r = r0(R.outs[74], 'raum_offset'); check('Vorlauf-Untergrenze 29 °C: -1 K bei Soll 29 nie (kein Vorschlag)', r.st === 'bereit' && /Soll-Vorlauf würde 28 °C \(Untergrenze 29 °C\)/.test(r.grund), r.grund); }
+    { const R = runSeq(75, i => inp(T0 + i * MIN, {korr: {v: 1, code: 'Raum unter Minimum', distrib: true, lead: 'Kinderzimmer oben'}})); check('Waermeverteilungsproblem: keine Verschiebung', /Wärmeverteilungsproblem/.test(r0(R.outs[74], 'raum_offset').grund), r0(R.outs[74], 'raum_offset').grund); }
+    { const R = runSeq(95, i => inp(T0 + i * MIN, {korr: {v: i < 30 ? 0 : 1, code: 'Raum unter Minimum', distrib: false, lead: 'Kinderzimmer oben'}, rooms: rooms({ki_oben: 21.5})})); const st = R.outs.map(o => r0(o, 'raum_offset').st); check('Raumregel: lange Haltezeit 60 min, erst dann Vorschlag "+1 K" (SetZ1HeatRequestTemperature = 1)', st[60] === 'bereit' && /erst seit 30 von 60 min stabil/.test(r0(R.outs[60], 'raum_offset').grund) && st[90] === 'vorschlag' && R.outs[90].prop.cmd.name === 'SetZ1HeatRequestTemperature' && R.outs[90].prop.cmd.value === 1, st[60] + '/' + st[90]); }
+}
+console.log('--- (a) Randfaelle: fehlende/unsinnige Werte, Neustart, Tageslimit, Zeitumstellung');
+{
+    let err = null, o = null;
+    try { o = E.step(null, {t: T0}, cfg); o = E.step(o.S, {t: T0 + MIN, hz: 'abc', vl: NaN, soll: null, rooms: null, korr: {v: 'x'}, q: '3'}, cfg); } catch (e) { err = e; }
+    check('leere/unsinnige Eingaben: kein Absturz, alles "gesperrt" (Daten) oder "bereit", kein Vorschlag', err === null && o && !o.prop && o.res.every(r => ['gesperrt', 'bereit', 'inaktiv'].indexOf(r.st) >= 0), err ? err.message : JSON.stringify(o.res.map(r => r.st)));
+    let err2 = null; try { E.step({mv: 99, foo: 1}, inp(T0), cfg); E.step('kaputt', inp(T0), cfg); } catch (e) { err2 = e; }
+    check('fremder/kaputter Zustand aus der Datei: wird ersetzt, kein Absturz', err2 === null, err2 ? err2.message : '');
+    // Neustart mitten im Vorschlag: Zustand per JSON (Datei) -> Vorschlag bleibt, Zaehler bleiben, 10 min Anlauf-Sperre zieht ihn zurueck
+    const f = i => inp(T0 + i * MIN, {rt: 30 + i, soll: 38, vl: 30, rl: 28.25, rooms: rooms({ki_oben: 21.2}), q: 3, hz: 16});
+    const A = runSeq(25, f), S1 = JSON.parse(JSON.stringify(A.S)); S1.born = T0 + 25 * MIN;
+    const B = runSeq(15, i => f(25 + i), S1);
+    check('Neustart (Zustand aus Datei): Anlauf-Sperre 10 min zieht den Vorschlag zurueck, danach neuer Vorschlag; Tageszaehler bleibt', A.outs[24].prop && r0(B.outs[0], 'quiet_freigabe').st === 'gesperrt' && /Neustart/.test(r0(B.outs[0], 'quiet_freigabe').grund) && B.outs[14].prop === null && B.S.rules.quiet_freigabe.n === 1, r0(B.outs[14], 'quiet_freigabe').st + ' n=' + B.S.rules.quiet_freigabe.n);
+    // Tageslimit 3, Wechsel um Mitternacht setzt zurueck
+    let S = null, props = 0; const d0 = new Date(2026, 9, 12, 20, 0, 0).getTime();
+    for (let i = 0; i < 6 * 60; i++) {
+        const cyc = i % 100, t = d0 + i * MIN;              // alle 100 min: 40 min Lage, dann 60 min ohne Lage
+        const o2 = E.step(S, inp(t, {rt: 20 + cyc, soll: cyc < 40 ? 38 : 30, vl: cyc < 40 ? 30 : 31, rl: 28.25, rooms: rooms({ki_oben: 21.2}), q: 3, hz: 16}), cfg); S = o2.S;
+        props += o2.res.filter(r => r.neu && r.id === 'quiet_freigabe').length;
+    }
+    check('Tageslimit (3 Vorschlaege) und Ruecksetzen um Mitternacht: 20:00-02:00 hoechstens 3 am 12.10. + neue am 13.10.', props >= 3 && props <= 6 && S.rules.quiet_freigabe.day === '2026-10-13', 'Vorschlaege ' + props + ', Tag ' + S.rules.quiet_freigabe.day);
+    // Zeitumstellung 25.10.2026 (03:00 -> 02:00): Minutenschritte in ms, Datensatzzeit lokal, kein Fehler
+    let Sd = null, errD = null; const dst = new Date(2026, 9, 25, 0, 0, 0).getTime(), ts = [];
+    try { for (let i = 0; i < 300; i++) { const o3 = E.step(Sd, inp(dst + i * MIN, {rt: i}), cfg); Sd = o3.S; ts.push(o3.rec.t); } } catch (e) { errD = e; }
+    check('Zeitumstellung 25.10.: 300 Minuten ohne Fehler, Uhrzeit 02:xx kommt zweimal vor (lokale Zeit im Datensatz), Laufzeit monoton', errD === null && ts.filter(t => t.slice(11, 13) === '02').length === 120, errD ? errD.message : ts.filter(t => t.slice(11, 13) === '02').length + ' Minuten mit 02 Uhr');
+}
+
+// ------------------------------------------------------------------ Mehrtages-Simulation mit einfachem Anlagenmodell (Takt, Kaltstart, Boost, Abtauen, Sensorausfall, Neustarts)
+// Spielzeug-Physik, nur fuer Ablauf und Sicherheit (nicht fuer Aussagen ueber die Anlage): Wasserkreis 0,4 kWh/K, Heizkoerper 0,25 kW/K, Haus UA 0,18 kW/K, 8 kWh/K,
+// innere Gewinne 0,9 kW (Opus 09.10.: 0,5-0,9 kW); Mindestleistung 2,1 kW deckt den Bedarf bis ~6 °C (wie gemessen: bei 4-6 °C Dauerlauf am Minimum).
+function plantSim(days, opts) {
+    opts = opts || {};
+    const P = {on: false, tw: 31, room: 22.3, over: 0, under: 0, q: opts.q !== undefined ? opts.q : 3, shift: 0, rt: 0, sollHand: null, defrost: 0};
+    let S = null; const log = {props: [], recs: 0, ev: [], scores: [], lockedProp: 0, maxSendable: 0, errors: 0, minutes: 0, statuses: {}};
+    const start = new Date(2026, 9, 14, 0, 0, 0).getTime();
+    for (let i = 0; i < days * 1440; i++) {
+        const t = start + i * MIN, h = (i % 1440) / 60, day = Math.floor(i / 1440);
+        const at = (opts.at !== undefined ? opts.at : 8) + 4 * Math.sin(2 * Math.PI * (h - 9) / 24) - day * (opts.cool || 0);
+        const atI = Math.round(at), kurve = Math.max(29, 29 + 0.375 * (11 - atI));
+        const soll = Math.ceil(P.sollHand !== null ? P.sollHand : kurve) + P.shift;
+        if (opts.boostAt && i % 1440 === opts.boostAt) { P.sollHand = 38; }
+        if (opts.boostAt && i % 1440 === opts.boostAt + 60) { P.sollHand = null; }
+        if (opts.defrostEvery && P.on && i % opts.defrostEvery === 0) { P.defrost = 6; }
+        const spread = P.on ? 2.5 : 0, vl = Math.round((P.tw + spread / 2) * 4) / 4, rl = Math.round((P.tw - spread / 2) * 4) / 4;
+        const rlRueck = soll - 3 - rl;
+        const hz = !P.on ? 0 : (P.defrost > 0 ? 17 : (P.q >= 1 ? 16 + (i % 2) : (rlRueck >= 2.5 ? 33 : 17)));
+        const pth = !P.on ? 0 : (P.defrost > 0 ? -1000 : (hz >= 30 ? 5000 : 2100)), qrad = 0.25 * (P.tw - P.room);
+        P.tw += ((pth / 1000) - qrad) / 0.4 / 60; P.room += (qrad - 0.18 * (P.room - at) + 0.9) / 8 / 60;
+        if (P.defrost > 0) { P.defrost--; }
+        if (P.on) { P.rt++; if (vl >= soll + 3.25) { P.over++; } else { P.over = 0; } if (P.over >= 3) { P.on = false; P.rt = 0; P.over = 0; } }
+        else { if (vl <= soll - 3) { P.under++; } else { P.under = 0; } if (P.under >= 6 && at < 15) { P.on = true; P.under = 0; } }
+        const stale = opts.staleFrom !== undefined && i >= opts.staleFrom && i < opts.staleFrom + 30;
+        const korrV = P.room < 21.7 ? 1 : (P.room > 23.6 ? -1 : 0);
+        const x = {t: t, hpAge: stale ? 12 : 0.4, hz: hz, vl: vl, rl: rl, soll: soll, dT: 3, pel: hz >= 30 ? 830 : (P.on ? 300 : 15), pth: pth, flow: 13.5, pump: P.on || at < 15 ? 1750 : 0,
+                   q: P.q, qPrio: 1, hc: 1, at: atI, defrost: P.defrost > 0 ? 1 : 0, dhw: 0, ss: 0, rt: P.rt, shift: P.shift, heatMode: 0, z1Sensor: 0, heaterI: 0, heaterE: 0, htrOnAT: 0, htrStartDelta: -3,
+                   heatOffAT: 12, sollKurve: kurve, block: opts.block && i % 700 < 30 ? 1 : 0, otherQ: null, otherShift: null, kzRad: 1,
+                   rooms: [{id: 'ki_oben', name: 'Kinderzimmer oben', t: Math.round(P.room * 10) / 10, age: 20, min: 22, max: 23.5, valid: !stale, active: true}],
+                   korr: {v: korrV, code: korrV ? 'Raum ausserhalb' : 'alle im Band', distrib: false, lead: 'Kinderzimmer oben'}};
+        if (opts.restartEvery && i > 0 && i % opts.restartEvery === 0 && S) { S = JSON.parse(JSON.stringify(S)); S.born = t; }
+        try {
+            const o = E.step(S, x, cfg); S = o.S; log.recs++; log.minutes++;
+            o.res.forEach(r => { log.statuses[r.st] = (log.statuses[r.st] || 0) + 1; if (r.neu) { log.props.push(S.rules[r.id].prop); if (r.locks.length) { log.lockedProp++; } } });
+            if (o.prop && o.prop.art === 'befehl' && (x.block === 1 || stale || x.defrost === 1)) { log.maxSendable++; }
+            o.scores.forEach(s => log.scores.push(s)); o.ev.forEach(e => log.ev.push(e));
+            if (opts.applyQuiet && o.prop && o.prop.rule === 'quiet_freigabe') { P.q = 0; }           // "Nutzer klickt": Quiet 0
+        } catch (e) { log.errors++; if (log.errors < 3) { console.log(e.stack); } }
+    }
+    log.S = S;
+    return log;
+}
+console.log('--- (a) Mehrtages-Simulation (Anlagenmodell, Fake-Uhr)');
+{
+    const A = plantSim(4, {at: 9, defrostEvery: 333, staleFrom: 3000, restartEvery: 1700, block: true});
+    check('4 Tage mild (Takt) mit Abtauen, 30 min Datenausfall, Neustarts, MQTT-Sperre: kein Fehler, 5760 Datensaetze', A.errors === 0 && A.recs === 4 * 1440, 'Fehler ' + A.errors + ', Datensaetze ' + A.recs + ', Status ' + JSON.stringify(A.statuses));
+    check('... nie ein Vorschlag waehrend Sperre/Abtauen/veralteter Daten', A.lockedProp === 0 && A.maxSendable === 0, 'gesperrte Vorschlaege ' + A.lockedProp + ', Vorschlag in Sperrminute ' + A.maxSendable);
+    const aq = A.props.filter(p => p.rule === 'quiet_freigabe');
+    check('... Quiet-Freigabe im milden Takt selten: hoechstens einmal je Tag und nur, wenn ein Sollsprung nach oben den Lauf zurueckwirft (Kaltstarts allein reichen nicht)', aq.length <= 4 && aq.every(p => /Sollvorlauf in diesem Lauf noch nicht erreicht/.test(p.warum)), aq.map(p => E.iso(p.ts) + ' ' + p.warum).join(' | '));
+    const B = plantSim(3, {at: 9, boostAt: 9 * 60});
+    const bq = B.props.filter(p => p.rule === 'quiet_freigabe');
+    const inBoost = p => { const m = new Date(p.ts).getHours() * 60 + new Date(p.ts).getMinutes(); return m >= 9 * 60 + 10 && m <= 10 * 60; };
+    check('3 Tage mit taeglichem Boost von Hand (Soll 38 fuer 60 min, Quiet 3): an jedem Boost-Tag eine Quiet-Freigabe 10-60 min nach Boost-Beginn', ['2026-10-14', '2026-10-15', '2026-10-16'].every(day => bq.some(p => E.iso(p.ts).slice(0, 10) === day && inBoost(p))), bq.map(p => E.iso(p.ts)).join(', '));
+    check('... Raumregel waehrend des Boosts gesperrt (Handeingriff), nie ein Raum-Vorschlag mit Soll 38', !B.props.some(p => p.rule === 'raum_offset' && /38/.test(p.was)), B.props.filter(p => p.rule === 'raum_offset').map(p => p.was).join(' | '));
+    const C = plantSim(3, {at: 9, boostAt: 9 * 60, applyQuiet: true});
+    check('Boost mit "Klick" (Quiet 0 nach dem Vorschlag): Wirkungsfall wird bewertet (kein Kalibrierfall), Ausloeser-Fall neutral (Eingriff)', C.scores.some(s => s.typ === 'wirkung' && s.regel === 'quiet_freigabe' && s.kalibrierfall === 0) && C.scores.filter(s => s.typ === 'ausloeser' && s.regel === 'quiet_freigabe').every(s => s.ergebnis === 'neutral'), C.scores.filter(s => s.regel === 'quiet_freigabe').map(s => s.typ + ':' + s.punkte).join(', '));
+    const D = plantSim(5, {at: 4, cool: 1.5});
+    const perDay = {}; D.props.filter(p => p.rule === 'quiet_freigabe').forEach(p => { const k = E.iso(p.ts).slice(0, 10); perDay[k] = (perDay[k] || 0) + 1; });
+    check('5 Tage kaelter werdend (4 -> -3,5 °C, Bedarf ueber der Mindestleistung): Quiet-Freigabe schlaegt an (Deckel-Lage), hoechstens 3 je Tag, kein Fehler', D.errors === 0 && Object.keys(perDay).length >= 3 && Object.keys(perDay).every(k => perDay[k] <= 3), JSON.stringify(perDay));
+}
+
+// ================================================================== (b) Punktesystem (automatisch, ohne Nutzereingabe)
+console.log('--- (b) Punktesystem');
+{
+    // Grundlage: Brier-Prinzip. Eine Prognose p gewinnt gegen die Basisrate b nur, wenn sie trennt; Dauer-Alarm oder Raten bringt im Mittel <= 0 Punkte.
+    const ev = (p, f) => f * E.brier(p, f, 1) + (1 - f) * E.brier(p, f, 0);           // Erwartungswert, wenn die Basisrate stimmt (b = f)
+    check('Brier: Treffer gegen Basisrate 0,5 mit p 0,8 = +21, Fehlalarm = -39 (Punkte je Fall bei einem Horizont)', Math.abs(E.brier(0.8, 0.5, 1) - 21) < 1e-9 && Math.abs(E.brier(0.8, 0.5, 0) + 39) < 1e-9, E.brier(0.8, 0.5, 1) + ' / ' + E.brier(0.8, 0.5, 0));
+    check('Kein Gaming: wer ohne Trennschaerfe vorschlaegt (Ergebnis = Basisrate f), bekommt im Mittel <= 0 Punkte, egal welches p (f 0,1..0,9, p 0,1..0,9)', [0.1, 0.3, 0.5, 0.7, 0.9].every(f => [0.1, 0.5, 0.8, 0.9].every(p => ev(p, f) <= 1e-9)), [0.1, 0.5, 0.9].map(f => 'f' + f + ':' + ev(0.8, f).toFixed(1)).join(' '));
+    check('Treffer bei hoher Basisrate (0,86) bringt mit p 0,6 MINUS (der Vorschlag kam nur, wo das Problem ohnehin meist bleibt)', E.brier(0.6, 0.86, 1) < 0, E.brier(0.6, 0.86, 1).toFixed(2));
+
+    const boost = (i, o) => inp(T0 + i * MIN, Object.assign({rt: 30 + i, soll: 38, sollKurve: 29.75, vl: 30, rl: 28.25, q: 3, hz: 16, rooms: rooms({ki_oben: 21.2})}, o || {}));
+    // S1: Problem bleibt 150 min -> Treffer an allen drei Horizonten, Basisrate noch unbekannt (0,5) -> 3 x 7 = +21
+    let R = runSeq(160, i => boost(i));
+    let sc = [].concat.apply([], R.outs.map(o => o.scores)), a = sc.find(s => s.typ === 'ausloeser');
+    check('Fall bleibt bestehen (150 min am Deckel mit Rueckstand): Treffer an 30/60/120 min, Basisrate 0,5 (noch < 5 Vergleiche), +21 Punkte', a && a.ergebnis === 'treffer' && a.horizonte.every(h => h.o === 1 && h.b === 0.5) && Math.abs(a.punkte - 21) < 0.01 && a.fall === 'quiet_freigabe@2026-10-12T06:10', a && (a.ergebnis + ' ' + a.punkte + ' ' + a.text));
+    check('Punktebuch: Datensatz mit Regel, Version, Bewertungsversion, Prognose p, je Horizont Ergebnis/Basisrate/Punkte, laufende Summe', a && a.regel === 'quiet_freigabe' && a.v === 1 && a.sv === E.SCORE_VER && a.p === 0.8 && a.horizonte.length === 3 && a.summe === 21, a && JSON.stringify(a.horizonte[0]));
+    // S2: Problem loest sich nach 5 min von selbst -> Fehlalarm an allen Horizonten -> -39
+    R = runSeq(160, i => boost(i, i >= 15 ? {vl: 38, rl: 35.5} : {}));
+    sc = [].concat.apply([], R.outs.map(o => o.scores)); a = sc.find(s => s.typ === 'ausloeser');
+    check('Problem verschwindet von selbst (Ruecklauf am Soll nach 5 min): Fehlalarm, -39 Punkte', a && a.ergebnis === 'fehlalarm' && Math.abs(a.punkte + 39) < 0.01, a && (a.ergebnis + ' ' + a.punkte + ' ' + a.text));
+    // S3: Eingriff (Quiet 0 von Hand 5 min nach dem Vorschlag) -> Ausloeser neutral, Wirkungsfall bewertet (kein Kalibrierfall): 33 Hz, +500 W, Vorlauf +3 K
+    R = runSeq(160, i => boost(i, i >= 15 ? {q: 0, hz: 33, pel: 800, vl: Math.min(36, 30 + (i - 15) * 0.15)} : {pel: 300}));
+    sc = [].concat.apply([], R.outs.map(o => o.scores)); a = sc.find(s => s.typ === 'ausloeser'); const w = sc.find(s => s.typ === 'wirkung');
+    check('Eingriff von aussen (Quiet von Hand): Ausloeser-Prognose neutral (0), keine Gegenfaktik mehr', a && a.ergebnis === 'neutral' && a.punkte === 0 && /Eingriff nach 5 min/.test(a.text), a && a.text);
+    check('Wirkungsprognose bei gleichwertiger Aenderung: 3 von 3 getroffen (>= 25 Hz, +500 W, Vorlauf +3 K) = +30, kein Kalibrierfall', w && w.punkte === 30 && w.kalibrierfall === 0 && w.teile.every(t => t.ergebnis === 'getroffen'), w && w.text);
+    R = runSeq(160, i => boost(i, i >= 15 ? {q: 0, hz: 17, pel: 310} : {pel: 300}));
+    sc = [].concat.apply([], R.outs.map(o => o.scores)); const w2 = sc.find(s => s.typ === 'wirkung');
+    check('Wirkungsprognose daneben (Verdichter bleibt bei 17 Hz): -30', w2 && w2.punkte === -30, w2 && w2.text);
+    // S4: Schaden: Verdichter stoppt 4 min nach dem Vorschlag (Lage war knapp vor der Abschaltung) -> -30 und Fehlalarm
+    R = runSeq(160, i => boost(i, i >= 14 && i < 40 ? {hz: 0, rt: 0, pump: 1750, vl: 41.5, rl: 41} : (i >= 40 ? {soll: 30, vl: 31, rl: 28} : {})));
+    sc = [].concat.apply([], R.outs.map(o => o.scores)); const dmg = sc.find(s => s.typ === 'schaden');
+    check('Schaden: Stopp binnen 10 min nach dem Vorschlag = -30 (eigener Datensatz mit Art)', dmg && dmg.arten.indexOf('stopp10') >= 0 && dmg.punkte <= -30, dmg && dmg.text);
+    // S5: Verpasst: Lage 25 min (Ruecklauf >= 2 K am Deckel), aber Tageslimit 0 -> keine Vorschlaege -> -20; bei MQTT-Sperre entschuldigt
+    const c0 = E.mergeCfg({rules: {quiet_freigabe: {proTag: 0}}});
+    R = runSeq(40, i => boost(i), null, c0); sc = [].concat.apply([], R.outs.map(o => o.scores));
+    check('Verpasst: 20 min Lage am Deckel mit >= 2 K Rueckstand, eigenes Tageslimit verhinderte den Vorschlag -> -20', sc.some(s => s.typ === 'verpasst' && s.regel === 'quiet_freigabe' && s.punkte === -20), sc.map(s => s.typ).join(','));
+    R = runSeq(40, i => boost(i, {block: 1})); sc = [].concat.apply([], R.outs.map(o => o.scores));
+    check('Verpasst entschuldigt: MQTT-Sperre (Sicherheitssperre) -> keine Minuspunkte', !sc.some(s => s.typ === 'verpasst'), sc.map(s => s.typ).join(','));
+    // S5b (Bewertungsregeln v2): eigene Sperren/Wartezeiten entschuldigen "verpasst" (neutral, getrennt gezaehlt), Schaden und verlaengerte Werte nicht
+    const hand = (i, o) => boost(i, Object.assign(i === 0 ? {q: 2} : {}, o || {}));          // Quiet 2 -> 3 von Hand in Minute 1: 60 min Mindestabstand
+    const allSc = R0 => [].concat.apply([], R0.outs.map(o => o.scores));
+    R = runSeq(80, i => hand(i)); sc = allSc(R);
+    const vs = sc.filter(s => s.typ === 'verpasst_sperre'), pr1 = R.outs.findIndex(o => o.res.find(r => r.id === 'quiet_freigabe').neu);
+    check('v2: Sperre entschuldigt verpasst - Lage ab Minute 0, Regel nur durch Haltezeit (10 min) und Mindestabstand nach Quiet von Hand (60 min) zurueckgehalten -> nach 20 min "verpasst_sperre" mit 0 Punkten, kein "verpasst"; Vorschlag sobald der Abstand endet (Minute 61)',
+          vs.length === 1 && vs[0].punkte === 0 && vs[0].sv === E.SCORE_VER && vs[0].t === E.iso(T0 + 20 * MIN) && JSON.stringify(vs[0].sperre) === '["haltezeit","abstand"]' && !sc.some(s => s.typ === 'verpasst') && pr1 === 61, vs.map(s => s.t + ' ' + s.text).join(' | ') + ' · Vorschlag in Minute ' + pr1);
+    const rp1 = E.report(R.S).find(r => r.regel === 'quiet_freigabe');
+    check('v2: "waehrend Sperre" getrennt im Punktebuch (verpasstSperre 1, verpasst 0, 0 Punkte daraus) und nicht in der Freigabereife', rp1.verpasstSperre === 1 && rp1.verpasst === 0 && rp1.sv === E.SCORE_VER && rp1.kriterien.find(k => k.k === 'verpasst').ok, JSON.stringify({vs: rp1.verpasstSperre, v: rp1.verpasst, p: rp1.punkte}));
+    R = runSeq(80, i => hand(i), null, E.mergeCfg({sv: 1})); sc = allSc(R);
+    check('v1 bleibt nachrechenbar (cfg.sv = 1): dieselbe Lage ergibt wie bisher "verpasst" -20 nach 20 min, Datensatz sv 1', sc.filter(s => s.typ === 'verpasst').length === 1 && sc.find(s => s.typ === 'verpasst').punkte === -20 && sc.find(s => s.typ === 'verpasst').sv === 1 && !sc.some(s => s.typ === 'verpasst_sperre') && R.outs[5].rec.sv === 1, sc.map(s => s.typ + ':' + s.punkte).join(','));
+    R = runSeq(80, i => hand(i, {rooms: rooms({ki_oben: 20.8})})); sc = allSc(R);
+    const vd = sc.filter(s => s.typ === 'verpasst');
+    check('v2: Schaden waehrend Sperre zaehlt - Raum 1,2 K unter Minimum im Fenster -> trotz eigener Sperre "verpasst" -20 mit Schadensart, kein neutraler Eintrag', vd.length === 1 && vd[0].punkte === -20 && JSON.stringify(vd[0].schaden) === '["komfort"]' && /aber Schaden: Raum mehr als 1 K unter Minimum/.test(vd[0].text) && !sc.some(s => s.typ === 'verpasst_sperre'), vd.map(s => s.t + ' ' + s.text).join(' | '));
+    const late = (i, o) => hand(i, Object.assign(i < 70 ? {rl: 35} : {}, o || {}));        // Lage erst ab Minute 70 (Standard-Abstand endet in Minute 61)
+    R = runSeq(110, i => late(i)); sc = allSc(R);
+    check('v2: mit Standard-Abstand (60 min) schlaegt die Regel ab Minute 80 vor (Lage ab 70 + 10 min Haltezeit) - nichts verpasst', !sc.some(s => /^verpasst/.test(s.typ)) && R.outs.findIndex(o => o.res.find(r => r.id === 'quiet_freigabe').neu) === 80, sc.map(s => s.typ).join(','));
+    R = runSeq(110, i => late(i), null, E.mergeCfg({locks: {gapMin: 180}})); sc = allSc(R);
+    const vx = sc.filter(s => s.typ === 'verpasst');
+    check('v2: verlaengerte Sperre entschuldigt nicht - Mindestabstand auf 180 min verlaengert: die Minuten nach dem Standard (60 min) zaehlen frei -> "verpasst" -20 in Minute 99 (Haltezeit bis Minute 79 entschuldigt, ab Minute 80 frei, 20 freie Minuten)', vx.length === 1 && vx[0].punkte === -20 && vx[0].t === E.iso(T0 + 99 * MIN) && /verlängert: Mindestabstand/.test(vx[0].text) && !R.outs.some(o => o.res.find(r => r.id === 'quiet_freigabe').neu), vx.map(s => s.t + ' ' + s.text).join(' | '));
+    const stretch = i => inp(T0 + i * MIN, i < 25 ? {q: i === 0 ? 3 : 0, hz: 30, rt: 60 + i, soll: 30, sollKurve: 29.75, vl: Math.round((30.5 + 0.1 * i) * 100) / 100, rl: 26.5} : {q: 0, hz: 0, rt: 0, soll: 30, vl: 33, rl: 30});
+    R = runSeq(40, stretch); sc = allSc(R);
+    const ts = sc.filter(s => s.regel === 'quiet_strecken');
+    check('v2: Takten waehrend Sperre zaehlt - Laufzeit strecken nur durch Haltezeit/Mindestabstand (Quiet 3 -> 0 von Hand) zurueckgehalten: erst "verpasst_sperre" (0), der Verdichter-Stopp danach hebt die Entschuldigung auf -> "verpasst" -20 mit Schadensart Takt', ts.length === 2 && ts[0].typ === 'verpasst_sperre' && ts[1].typ === 'verpasst' && ts[1].punkte === -20 && JSON.stringify(ts[1].schaden) === '["takt"]', ts.map(s => s.t.slice(11, 16) + ' ' + s.typ + ' ' + (s.schaden || '')).join(' | '));
+    R = runSeq(40, i => boost(i), null, E.mergeCfg({sv: 1, rules: {quiet_freigabe: {proTag: 0}}}));
+    const Sold = R.S, oldSum = Sold.sc.tot['quiet_freigabe|v1'].punkte; R = runSeq(30, i => boost(40 + i), Sold);
+    check('Versionswechsel v1 -> aktuelle Version im laufenden Zustand: alte Punkte bleiben unveraendert unter "quiet_freigabe|v1", die aktuelle zaehlt getrennt ("|s' + E.SCORE_VER + '"), Bericht zeigt sie', oldSum === -20 && R.S.sc.tot['quiet_freigabe|v1'].punkte === -20 && R.S.sc.tot['quiet_freigabe|v1|s' + E.SCORE_VER] && E.report(R.S).find(r => r.regel === 'quiet_freigabe').sv === E.SCORE_VER && E.report(R.S, 1).find(r => r.regel === 'quiet_freigabe').punkte === -20, JSON.stringify(Object.keys(R.S.sc.tot)));
+    // S6: Basisrate lernt aus Vergleichslagen: 8 kurze Episoden (Rueckstand 30 min, dann geloest) -> b fuer 60/120 min nahe 0 -> Treffer zaehlt viel
+    let S = null; const ep = [];
+    for (let k = 0; k < 8; k++) { for (let i = 0; i < 150; i++) { const t = k * 150 + i; const o = E.step(S, inp(T0 + t * MIN, {rt: 20 + i, soll: 31, sollKurve: 30.5, vl: i < 30 ? 29 : 31.5, rl: i < 30 ? 26.5 : 29.5, q: 3, hz: 16, block: 1}), cfg); S = o.S; } }
+    const B = S.sc.base.quiet_freigabe || {};
+    check('Basisrate "bleibt, wie es ist": aus Vergleichslagen gelernt (8 Episoden mit 30 min Rueckstand: nach 30 min bestand das Problem 8/8, nach 120 min 0/8; 60 min unklar = nicht gezaehlt)', B['30'] && B['30'][0] === 8 && B['30'][1] === 8 && B['120'] && B['120'][0] === 8 && B['120'][1] === 0 && !B['60'], JSON.stringify(B));
+    // S7: Neustart mitten in einem offenen Fall (Zustand per Datei) -> gleiches Ergebnis wie ohne Neustart
+    const A1 = runSeq(160, i => boost(i));
+    let Sx = null, sx = [];
+    for (let i = 0; i < 160; i++) { if (i === 60) { Sx = JSON.parse(JSON.stringify(Sx)); Sx.born = T0 + i * MIN; } const o = E.step(Sx, boost(i), cfg); Sx = o.S; sx = sx.concat(o.scores); }
+    const a1 = [].concat.apply([], A1.outs.map(o => o.scores)).find(s => s.typ === 'ausloeser'), ax = sx.find(s => s.typ === 'ausloeser');
+    check('Neustart mitten im Fall: offener Fall ueberlebt die Datei, gleiches Ergebnis (+21)', a1 && ax && a1.punkte === ax.punkte && ax.ergebnis === 'treffer', (ax && ax.punkte) + ' vs ' + (a1 && a1.punkte));
+    // S8: Raumoffset: Raum bleibt kalt -> Treffer; Verpasst, wenn der Raumvorschlag fehlt
+    R = runSeq(400, i => inp(T0 + i * MIN, {korr: {v: 1, code: 'Raum unter Minimum', distrib: false, lead: 'Kinderzimmer oben'}, rooms: rooms({ki_oben: 21.2})}));
+    sc = [].concat.apply([], R.outs.map(o => o.scores)); a = sc.find(s => s.typ === 'ausloeser' && s.regel === 'raum_offset');
+    check('Raumoffset +1 K: Raum bleibt 240 min unter Minimum -> Treffer an 60/120/240 min', a && a.ergebnis === 'treffer' && a.horizonte.length === 3, a && a.text);
+    R = runSeq(200, i => inp(T0 + i * MIN, {korr: {v: 0, code: 'Daten unvollständig', distrib: false, lead: ''}, rooms: rooms({ki_oben: 21.2, valid: false, age: 120})}));
+    sc = [].concat.apply([], R.outs.map(o => o.scores));
+    check('Raumoffset verpasst: Raum 0,8 K unter Minimum 180 min lang (Wert 2 h alt, Shelly meldet nur bei Aenderung), aber kein Raumvorschlag -> -20', sc.some(s => s.typ === 'verpasst' && s.regel === 'raum_offset'), sc.map(s => s.typ).join(','));
+    // S9: Hinweis Heizgrenze: Raeume behalten die Reserve -> Treffer; Raum faellt unter Minimum -> Fehlalarm und Schaden "zu kalt"
+    const mild = (i, t) => inp(T0 + i * MIN, {at: 13, rt: 20 + i, soll: 29, sollKurve: 29, vl: 30, rl: 28, rooms: [{id: 'ki_oben', name: 'Kinderzimmer oben', t: t, age: 10, min: 22, max: 23.5, valid: true, active: true}]});
+    R = runSeq(220, i => mild(i, 22.8)); sc = [].concat.apply([], R.outs.map(o => o.scores));
+    check('Heizgrenze-Hinweis: Raum behaelt die Reserve 180 min -> Treffer (nur Hinweis, kein Befehl)', sc.some(s => s.typ === 'ausloeser' && s.regel === 'heizgrenze_hinweis' && s.ergebnis === 'treffer') && R.outs.some(o => o.prop && o.prop.art === 'hinweis'), sc.map(s => s.typ + ':' + s.ergebnis).join(','));
+    R = runSeq(220, i => mild(i, Math.round((i < 40 ? 22.8 : 22.8 - (i - 40) * 0.01) * 10) / 10)); sc = [].concat.apply([], R.outs.map(o => o.scores));
+    check('Heizgrenze-Hinweis: Raum faellt langsam (0,6 K/h) unter Minimum - 0,3 K -> Fehlalarm und Schaden "zu kalt"', sc.some(s => s.typ === 'ausloeser' && s.ergebnis === 'fehlalarm') && sc.some(s => s.typ === 'schaden' && s.arten.indexOf('zu_kalt') >= 0), sc.map(s => s.typ + ':' + (s.ergebnis || s.arten)).join(','));
+    R = runSeq(220, i => mild(i, i < 60 ? 22.8 : 21.6)); sc = [].concat.apply([], R.outs.map(o => o.scores));
+    check('Lueftungsverdacht: Raum faellt 1,2 K in einer Minute (Fenster) -> Eingriff von aussen, Bewertung neutral, kein Schaden', sc.some(s => s.typ === 'ausloeser' && s.ergebnis === 'neutral' && /Lüftungsverdacht \(Kinderzimmer oben −1,2 K/.test(s.text)) && !sc.some(s => s.typ === 'schaden'), sc.map(s => s.typ + ':' + s.ergebnis + ' ' + (s.text || '').slice(-80)).join(','));
+    // S10: Bericht, Wochenuebersicht, Freigabereife
+    const rep = E.report(A1.S), rq = rep.find(r => r.regel === 'quiet_freigabe');
+    check('Bericht je Regel: Punkte, Faelle, Treffer-/Fehlalarmquote, Brier-Skill, Schaden, Verpasst, Wirkung, Freigabereife mit Kriterien', rq && rq.punkte === 21 && rq.trefferquote === 1 && rq.fehlalarmquote === 0 && rq.skill !== null && rq.reif === false && rq.kriterien.length === 6 && rq.kriterien.find(k => k.k === 'faelle').ok === false, JSON.stringify(rq.kriterien.map(k => k.k + (k.ok ? '+' : '-'))));
+    check('Wochenuebersicht (ISO-Woche) mit Punkten, Faellen, Treffern', A1.S.sc.week['2026-W42'] && A1.S.sc.week['2026-W42'].quiet_freigabe.punkte === 21 && A1.S.sc.week['2026-W42'].quiet_freigabe.treffer === 1, JSON.stringify(A1.S.sc.week));
+    check('Punkteverlauf fuer das Diagramm (Zeit, Regel, Summe)', A1.S.sc.hist.length >= 1 && A1.S.sc.hist[A1.S.sc.hist.length - 1][2] === 21, JSON.stringify(A1.S.sc.hist.slice(-1)));
+    // S11: Messaufgabe Comfort gegen Efficiency: beide Seiten mit Quiet 0 und Rueckstand -> ein Befund mit Zahlen
+    let Sm = null, ms = [];
+    for (let i = 0; i < 80; i++) { const hc = i < 40 ? 1 : 0, o = E.step(Sm, inp(T0 + i * MIN, {q: 0, hc: hc, rt: 30 + i, soll: 38, vl: 33, rl: 30, hz: hc ? 34 : 45, pel: hc ? 840 : 1150, pth: hc ? 5000 : 6500, at: 11}), cfg); Sm = o.S; ms = ms.concat(o.scores); }
+    const mb = ms.find(s => s.typ === 'messaufgabe');
+    check('Messaufgabe: Befund "Comfort bis 45 Hz, Efficiency bis 34 Hz" genau einmal, ohne Punkte', mb && mb.punkte === 0 && mb.comfort.hzMax === 45 && mb.efficiency.hzMax === 34 && ms.filter(s => s.typ === 'messaufgabe').length === 1 && /Comfort bis 45 Hz/.test(mb.text) && !E.messStatus(Sm).offen, mb && mb.text);
+    const src = fs.readFileSync(path.join(__dirname, 'engine_core.js'), 'utf8'), bewertung = src.slice(src.indexOf('// ------------------------------------------------------------------ Punktesystem'), src.indexOf('// ------------------------------------------------------------------ Ein-Klick'));
+    check('Verwerfen ist keine Bewertung: der Bewertungsteil des Kerns kennt weder Klicks noch den Uebernahme-Zustand (keine Nutzereingabe in den Punkten)', bewertung.length > 1000 && !/verworfen|lastClick|applyRequest|uebernehmen/.test(bewertung), bewertung.length + ' Zeichen geprueft');
+}
+
+// ================================================================== Nachpruefung 10.10. abends (gefundene Luecken, je mit Test)
+console.log('--- Nachpruefung: Ruecklese-Timeout, Flackern des Raumvorschlags');
+{
+    // L1: Ruecklese-Timeout, Anlage blieb nachweislich auf dem Ausgangswert -> Uebernahme endet (blockierte sonst die Groesse fuer jeden weiteren Klick)
+    const NOWx = T0 + 600 * MIN;
+    const A = E.newApply(); A.pending = {name: 'SetQuietMode', value: 0, ts: NOWx - 100000, versuche: 3, art: 'uebernahme', id: 'q'}; A.aktiv = {id: 'q', rule: 'quiet_freigabe', groesse: 'quiet', name: 'SetQuietMode', value: 0, von: 3, ts: NOWx - 300000, bis: null, bestaetigt: false};
+    const t1 = E.applyTick(JSON.parse(JSON.stringify(A)), {now: NOWx, plant: {q: 3, hpAge: 0.3, block: 0}});
+    check('Ruecklese-Timeout, Anlage steht weiter auf dem Ausgangswert: Warnung, Uebernahme beendet (kein Dauerblock der Groesse Quiet), kein Befehl', t1.send.length === 0 && t1.A.aktiv === null && /Keine Bestätigung/.test(t1.A.alarm.text), JSON.stringify(t1.A.aktiv));
+    const t2 = E.applyTick(JSON.parse(JSON.stringify(A)), {now: NOWx, plant: {q: 2, hpAge: 0.3, block: 0}});
+    check('Ruecklese-Timeout, Anlage meldet einen dritten Wert: Uebernahme bleibt (unbestaetigt), "Zurücksetzen" moeglich', t2.send.length === 0 && t2.A.aktiv && t2.A.aktiv.unbestaetigt === true, JSON.stringify(t2.A.aktiv));
+    const pq = {id: 'quiet_freigabe@x', rule: 'quiet_freigabe', ver: 1, art: 'befehl', ts: NOWx, bis: NOWx + 60 * MIN, cmd: {name: 'SetQuietMode', topic: 'panasonic_heat_pump/commands/SetQuietMode', value: 0}, von: 3, was: 'x'}; pq.sum = E.checksum(pq);
+    const c3 = E.applyRequest(t1.A, {topic: 'uebernehmen', payload: {id: pq.id, sum: pq.sum}}, {now: NOWx + 11 * MIN, enabled: true, rules: ['quiet_freigabe'], eng: {ts: NOWx + 11 * MIN, prop: pq, locks: {}}, plant: {q: 3, hpAge: 0.3, block: 0}});
+    check('... danach ist ein neuer Klick fuer Quiet wieder moeglich (nicht "schon eine Übernahme aktiv")', c3.send.length === 1, c3.toast && c3.toast.text);
+    // L2: Raumvorschlag flackert eine Minute auf 0 -> kein Rueckweg-Grund; erst nach 15 min am Stueck
+    const kz = v => ({v: v, code: 'x', distrib: false, lead: 'Kinderzimmer oben'});
+    const R = runSeq(40, i => inp(T0 + i * MIN, {shift: 1, soll: 31, korr: kz(i === 5 ? 0 : (i >= 20 ? 0 : 1))}));
+    check('Raumvorschlag flackert 1 min auf 0: kein Rueckweg-Grund fuer die Raumregel; 15 min am Stueck 0: Grund gesetzt', !R.outs[5].ende.raum_offset && !R.outs[6].ende.raum_offset && !R.outs[33].ende.raum_offset && /seit 15 min wieder 0 K/.test(R.outs[35].ende.raum_offset || ''), R.outs[35].ende.raum_offset);
+}
+
+// ================================================================== (d) Vorausschau ±1 K und Verschiebungs-Arbitrierung (keine Regel beisst eine andere)
+console.log('--- (d) Vorausschau und Verschiebungs-Arbitrierung');
+const VSK = {up: [10, 10, 9, 8, 7, 7, 7], down: [8, 8, 9, 10.5, 11, 11, 11], flat: [10, 10, 10, 10, 10, 10, 10]};   // gegen den Tagesgang 10 °C: Bedarf +2,25 K / -2,38 K / 0 K
+const vsx = (at, o) => Object.assign({age: 10, at: at, n: 12, minDays: 10, gate: 1, ua: 0.22, tbal: 15, aktiv: 0}, o || {});
+const kx = (v, lead) => ({v: v, code: v ? (v > 0 ? 'Raum unter Minimum' : 'Überschreitung') : 'alle im Band', distrib: false, lead: lead || 'Kinderzimmer oben'});
+function seedS(val, t) {                                                         // Zustand mit 8 Tagen gemessenem Tagesgang (konstant val °C, bzw. val(Stunde)), Maschine "neu gestartet" zu t
+    t = t || T0; const S = E.newState(t), H = 3600000;
+    for (let k = 8 * 24; k >= 1; k--) { const hs = Math.floor((t - k * H) / H) * H, v = typeof val === 'function' ? val(hs) : val; S.atH.push([hs, v * 60, 60, 0, 0]); }
+    return S;
+}
+function runD(n, f, S0, c) {                                                      // wie runSeq (mit Tagesgang 10 °C), haelt aber je Minute eine Kopie der Verschiebungs-Vorschlaege fest
+    const R = {S: S0 === undefined ? seedS(10) : S0, outs: []};
+    for (let i = 0; i < n; i++) { const o = E.step(R.S, f(i), c || cfg); R.S = o.S; o.snap = {raum_offset: o.S.rules.raum_offset.prop ? JSON.parse(JSON.stringify(o.S.rules.raum_offset.prop)) : null, vorausschau: o.S.rules.vorausschau.prop ? JSON.parse(JSON.stringify(o.S.rules.vorausschau.prop)) : null}; R.outs.push(o); }
+    return R;
+}
+const shiftProps = R => { const L = []; R.outs.forEach((o, i) => o.res.forEach(r => { if (r.neu && (r.id === 'raum_offset' || r.id === 'vorausschau')) { L.push({i: i, rule: r.id, p: o.snap[r.id]}); } })); return L; };
+const twoShift = R => R.outs.some(o => o.snap.raum_offset && o.snap.vorausschau);
+const stAt = (R, i, id) => r0(R.outs[i], id);
+const allScores = R => [].concat.apply([], R.outs.map(o => o.scores));
+{
+    // Regelwerk
+    const RV = E.RULE.vorausschau;
+    check('Regelwerk: Vorausschau v1 ist Befehlsregel der Groesse "shift" mit Sperren Modell-Gate, Vorrang, Gegenrichtung; Raumeinfluss v2 nimmt an der Arbitrierung teil', RV && RV.groesse === 'shift' && RV.art === 'befehl' && ['modell', 'vorrang', 'gegenrichtung'].every(x => RV.sperren.includes(x)) && E.RULE.raum_offset.ver === 2 && ['vorrang', 'gegenrichtung'].every(x => E.RULE.raum_offset.sperren.includes(x)) && RV.befehl.name === 'SetZ1HeatRequestTemperature', RV.sperren.join(','));
+    // Gate geschlossen: nie ein Vorschlag, nur Anzeige; Vergleichslagen fuer die Basisrate laufen trotzdem mit
+    let R = runD(300, i => inp(T0 + i * MIN, {vs: vsx(VSK.up, {gate: 0, n: 1})}));
+    const rg = stAt(R, 100, 'vorausschau');
+    check('Gate geschlossen (1 von 10 Tagen): 300 min mit Vorhersage +2,3 K und Raeumen im Band -> kein Vorschlag, Status "gesperrt" (modell), Grund nennt die Tage, keine Faelle/Punkte',
+          !R.outs.some(o => o.res.some(r => r.id === 'vorausschau' && r.neu)) && rg.st === 'gesperrt' && JSON.stringify(rg.locks) === '["modell"]' && /^würde schalten, aber gesperrt: Gebäudemodell noch nicht freigegeben \(1 von 10 Tagen\)$/.test(rg.grund) && !allScores(R).some(s => s.regel === 'vorausschau') && !R.S.sc.cases.some(c => c.rule === 'vorausschau'), rg.grund);
+    check('Gate geschlossen: Vergleichslagen (Basisrate) werden trotzdem gesammelt (ohne Wertung), Datensatz traegt die Vorhersage', R.S.sc.cands.some(c => c.rule === 'vorausschau') && R.outs[100].rec.in.vs && R.outs[100].rec.in.vs.gate === 0 && R.outs[100].rec.r[4].sperren[0] === 'modell', JSON.stringify(R.outs[100].rec.in.vs));
+    R = runD(60, i => inp(T0 + i * MIN, {vs: vsx(VSK.up, {gate: 0, n: 1}), rooms: rooms({ki_oben: 23.4})}));
+    check('Gate geschlossen und Bedingung fehlt: Grund nennt beides ("außerdem …")', /^gesperrt: Gebäudemodell .*; außerdem Kinderzimmer oben nur 0,1 K unter Maximum$/.test(stAt(R, 59, 'vorausschau').grund), stAt(R, 59, 'vorausschau').grund);
+    // Gate offen
+    R = runD(60, i => inp(T0 + i * MIN, {vs: vsx(VSK.up)}));
+    const pu = R.outs[30].snap.vorausschau;
+    check('Gate offen, Vorhersage +2,3 K, alle Raeume im Band mit Luft: 30 min Haltezeit, dann Vorschlag +1 K (SetZ1HeatRequestTemperature = 1, von 0)', stAt(R, 20, 'vorausschau').st === 'wartet' && shiftProps(R).length === 1 && shiftProps(R)[0].i === 30 && pu.cmd.value === 1 && pu.von === 0 && pu.dir === 'soll_hoch' && /Bedarf \+2,3 K/.test(pu.warum) && /Soll-Vorlauf 30 → 31/.test(pu.was), pu && (pu.was + ' | ' + pu.warum));
+    R = runD(60, i => inp(T0 + i * MIN, {vs: vsx(VSK.down)}));
+    const pd = shiftProps(R)[0];
+    check('Vorhersage Milderung -2,4 K: Vorschlag -1 K (Soll 30 -> 29 °C, Untergrenze 29 eingehalten)', pd && pd.p.cmd.value === -1 && pd.p.dir === 'soll_runter', pd && pd.p.was);
+    R = runD(60, i => inp(T0 + i * MIN, {vs: vsx(VSK.down), soll: 29.5, sollKurve: 29.5}));
+    check('-1 K nie unter 29 °C Soll-Vorlauf', shiftProps(R).length === 0 && /Soll-Vorlauf würde 28,5|Soll-Vorlauf würde 29 °C|würde 28/.test(stAt(R, 59, 'vorausschau').grund), stAt(R, 59, 'vorausschau').grund);
+    R = runD(60, i => inp(T0 + i * MIN, {vs: vsx(VSK.up), rooms: rooms({ki_oben: 23.3})}));
+    check('+1 K nur mit Luft nach oben: waermster Raum 0,2 K unter Maximum -> kein Vorschlag', shiftProps(R).length === 0 && /Kinderzimmer oben nur 0,2 K unter Maximum/.test(stAt(R, 59, 'vorausschau').grund), stAt(R, 59, 'vorausschau').grund);
+    R = runD(60, i => inp(T0 + i * MIN, {vs: vsx(VSK.down), rooms: rooms({ki_oben: 22.2})}));
+    check('-1 K nur mit Luft nach unten: kaeltester Raum 0,2 K ueber Minimum -> kein Vorschlag', shiftProps(R).length === 0 && /Kinderzimmer oben nur 0,2 K über Minimum/.test(stAt(R, 59, 'vorausschau').grund), stAt(R, 59, 'vorausschau').grund);
+    R = runD(120, i => inp(T0 + i * MIN, {vs: vsx(VSK.up), rooms: rooms({ki_oben: i >= 50 ? 23.6 : 22.6})}));
+    check('Nie gegen den Raumzustand: laufender +1-K-Vorschlag endet in DERSELBEN Minute, in der ein Raum ueber das Maximum steigt (harte Bedingung, keine 3 min Nachlauf)', R.outs[49].snap.vorausschau && R.outs[50].prop === null && R.outs[50].ev.some(e => e[0] === 'optimierer_ende' && /vorausschau: Bedingung entfallen: Kinderzimmer oben außerhalb des Bandes/.test(e[1])) && shiftProps(R).length === 1, R.outs[50].ev.map(e => e[1]).join(' | '));
+    // Prioritaet: Komfort-Notfall des Raums schlaegt die Vorausschau
+    R = runD(150, i => inp(T0 + i * MIN, {vs: vsx(VSK.down), korr: kx(1), rooms: rooms({ki_oben: 21.5})}));
+    check('Prioritaet: Raum unter Minimum (Komfort-Notfall) -> Vorausschau schlaegt nie -1 K vor, der Raumeinfluss +1 K schon (nach 60 min)', shiftProps(R).length === 1 && shiftProps(R)[0].rule === 'raum_offset' && shiftProps(R)[0].i === 60 && shiftProps(R)[0].p.cmd.value === 1 && stAt(R, 100, 'vorausschau').st === 'bereit', JSON.stringify(shiftProps(R).map(x => [x.i, x.rule, x.p.cmd.value])) + ' / ' + stAt(R, 100, 'vorausschau').grund);
+    // Konflikt 1: Vorausschau +1, danach will der Raumeinfluss -1 (ohne Notfall) -> erst nach 240 min Wartezeit
+    const k1 = (i, room) => inp(T0 + i * MIN, {vs: vsx(i < 120 ? VSK.up : VSK.flat), korr: kx(-1, 'Schlafzimmer'), rooms: room ? room(i) : rooms()});
+    R = runD(420, i => k1(i));
+    let sp = shiftProps(R);
+    check('Konflikt +1 (Vorausschau) gegen -1 (Raumeinfluss): waehrend die Vorausschau die Verschiebung hat, ist der Raumeinfluss "gesperrt: andere Regel" - nie zwei Verschiebungs-Vorschlaege gleichzeitig',
+          sp[0].rule === 'vorausschau' && sp[0].i === 30 && stAt(R, 90, 'raum_offset').st === 'gesperrt' && stAt(R, 90, 'raum_offset').locks[0] === 'vorrang' && /vorgeschlagen von „Vorausschau ±1 K“/.test(stAt(R, 90, 'raum_offset').grund) && !twoShift(R), stAt(R, 90, 'raum_offset').grund);
+    check('... Vorausschau endet (Vorhersage flach, 3 min) in Minute 123; Raumeinfluss -1 K: bis 183 Mindesthaltezeit, danach ohne Komfort-Notfall "Gegenrichtung" bis 363, Vorschlag erst in Minute 363',
+          sp.length === 2 && sp[1].rule === 'raum_offset' && sp[1].i === 363 && sp[1].p.cmd.value === -1 && /Mindesthaltezeit 60 min/.test(stAt(R, 150, 'raum_offset').grund) && /ohne Komfort-Notfall erst nach 240 min/.test(stAt(R, 200, 'raum_offset').grund) && stAt(R, 200, 'raum_offset').naechste.bis === T0 + 363 * MIN, JSON.stringify(sp.map(x => [x.i, x.rule, x.p.cmd.value])) + ' | ' + stAt(R, 200, 'raum_offset').grund);
+    // ... mit Komfort-Notfall (Schlafzimmer 0,4 K ueber Maximum): die Vorausschau zieht sofort zurueck, der Raumeinfluss darf nach der Mindesthaltezeit
+    R = runD(300, i => k1(i, j => j >= 100 ? [rooms()[0], rooms()[1], {id: 'schlaf', name: 'Schlafzimmer', t: 22.4, age: 10, min: 20, max: 22, valid: true, active: true}] : rooms()));
+    sp = shiftProps(R);
+    check('Konflikt mit Komfort-Notfall (Raum 0,4 K ueber Maximum): Vorausschau endet sofort (Minute 100), Raumeinfluss -1 K nach der gemeinsamen Mindesthaltezeit (Minute 160), nicht frueher',
+          sp.length === 2 && sp[0].rule === 'vorausschau' && R.outs[100].snap.vorausschau === null && sp[1].rule === 'raum_offset' && sp[1].i === 160 && stAt(R, 159, 'raum_offset').locks.includes('gegenrichtung') && !twoShift(R), JSON.stringify(sp.map(x => [x.i, x.rule, x.p.cmd.value])));
+    // Konflikt 2 (umgekehrt): Raumeinfluss +1, danach will die Vorausschau -1 -> nie mit Notfall, also immer 240 min
+    R = runD(450, i => inp(T0 + i * MIN, {vs: vsx(i >= 70 ? VSK.down : VSK.flat), korr: kx(i < 150 ? 1 : 0)}));
+    sp = shiftProps(R);
+    check('Konflikt +1 (Raumeinfluss) gegen -1 (Vorausschau): erst "andere Regel" (Minute 100), nach dem Ende des Raumeinflusses (Minute 150) "Gegenrichtung", Vorschlag -1 K erst in Minute 390 (240 min, die Vorausschau hat nie einen Notfall)',
+          sp.length === 2 && sp[0].rule === 'raum_offset' && sp[0].i === 60 && stAt(R, 100, 'vorausschau').locks[0] === 'vorrang' && stAt(R, 200, 'vorausschau').locks[0] === 'gegenrichtung' && sp[1].rule === 'vorausschau' && sp[1].i === 390 && sp[1].p.cmd.value === -1 && !twoShift(R), JSON.stringify(sp.map(x => [x.i, x.rule, x.p.cmd.value])) + ' | ' + stAt(R, 200, 'vorausschau').grund);
+    // gleiche Richtung: Uebergabe statt Hin und Her
+    R = runD(200, i => inp(T0 + i * MIN, {vs: vsx(i < 120 ? VSK.up : VSK.flat), korr: kx(1)}));
+    sp = shiftProps(R);
+    check('Gleiche Richtung: Raumeinfluss will +1, die Vorausschau hat +1 schon vorgeschlagen -> "dieselbe Verschiebung"; endet die Vorausschau (Minute 123), uebernimmt der Raumeinfluss +1 sofort (keine Gegenrichtung, keine Luecke)',
+          sp.length === 2 && sp[0].rule === 'vorausschau' && /dieselbe Verschiebung \+1 K schlägt schon „Vorausschau ±1 K“ vor/.test(stAt(R, 90, 'raum_offset').grund) && sp[1].rule === 'raum_offset' && sp[1].i === 123 && sp[1].p.cmd.value === 1 && !twoShift(R), JSON.stringify(sp.map(x => [x.i, x.rule])) + ' | ' + stAt(R, 90, 'raum_offset').grund);
+    // Uebernommene Verschiebung: gehoert der Vorausschau, Raumeinfluss bewertet sie nicht als eigenen Eingriff, Wirkung zaehlt fuer die Vorausschau
+    const ap = (i, o) => inp(T0 + i * MIN, Object.assign({vs: vsx(VSK.up), korr: kx(0), shift: i >= 35 ? 1 : 0, soll: i >= 35 ? 31 : 30}, o || {}));
+    R = runD(200, i => ap(i, {korr: kx(i >= 40 ? -1 : 0, 'Schlafzimmer')}));
+    let sc = allScores(R);
+    check('Vorschlag +1 K uebernommen (Minute 35): Verschiebung gehoert der Vorausschau (applied), Wirkungsfall "Soll folgt" fuer die Vorausschau, keiner fuer den Raumeinfluss',
+          R.S.arb.applied && R.S.arb.applied.rule === 'vorausschau' && sc.some(s => s.typ === 'wirkung' && s.regel === 'vorausschau' && s.punkte === 10) && !sc.some(s => s.typ === 'wirkung' && s.regel === 'raum_offset') && /\(Vorausschau\) steht/.test(stAt(R, 50, 'vorausschau').grund), sc.map(s => s.regel + ':' + s.typ + ':' + s.punkte).join(', '));
+    check('... Raumvorschlag -1 K gegen die uebernommene +1 K: "gesperrt: andere Regel", nie ein Vorschlag 1 -> -1/0 (kein Zurueckstellen der fremden Verschiebung)', !shiftProps(R).some(x => x.rule === 'raum_offset') && stAt(R, 150, 'raum_offset').locks[0] === 'vorrang' && /gehört „Vorausschau ±1 K“/.test(stAt(R, 150, 'raum_offset').grund), stAt(R, 150, 'raum_offset').grund);
+    R = runD(120, i => ap(i));
+    check('... Raumvorschlag 0 bei uebernommener +1 K: Raumeinfluss "ruht" (gehoert der Vorausschau), kein Rueckstellen auf 0', stAt(R, 100, 'raum_offset').st === 'inaktiv' && /gehört der Regel „Vorausschau ±1 K“/.test(stAt(R, 100, 'raum_offset').grund) && !shiftProps(R).some(x => x.rule === 'raum_offset'), stAt(R, 100, 'raum_offset').grund);
+    const cut = allScores(runD(400, i => ap(i))).find(s => s.typ === 'ausloeser');
+    check('... der Ausloeser-Fall der Vorausschau selbst wird ab der Uebernahme neutral (Eingriff mit Urheber im Text), die Wirkung wird bewertet', cut && cut.regel === 'vorausschau' && cut.ergebnis === 'neutral' && /Vorschlag „Vorausschau ±1 K“ übernommen/.test(cut.text), cut && cut.text);
+    // Rueckweg und Uebergabe in der Uebernahme
+    R = runD(80, i => ap(i, {vs: vsx(i < 50 ? VSK.up : VSK.flat)}));
+    check('Rueckweg-Grund der Vorausschau: Vorhersage zeigt die Aenderung 15 min nicht mehr (ab Minute 65), Raum ueber Maximum sofort', !R.outs[60].ende.vorausschau && /seit 15 min nicht mehr/.test(R.outs[65].ende.vorausschau || '') && /über Maximum/.test(E.step(JSON.parse(JSON.stringify(R.S)), ap(80, {rooms: rooms({ki_oben: 23.6})}), cfg).ende.vorausschau || ''), R.outs[65].ende.vorausschau);
+    R = runD(80, i => ap(i, {vs: vsx(i < 50 ? VSK.up : VSK.flat), korr: kx(1)}));
+    check('Uebergabe: Raumvorschlag verlangt dieselbe +1 K -> kein Rueckweg-Grund, "halten" fuer die Vorausschau', !R.outs[79].ende.vorausschau && /Raumeinfluss verlangt dieselbe Verschiebung/.test(R.outs[79].halten.vorausschau || ''), JSON.stringify(R.outs[79].halten));
+    const Av = E.newApply(); Av.aktiv = {id: 'v', rule: 'vorausschau', groesse: 'shift', name: 'SetZ1HeatRequestTemperature', value: 1, von: 0, ts: T0, bis: T0 + 360 * MIN, bestaetigt: true};
+    const tk = h => E.applyTick(JSON.parse(JSON.stringify(Av)), {now: T0 + 361 * MIN, plant: {shift: 1, hpAge: 0.3, block: 0}, halten: h});
+    check('Uebernahme: Ablauf nach 6 h schickt den Rueckweg 0 - ausser die andere Regel verlangt denselben Wert ("halten")', tk({}).send.length === 1 && tk({}).send[0].payload === '0' && tk({vorausschau: 'Raumeinfluss verlangt dieselbe Verschiebung (+1 K)'}).send.length === 0, '');
+}
+console.log('--- (d) Sonne/Wind nur mit coefActivate, Bewertung und Neutralitaet');
+{
+    const H = 3600000, now = T0;
+    const W = {f_ts: now - 10 * MIN, fpts: [[now - 10 * MIN, 10, 80, 20, 6], [now + 3 * H, 8, 85, 90, 9], [now + 6 * H, 6, 90, 100, 11]]};
+    const PI = {pv: [0, 1, 2, 3, 4, 5, 6, 7].map(h => [now + (h - 1) * H, 4000, H])};
+    const PLoff = {model: {n: 12, minDays: 10, gate: true, aktiv: false, bs: 0.4, bw: 0.02, ua: 0.22, tbal: 15}}, PLon = {model: Object.assign({}, PLoff.model, {aktiv: true})};
+    const vOff = E.vorschau(W, PLoff, PI, 11, now), vOn = E.vorschau(W, PLon, PI, 11, now), c = cfg.rules.vorausschau;
+    check('Vorhersage-Eingabe: Fuehler 11 °C, OWM jetzt 10 °C -> an den Fuehler angeglichen (Versatz klingt ab), 7 Stuetzstellen', vOff.at[0] === 11 && Math.abs(vOff.at[1] - (10 - 2 / 3 + Math.exp(-1 / 4))) < 0.06 && vOff.at.length === 7 && vOff.age === 10, JSON.stringify(vOff.at));
+    check('coefActivate aus: Sonne und Wind stehen gar nicht in der Eingabe (kein pv/wind/bs/bw), auch wenn PV-Prognose und Wind vorliegen', !('pv' in vOff) && !('wind' in vOff) && !('bs' in vOff) && !('bw' in vOff) && vOff.aktiv === 0, Object.keys(vOff).join(','));
+    const vInj = Object.assign({}, vOff, {pv: [9000, 9000, 9000, 9000, 9000, 9000, 9000], wind: [15, 15, 15, 15, 15, 15, 15], bs: 0.9, bw: 0.1}), B10 = {at: [0, 0, 0, 0, 0, 0, 0], pv: [0, 0, 0, 0, 0, 0, 0]};
+    check('coefActivate aus: selbst eingeschleuste Sonne/Wind-Werte aendern die Bedarfsaenderung nicht (nur Temperatur)', E.bedarfK(vInj, c, B10) === E.bedarfK(vOff, c, B10) && E.bedarfK(vOff, c, B10) !== null, E.bedarfK(vOff, c, B10) + ' / ' + E.bedarfK(vInj, c, B10));
+    check('coefActivate an (Gate offen): Wind und PV-Prognose gehen ein und veraendern die Bedarfsaenderung', vOn.aktiv === 1 && vOn.pv.length === 7 && vOn.pv[3] === 4000 && vOn.wind[3] === 9 && E.bedarfK(vOn, c, B10) !== E.bedarfK(vOff, c, B10), E.bedarfK(vOff, c, B10) + ' -> ' + E.bedarfK(vOn, c, B10));
+    // Tagesgang herausgerechnet: ein gewoehnlicher Tag (Vorhersage = gestern zur selben Uhrzeit) ergibt 0, Wetter ergibt die Aenderung
+    const day = hs => 6 + 4 * Math.sin(2 * Math.PI * ((new Date(hs).getHours() + 0.5) - 9) / 24), t15 = new Date(2026, 9, 12, 15, 30).getTime();
+    const Sd = seedS(day, t15), base = E.tagesgang(Sd, t15), fc = off => vsx([0, 1, 2, 3, 4, 5, 6].map(h => Math.round((day(t15 + h * H) + (h >= 2 ? off : 0)) * 10) / 10));
+    check('Tagesgang herausgerechnet: Vorhersage 15:30 wie gestern (abends ~4 K kaelter, Tagesgang ±4 K) -> Bedarfsaenderung ~0, kein Vorschlag; derselbe Abend 3 K kaelter als gestern -> ~+3 K',
+          Math.abs(E.bedarfK(fc(0), c, base)) < 0.3 && Math.abs(E.bedarfK(fc(-3), c, base) - 3) < 0.3 && E.bedarfK(fc(0), c, {at: [null, null, null, null, null, null, null]}) === null && (fc(0).at[0] - fc(0).at[5]) >= 3.5,
+          'gleich wie gestern ' + E.bedarfK(fc(0), c, base) + ' K, 3 K kaelter ' + E.bedarfK(fc(-3), c, base) + ' K; ohne Tagesgang-Abzug waeren es ' + E.bedarfK(fc(0), c, B10) + ' K');
+    { let Rn = runD(90, i => inp(t15 + i * MIN, {vs: fc(0)}), seedS(day, t15)); const Rk = runD(90, i => inp(t15 + i * MIN, {vs: fc(-3)}), seedS(day, t15));
+      check('... in der Maschine: gewoehnlicher Nachmittag -> kein Vorschlag, kaelterer Abend als gestern -> +1 K', shiftProps(Rn).length === 0 && shiftProps(Rk).length === 1 && shiftProps(Rk)[0].p.cmd.value === 1 && /aus dem Wetter/.test(shiftProps(Rk)[0].p.warum), shiftProps(Rk).map(x => x.p.warum).join(' | ') + ' / ohne: ' + r0(Rn.outs[89], 'vorausschau').grund);
+      Rn = runD(30, i => inp(T0 + i * MIN, {vs: vsx(VSK.up)}), null);
+      check('Ohne 24 h gemessenen Tagesgang (frischer Zustand): Vorausschau ruht ("Tagesgang noch nicht bekannt"), bei geschlossenem Gate "gesperrt" mit diesem Zusatz', /^Tagesgang noch nicht bekannt \(\d+ h gemessen, mindestens 36 h\)$/.test(r0(Rn.outs[29], 'vorausschau').grund) && /Gebäudemodell.*; außerdem Tagesgang noch nicht bekannt/.test(r0(E.step(null, inp(T0, {vs: vsx(VSK.up, {gate: 0})}), cfg), 'vorausschau').grund), r0(Rn.outs[29], 'vorausschau').grund); }
+    check('Vorhersage alt (> 120 min) oder zu kurz: Vorausschau ruht', /min alt/.test(r0(E.step(null, inp(T0, {vs: vsx(VSK.up, {age: 150})}), cfg), 'vorausschau').grund) && /reicht nicht/.test(r0(E.step(seedS(10), inp(T0, {vs: vsx([10, 10, 9, null, null, null, null])}), cfg), 'vorausschau').grund) && E.vorschau({f_ts: now, fpts: []}, PLoff, null, 10, now) === null, '');
+    // Bewertung: Fall der Vorausschau (Treffer / Fehlalarm), nur unter ihrer Regel
+    const drift = (i, end) => Math.round((i < 40 ? 22.6 : Math.max(end, 22.6 - (i - 40) * 0.004)) * 10) / 10;
+    let R = runD(400, i => inp(T0 + i * MIN, {vs: vsx(i < 120 ? VSK.up : VSK.flat), rooms: rooms({ki_oben: drift(i, 22.2)})}));
+    let sc = allScores(R), a = sc.find(s => s.typ === 'ausloeser');
+    check('Bewertung: Vorausschau +1 K, kaeltester Raum (Kinderzimmer oben) sinkt ohne Verschiebung an den Bandrand (22,2 <= Minimum + 0,3) -> Treffer, gebucht unter "vorausschau", nichts fuer den Raumeinfluss',
+          a && a.regel === 'vorausschau' && a.ergebnis === 'treffer' && a.horizonte.length === 3 && !sc.some(s => s.regel === 'raum_offset'), a && a.text);
+    R = runD(400, i => inp(T0 + i * MIN, {vs: vsx(i < 120 ? VSK.up : VSK.flat)}));
+    sc = allScores(R); a = sc.find(s => s.typ === 'ausloeser');
+    check('Bewertung: Raum bleibt mit Luft im Band -> Fehlalarm der Vorausschau (Minuspunkte nur fuer sie)', a && a.regel === 'vorausschau' && a.ergebnis === 'fehlalarm' && a.punkte < 0 && E.report(R.S).find(r => r.regel === 'vorausschau').fehlalarm === 1 && E.report(R.S).find(r => r.regel === 'raum_offset').faelle === 0, a && (a.punkte + ' ' + a.text));
+    // Neutralitaet: Raumeinfluss durch die Gegenregel gesperrt (uebernommene -1 K der Vorausschau), Raum kalt -> v3 "waehrend Sperre" (0), v2 "verpasst" (-20)
+    const neu = i => inp(T0 + i * MIN, {vs: vsx(VSK.down), shift: i >= 32 ? -1 : 0, soll: i >= 32 ? 29 : 30, korr: kx(i >= 40 ? 1 : 0), rooms: rooms({ki_oben: i >= 40 ? 21.4 : 22.6})});
+    R = runD(300, neu); sc = allScores(R).filter(s => s.regel === 'raum_offset' && /^verpasst/.test(s.typ));
+    check('Neutralitaet (v3): Raumeinfluss 180 min lang nur durch die Gegenregel (uebernommene -1 K der Vorausschau) und eigene Wartezeiten gesperrt -> "verpasst_sperre" 0 Punkte mit Sperre "vorrang", kein "verpasst"',
+          sc.length === 1 && sc[0].typ === 'verpasst_sperre' && sc[0].punkte === 0 && sc[0].sperre.includes('vorrang') && !/\bverpasst"/.test(JSON.stringify(sc)) && stAt(R, 150, 'raum_offset').locks[0] === 'vorrang', sc.map(s => s.t + ' ' + s.typ + ' ' + JSON.stringify(s.sperre)).join(' | '));
+    R = runD(300, neu, undefined, E.mergeCfg({sv: 2})); sc = allScores(R).filter(s => s.regel === 'raum_offset' && /^verpasst/.test(s.typ));
+    check('... mit den Bewertungsregeln v2 (cfg.sv = 2) waere dieselbe Lage "verpasst" -20 (Gegenregel-Sperren entschuldigten dort nicht): v3 aendert genau das', sc.some(s0 => s0.typ === 'verpasst' && s0.punkte === -20 && s0.sv === 2), sc.map(s => s.t + ' ' + s.typ + ' ' + s.punkte).join(' | '));
+    R = runD(300, i => { const x = neu(i); if (i >= 200) { x.rooms = rooms({ki_oben: 20.8}); } return x; }); sc = allScores(R).filter(s => s.regel === 'raum_offset' && /^verpasst/.test(s.typ));
+    check('... Schaden hebt auch die Gegenregel-Entschuldigung auf: Raum 1,2 K unter Minimum -> "verpasst" -20 mit Schaden "komfort"', sc.some(s => s.typ === 'verpasst' && s.punkte === -20 && JSON.stringify(s.schaden) === '["komfort"]'), sc.map(s => s.t + ' ' + s.typ + ' ' + s.punkte).join(' | '));
+    // Verpasst der Vorausschau (v3): Lage 60 min ohne Vorschlag, bewertet erst, wenn sie wirklich eintritt
+    const vsMiss = (o) => i => inp(T0 + i * MIN, Object.assign({vs: vsx(i >= (o.ab || 0) ? VSK.up : VSK.flat), at: 10, korr: kx(o.korr ? (i < (o.korrBis || 999) ? o.korr : 0) : 0, 'Schlafzimmer')}, o.f ? o.f(i) : {}));
+    const vmiss = R => allScores(R).filter(s0 => s0.regel === 'vorausschau' && /^verpasst/.test(s0.typ));
+    let Rm = runD(400, vsMiss({f: i => (i >= 150 ? {rooms: rooms({ki_oben: 21.8})} : {})}), undefined, E.mergeCfg({rules: {vorausschau: {proTag: 0}}}));
+    let vm = vmiss(Rm);
+    check('Verpasst Vorausschau: Lage ab Minute 0, Tageslimit ueber den Standard hinaus auf 0 gesetzt (zaehlt frei), Raum faellt in Minute 150 unter Minimum (vorhergesagter Bedarf trat ein) -> "verpasst" -20',
+          vm.length === 1 && vm[0].typ === 'verpasst' && vm[0].punkte === -20 && vm[0].t === E.iso(T0 + 150 * MIN) && /eingetreten: Kinderzimmer oben unter Minimum/.test(vm[0].text) && /verlängert: Tageslimit/.test(vm[0].text), vm.map(x => x.t + ' ' + x.typ + ' ' + x.text).join(' | '));
+    Rm = runD(400, vsMiss({}), undefined, E.mergeCfg({rules: {vorausschau: {proTag: 0}}}));
+    check('... trat nichts ein (Raum bleibt im Band, gemessene Aussentemperatur bleibt beim Tagesgang): kein Eintrag', vmiss(Rm).length === 0, vmiss(Rm).map(x => x.typ).join(','));
+    Rm = runD(400, vsMiss({f: i => (i >= 120 ? {at: 6.5} : {})}), undefined, E.mergeCfg({rules: {vorausschau: {proTag: 0}}}));
+    vm = vmiss(Rm);
+    check('... eingetreten ueber die Messung: Aussentemperatur im Fenster 3,5 K unter dem Tagesgang (>= halbe Schwelle) -> "verpasst" -20 am Fensterende (Minute 60 + 5 h)', vm.length === 1 && vm[0].typ === 'verpasst' && vm[0].t === E.iso(T0 + 360 * MIN) && /gemessen \+3,5 K/.test(vm[0].text), vm.map(x => x.t + ' ' + x.text).join(' | '));
+    Rm = runD(500, vsMiss({ab: 70, korr: -1, korrBis: 400, f: i => (i >= 200 ? {rooms: rooms({ki_oben: 21.8})} : {})}));
+    vm = vmiss(Rm);
+    check('... Neutralitaet: Vorausschau nur durch Haltezeit und die Gegenregel (Raumeinfluss hat -1 K) zurueckgehalten, Bedarf trat ein -> "verpasst_sperre" 0 Punkte',
+          vm.length === 1 && vm[0].typ === 'verpasst_sperre' && vm[0].punkte === 0 && vm[0].sperre.includes('vorrang') && vm[0].sperre.includes('haltezeit'), vm.map(x => x.t + ' ' + x.typ + ' ' + JSON.stringify(x.sperre)).join(' | '));
+    Rm = runD(500, vsMiss({ab: 70, korr: -1, korrBis: 400, f: i => (i >= 200 ? {rooms: rooms({ki_oben: 20.8})} : {})}));
+    vm = vmiss(Rm);
+    check('... Schaden hebt die Neutralitaet auf: Raum 1,2 K unter Minimum -> "verpasst" -20 mit Schaden "komfort"', vm.length === 1 && vm[0].typ === 'verpasst' && JSON.stringify(vm[0].schaden) === '["komfort"]', vm.map(x => x.t + ' ' + x.typ).join(' | '));
+    Rm = runD(400, vsMiss({f: i => (i >= 150 ? {rooms: rooms({ki_oben: 21.8})} : {})}));
+    check('... mit Vorschlag (Standardwerte): kein "verpasst"; mit Gate zu: nie ein Eintrag; Bewertungsregeln v2: kein "verpasst" der Vorausschau', vmiss(Rm).length === 0 && shiftProps(Rm).length === 1 &&
+          vmiss(runD(400, i => { const x = vsMiss({f: j => (j >= 150 ? {rooms: rooms({ki_oben: 21.8})} : {})})(i); x.vs.gate = 0; return x; }, undefined, E.mergeCfg({rules: {vorausschau: {proTag: 0}}}))).length === 0 &&
+          vmiss(runD(400, vsMiss({f: i => (i >= 150 ? {rooms: rooms({ki_oben: 21.8})} : {})}), undefined, E.mergeCfg({sv: 2, rules: {vorausschau: {proTag: 0}}}))).length === 0, '');
+    // Nachspielen mit Vorhersage aus dem Datensatz
+    R = runD(80, i => inp(T0 + i * MIN, {vs: vsx(i < 50 ? VSK.up : VSK.down)}));
+    const R2 = runD(80, i => E.unsnap(T0 + i * MIN, JSON.parse(JSON.stringify(R.outs[i].rec.in))));
+    check('Nachspielen aus dem Datensatz (Vorhersage im Schnappschuss): dieselben Entscheidungen der Vorausschau', R2.outs.every((o, i) => JSON.stringify(o.rec.r) === JSON.stringify(R.outs[i].rec.r)) && shiftProps(R).length === 1, '');
+}
+
+// ------------------------------------------------------------------ Mehrtages-Simulation mit Vorhersage und beiden Verschiebungs-Regeln (Fake-Uhr): nie Hin und Her
+function shiftSim(days, opts) {
+    opts = opts || {};
+    const P = {on: false, tw: 31, room: 22.6, room2: 21, over: 0, under: 0, shift: 0, rt: 0}, H = 3600000;
+    let S = null, A = null; const log = {props: [], plantChg: [], errors: 0, conc: 0, ev: [], scores: [], claims: []};
+    const start = new Date(2026, 10, 2, 0, 0, 0).getTime();
+    const atOf = t => { const i = (t - start) / MIN, h = (i % 1440) / 60, day = i / 1440; return 6 + 4 * Math.sin(2 * Math.PI * (h - 9) / 24) - (day > 4 && day < 5.5 ? 5 : 0) + (day > 6.5 ? 4 : 0); };   // 4 gewoehnliche Tage (Tagesgang lernen), Kaelteeinbruch Tag 5, Milderung ab Tag 6,5
+    for (let i = 0; i < days * 1440; i++) {
+        const t = start + i * MIN, at = atOf(t), atI = Math.round(at), kurve = Math.max(29, 29 + 0.375 * (11 - atI)), soll = Math.ceil(kurve) + P.shift;
+        const spread = P.on ? 2.5 : 0, vl = Math.round((P.tw + spread / 2) * 4) / 4, rl = Math.round((P.tw - spread / 2) * 4) / 4;
+        const hz = P.on ? 17 : 0, pth = P.on ? 2100 + (soll - 30) * 150 : 0, qrad = 0.25 * (P.tw - P.room);
+        P.tw += ((pth / 1000) - qrad) / 0.4 / 60; P.room += (qrad - 0.18 * (P.room - at) + 0.9) / 8 / 60; P.room2 = P.room - 1.4;
+        if (P.on) { P.rt++; if (vl >= soll + 3.25) { P.over++; } else { P.over = 0; } if (P.over >= 3) { P.on = false; P.rt = 0; P.over = 0; } }
+        else { if (vl <= soll - 3) { P.under++; } else { P.under = 0; } if (P.under >= 6) { P.on = true; P.under = 0; } }
+        const rr = Math.round(P.room * 10) / 10, korrV = rr < 22 ? 1 : (rr > 23.5 ? -1 : 0);
+        const W = {f_ts: t - 15 * MIN, fpts: [0, 1, 2, 3, 4, 5, 6, 7].map(h => [t - 15 * MIN + h * H, Math.round(atOf(t - 15 * MIN + h * H) * 10) / 10])};
+        const x = {t: t, hpAge: 0.4, hz: hz, vl: vl, rl: rl, soll: soll, dT: 3, pel: P.on ? 300 : 15, pth: pth, flow: 13.5, pump: 1750, q: 3, qPrio: 1, hc: 1, at: atI, defrost: 0, dhw: 0, ss: 0, rt: P.rt, shift: P.shift,
+                   heatMode: 0, z1Sensor: 0, heaterI: 0, heaterE: 0, htrOnAT: 0, htrStartDelta: -3, heatOffAT: 12, sollKurve: kurve, block: 0, otherQ: null, otherShift: null, kzRad: 1,
+                   rooms: [{id: 'ki_oben', name: 'Kinderzimmer oben', t: rr, age: 20, min: 22, max: 23.5, valid: true, active: true}, {id: 'schlaf', name: 'Schlafzimmer', t: Math.round(P.room2 * 10) / 10, age: 20, min: 20, max: 22.5, valid: true, active: true}],
+                   korr: {v: korrV, code: korrV ? 'Raum ausserhalb' : 'alle im Band', distrib: false, lead: 'Kinderzimmer oben'},
+                   vs: E.vorschau(W, {model: {n: 12, minDays: 10, gate: opts.gate !== false, aktiv: false, ua: 0.22, tbal: 15}}, null, atI, t)};
+        try {
+            const o = E.step(S, x, cfg); S = o.S;
+            if (S.rules.raum_offset.prop && S.rules.vorausschau.prop) { log.conc++; }
+            o.res.forEach(r => { if (r.neu && E.RULE[r.id].groesse === 'shift') { log.props.push({t: t, rule: r.id, v: S.rules[r.id].prop.cmd.value, von: S.rules[r.id].prop.von, hart: r.hart}); } });
+            o.scores.forEach(s => log.scores.push(s)); o.ev.forEach(e => log.ev.push([t, e[0], e[1]]));
+            if (opts.apply) {                                                              // "Nutzer klickt jeden Verschiebungs-Vorschlag", Rueckweg wie die Uebernahme (Grund, Ablauf, halten)
+                const p = o.prop && E.RULE[o.prop.rule].groesse === 'shift' ? o.prop : null;
+                if (p && !A && p.von === P.shift) { A = {rule: p.rule, von: P.shift, bis: t + cfg.rules[p.rule].maxDauerMin * MIN}; P.shift = p.cmd.value; log.plantChg.push({t: t, rule: p.rule, v: P.shift}); }
+                else if (A && ((o.ende[A.rule]) || (t >= A.bis && !o.halten[A.rule]))) { P.shift = A.von; log.plantChg.push({t: t, rule: A.rule + ' (Rückweg)', v: P.shift}); A = null; }
+            }
+        } catch (e) { log.errors++; if (log.errors < 3) { console.log(e.stack); } }
+    }
+    log.S = S;
+    return log;
+}
+{
+    // Pruefung "kein Hin und Her" fuer eine Folge von Verschiebungs-Vorschlaegen (Shadow): Gegenrichtung erst 60 min nach dem Ende der vorigen, ohne Notfall 240 min
+    const flips = L => { const bad = []; for (let k = 1; k < L.props.length; k++) { const a = L.props[k - 1], b = L.props[k], da = Math.sign(a.v - a.von), db = Math.sign(b.v - b.von); if (da && db && da === -db) { const end = (L.ev.find(e => e[0] >= a.t && e[1] === 'optimierer_ende' && e[2].indexOf(a.rule + ':') === 0) || [b.t])[0]; const gap = (b.t - end) / MIN; if (gap < 60 || (gap < 240 && !b.hart)) { bad.push(E.iso(b.t) + ' ' + b.rule + ' ' + gap + ' min'); } } } return bad; };
+    const L1 = shiftSim(8, {});
+    const byRule = r => L1.props.filter(p => p.rule === r).length;
+    check('8 Tage (4 gewoehnliche Tage mit Tagesgang ±4 K, dann Kaelteeinbruch und Milderung), Gate offen, Shadow: kein Fehler, beide Verschiebungs-Regeln kommen vor, nie zwei Verschiebungs-Vorschlaege gleichzeitig', L1.errors === 0 && byRule('vorausschau') >= 1 && L1.conc === 0 && L1.props.filter(p => p.rule === 'vorausschau').every(p => (p.t - new Date(2026, 10, 2).getTime()) / 86400000 > 3.5), 'Vorausschau ' + byRule('vorausschau') + ', Raumeinfluss ' + byRule('raum_offset') + ': ' + L1.props.map(p => E.iso(p.t).slice(5, 16) + ' ' + p.rule + ' ' + p.v).join(', '));
+    check('... kein Hin und Her: jede Gegenrichtung fruehestens 60 min nach dem Ende der vorigen Verschiebung, ohne Komfort-Notfall erst nach 240 min', flips(L1).length === 0, flips(L1).join(' | ') || (L1.props.length + ' Vorschlaege geprueft'));
+    const L0 = shiftSim(8, {gate: false});
+    check('... dieselben 8 Tage mit geschlossenem Gate: keine Vorausschau, der Raumeinfluss allein', L0.errors === 0 && !L0.props.some(p => p.rule === 'vorausschau'), L0.props.map(p => E.iso(p.t).slice(5, 16) + ' ' + p.rule + ' ' + p.v).join(', '));
+    const L2 = shiftSim(8, {apply: true});
+    const chg = L2.plantChg, rev = []; for (let k = 1; k < chg.length; k++) { if (chg[k].t - chg[k - 1].t < 60 * MIN) { rev.push(E.iso(chg[k].t) + ' ' + chg[k].rule); } }
+    const ap2 = L2.scores.filter(s => s.typ === 'wirkung');
+    check('8 Tage, jeder Verschiebungs-Vorschlag sofort uebernommen (Rueckweg ueber Grund/Ablauf/halten): Anlage wechselt nie binnen 60 min, Wirkung je Regel ihrem Vorschlag zugeordnet', L2.errors === 0 && chg.length >= 2 && rev.length === 0 && ap2.length >= 1 && ap2.every(s => chg.some(c0 => c0.rule === s.regel)) && L2.conc === 0, chg.map(c0 => E.iso(c0.t).slice(5, 16) + ' ' + c0.rule + '=' + c0.v).join(', ') + (rev.length ? ' | zu schnell: ' + rev.join(', ') : ''));
+}
+
+// ================================================================== Seite "Optimierer": Karten-Daten (engine_view.js) und Darstellung (eng_ui.js)
+console.log('--- Seite "Optimierer": Karten-Daten und Darstellung');
+{
+    const VW = require('./engine_view.js'), UI = require('./eng_ui.js');
+    const txt = h => h.replace(/<style[\s\S]*?<\/style>/g, '').replace(/<[^>]+>/g, ' ').replace(/&[a-z]+;/g, 'x').replace(/\s+/g, ' ').trim();
+    const vsrc = fs.readFileSync(path.join(__dirname, 'engine_view.js'), 'utf8').replace(/\/\/.*$/gm, ''), usrc = fs.readFileSync(path.join(__dirname, 'eng_ui.js'), 'utf8');
+    check('Anzeige-Funktionen sind rein: keine Uhr, kein Zufall, kein Speicher/Dateizugriff (die Zeit kommt aus der Eingabe)', !/Date\.now|Math\.random|\bfs\.|global\.(get|set)|flow\.(get|set)/.test(vsrc) && !/Date\.now|Math\.random/.test(usrc), '');
+    // Ablauf wie (a): 70 min, ab Minute 30 Boost -> wartet -> Vorschlag; dazwischen Datenluecke, Startphase-Flackern (Dauerzustaende)
+    const V = {ep: [], open: {}}; let S = null, o = null, snap = null;
+    for (let i = 0; i < 70; i++) {
+        o = E.step(S, inp(T0 + i * MIN, {rt: 20 + i, soll: i >= 30 ? 38 : 30, vl: i >= 30 ? 30 : 29.5, rl: i >= 30 ? 28.25 : 28, sollKurve: 29.75, rooms: rooms({ki_oben: 21.2}), q: 3, hz: 16, hpAge: i === 12 ? 9 : 0.5}), cfg); S = o.S;
+        VW.track(V, o.res, S.rules, T0 + i * MIN);
+        if (i === 20) { snap = VW.build({now: T0 + i * MIN, last: {t: T0 + i * MIN, res: o.res, prop: o.prop, anl: {z: o.d.zustand, lauf: o.d.runMin, hz: o.d.hz, q: o.d.q, vlR: o.d.vlRueck}}, S: S, V: V, AP: {}, enabled: false}); }
+    }
+    const last = {t: T0 + 69 * MIN, res: o.res, prop: o.prop, anl: {z: o.d.zustand, lauf: o.d.runMin, hz: o.d.hz, q: o.d.q, vlR: o.d.vlRueck}};
+    const B = VW.build({now: T0 + 69 * MIN, last: last, S: S, V: V, AP: {}, enabled: false});
+    const all = JSON.stringify(B) + JSON.stringify(snap);
+    check('Karten-Daten ohne "würde schalten, sobald …"-Saetze; Regelkachel = Chip + Bedingungen + eine Zeile (Engpass mit Ist / Schwelle)', !/würde schalten/.test(all) && snap.rules.rules[0].chip === 'prüft' && snap.rules.rules[0].line.l === 'Vorlauf-Rückstand' && snap.rules.rules[0].line.v === '0,5 / 1,5 K' && Math.abs(snap.rules.rules[0].line.f - 1 / 3) < 0.01 && snap.rules.rules[0].bed.length === 6 && snap.rules.rules[0].bed.filter(b => b[1]).length === 4, JSON.stringify(snap.rules.rules[0]));
+    check('Regelkacheln: Vorschlag zeigt seit/gueltig bis mit Ablauf-Balken, Raumregel "ruht" mit kurzem Grund ohne Klammerzusatz, Zeilen hoechstens 45 Zeichen', B.rules.rules[0].chip === 'Vorschlag' && /^seit \d\d:\d\d$/.test(B.rules.rules[0].line.l) && /^gültig bis/.test(B.rules.rules[0].line.v) && B.rules.rules.every(r => (r.line.l + r.line.v).length <= 45), B.rules.rules.map(r => r.chip + ': ' + r.line.l + ' ' + r.line.v).join(' | '));
+    check('keine doppelten Inhalte: die Begruendung des Vorschlags steht nur in der Vorschlagskarte, nicht in Regelkacheln oder Entscheidungen', B.card.prop && !UI.html('rules', B.rules).includes(B.card.prop.warum.slice(0, 30)) && !UI.html('log', B.log).includes(B.card.prop.warum.slice(0, 30)), '');
+    check('Statuszeile: Maschine laeuft, Anlagenzustand, Übernahme gesperrt (Schloss); kein Vorschlag -> keine Knoepfe ausser Zuruecksetzen/Sperren bei Bedarf', B.card.status.length === 3 && B.card.status[0].c === 'ok' && /^Lauf 89 min · 16 Hz · Quiet 3 · Vorlauf -8,0 K$/.test(B.card.status[1].t) && B.card.status[2].c === 'lock' && !/<button/.test(UI.html('card', snap.card)), B.card.status.map(s => s.t).join(' | '));
+    check('Anlaufsperre und Datenausfall erscheinen in der Statuszeile', (() => { const r0x = VW.build({now: T0 + 3 * MIN, last: {t: T0 + 3 * MIN, res: [], anl: {}}, S: {born: T0, rules: {}, sc: E.newState(T0).sc}, V: {}, AP: {}}); const r1 = VW.build({now: T0 + 30 * MIN, last: {t: T0 + 30 * MIN, res: [{id: 'quiet_freigabe', st: 'gesperrt', grund: 'gesperrt: x', naechste: {b: 'daten'}, locks: ['daten']}], anl: {}}, S: {born: T0, rules: {}, sc: E.newState(T0).sc}, V: {}, AP: {}}); return /^Anlaufsperre bis 06:10$/.test(r0x.card.status[0].t) && r1.card.status[0].t === 'keine HeishaMon-Daten' && r1.rules.rules[0].chip === 'keine Daten'; })(), '');
+    check('Entscheidungen = Episoden: nur tatsaechliche Lagen (Datenluecke, "prüft"-Flackern erzeugen keine Zeile), Quiet-Freigabe wartet > Vorschlag, laeuft', B.log.rows.length === 1 && B.log.rows[0].offen && B.log.rows[0].steps.map(s => s[0]).join(' > ') === 'wartet > Vorschlag 06:40' && B.log.rows[0].was === 'Quiet-Stufe 3 → 0', JSON.stringify(B.log.rows));
+    { const V2 = {ep: [], open: {}}; const mk = st => [{id: 'heizgrenze_hinweis', st: st, grund: 'kein Vorschlag: x', naechste: {b: 'reserve'}}];
+      for (let i = 0; i < 40; i++) { VW.track(V2, mk(i % 10 < 3 ? 'wartet' : 'bereit'), {}, T0 + i * MIN); }
+      check('kurze "wartet"-Episoden (< 5 min ohne Sperre/Vorschlag) werden ausgefiltert, die Liste bleibt leer', V2.ep.length === 4 && VW.logRows(V2, T0 + 40 * MIN).length === 0, V2.ep.length + ' Episoden'); }
+    const evil = JSON.parse(JSON.stringify(B)); evil.card.prop.warum = '<script>alert(1)</script>'; evil.rules.rules[1].line.l = '<img src=x onerror=1>';
+    check('Darstellung: Texte werden maskiert (kein HTML aus Gruenden/Namen)', !/<script>alert|<img src=x/.test(UI.html('card', evil.card) + UI.html('rules', evil.rules)), '');
+    const hc = UI.html('card', B.card);
+    check('Vorschlagskarte: hervorgehoben, Knoepfe Übernehmen (gesperrt, deaktiviert) und Verwerfen; Erwartung/Rückweg nur eingeklappt', /class="oe-prop"/.test(hc) && /<button data-a="uebernehmen" disabled>Übernahme gesperrt<\/button>/.test(hc) && /data-a="verwerfen"/.test(hc) && !/data-a="zuruecksetzen"|data-a="sperren"/.test(hc) && /<details data-k="prop"><summary>Erwartung und Rückweg<\/summary>/.test(hc), '');
+    const hC = UI.html('card', VW.build({now: last.t, last: last, S: S, V: V, AP: {aktiv: {name: 'SetQuietMode', value: 0, von: 3, ts: last.t - 5 * MIN, bestaetigt: true}, rules: ['quiet_freigabe']}, enabled: true}).card);
+    check('Hauptschalter AN, Regel frei, aktive Übernahme: Übernehmen aktiv, Zurücksetzen und Übernahme sperren sichtbar', /<button data-a="uebernehmen">Übernehmen<\/button>/.test(hC) && /data-a="zuruecksetzen"/.test(hC) && /data-a="sperren"/.test(hC), '');
+    check('Textmenge: Statuskarte ohne Vorschlag < 160 Zeichen, Regelkarte < 400, Entscheidungen je Zeile < 160', txt(UI.html('card', snap.card)).length < 160 && txt(UI.html('rules', B.rules)).length < 400 && B.log.rows.every(r => txt(UI.html('log', {rows: [r]})).length < 160 + 30), txt(UI.html('card', snap.card)).length + ' / ' + txt(UI.html('rules', B.rules)).length);
+    check('Kacheln: 5 Spalten gleicher Breite (eine je Regel; bei 18 Einheiten = 966 px je Kachel ~180 px), Kacheltexte abgeschnitten statt umgebrochen', /\.oe-grid\{display:grid;grid-template-columns:repeat\(5,minmax\(0,1fr\)\)/.test(UI.css) && /\.oe-nm\{[^}]*text-overflow:ellipsis/.test(UI.css) && Math.floor((18 * 48 + 17 * 6 - 24 - 4 * 8) / 5) >= 175, '');
+    check('Kacheln ohne Abschneiden (Nutzer 11.10.): kurze Kachelnamen (hoechstens 17 Zeichen, ~140 px), Status-Chip unter dem Namen, Zeilentexte umbrechen statt "…" (geprueft in der statischen Vorschau bei 1024/1920/2560 px: 0 abgeschnitten)',
+          E.RULES.every(R0 => R0.kachel && R0.kachel.length <= 17) && B.rules.rules.map(r => r.name).join(',') === 'Quiet-Freigabe,Laufzeit strecken,Raumeinfluss,Heizgrenze,Vorausschau' && /<div class="oe-st"><span class="oe-chip/.test(UI.html('rules', B.rules)) && /\.oe-ln span\{white-space:normal/.test(UI.css) && !/\.oe-sub\{[^}]*ellipsis/.test(UI.css), B.rules.rules.map(r => r.name).join(','));
+    const sc = B.score;
+    check('Punkte-Karte: 4 Kacheln mit Punkten, Freigabereife n/m (Kriterien nur eingeklappt), Messaufgabe als eine Zeile; ohne Punkteverlauf kein leeres Diagramm', sc.tiles.length === 5 && sc.tiles[0].reife.m === 6 && sc.tiles[3].reife === null && !UI.html('score', sc).includes('oe_chart') && /<details data-k="reife_quiet_freigabe"><summary>Kriterien<\/summary>/.test(UI.html('score', sc)) && /^Comfort 0\/10 min · Efficiency 0\/10 min$/.test(sc.mess.t), sc.mess.t);
+    const A1 = runSeq(160, i => inp(T0 + i * MIN, {rt: 30 + i, soll: 38, sollKurve: 29.75, vl: 30, rl: 28.25, q: 3, hz: 16, rooms: rooms({ki_oben: 21.2})}));
+    const s1 = VW.build({now: T0 + 159 * MIN, last: {t: T0 + 159 * MIN, res: A1.outs[159].res, anl: {}}, S: A1.S, V: {}, AP: {}}).score;
+    check('Punkte-Diagramm: Summe je Regel als Stufenlinie ab 0 bis jetzt (SVG-Baukasten), Kachel +21', s1.series.length === 1 && s1.series[0].d[0][1] === 0 && s1.series[0].d[s1.series[0].d.length - 1][0] === T0 + 159 * MIN && s1.tiles[0].punkte === '+21,0' && /<svg/.test(require('./ui_chart.js').svg(UI.chartSpec(s1), 940).svg) && UI.html('score', s1).includes('id="oe_chart"'), JSON.stringify(s1.series[0].d));
+    const A2 = runSeq(80, i => inp(T0 + i * MIN, {rt: 30 + i, soll: 38, sollKurve: 29.75, vl: 30, rl: 28.25, q: i === 0 ? 2 : 3, hz: 16, rooms: rooms({ki_oben: 21.2})}));
+    const s2 = VW.build({now: T0 + 79 * MIN, last: {t: T0 + 79 * MIN, res: A2.outs[79].res, anl: {}}, S: A2.S, V: {}, AP: {}}).score, h2 = UI.html('score', s2);
+    check('Punkte-Karte (v2): "verpasst waehrend Sperre" als Kennzahl je Befehlsregel (Quiet-Freigabe 1, sonst 0, Hinweis ohne), kein Warntext, Punkte 0', s2.sv === E.SCORE_VER && s2.tiles[0].sperre === 1 && s2.tiles[1].sperre === 0 && s2.tiles[3].sperre === null && s2.tiles[0].warn === '' && s2.tiles[0].punkte === '0' && h2.includes('<div class="oe-ln" data-k="sperre"><span>🔒 verpasst während Sperre</span><b>1</b></div>') && (h2.match(/data-k="sperre"/g) || []).length === 4, s2.tiles.map(t => t.sperre).join(','));
+    if (fs.existsSync(path.join(dataDir, 'quiet-2026-10.csv'))) {
+        const PV = require('./engine_ui_preview.js'), SN = PV.snapshots(dataDir), html = PV.page({A: SN.A, B: SN.B});
+        check('Vorschau mit echten Daten: 10.10. 08:38 Vorschlag Quiet 3 -> 0 (Übernahme gesperrt), Ende ohne Vorschlag; Entscheidungen hoechstens 12 Episoden, keine Wiederholungen', SN.A.card.prop && SN.A.card.prop.was === 'Quiet-Stufe 3 → 0' && !SN.B.card.prop && SN.B.log.rows.length <= 12 && new Set(SN.B.log.rows.map(r => r.t + r.n)).size === SN.B.log.rows.length && html.length < 200000, SN.B.log.rows.length + ' Episoden, ' + html.length + ' Bytes');
+    }
+}
+
+// ================================================================== Replay der echten Daten (07.-10.10.)
+let RP = null;
+if (fs.existsSync(path.join(dataDir, 'quiet-2026-10.csv'))) {
+    console.log('--- Replay der echten Minutenprotokolle (' + dataDir + ')');
+    const replay = require('./engine_replay.js').replay;
+    RP = replay(dataDir, {});
+    const RP2 = replay(dataDir, {});
+    check('Replay: 4110 Minuten 07.10. 16:54 bis 10.10. 13:24, ein Datensatz je Minute', RP.recs.length === RP.inputs.length && RP.inputs.length >= 4100, RP.recs.length);
+    check('Replay ist reproduzierbar (zweiter Lauf bit-identisch: Datensaetze und Punkte)', RP.recs.join('\n') === RP2.recs.join('\n') && JSON.stringify(RP.scores) === JSON.stringify(RP2.scores), '');
+    const q = RP.props.filter(p => p.rule === 'quiet_freigabe');
+    check('Boost 10.10.: Quiet-Freigabe genau einmal, 08:36 (Soll 38 seit 08:25, 10 min Haltezeit), vor dem Klick des Nutzers 08:40:41', q.length === 1 && E.iso(q[0].ts) === '2026-10-10 08:36:00' && q[0].cmd.value === 0 && q[0].von === 3, q.map(p => E.iso(p.ts)).join(','));
+    check('Boost: Vorschlag endet, sobald der Nutzer Quiet 0 setzt (08:42 im Minutenraster)', RP.events.some(e => e[0] === '2026-10-10 08:42:00' && e[1] === 'optimierer_ende' && /quiet_freigabe: Quiet steht auf 0/.test(e[2])), '');
+    check('Kaltstarts 07.10. 20:18, 08.10. 09:33 und 17:18 (Rueckstand nur 15-24 min): keine Quiet-Freigabe; 08.10. 09:59 waere sie gesperrt gewesen (Quiet 2->3 von Hand um 09:38)', q.length === 1 && RP.recs.some(l => l.indexOf('"t":"2026-10-08 09:59:00"') >= 0 && /"id":"quiet_freigabe","v":1,"st":"gesperrt","grund":"würde schalten, aber gesperrt: Mindestabstand/.test(l)), '');
+    check('Raumregel waehrend des Boosts gesperrt (Handeingriff Soll 38) und erst 60 min nach dem Boost wieder frei', RP.recs.some(l => l.indexOf('"t":"2026-10-10 09:13:00"') >= 0 && /Handeingriff/.test(l)) && !RP.props.some(p => p.rule === 'raum_offset' && p.ts >= new Date(2026, 9, 10, 8, 25).getTime() && p.ts < new Date(2026, 9, 10, 10, 25).getTime()), RP.props.filter(p => p.rule === 'raum_offset').map(p => E.iso(p.ts)).join(','));
+    check('Laufzeit strecken: nie (Quiet 3 fast immer; bei Quiet 0 nur im Boost mit Raumbedarf ueber 22 Hz)', !RP.props.some(p => p.rule === 'quiet_strecken'), '');
+    check('Kein Vorschlag mit aktiver Sperre und keiner ohne frische Daten', RP.recs.every(l => { const d = JSON.parse(l); return d.r.every(r => !(r.st === 'vorschlag' && r.sperren)); }), '');
+    check('Messaufgabe Comfort/Efficiency: offen, Efficiency 41 min bei Quiet 0 (Boost, max 34 Hz), Comfort 0 min', (() => { const m = E.messStatus(RP.S); return m.offen && m.comfortMin === 0 && m.efficiencyMin >= 35 && m.efficiency.hzMax === 34; })(), E.messStatus(RP.S).text);
+    const RV = replay(dataDir, {cfg: {rules: {quiet_freigabe: {rlRueckK: -99}}}}), extra = RV.props.filter(p => p.rule === 'quiet_freigabe').length - 1;
+    const sumV = RV.scores.filter(s0 => s0.regel === 'quiet_freigabe' && s0.typ !== 'wirkung').reduce((a0, s0) => a0 + s0.punkte, 0);
+    check('Begruendung der Ruecklauf-Bedingung: ohne sie 4 zusaetzliche Quiet-Freigaben, alle Fehlalarm, mit Schaden "zu warm" (zusammen rund -213 Punkte)', extra === 4 && RV.scores.filter(s0 => s0.regel === 'quiet_freigabe' && s0.typ === 'ausloeser' && s0.ergebnis === 'fehlalarm').length === 4 && Math.round(sumV) === -213, extra + ' zusaetzlich, ' + sumV.toFixed(2) + ' Punkte');
+    const RP1 = replay(dataDir, {cfg: {sv: 1}}), rv1 = RP1.report.find(r => r.regel === 'raum_offset'), rv2 = RP.report.find(r => r.regel === 'raum_offset');
+    const m1 = RP1.scores.filter(s0 => /^verpasst/.test(s0.typ)), m2 = RP.scores.filter(s0 => /^verpasst/.test(s0.typ));
+    check('Replay v1 reproduzierbar (cfg.sv = 1): Raumeinfluss -23,73 mit "verpasst" 09.10. 21:47 wie im Bericht v1; Datensaetze ausser sv identisch mit v2', rv1.punkte === -23.73 && rv1.verpasst === 1 && m1.length === 1 && m1[0].typ === 'verpasst' && m1[0].t === '2026-10-09 21:47:00' && RP1.recs.every((l, i) => l.replace('"sv":1', '"sv":' + E.SCORE_VER) === RP.recs[i]), rv1.punkte + ' / ' + m1.map(x => x.t + ' ' + x.typ).join(','));
+    check('Replay v2: dieselbe Lage (Kinderzimmer oben ab 18:47) ist "waehrend Sperre" (Stabilitaetszeit des flackernden Raumvorschlags, kein Raum > 1 K unter Minimum) -> 0 Punkte, Raumeinfluss -3,73; sonst gleiche Punkte', rv2.punkte === -3.73 && rv2.verpasst === 0 && rv2.verpasstSperre === 1 && m2.length === 1 && m2[0].typ === 'verpasst_sperre' && JSON.stringify(m2[0].sperre) === '["stabil"]' && JSON.stringify(RP.scores.filter(s0 => !/^verpasst/.test(s0.typ)).map(s0 => [s0.t, s0.typ, s0.punkte])) === JSON.stringify(RP1.scores.filter(s0 => !/^verpasst/.test(s0.typ)).map(s0 => [s0.t, s0.typ, s0.punkte])), rv2.punkte + ' / ' + m2.map(x => x.t + ' ' + x.typ).join(','));
+    // Vorausschau mit den echten Daten (OWM-Vorhersage aus optimizer-v2): Gate zu wie live -> nie ein Vorschlag; Gate testweise offen -> keine Stoerung der anderen Regeln
+    const nVs = RP.inputs.filter(x => x.vs).length, vsSt = {}; RP.perMin.forEach(m => { vsSt[m.st[4]] = (vsSt[m.st[4]] || 0) + 1; });
+    check('Replay Vorausschau, Gate zu (1 Tag, wie live): Vorhersage in fast jeder Minute vorhanden, nie ein Vorschlag, Status "gesperrt" (Modell-Gate)', nVs >= RP.inputs.length - 30 && !RP.props.some(p => p.rule === 'vorausschau') && vsSt.gesperrt >= nVs - 30, nVs + ' Minuten mit Vorhersage, Status ' + JSON.stringify(vsSt));
+    const RPo = replay(dataDir, {model: Object.assign({}, require('./engine_replay.js').ASSUME.model, {gate: true, n: 12})});
+    const dkOf = R0 => R0.recs.map(l => JSON.parse(l).abl.vs_dk).filter(x => typeof x === 'number');
+    const oth = R0 => JSON.stringify(R0.props.filter(p => p.rule !== 'vorausschau').map(p => [p.id, p.cmd.value]));
+    check('Replay Vorausschau, Gate testweise offen: die Daten reichen fuer keinen sicheren Tagesgang (3 Vortage) -> keine Bedarfsaenderung, kein Vorschlag, alle anderen Vorschlaege identisch, nie zwei Verschiebungs-Vorschlaege gleichzeitig',
+          dkOf(RPo).length === 0 && !RPo.props.some(p => p.rule === 'vorausschau') && oth(RPo) === oth(RP) && !RPo.perMin.some(m => m.st[2] === 'vorschlag' && m.st[4] === 'vorschlag') && /Tagesgang noch nicht sicher \([12] von 3 Vortagen\)/.test(RPo.recs[RPo.recs.length - 1]), JSON.parse(RPo.recs[RPo.recs.length - 1]).r[4].grund);
+    const RP1t = replay(dataDir, {model: Object.assign({}, require('./engine_replay.js').ASSUME.model, {gate: true, n: 12}), cfg: {rules: {vorausschau: {tagesgangTage: 1}}}}), dk1 = dkOf(RP1t);
+    check('... testweise mit einem Vortag als Tagesgang: die Kaltfront vom 08.10. abends erscheint am 09.10. als bis zu ' + E.de(Math.max.apply(null, dk1.map(Math.abs)), 1) + ' K (Begruendung fuer 3 Vortage); Vorschlaege trotzdem ' + RP1t.props.filter(p => p.rule === 'vorausschau').length + ' (Raeume ausserhalb des Bandes oder ungueltig), andere Vorschlaege identisch',
+          dk1.length > 1000 && Math.max.apply(null, dk1.map(Math.abs)) >= 4 && oth(RP1t) === oth(RP) && !RP1t.perMin.some(m => m.st[2] === 'vorschlag' && m.st[4] === 'vorschlag'), RP1t.props.filter(p => p.rule === 'vorausschau').map(p => E.iso(p.ts) + ' ' + p.was).join(' | '));
+    check('Datensatzgroesse: unter 2,7 MB je Tag (ca. 80 MB/Monat; seit der Vorausschau mit Vorhersage im Schnappschuss und fuenfter Regel)', RP.bytes / (RP.inputs.length / 1440) < 2.7e6, Math.round(RP.bytes / (RP.inputs.length / 1440)) + ' Bytes/Tag');
+}
+
+// ================================================================== (c) Node-RED-Huellen (opt_engine, opt_apply) und gesperrte Uebernahme, mit der erzeugten Flow-Datei
+function applyPathProblems(nodes) {                                              // Strukturregeln des Sendewegs (wie in optimizer_sim.js), hier auch fuer verfaelschte Kopien
+    const P = [], tab = nodes.filter(n => n.z === 'opt_tab'), outs = tab.filter(n => n.type === 'mqtt out');
+    if (outs.length !== 1 || outs[0].id !== 'opt_apply_mqtt') { P.push('mqtt out im Tab: ' + outs.map(n => n.id).join(',')); }
+    if (outs.some(n => n.d !== true)) { P.push('Uebernahme-Knoten nicht deaktiviert'); }
+    if (tab.some(n => ['link out', 'link in', 'link call', 'http in', 'http response'].includes(n.type))) { P.push('Link/HTTP-Knoten im Tab'); }
+    const feeders = nodes.filter(n => (n.wires || []).some(w => w.indexOf('opt_apply_mqtt') >= 0)).map(n => n.id);
+    if (JSON.stringify(feeders) !== '["opt_apply"]') { P.push('mqtt out gespeist von ' + feeders.join(',')); }
+    const toApply = nodes.filter(n => (n.wires || []).some(w => w.indexOf('opt_apply') >= 0)).map(n => n.id).sort();
+    if (JSON.stringify(toApply) !== '["opt_i_apply","opt_t_eng_prop"]') { P.push('opt_apply gespeist von ' + toApply.join(',')); }
+    const en = nodes.find(n => n.id === 'opt_engine');
+    if (!en || /node\.send\s*\(/.test(en.func) || en.wires.some(w => w.some(id => /^opt_apply/.test(id)))) { P.push('opt_engine fuehrt zum Sendeweg'); }
+    const ap = nodes.find(n => n.id === 'opt_apply');
+    if (!ap || /node\.send\s*\(/.test(ap.func)) { P.push('opt_apply nutzt node.send'); }
+    return P;
+}
+if (flowsFile) {
+    console.log('--- (c) Huellen und gesperrte Uebernahme mit der Flow-Datei ' + flowsFile);
+    const vm = require('vm');
+    const NODES = JSON.parse(fs.readFileSync(flowsFile, 'utf8')), FN = {}; NODES.forEach(n => { if (n.type === 'function') { FN[n.id] = n.func; } });
+    check('Flow-Datei: Huellen opt_engine/opt_apply enthalten den Kern unveraendert (Text identisch mit tools/engine_core.js)', ['opt_engine', 'opt_apply'].every(id => FN[id] && FN[id].indexOf(fs.readFileSync(path.join(__dirname, 'engine_core.js'), 'utf8')) === 0), '');
+    check('Struktur des Sendewegs: genau ein deaktivierter mqtt out, nur von opt_apply, Eingaenge nur Karte + Takt', applyPathProblems(NODES).length === 0, applyPathProblems(NODES).join(' | '));
+    const mut = (f) => { const c = JSON.parse(JSON.stringify(NODES)); f(c); return applyPathProblems(c); };
+    check('Strukturpruefung schlaegt an: Knoten aktiviert / zweiter mqtt out / opt_engine direkt verdrahtet / Link im Tab', mut(c => { delete c.find(n => n.id === 'opt_apply_mqtt').d; }).length > 0 && mut(c => { c.push({id: 'opt_x', type: 'mqtt out', z: 'opt_tab', wires: []}); }).length > 0 && mut(c => { c.find(n => n.id === 'opt_engine').wires[4].push('opt_apply_mqtt'); }).length > 0 && mut(c => { c.push({id: 'opt_l', type: 'link out', z: 'opt_tab', wires: []}); }).length > 0, '');
+    const tplP = NODES.find(n => n.id === 'opt_t_eng_prop'), grp = NODES.filter(n => n.type === 'ui_group' && n.tab === 'opt_eng_ui_tab');
+    check('Seite "Optimierer": vier gleich breite Gruppen (18, Masonry-Falle vermieden), Karte mit Uebernehmen/Verwerfen/Zuruecksetzen/Sperren, Klick schickt nur Aktion + ID + Pruefsumme (genau vier send-Aufrufe)', grp.length === 4 && grp.every(g => g.width === 18) && tplP.format.includes("scope.send({topic: 'uebernehmen', payload: {id: P.prop.id, sum: P.prop.sum}})") && tplP.format.includes("scope.send({topic: 'verwerfen', payload: {id: P.prop.id}})") && tplP.format.includes("scope.send({topic: 'zuruecksetzen', payload: {}})") && tplP.format.includes("scope.send({topic: 'sperren', payload: {}})") && (tplP.format.match(/scope\.send\(/g) || []).length === 4 && tplP.format.includes("(P.knopf && P.knopf.ok ? '' : ' disabled')") && ['opt_t_eng_rules', 'opt_t_eng_score', 'opt_t_eng_log'].every(id => JSON.stringify(NODES.find(n => n.id === id).wires) === '[[]]'), grp.map(g => g.name + ':' + g.width).join(', '));
+    check('Seite "Optimierer": keine erklaerenden Hinweiszeilen (nur Daten, Status, Knoepfe)', !/class="note"|optq-note/.test(['opt_t_eng_prop', 'opt_t_eng_rules', 'opt_t_eng_score', 'opt_t_eng_log'].map(id => NODES.find(n => n.id === id).format).join('')), '');
+    // ---- vm-Harness (wie optimizer_sim.js): Fake-Uhr, Speicher, Dateien
+    let NOW = new Date(2026, 9, 12, 8, 0, 0).getTime();
+    class FD extends Date { constructor(...a) { if (a.length === 0) { super(NOW); } else { super(...a); } } static now() { return NOW; } }
+    let gstore = {}, fstores = {}, files = {}, warns = [];
+    const fsm = {readFileSync: p => { if (!(p in files)) { const e = new Error('ENOENT ' + p); e.code = 'ENOENT'; throw e; } return files[p]; }, writeFileSync: (p, d) => { files[p] = String(d); }, mkdirSync: () => {}, chmodSync: () => {}};
+    const comp = {};
+    const ctx = st => ({get: (k, s) => (s === 'file' ? undefined : st[k]), set: (k, v) => { st[k] = v; }});
+    function runN(id, msg) {
+        if (!comp[id]) { comp[id] = vm.runInNewContext('(function(msg,global,flow,context,env,node,fs,Date,Buffer){' + FN[id] + '\n})', {}); }
+        fstores[id] = fstores[id] || {};
+        const nd = {send: () => { throw new Error('node.send benutzt'); }, warn: m => warns.push(String(m)), error: () => {}, status: () => {}};
+        const res = comp[id](msg, ctx(gstore), ctx(fstores[id]), ctx({}), {get: () => undefined}, nd, fsm, FD, Buffer);
+        const fo = res && (id === 'opt_engine' ? res[4] : (id === 'opt_apply' ? res[2] : null));   // Datei-Knoten nachbilden (anhaengen)
+        if (fo) { [].concat(fo).forEach(m => { if (m && m.filename) { files[m.filename] = (files[m.filename] || '') + m.payload; } }); }
+        return res;
+    }
+    const restart = () => { fstores = {}; };                                         // Node-RED-Neustart: Flow-Kontext weg, Dateien bleiben (Speicher "file" ist hier nur memory)
+    const cfgRooms = [{id: 'ki_oben', name: 'Kinderzimmer oben', active: true, min: 22, max: 23.5, maxAgeMin: 90}];
+    function world(o) {                                                               // Anlagenwerte wie HeishaMoNR sie global ablegt (+ OPT_hp vom eigenen Abo)
+        o = o || {};
+        const hp = n => ({v: n, ts: NOW - 20000});
+        gstore = Object.assign(gstore, {OPT_cfg: {rooms: cfgRooms, sensor: {maxAgeMin: 90}}, compressor_frequency: 16, TOP6_Main_Outlet_Temp: 30, TOP5_Main_Inlet_Temp: 28.25, TOP42_Z1_Water_Target_Temp: 38,
+            TOP23_Heat_Delta: 3, TOP16_Heat_Energy_Consumption: 300, TOP1_Pump_Flow: 13.5, TOP18_Quiet_Mode_Level: 3, TOP14_Outside_Temp: 11, TOP26_Defrosting_State: 0, TOP20_ThreeWay_Valve_State: 0,
+            F_SS: {state: 0}, compressor_runtime: 40, TOP27_Z1_Heat_Request_Temp: 0, TOP76_Heating_Mode: 0, TOP111_Z1_Sensor_Settings: 0, MQTT: {block_active: 0},
+            Z1_Heat_Curve_Outside_Low_Temp: -13, Z1_Heat_Curve_Outside_High_Temp: 11, Z1_Heat_Curve_Target_Low_Temp: 29, Z1_Heat_Curve_Target_High_Temp: 38,
+            OPT_rooms: {ki_oben: {ema: 21.2, ts: NOW - 10 * 60000}}, OPT_state: {ts: NOW, korr: 0, korrCode: 'x', korrLead: '', distrib: false},
+            OPT_hp: {Quiet_Mode_Level: hp(o.q !== undefined ? o.q : 3), Pump_Speed: hp(1750), Heating_Control: hp(1), Z1_Heat_Request_Temp: hp(0), Heating_Off_Outdoor_Temp: hp(12), Main_Outlet_Temp: hp(30)},
+            OPT_weather: {f_ts: NOW - 20 * 60000, fpts: [0, 3, 6, 9].map(h => [NOW - 20 * 60000 + h * 3600000, 11 - h * 0.8, 80, 50, 4])},
+            OPT_plan_in: {ts: NOW, pv: [0, 1, 2, 3, 4, 5, 6, 7].map(h => [NOW + (h - 1) * 3600000, 3000, 3600000])},
+            OPT_plan: {ts: NOW, model: {n: 1, minDays: 10, gate: false, why: ['weniger als 10 Tage'], aktiv: false, bs: 0, bw: 0, ua: 0.21, tbal: 15}}}, o.g || {});
+        gstore.TOP18_Quiet_Mode_Level = o.q !== undefined ? o.q : 3;
+    }
+    function minute(n, hook) {                                                         // n Minuten: Engine jede Minute, Uebernahme-Takt alle 15 s
+        const out = {eng: [], app: []};
+        for (let i = 0; i < n; i++) {
+            NOW += 60000; if (hook) { hook(i); }
+            gstore.OPT_hp && Object.keys(gstore.OPT_hp).forEach(k => { gstore.OPT_hp[k].ts = NOW - 20000; });
+            if (gstore.OPT_rooms && gstore.OPT_rooms.ki_oben) { gstore.OPT_rooms.ki_oben.ts = NOW - 10 * 60000; }
+            if (gstore.OPT_state) { gstore.OPT_state.ts = NOW; }
+            out.eng.push(runN('opt_engine', {topic: '', payload: NOW}));
+            for (let k = 0; k < 4; k++) { NOW += k ? 15000 : 0; out.app.push(runN('opt_apply', {topic: 'tick', payload: NOW})); }
+            NOW -= 45000;
+        }
+        return out;
+    }
+    const sends = outs => outs.app.filter(o => o && o[0]).map(o => o[0]);
+    const click = (topic, payload) => runN('opt_apply', {topic: topic, payload: payload});
+    // 1) Engine allein: Vorschlag entsteht, Dateien, globale Werte, ohne Klick nie ein Befehl
+    world(); let R = minute(25);
+    const eng = gstore.OPT_engine;
+    check('Huelle: Vorschlag Quiet 3 -> 0 im Boost (Soll 38, 16 Hz), OPT_engine mit Vorschlag, Sperren, Rueckweg-Gruenden', eng && eng.prop && eng.prop.rule === 'quiet_freigabe' && eng.prop.cmd.value === 0 && eng.locks && eng.ende !== undefined, eng && eng.prop && eng.prop.id);
+    const decFile = Object.keys(files).find(f => /decisions-2026-10\.jsonl$/.test(f));
+    check('Huelle: decisions-YYYY-MM.jsonl bekommt jede Minute genau einen Datensatz', decFile && files[decFile].trim().split('\n').length === 25 && JSON.parse(files[decFile].trim().split('\n')[24]).vorschlag === eng.prop.id, decFile);
+    check('Huelle: ohne Klick sendet nichts (25 min, 100 Takte der Uebernahme)', sends(R).length === 0 && R.eng.every(o => !o || !o[4] || o[4].every(m => /^\/data\/optimizer\//.test(m.filename))), '');
+    check('Huelle: Karte zeigt den Vorschlag mit Pruefsumme, Knopf "Übernahme gesperrt", Statuszeile "Übernahme gesperrt" (Hauptschalter aus)', (() => { const c = R.eng[24][0].payload; return c.prop && c.prop.id === eng.prop.id && c.prop.sum === eng.prop.sum && c.knopf.ok === false && c.knopf.text === 'Übernahme gesperrt' && c.status.some(s => s.t === 'Übernahme gesperrt' && s.c === 'lock') && c.status[0].c === 'ok' && /^Maschine läuft/.test(c.status[0].t); })(), JSON.stringify(R.eng[24][0].payload.status));
+    check('Huelle: Regelkacheln (5 Regeln mit Status-Chip, Bedingungen, einer Zeile), Punkte-Kacheln (5), Entscheidungen als Episoden (Quiet-Freigabe: wartet > Vorschlag, laeuft)', R.eng[24][1].payload.rules.length === 5 && R.eng[24][1].payload.rules.every(r => r.chip && r.line && typeof r.line.l === 'string') && R.eng[24][2].payload.tiles.length === 5 && (() => { const rw = R.eng[24][3].payload.rows; return rw.length === 1 && rw[0].offen && rw[0].steps.map(s => s[0].split(' ')[0]).join('>') === 'wartet>Vorschlag'; })(), JSON.stringify(R.eng[24][3].payload.rows));
+    { const hs = gstore.OPT_hp.Heating_Off_Outdoor_Temp; gstore.OPT_hp.Heater_On_Outdoor_Temp = {v: 0, ts: NOW - 3 * 3600000}; const keep = Object.assign({}, hs); hs.ts = NOW - 3 * 3600000;
+      NOW += 60000; runN('opt_engine', {topic: '', payload: NOW}); const last = JSON.parse(files[decFile].trim().split('\n').pop()); Object.assign(hs, keep); delete gstore.OPT_hp.Heater_On_Outdoor_Temp;
+      check('Huelle: Einstellungen (Heizgrenze, Heizstab-Einschaltgrenze) gelten bis 24 h nach der letzten Meldung (HeishaMon meldet sie selten), Heizstab-Sperre faellt nicht still aus', last.in.heatOffAT === 12 && last.in.htrOnAT === 0, JSON.stringify({heatOffAT: last.in.heatOffAT, htrOnAT: last.in.htrOnAT})); }
+    { const lr = JSON.parse(files[decFile].trim().split('\n').pop()), tv = R.eng[24][1].payload.rules.find(r => r.id === 'vorausschau');
+      check('Huelle Vorausschau: Eingabe aus OPT_weather/OPT_plan (an den Fuehler angeglichen, Gate zu, ohne Sonne/Wind), Regel "gesperrt" (Modell-Gate 1 / 10 Tage), OPT_engine traegt "halten"',
+            lr.in.vs && lr.in.vs.gate === 0 && lr.in.vs.at[0] === 11 && lr.in.vs.at.length === 7 && !('pv' in lr.in.vs) && !('wind' in lr.in.vs) && lr.r[4].id === 'vorausschau' && lr.r[4].sperren[0] === 'modell' && tv.chip === 'gesperrt' && tv.line.l === 'Modell-Gate' && tv.line.v === '1 / 10 Tage' && gstore.OPT_engine.halten !== undefined, JSON.stringify(lr.in.vs) + ' | ' + JSON.stringify(tv.line)); }
+    { const keepP = gstore.OPT_plan; gstore.OPT_plan = {ts: NOW, model: {n: 12, minDays: 10, gate: true, why: [], aktiv: true, bs: 0.3, bw: 0.02, ua: 0.21, tbal: 15}}; NOW += 60000; runN('opt_engine', {topic: '', payload: NOW});
+      const lv = JSON.parse(files[decFile].trim().split('\n').pop()).in.vs; gstore.OPT_plan = keepP;
+      check('Huelle Vorausschau: erst mit aktivem Modell (coefActivate) stehen PV-Prognose und Wind in der Eingabe', lv.gate === 1 && lv.aktiv === 1 && lv.pv.length === 7 && lv.pv[2] === 3000 && lv.wind.length === 7 && lv.bs === 0.3, JSON.stringify(lv)); }
+    const nDec = files[decFile].length, an = runN('opt_engine', {topic: 'anzeige'});
+    check('Huelle: "anzeige" (von der Uebernahme) baut nur die Karten neu, rechnet und schreibt nichts', an && an[0] && an[0].payload.prop && an[4] === null && files[decFile].length === nDec, '');
+    check('Huelle schreibt nur OPT_*-Werte (keine Anlagen-/HeishaMoNR-Variable)', (() => { const before = JSON.stringify(Object.keys(gstore).filter(k => !/^OPT_/.test(k)).sort().map(k => [k, gstore[k]])); world(); minute(2); return JSON.stringify(Object.keys(gstore).filter(k => !/^OPT_/.test(k)).sort().map(k => [k, gstore[k]])) === before; })(), '');
+    // 2) Klick bei Hauptschalter AUS
+    let r = click('uebernehmen', {id: gstore.OPT_engine.prop.id, sum: gstore.OPT_engine.prop.sum});
+    check('Klick, Hauptschalter AUS (keine apply.json): nichts gesendet, rote Meldung, Protokoll "abgelehnt"', !r[0] && r[1] && r[1].highlight === 'red' && /Hauptschalter/.test(r[1].payload) && /"ergebnis":"abgelehnt"/.test(r[2][0].payload), r[1] && r[1].payload);
+    files['/data/optimizer/apply.json'] = '{"enabled": true, "rules": []}';
+    r = click('uebernehmen', {id: gstore.OPT_engine.prop.id, sum: gstore.OPT_engine.prop.sum});
+    check('Klick, Hauptschalter AN, Regel nicht freigegeben: nichts gesendet', !r[0] && /nicht freigegeben/.test(r[1].payload), r[1].payload);
+    files['/data/optimizer/apply.json'] = '{"enabled": "ja", "rules": ["quiet_freigabe"]}';
+    r = click('uebernehmen', {id: gstore.OPT_engine.prop.id, sum: gstore.OPT_engine.prop.sum});
+    check('Hauptschalter nur bei enabled === true (Text "ja" zaehlt nicht)', !r[0] && /Hauptschalter/.test(r[1].payload), r[1].payload);
+    files['/data/optimizer/apply.json'] = '{"enabled": true, "rules": ["quiet_freigabe"]}';
+    r = click('uebernehmen', {id: gstore.OPT_engine.prop.id, sum: 'deadbeef'});
+    check('falsche Pruefsumme: nichts gesendet', !r[0] && /Prüfsumme/.test(r[1].payload), r[1].payload);
+    r = click('uebernehmen', {id: 'quiet_freigabe@2026-01-01T00:00', sum: gstore.OPT_engine.prop.sum});
+    check('veralteter/fremder Vorschlag (andere ID): nichts gesendet', !r[0] && /nicht mehr aktuell/.test(r[1].payload), r[1].payload);
+    r = click('uebernehmen', {id: gstore.OPT_engine.prop.id, sum: gstore.OPT_engine.prop.sum, topic: 'panasonic_heat_pump/commands/SetHeatingControl', value: 1});
+    const sent1 = r[0];
+    check('Klick + Hauptschalter AN + Regel frei: GENAU der Vorschlag wird gesendet (SetQuietMode = "0"), Zusatzfelder aus dem Browser werden ignoriert', sent1 && sent1.length === 1 && sent1[0].topic === 'panasonic_heat_pump/commands/SetQuietMode' && sent1[0].payload === '0' && sent1[0].retain === false, JSON.stringify(sent1));
+    check('Quelle fuer Waechter/HeishaMoNR gesetzt: MQTT_Source = "Optimierer (Klick)"; Protokoll applied-YYYY-MM.jsonl mit ID, Pruefsumme, Wert, Hauptschalter', gstore.MQTT_Source === 'Optimierer (Klick)' && /"aktion":"uebernehmen","ergebnis":"gesendet".*"hauptschalter":true/.test(files['/data/optimizer/applied-2026-10.jsonl'] || ''), gstore.MQTT_Source);
+    r = click('uebernehmen', {id: gstore.OPT_engine.prop.id, sum: gstore.OPT_engine.prop.sum});
+    check('Doppelklick: zweiter Klick wird ignoriert, nichts gesendet', !r[0] && /Doppelklick/.test(r[1].payload), r[1].payload);
+    // 3) Neustart mitten in der Uebernahme (vor der Bestaetigung) -> Zustand aus apply-state.json, Ruecklesen geht weiter, bestaetigt
+    restart();
+    gstore.OPT_hp.Quiet_Mode_Level.v = 0; gstore.TOP18_Quiet_Mode_Level = 0;
+    R = minute(2);
+    check('Neustart mitten in der Uebernahme: Zustand aus der Datei, Anlage meldet 0 -> bestaetigt, kein zweiter Befehl', sends(R).length === 0 && gstore.OPT_apply.aktiv && gstore.OPT_apply.aktiv.bestaetigt === true && gstore.OPT_apply.pending === null, JSON.stringify(gstore.OPT_apply.aktiv));
+    // 4) Quiet-Freigabe hat keinen automatischen Rueckweg; Zuruecksetzen schickt die vorherige Stufe; danach bestaetigt
+    R = minute(120);
+    check('Quiet-Freigabe: kein automatischer Rueckweg (Quiet 0 ist Standard), auch nach 2 h', sends(R).length === 0 && gstore.OPT_apply.aktiv, '');
+    r = click('zuruecksetzen', {});
+    check('Zuruecksetzen: sendet Quiet 3 (vorherige Stufe), Quelle "Optimierer (Rückweg)"', r[0] && r[0].length === 1 && r[0][0].payload === '3' && gstore.MQTT_Source === 'Optimierer (Rückweg)', JSON.stringify(r[0]));
+    gstore.OPT_hp.Quiet_Mode_Level.v = 3; gstore.TOP18_Quiet_Mode_Level = 3; R = minute(1);
+    check('Rueckweg bestaetigt: Uebernahme beendet', !gstore.OPT_apply.aktiv && !gstore.OPT_apply.pending, '');
+    // 5) Ruecklese-Timeout: Anlage reagiert nicht -> 2 Wiederholungen (90 s Abstand), dann Warnung; insgesamt 3 Befehle
+    NOW += 2 * 3600000; world(); minute(15);                                         // > 60 min nach der letzten Quiet-Aenderung (Mindestabstand)
+    const p2 = gstore.OPT_engine.prop;
+    r = click('uebernehmen', {id: p2.id, sum: p2.sum});
+    R = minute(8);
+    check('Ruecklese-Timeout: Anlage bleibt bei 3 -> 2 Wiederholungen, dann rote Warnung, insgesamt 3 Befehle, danach Ruhe', r[0] && sends(R).length === 2 && gstore.OPT_apply.alarm && /Keine Bestätigung/.test(gstore.OPT_apply.alarm.text) && !gstore.OPT_apply.pending, sends(R).length + ' Wiederholungen, ' + (gstore.OPT_apply.alarm && gstore.OPT_apply.alarm.text));
+    // 6) Notbremse und Sperren
+    files['/data/optimizer/apply-state.json'] = JSON.stringify(E.newApply()); restart(); NOW += 2 * 3600000; world(); minute(15);
+    gstore.MQTT.block_active = 1;
+    r = click('uebernehmen', {id: gstore.OPT_engine.prop ? gstore.OPT_engine.prop.id : 'x', sum: gstore.OPT_engine.prop ? gstore.OPT_engine.prop.sum : 'x'});
+    check('Notbremse MQTT.block_active: Klick sendet nichts (Vorschlag ist zudem gesperrt)', !r[0], r[1] && r[1].payload);
+    gstore.MQTT.block_active = 0; minute(12);
+    r = click('sperren', {});
+    check('"Übernahme sperren" (Not-Aus im Dashboard): apply.json enabled=false, Regeln bleiben, OPT_apply_enabled false', JSON.parse(files['/data/optimizer/apply.json']).enabled === false && JSON.parse(files['/data/optimizer/apply.json']).rules[0] === 'quiet_freigabe' && gstore.OPT_apply_enabled === false, files['/data/optimizer/apply.json']);
+    r = click('uebernehmen', {id: p2.id, sum: p2.sum});
+    check('nach dem Sperren: Klick sendet nichts', !r[0] && /Hauptschalter/.test(r[1].payload), r[1].payload);
+    // 7) Verwerfen: blendet aus, sendet nichts, Punkte bleiben unberuehrt
+    NOW += 3 * 3600000; world(); minute(15);
+    const scoreBefore = JSON.stringify(E.report(fstores.opt_engine.eng.S));
+    r = click('verwerfen', {id: gstore.OPT_engine.prop.id});
+    R = minute(1);
+    check('Verwerfen: nichts gesendet, Karte ohne Vorschlag mit Vermerk in der Statuszeile, Punktebuch unveraendert', !r[0] && R.eng[0][0].payload.prop === null && R.eng[0][0].payload.verworfen === gstore.OPT_engine.prop.id && R.eng[0][0].payload.status.some(s => /^verworfen: /.test(s.t)) && JSON.stringify(E.report(fstores.opt_engine.eng.S)) === scoreBefore, JSON.stringify(R.eng[0][0].payload.status));
+    // 8) Raumoffset mit automatischem Rueckweg nach Ablauf (6 h); Whitelist-Grenzen
+    files['/data/optimizer/apply.json'] = '{"enabled": true, "rules": ["raum_offset"]}';
+    files['/data/optimizer/apply-state.json'] = JSON.stringify(E.newApply()); restart(); NOW += 3 * 3600000;
+    world({g: {TOP42_Z1_Water_Target_Temp: 30, TOP6_Main_Outlet_Temp: 30.5, OPT_state: {ts: NOW, korr: 1, korrCode: 'Raum unter Minimum', korrLead: 'Kinderzimmer oben', distrib: false}}});
+    minute(75);
+    const p3 = gstore.OPT_engine.prop;
+    r = click('uebernehmen', {id: p3 && p3.id, sum: p3 && p3.sum});
+    check('Raumoffset: Klick sendet SetZ1HeatRequestTemperature = 1', p3 && p3.rule === 'raum_offset' && r[0] && r[0][0].topic === 'panasonic_heat_pump/commands/SetZ1HeatRequestTemperature' && r[0][0].payload === '1', p3 ? p3.id : 'kein Vorschlag');
+    gstore.OPT_hp.Z1_Heat_Request_Temp.v = 1; gstore.TOP27_Z1_Heat_Request_Temp = 1; gstore.TOP42_Z1_Water_Target_Temp = 31;
+    R = minute(6 * 60 + 2, () => { gstore.OPT_state.korr = 1; const pa = gstore.OPT_apply && gstore.OPT_apply.pending; if (pa && pa.art === 'rueckweg') { gstore.OPT_hp.Z1_Heat_Request_Temp.v = 0; gstore.TOP27_Z1_Heat_Request_Temp = 0; } });   // Anlage bestaetigt den Rueckweg
+    const back = sends(R);
+    check('Raumoffset: automatischer Rueckweg nach 6 h (gehoert zum geklickten Vorschlag): genau ein Befehl SetZ1HeatRequestTemperature = 0, bestaetigt, Uebernahme beendet', back.length === 1 && back[0][0].payload === '0' && !gstore.OPT_apply.aktiv, JSON.stringify(back));
+    // 9) Whitelist/Wertebereich direkt am Kern (verfaelschte Vorschlaege in OPT_engine)
+    const forge = (cmd, value, art) => { const pp = JSON.parse(JSON.stringify(gstore.OPT_engine.prop || p3)); pp.cmd = {name: cmd, topic: 'panasonic_heat_pump/commands/' + cmd, value: value}; pp.art = art || 'befehl'; pp.von = gstore.TOP27_Z1_Heat_Request_Temp; pp.bis = NOW + 600000; pp.sum = E.checksum(pp); return E.applyRequest(null, {topic: 'uebernehmen', payload: {id: pp.id, sum: pp.sum}}, {now: NOW, enabled: true, rules: [pp.rule], eng: {ts: NOW, prop: pp, locks: {}}, plant: {q: 3, shift: pp.von, hpAge: 0.3, block: 0, heatMode: 0, z1Sensor: 0}}); };
+    check('Whitelist: SetHeatingControl wird abgelehnt (nie Comfort/Efficiency)', forge('SetHeatingControl', 1).send.length === 0 && /nicht auf der Whitelist/.test(forge('SetHeatingControl', 1).toast.text), forge('SetHeatingControl', 1).toast.text);
+    check('Whitelist: SetMaxPumpDuty steht nicht darauf (Pumpenlimit sitzt auf dem Mainboard; kein Vorschlag/Befehl)', !E.WHITELIST.SetMaxPumpDuty && forge('SetMaxPumpDuty', 94).send.length === 0 && !E.RULES.some(R0 => /Pump/.test(R0.befehl.name)), '');
+    check('Wertebereich: Verschiebung +2 K abgelehnt (nur -1..+1)', forge('SetZ1HeatRequestTemperature', 2).send.length === 0 && /nicht erlaubt/.test(forge('SetZ1HeatRequestTemperature', 2).toast.text), forge('SetZ1HeatRequestTemperature', 2).toast.text);
+    check('Hinweis-Regel (Heizgrenze) nie per Klick', forge('SetHeatingOffOutdoorTemp', 10, 'hinweis').send.length === 0, forge('SetHeatingOffOutdoorTemp', 10, 'hinweis').toast.text);
+    const old = (() => { const pp = JSON.parse(JSON.stringify(p3)); pp.bis = NOW + 600000; pp.sum = E.checksum(pp); return E.applyRequest(null, {topic: 'uebernehmen', payload: {id: pp.id, sum: pp.sum}}, {now: NOW, enabled: true, rules: ['raum_offset'], eng: {ts: NOW - 5 * 60000, prop: pp, locks: {}}, plant: {shift: 0, hpAge: 0.3, block: 0, heatMode: 0, z1Sensor: 0}}); })();
+    check('Alter: Entscheidungsmaschine rechnet seit 5 min nicht -> abgelehnt', old.send.length === 0 && /nicht gerechnet/.test(old.toast.text), old.toast.text);
+    const exp = (() => { const pp = JSON.parse(JSON.stringify(p3)); pp.bis = NOW - 1; pp.sum = E.checksum(pp); return E.applyRequest(null, {topic: 'uebernehmen', payload: {id: pp.id, sum: pp.sum}}, {now: NOW, enabled: true, rules: ['raum_offset'], eng: {ts: NOW, prop: pp, locks: {}}, plant: {shift: 0, hpAge: 0.3, block: 0, heatMode: 0, z1Sensor: 0}}); })();
+    check('Gueltigkeit: abgelaufener Vorschlag -> abgelehnt', exp.send.length === 0 && /abgelaufen/.test(exp.toast.text), exp.toast.text);
+    const stale = (() => { const pp = JSON.parse(JSON.stringify(p3)); pp.bis = NOW + 600000; pp.sum = E.checksum(pp); return E.applyRequest(null, {topic: 'uebernehmen', payload: {id: pp.id, sum: pp.sum}}, {now: NOW, enabled: true, rules: ['raum_offset'], eng: {ts: NOW, prop: pp, locks: {}}, plant: {shift: 0, hpAge: 7, block: 0, heatMode: 0, z1Sensor: 0}}); })();
+    check('frische Daten: HeishaMon 7 min alt -> abgelehnt', stale.send.length === 0 && /veraltet/.test(stale.toast.text), stale.toast.text);
+    const moved = (() => { const pp = JSON.parse(JSON.stringify(p3)); pp.bis = NOW + 600000; pp.sum = E.checksum(pp); return E.applyRequest(null, {topic: 'uebernehmen', payload: {id: pp.id, sum: pp.sum}}, {now: NOW, enabled: true, rules: ['raum_offset'], eng: {ts: NOW, prop: pp, locks: {}}, plant: {shift: -1, hpAge: 0.3, block: 0, heatMode: 0, z1Sensor: 0}}); })();
+    check('Abgleich mit dem Ist-Zustand: Anlage steht nicht mehr auf dem Ausgangswert -> abgelehnt', moved.send.length === 0 && /steht nicht mehr auf 0/.test(moved.toast.text), moved.toast.text);
+    // Rate und Tageslimit
+    let A = null, ns = 0; const pp0 = JSON.parse(JSON.stringify(p3));
+    for (let k = 0; k < 10; k++) { const pp = Object.assign({}, pp0, {id: 'raum_offset@x' + k, ts: NOW, bis: NOW + 3600000, von: 0}); pp.sum = E.checksum(pp); const rr = E.applyRequest(A, {topic: 'uebernehmen', payload: {id: pp.id, sum: pp.sum}}, {now: NOW, enabled: true, rules: ['raum_offset'], eng: {ts: NOW, prop: pp, locks: {}}, plant: {shift: 0, hpAge: 0.3, block: 0, heatMode: 0, z1Sensor: 0}}); A = rr.A; ns += rr.send.length; A.pending = null; A.aktiv = null; NOW += (k === 0 ? 5 : 11) * 60000; }
+    check('Rate (10 min Abstand) und Tageslimit (6 Befehle/Tag)', ns === 6 && A.n === 6, 'gesendet ' + ns);
+    // fremde Aenderung nach Bestaetigung: Warnung, kein automatischer Rueckweg
+    let A2 = E.newApply(); A2.aktiv = {id: 'x', rule: 'raum_offset', groesse: 'shift', name: 'SetZ1HeatRequestTemperature', value: 1, von: 0, ts: NOW, bis: NOW + 3600000, bestaetigt: true};
+    const fr = E.applyTick(A2, {now: NOW, plant: {shift: -1, hpAge: 0.3, block: 0}});
+    check('fremde Aenderung nach der Bestaetigung: Warnung, Uebernahme beendet, KEIN Befehl', fr.send.length === 0 && /von außen/.test(fr.toast.text) && fr.A.aktiv === null, fr.toast.text);
+    // Notbremse waehrend Wiederholung/Rueckweg: wartet, zaehlt nicht
+    let A3 = E.newApply(); A3.pending = {name: 'SetQuietMode', value: 0, ts: NOW - 200000, versuche: 1, art: 'uebernahme', id: 'y'}; A3.aktiv = {id: 'y', rule: 'quiet_freigabe', groesse: 'quiet', name: 'SetQuietMode', value: 0, von: 3, ts: NOW, bis: null};
+    const bl = E.applyTick(A3, {now: NOW, plant: {q: 3, hpAge: 0.3, block: 1}});
+    check('Notbremse waehrend der Wiederholung: kein Befehl, Versuch nicht verbraucht', bl.send.length === 0 && bl.A.pending.versuche === 1, JSON.stringify(bl.A.pending));
+    let A4 = E.newApply(); A4.aktiv = {id: 'z', rule: 'quiet_strecken', groesse: 'quiet', name: 'SetQuietMode', value: 3, von: 0, ts: NOW - 5 * 3600000, bis: NOW - 1, bestaetigt: true};
+    check('Rueckweg wartet bei Notbremse, kommt danach', E.applyTick(JSON.parse(JSON.stringify(A4)), {now: NOW, plant: {q: 3, hpAge: 0.3, block: 1}}).send.length === 0 && E.applyTick(A4, {now: NOW, plant: {q: 3, hpAge: 0.3, block: 0}}).send[0].payload === '0', '');
+    // Rueckweg, weil der Grund endet (Raumvorschlag wieder 0): nur nach Bestaetigung, genau ein Befehl
+    let A5 = E.newApply(); A5.aktiv = {id: 'r', rule: 'raum_offset', groesse: 'shift', name: 'SetZ1HeatRequestTemperature', value: 1, von: 0, ts: NOW - 3600000, bis: NOW + 3600000, bestaetigt: true};
+    const en5 = E.applyTick(A5, {now: NOW, plant: {shift: 1, hpAge: 0.3, block: 0}, endReason: {raum_offset: 'Raumvorschlag ist wieder 0 K'}});
+    check('Rueckweg, wenn der Grund endet (Raumvorschlag 0): ein Befehl zurueck auf 0 mit Grund im Protokoll', en5.send.length === 1 && en5.send[0].payload === '0' && /Raumvorschlag ist wieder 0 K/.test(en5.log[0].grund), JSON.stringify(en5.log[0]));
+    // Lange Fahrt mit Hauptschalter AN und ALLEN Regeln freigegeben, aber ohne Klick: nie ein Befehl
+    files['/data/optimizer/apply.json'] = '{"enabled": true, "rules": ["quiet_freigabe", "quiet_strecken", "raum_offset"]}';
+    files['/data/optimizer/apply-state.json'] = JSON.stringify(E.newApply()); restart(); NOW += 3600000; world();
+    let nProp = 0, nSend = 0;
+    for (let h = 0; h < 36; h++) {
+        const Rh = minute(60, i => { const boost = (h % 6) === 2; gstore.TOP42_Z1_Water_Target_Temp = boost ? 38 : 30; gstore.TOP6_Main_Outlet_Temp = boost ? 30 : 30.5; gstore.TOP5_Main_Inlet_Temp = boost ? 28.25 : 28; gstore.OPT_state.korr = (h % 8) < 4 ? 1 : 0; gstore.OPT_state.korrLead = 'Kinderzimmer oben'; });
+        nSend += sends(Rh).length; nProp += Rh.eng.filter(o => o && o[0] && o[0].payload.prop).length;
+    }
+    check('36 h mit Hauptschalter AN und allen Regeln freigegeben, Vorschlaege in ' + nProp + ' Minuten, aber ohne Klick: kein einziger Befehl (es gibt keinen automatischen Sendeweg)', nProp > 0 && nSend === 0, 'Befehle ' + nSend);
+    check('kein node.send in den Huellen und Warnungen nur erwartbare', !warns.some(w => /node\.send|TypeError|ReferenceError/.test(w)), warns.slice(0, 3).join(' | '));
+}
+
+module.exports = {check: check, inp: inp, rooms: rooms, runSeq: runSeq, plantSim: plantSim, T0: T0, applyPathProblems: applyPathProblems};
+if (require.main === module) {
+    console.log('\nERGEBNIS engine_sim: ' + oks + ' OK, ' + fails + ' FAIL');
+    process.exit(fails ? 1 : 0);
+}

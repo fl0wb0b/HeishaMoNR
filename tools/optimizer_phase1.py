@@ -18,7 +18,10 @@ import json
 import os
 import sys
 
-path = sys.argv[1] if len(sys.argv) > 1 else "flows (26.5.1 stable).json"
+_args = [a for a in sys.argv[1:] if not a.startswith("--")]
+path = _args[0] if _args else "flows (26.5.1 stable).json"
+# Ein-Klick-Uebernahme: der mqtt-out-Knoten wird GESPERRT (deaktiviert) ausgeliefert. Erst mit diesem Schalter UND apply.json (enabled + Regel) kann ein Klick senden.
+APPLY_NODE_ACTIVE = "--uebernahme-knoten-aktiv" in sys.argv[1:]
 flows = json.load(open(path, encoding="utf-8"))
 B = {n["id"]: n for n in flows}
 
@@ -827,6 +830,50 @@ global.set('OPT_hp', hp);
 return res;
 """
 
+KZ_IN_JS = r"""
+// Kinderzimmer oben (NUR LESEN): Zustand von Radiator-Relais (Shelly 1 Mini, shelly-radiator) und Heizluefter (Shelly Plug S, elektrisch) vom Venus/Shelly-Broker.
+// Die Regelung selbst liegt im Tab Dashboard; dieser Tab schreibt nichts an die Geraete. Ergebnis: global OPT_kz, Aenderungen als Ereignis in quiet-events.
+var kz = global.get('OPT_kz') || {};
+kz.rad = kz.rad || {}; kz.fan = kz.fan || {};
+var now = Date.now(), t = String(msg.topic || ''), raw = msg.payload;
+var d = new Date(now), pad = function (x) { return (x < 10 ? '0' : '') + x; };
+var iso = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+var file = '/data/optimizer/quiet-events-' + iso.slice(0, 7) + '.csv';
+function event(what, change) {
+    var head = '';
+    try { fs.readFileSync(file, 'utf8'); } catch (e) { head = 'zeit,ereignis,wechsel\n'; }
+    return {filename: file, payload: head + iso + ',' + what + ',' + String(change).replace(/,/g, ';') + '\n'};
+}
+function bool(v) { v = String(v).trim().toLowerCase(); return (v === 'on' || v === 'true' || v === '1') ? true : ((v === 'off' || v === 'false' || v === '0') ? false : null); }
+function txt(b) { return b ? 'an' : 'aus'; }
+var res = null;
+if (t === 'shelly-radiator/events/rpc') {                                                      // Gen3: NotifyStatus mit switch:0.output nur bei Aenderung (sonst Zaehler)
+    var p = raw;
+    if (Buffer.isBuffer(p)) { p = p.toString(); }
+    if (typeof p === 'string') { try { p = JSON.parse(p); } catch (e) { p = null; } }
+    var sw = p && p.params && p.params['switch:0'];
+    if (sw && typeof sw.output === 'boolean') {
+        var prevR = kz.rad.on;
+        kz.rad.on = sw.output; kz.rad.ts = now; kz.rad.src = sw.source || '';
+        if (typeof prevR === 'boolean' && prevR !== sw.output) { res = event('kz_radiator', txt(prevR) + '->' + txt(sw.output) + (sw.source ? ' (Quelle: ' + sw.source + ')' : '')); }
+    }
+} else if (t === 'shelly-radiator/online') {
+    var oR = bool(raw);
+    if (oR !== null) { var pO = kz.rad.online; kz.rad.online = oR; kz.rad.onlineTs = now; if (typeof pO === 'boolean' && pO !== oR) { res = event('kz_radiator_online', (pO ? 'online' : 'offline') + '->' + (oR ? 'online' : 'offline')); } }
+} else if (t === 'shellies/shellyplug-s-heiz/relay/0') {
+    var f0 = bool(raw);
+    if (f0 !== null) { var pF = kz.fan.on; kz.fan.on = f0; kz.fan.ts = now; if (typeof pF === 'boolean' && pF !== f0) { res = event('kz_heizluefter', txt(pF) + '->' + txt(f0)); } }
+} else if (t === 'shellies/shellyplug-s-heiz/relay/0/power') {
+    var w = Number(raw);
+    if (isFinite(w)) { kz.fan.w = w; kz.fan.wTs = now; }
+} else if (t === 'shellies/shellyplug-s-heiz/online') {
+    var oF = bool(raw);
+    if (oF !== null) { var pOF = kz.fan.online; kz.fan.online = oF; kz.fan.onlineTs = now; if (typeof pOF === 'boolean' && pOF !== oF) { res = event('kz_heizluefter_online', (pOF ? 'online' : 'offline') + '->' + (oF ? 'online' : 'offline')); } }
+}
+global.set('OPT_kz', kz);
+return res;
+"""
+
 QUIET_JS = r"""
 // Phase 4 (Shadow): Quiet-Empfehlung als grober Leistungsdeckel. Schreibt NICHTS an die Waermepumpe (kein MQTT-Ausgang in diesem Tab).
 // Heizkurve (Temperaturniveau) und Quiet (Leistungsdeckel) bleiben getrennte Groessen; Pumpendrehzahl wird nur beobachtet.
@@ -865,6 +912,10 @@ var defrost = num(G('TOP26_Defrosting_State')) === 1, dhw = num(G('TOP20_ThreeWa
 var ss = G('F_SS') || {}, ssRamp = ss.state === 1 && Math.abs(num(ss.correction_value) || 0) > 0;
 var at = num(G('TOP14_Outside_Temp')), fan1 = num(G('TOP62_Fan1_Motor_Speed'));
 var S = G('OPT_state') || {}, sFresh = S.ts && now - S.ts < 5 * MS_MIN;
+// Kinderzimmer oben (eigene Regelung im Tab Dashboard, hier nur mitgelesen): Radiator-Relais (Shelly 1 Mini) und Heizluefter (Shelly Plug S, elektrisch)
+var KZ = G('OPT_kz') || {}, KZR = KZ.rad || {}, KZF = KZ.fan || {};
+var kzRad = typeof KZR.on === 'boolean' ? (KZR.on ? 1 : 0) : '', kzFanOn = typeof KZF.on === 'boolean' ? (KZF.on ? 1 : 0) : '', kzFanW = typeof KZF.w === 'number' ? KZF.w : null;
+var kzFanOnline = typeof KZF.online === 'boolean' ? (KZF.online ? 1 : 0) : '';
 
 // ---------- Zustand (ueberlebt Neustarts per Datei)
 var qs = flow.get('qs');
@@ -1055,25 +1106,32 @@ qs.hcKey = hcKey;
 
 // ---------- Eskalationswaechter (SCHATTEN, schaltet nichts): wann muesste Efficiency verlassen bzw. Quiet freigegeben werden?
 // Ausloeser: Sollvorlauf nach X min nicht erreicht · Vorlauf nach Erreichen laenger ueber 2 K unter Soll · Raum laenger unter Minimum · Heizstab-Schwelle naht.
-// Sperren gegen Takt (aus den Logs): nur im Betrieb, nicht kurz nach Start/Abtauen/Warmwasser/Sanftanlauf, nur wenn der Vorlauf hoechstens 1 K ueber Soll liegt (der Weg zu Comfort hebt ihn um ca. 0,5-1 K,
+// Nutzerregel (10.10.2026): Quiet bleibt auf 0, ausser man will die Laufzeit strecken; keine harte Regelung ueber Efficiency/Comfort, nur weil ein Raum waermer oder kaelter ist (der Wechsel
+// laesst die Pumpe im Lauf um ca. 65 % springen und aendert die Heizleistung nicht). Der Waechter schlaegt deshalb KEINEN Heizregelung-Wechsel mehr vor, sondern nur die Quiet-Freigabe (Quiet q -> q-1),
+// wenn der Verdichter trotz Rueckstand am Deckel haengt (Quiet 3 deckelt auf Minimum), und weist sonst nur darauf hin.
+// Sperren gegen Takt (aus den Logs): im Betrieb nicht kurz nach Start/Abtauen/Warmwasser/Sanftanlauf, nur wenn der Vorlauf hoechstens 1 K ueber Soll liegt (der Weg zu Comfort hebt ihn um ca. 0,5-1 K,
 // die Anlage schaltet bei mehr als +3 K ueber Soll ab), Mindestabstand zum letzten Wechsel. Geht der Verdichter nach einem Wechsel mit Ueberschwingen aus, wird das festgehalten und das automatische Schalten gesperrt.
 // Zeitmessung ueber Startzeitpunkte (nicht ueber Aufrufe), Sperren und Wechselzeit werden in watcher-state.json gesichert (Neustart-fest), Eingaenge muessen frisch sein.
 var escEvents = [], escTxt = '–', escCls = '', escKey = '', escWhyTxt = '', escGateTxt = '', escRunMin = null, escDev = null;
 var ES = qs.esc = qs.esc || {};
-var ESD = {runKey: 0, prevRt: null, obsStart: 0, late: false, reached: null, reachSince: 0, reachSinceMin: 0, dropSince: 0, defiSince: 0, htrSince: 0, trigSince: 0, nearStop: false,
+var ESD = {capSince: 0, cappedAt: 0, pDefiSince: 0, pTrigSince: 0, runKey: 0, prevRt: null, obsStart: 0, late: false, reached: null, reachSince: 0, reachSinceMin: 0, dropSince: 0, defiSince: 0, htrSince: 0, trigSince: 0, nearStop: false,
            lastChg: 0, lastChgWhat: '', hcPrev: null, qPrev: null, blockUntil: 0, devHist: [], keyCand: 'ruhig', keySince: 0, keyShown: 'ruhig', runHc: null, runQ: null, saved: ''};
 Object.keys(ESD).forEach(function (k) { if (ES[k] === undefined) { ES[k] = ESD[k]; } });
 var escX = qn(Q.escReachMin, 120), escBand = qn(Q.escReachBandK, 1), escDropK = qn(Q.escDropK, 2), escDropMin = qn(Q.escDropMin, 30), escRoomMin = qn(Q.escRoomMin, 60),
     escGap = qn(Q.escMinGapMin, 60), escLock = qn(Q.escStartLockMin, 15), escMaxDev = qn(Q.escMaxDevK, 1), escWait = qn(Q.escWaitMin, 10), escTakt = qn(Q.escTaktMin, 30), escBlockH = qn(Q.escBlockH, 24),
-    escOver = qn(Q.escOvershootK, 2.5), escDebounce = 3;
+    escOver = qn(Q.escOvershootK, 2.5), escDebounce = 3, escCycleH = qn(Q.escCycleH, 12), escCapHz = qn(Q.escCapHz, 20), escCapDevK = qn(Q.escCapDevK, 1.5), escCapMin = qn(Q.escCapMin, 10);
 var escHour = new Date(now).getHours(), escNight = escHour >= 22 || escHour < 7;
-var capHz = {3: 28, 2: 35, 1: 45};                                                                   // Annahme aus der Betreiberangabe (Quiet-Deckel in Hz), nicht gemessen
+var escLastRunEnd = 0; (qs.runs || []).forEach(function (r) { var e = r[0] + r[1] * MS_MIN; if (e > escLastRunEnd) { escLastRunEnd = e; } });
+var escLastStop = Math.max(qs.swStop || 0, escLastRunEnd), escCycling = escLastStop > 0 && now - escLastStop < escCycleH * 3600000;          // Takt-Phase: der Verdichter stand zuletzt vor weniger als 12 h (sonst Dauerlauf)
+// Quiet-Deckel in Hz. GEMESSEN ist nur Stufe 3: 10.10.2026 Boost (Soll 29 -> 38) blieb der Verdichter 15 min bei 16-17 Hz (300 W) mit 8 K Rueckstand; nach Quiet 3 -> 0 sofort 29 und 34 Hz (800 W, 4,7 kW thermisch).
+// Quiet 3 haelt den Verdichter also auf Minimum (kein "Bedarf unter Mindestleistung"). Stufen 2 und 1: weiter Annahme (nicht gemessen).
+var capHz = {2: 35, 1: 45};
 var escDataOk = freqRaw !== null && hpFresh;                                                         // Verdichterwert vorhanden und HeishaMon meldet noch
 var pd2 = function (x) { return (x < 10 ? '0' : '') + x; };
 var hd = function (ts) { var d0 = new Date(ts), n0 = new Date(now); return (d0.getDate() === n0.getDate() && d0.getMonth() === n0.getMonth() ? '' : pd2(d0.getDate()) + '.' + pd2(d0.getMonth() + 1) + '. ') + hhmm(ts); };
 var chgTxt = function (a0, b0) { if (a0 === null || a0 === undefined) { return b0 === null ? '?' : String(b0); } return (b0 === null || a0 === b0) ? String(a0) : a0 + '→' + b0; };
 var mins = function (since) { return since ? Math.floor((now - since) / MS_MIN) : 0; };
-function escReset() { ES.dropSince = 0; ES.defiSince = 0; ES.htrSince = 0; ES.trigSince = 0; ES.reachSince = 0; }
+function escReset() { ES.dropSince = 0; ES.defiSince = 0; ES.htrSince = 0; ES.trigSince = 0; ES.reachSince = 0; ES.capSince = 0; }
 function escRunEnd() {                                                                              // Lauf ist zu Ende (Stillstand beobachtet oder Laufzeit-Sprung): Zusammenfassung und Takt-Pruefung
     var obs = Math.round((now - ES.obsStart) / MS_MIN);
     escEvents.push(['lauf_ende', (ES.late ? 'beobachtet ' + obs + ' min (Beginn unbekannt)' : 'Lauf ' + Math.round(ES.prevRt || obs) + ' min') + ' · Sollvorlauf ' + (ES.reached !== null ? (ES.late ? 'erreicht (Zeit unbekannt)' : 'erreicht nach ' + ES.reached + ' min') : 'nicht erreicht')
@@ -1097,15 +1155,44 @@ if (!escDataOk) {
     escTxt = 'Daten fehlen oder sind veraltet (' + (freqRaw === null ? 'Verdichterwert fehlt' : 'HeishaMon meldet nicht') + ') · Wächter pausiert';
 } else if (!running) {
     if (ES.runKey !== 0) { escRunEnd(); }
+    var carriedDefi = ES.defiSince || ES.pDefiSince || 0;                                         // seit wann der Raum unter Minimum liegt (Lauf und Pause zusammen)
     qs.sawStop = true;
-    ES.runKey = 0; ES.prevRt = null; ES.reached = null; ES.late = false; ES.nearStop = false; ES.devHist = []; ES.keyCand = 'ruhig'; ES.keyShown = 'ruhig'; escReset();
-    escKey = 'ruhig'; escTxt = 'Verdichter steht · Wächter prüft im Betrieb';
+    ES.runKey = 0; ES.prevRt = null; ES.reached = null; ES.late = false; ES.nearStop = false; ES.devHist = []; escReset();
+    // Pausenfenster: Wechsel Efficiency -> Comfort wirkt erst beim naechsten Start, ohne zusaetzlichen Pumpensprung im Lauf
+    var pRpm = hpv('Pump_Speed'), pDef = defrost || now - qs.lastDefrostEnd < qn(Q.afterDefrostMin, 10) * MS_MIN, pDhw = dhw || now - qs.lastDhwEnd < qn(Q.afterDhwMin, 10) * MS_MIN;
+    if (sFresh && S.deficit) { ES.pDefiSince = carriedDefi || now; } else { ES.pDefiSince = 0; }
+    var pWhy = [], pGate = [], pAct = null, pKeyNow = 'ruhig';
+    if ((qNow !== null && qNow >= 1 && ES.cappedAt && now - ES.cappedAt < 6 * 3600000) && ES.pDefiSince && mins(ES.pDefiSince) >= escRoomMin) { pWhy.push('Raum seit ' + mins(ES.pDefiSince) + ' min unter Minimum (' + (S.deficitRoom || '?') + ')'); }
+    if (pWhy.length) {
+        if (!ES.pTrigSince) { ES.pTrigSince = now; }
+        pAct = 'Quiet ' + qNow + ' → ' + (qNow - 1) + ' (in der Pause, wirkt ab dem nächsten Start; Verdichter hing zuletzt am Deckel)';
+        if (pRpm === null) { pGate.push('Pumpendrehzahl unbekannt: kein Pausenfenster'); } else if (pRpm < 1000) { pGate.push('Pumpe steht (Heizgrenze): kein Pausenfenster'); }
+        if (pDef) { pGate.push('Abtauen'); }
+        if (pDhw) { pGate.push('Warmwasser'); }
+        if (qs.swStop && now - qs.swStop < 3 * MS_MIN) { pGate.push('Pause erst seit ' + Math.floor((now - qs.swStop) / MS_MIN) + ' min'); }
+        if (ES.lastChg && now - ES.lastChg < escGap * MS_MIN) { pGate.push('Mindestabstand ' + escGap + ' min zum letzten Wechsel (noch ' + Math.ceil((escGap * MS_MIN - (now - ES.lastChg)) / MS_MIN) + ' min)'); }
+        if (ES.blockUntil > now) { pGate.push('nach Takt durch Wechsel gesperrt bis ' + hd(ES.blockUntil)); }
+        escCls = 'warn';
+        if (pGate.length) { pKeyNow = 'gesperrt'; escTxt = 'Pause · Auslöser: ' + pWhy.join(' · ') + ' → würde in der Pause schalten: ' + pAct + ' · gesperrt: ' + pGate.join(' · '); }
+        else if (mins(ES.pTrigSince) < escWait) { pKeyNow = 'wartet'; escTxt = 'Pause · Auslöser: ' + pWhy.join(' · ') + ' → ' + pAct + ' nach ' + escWait + ' min Wartezeit (seit ' + mins(ES.pTrigSince) + ' min)'; }
+        else { pKeyNow = 'schalten'; escTxt = 'Pause · Auslöser: ' + pWhy.join(' · ') + ' → würde jetzt in der Pause schalten: ' + pAct + (escNight ? ' (Nacht: automatisch)' : ' (Tag: Vorschlag zur Bestätigung)'); }
+        escKey = pKeyNow; escWhyTxt = pWhy.join(' + '); escGateTxt = pGate.join(' + ');
+        if (ES.keyCand !== pKeyNow) { ES.keyCand = pKeyNow; ES.keySince = now; }
+        if (ES.keyShown !== ES.keyCand && now - ES.keySince >= escDebounce * MS_MIN) {
+            escEvents.push(['eskalation_schatten', pKeyNow + ' (Pause): ' + pWhy.join(' + ') + ' → ' + pAct + (pKeyNow === 'gesperrt' ? ' [' + pGate.join(' + ') + ']' : '')]);
+            ES.keyShown = ES.keyCand;
+        }
+    } else {
+        ES.pTrigSince = 0; ES.keyCand = 'ruhig'; ES.keyShown = 'ruhig';
+        escKey = 'ruhig'; escTxt = 'Verdichter steht · Wächter prüft im Betrieb' + (hcMode === 1 && ES.pDefiSince ? ' · Raum seit ' + mins(ES.pDefiSince) + ' min unter Minimum (Pausenfenster ab ' + escRoomMin + ' min)' : '');
+    }
 } else {
     var rtNow = rt;
     if (!ES.late && ES.runKey !== 0 && rtNow !== null && ES.prevRt !== null && rtNow < ES.prevRt - 1.5) { escRunEnd(); ES.runKey = 0; }                      // Stopp und Neustart zwischen zwei Aufrufen
     if (ES.runKey === 0) {
         ES.runKey = now; ES.obsStart = now; ES.late = !qs.sawStop;                                   // spaet: Lauf war beim ersten Hinsehen schon im Gang (Neustart/Deploy), Beginn unbekannt
         ES.reached = null; ES.nearStop = false; ES.devHist = []; ES.runHc = hcMode; ES.runQ = qNow; escReset();
+        if (ES.pDefiSince) { ES.defiSince = ES.pDefiSince; } ES.pDefiSince = 0; ES.pTrigSince = 0;                 // Raum war schon in der Pause unter Minimum: Dauer weiterzaehlen
     }
     ES.prevRt = rtNow;
     escRunMin = ES.late ? (now - ES.obsStart) / MS_MIN : (rtNow !== null ? rtNow : (now - ES.runKey) / MS_MIN);
@@ -1132,6 +1219,10 @@ if (!escDataOk) {
     if (ES.dropSince && mins(ES.dropSince) >= escDropMin) { escWhy.push('Vorlauf seit ' + mins(ES.dropSince) + ' min mehr als ' + f(escDropK, 0) + ' K unter Soll'); }
     if (ES.defiSince && mins(ES.defiSince) >= escRoomMin) { escWhy.push('Raum seit ' + mins(ES.defiSince) + ' min unter Minimum (' + (S.deficitRoom || '?') + ')'); }
     if (htrOn !== null && ES.htrSince && mins(ES.htrSince) >= Math.max(5, (htrDl === null ? 15 : htrDl) - 5)) { escWhy.push('Heizstab-Schwelle naht (Vorlauf ' + f(-escDev, 1) + ' K unter Soll seit ' + mins(ES.htrSince) + ' min, Heizstab ab ' + f(-Math.abs(htrSt), 0) + ' K nach ' + (htrDl === null ? 15 : htrDl) + ' min)'); }
+    // Verdichter am Quiet-Deckel: bleibt trotz Rueckstand zum Soll auf Minimum (Quiet >= 1, <= 20 Hz, Vorlauf mindestens 1,5 K unter Soll); nur dann bringt eine Quiet-Freigabe Leistung
+    var escCapped = qNow !== null && qNow >= 1 && freq > 0 && freq <= escCapHz && escDev !== null && escDev <= -escCapDevK && !escDef && !escDhw && escRunMin >= escLock;
+    if (escCapped) { ES.capSince = ES.capSince || now; ES.cappedAt = now; } else if (!(qNow !== null && qNow >= 1 && freq > 0 && freq <= escCapHz)) { ES.capSince = 0; }
+    var escCappedLong = ES.capSince > 0 && mins(ES.capSince) >= escCapMin;
     var escGate = [];
     if (escRunMin < escLock) { escGate.push('Startphase (' + Math.round(escRunMin) + ' von ' + escLock + ' min' + (ES.late ? ', Beginn unbekannt' : '') + ')'); }
     if (escDef) { escGate.push('Abtauen'); }
@@ -1144,7 +1235,8 @@ if (!escDataOk) {
     if (escWhy.length) {
         if (!ES.trigSince) { ES.trigSince = now; }
         if (hcMode === null || (hcMode === 0 && qNow === null)) { escKeyNow = 'modus_unbekannt'; escCls = 'warn'; escTxt = 'Auslöser: ' + whyTxt + ' · ' + (hcMode === null ? 'Heizregelung' : 'Quiet-Stufe') + ' unbekannt, keine Aktion möglich'; }
-        else if (hcMode === 1) { escAct = 'Heizregelung Efficiency → Comfort'; }
+        else if (qNow !== null && qNow >= 1 && escCappedLong) { escAct = 'Quiet ' + qNow + ' → ' + (qNow - 1) + ' (Verdichter seit ' + mins(ES.capSince) + ' min bei ' + f(freq, 0, 'Hz') + ' am Deckel, Vorlauf ' + f(-escDev, 1) + ' K unter Soll)'; }
+        else if (hcMode === 1) { escKeyNow = 'hinweis'; escCls = ''; escTxt = 'Auslöser: ' + whyTxt + ' · Efficiency bleibt: die Heizregelung wird nicht wegen eines Raums gewechselt (Verdichter bei ' + f(freq, 0, 'Hz') + ', nicht am Quiet-Deckel)'; }
         else if (qNow === 0) { escKeyNow = 'ausgeschoepft'; escCls = 'warn'; escTxt = 'Auslöser: ' + whyTxt + ' · Comfort und Quiet 0: keine weitere Stufe frei, die Leistung der Anlage reicht nicht'; }
         else if (capHz[qNow] !== undefined && freq >= capHz[qNow] - 3) { escAct = 'Quiet ' + qNow + ' → ' + (qNow - 1); }
         else { escKeyNow = 'ohne_wirkung'; escCls = ''; escTxt = 'Comfort aktiv, Auslöser: ' + whyTxt + ' · Quiet-Freigabe brächte nichts (Verdichter bei ' + f(freq, 0, 'Hz') + ', nicht am Deckel)'; }
@@ -1153,7 +1245,7 @@ if (!escDataOk) {
         escCls = 'warn';
         if (escGate.length) { escKeyNow = 'gesperrt'; escTxt = 'Auslöser: ' + whyTxt + ' → würde schalten: ' + escAct + ' · gesperrt: ' + escGate.join(' · '); }
         else if (mins(ES.trigSince) < escWait) { escKeyNow = 'wartet'; escTxt = 'Auslöser: ' + whyTxt + ' → ' + escAct + ' nach ' + escWait + ' min Wartezeit (seit ' + mins(ES.trigSince) + ' min)'; }
-        else { escKeyNow = 'schalten'; escTxt = 'Auslöser: ' + whyTxt + ' → würde jetzt schalten: ' + escAct + (escNight ? ' (Nacht: automatisch)' : ' (Tag: Vorschlag zur Bestätigung)'); }
+        else { escKeyNow = 'schalten'; escTxt = 'Auslöser: ' + whyTxt + ' → würde jetzt schalten: ' + escAct + '' + (escNight ? ' (Nacht: automatisch)' : ' (Tag: Vorschlag zur Bestätigung)'); }
     } else if (!escWhy.length) {
         escCls = 'ok';
         escTxt = (hcMode === 1 ? 'Efficiency' : (hcMode === 0 ? 'Comfort' : 'Modus unbekannt')) + ' · kein Auslöser · ' + (ES.reached !== null ? (ES.late ? 'Sollvorlauf erreicht (Zeit unbekannt)' : 'Sollvorlauf erreicht nach ' + ES.reached + ' min') : 'läuft ' + Math.round(escRunMin) + ' min, Sollvorlauf noch nicht erreicht (Grenze ' + escX + ' min)');
@@ -1180,6 +1272,7 @@ var rows = [
     ['Leistung thermisch', pth !== null ? f(pth, 0, 'W') + (pthHs !== null ? ' (HeishaMon)' : ' (berechnet)') : '–', ''],
     ['COP', copNow !== null ? f(copNow, 1) : '–', ''],
     ['Flow · Pumpe (nur Beobachtung)', f(flw, 1, 'l/min') + ' · ' + (HP.Pump_Duty ? f(HP.Pump_Duty.v, 0) : '–') + ' / ' + (HP.Pump_Speed ? f(HP.Pump_Speed.v, 0, 'U/min') : '–'), ''],
+    ['Kinderzimmer oben', 'Radiator ' + (kzRad === '' ? '–' : (kzRad ? 'an' : 'aus')) + ' · Heizlüfter ' + (kzFanOnline === 0 ? 'offline' : (kzFanOn === '' ? '–' : (kzFanOn ? 'an' + (kzFanW !== null ? ' (' + f(kzFanW, 0, 'W') + ')' : '') : 'aus'))), ''],
     ['Taktung', 'heute ' + f(startsToday, 0) + ' Starts · Ø Lauf 24 h ' + (meanRun !== null ? f(meanRun, 0, 'min') : '–') + ' (' + runs24.length + ')', cycleBad ? 'warn' : ''],
     ['Quiet aktuell', qNow !== null ? 'Stufe ' + qNow + ' seit ' + dur(now - qs.levelSince) + (prio !== null ? ' · Priorität ' + (prio === 1 ? 'Leistung' : 'Lautstärke') : '') : '–', ''],
     ['Quiet normal (Shadow)', targetNormal !== null ? 'Stufe ' + targetNormal : '–', ''],
@@ -1251,6 +1344,25 @@ if (hcEvent) {
     if (!(out[3] && out[3].filename === hFile)) { try { fs.readFileSync(hFile, 'utf8'); } catch (e) { hHead = 'zeit,ereignis,wechsel\n'; } }
     out[3] = {filename: hFile, payload: (out[3] && out[3].filename === hFile ? out[3].payload : hHead) + hIso + ',heizregelung_empfehlung,' + hcEvent + '\n'};
 }
+// Schaltpunkte und Sollspruenge (Grundlage, um Ein-/Ausschaltregel der Anlage aus den Daten zu pruefen, ohne einzugreifen)
+var pumpRpmNow = hpv('Pump_Speed'), relNow = (istVL !== null && solVL !== null) ? istVL - solVL : null;
+var zustandNow = running ? 'lauf' : (pumpRpmNow === null ? '' : (pumpRpmNow >= 1000 ? 'pause' : 'heizgrenze'));       // pause: Thermo-Aus mit laufender Pumpe; heizgrenze: Pumpe steht (Spuelung mit 4300 U/min zaehlt kurz als pause)
+var shiftHpNow = num(G('TOP27_Z1_Heat_Request_Temp'));
+function fdot(v, d) { return ok(v) ? Number(v).toFixed(d) : '?'; }                         // Ereignisse sind CSV: Punkt als Dezimaltrenner, keine Kommas
+function sdot(v, d) { return ok(v) ? (v > 0 ? '+' : '') + Number(v).toFixed(d) : '?'; }
+if (hpFresh) {
+    if (qs.swInit) {
+        if (running && !qs.swRun) { escEvents.push(['verdichter_start', 'Pause ' + (qs.swStop ? Math.round((now - qs.swStop) / MS_MIN) : '?') + ' min · Vorlauf ' + sdot(qs.swRel, 2) + ' K zum Soll ' + fdot(qs.swSoll, 0) + ' °C · Außen ' + fdot(at, 0) + ' °C · Pumpe ' + fdot(qs.swPump, 0) + ' U/min']); qs.swStart = now; }
+        if (!running && qs.swRun) { escEvents.push(['verdichter_stopp', 'Lauf ' + (qs.swStart ? Math.round((now - qs.swStart) / MS_MIN) : '?') + ' min · Vorlauf ' + sdot(qs.swRel, 2) + ' K zum Soll ' + fdot(qs.swSoll, 0) + ' °C · Außen ' + fdot(at, 0) + ' °C']); qs.swStop = now; }
+        if (solVL !== null && qs.swSoll !== null && qs.swSoll !== undefined && solVL !== qs.swSoll) {
+            escEvents.push(['sollsprung', (running ? 'Lauf' : (zustandNow === 'heizgrenze' ? 'Heizgrenze' : 'Pause')) + ' ' + fdot(qs.swSoll, 0) + '->' + fdot(solVL, 0) + ' °C · Vorlauf ' + fdot(istVL, 2) + ' (' + sdot(relNow, 2) + ' K zum neuen Soll) · Außen ' + fdot(at, 0) + ' °C · Anlagenverschiebung ' + fdot(shiftHpNow, 0) + ' K']);
+        }
+    }
+    qs.swInit = true; qs.swRun = running;
+    if (relNow !== null) { qs.swRel = relNow; }
+    if (solVL !== null) { qs.swSoll = solVL; }
+    qs.swPump = pumpRpmNow;
+}
 if (escEvents.length) {
     var ed0 = new Date(now), ep0 = function (x) { return (x < 10 ? '0' : '') + x; };
     var eIso = ed0.getFullYear() + '-' + ep0(ed0.getMonth() + 1) + '-' + ep0(ed0.getDate()) + ' ' + ep0(ed0.getHours()) + ':' + ep0(ed0.getMinutes()) + ':' + ep0(ed0.getSeconds());
@@ -1267,14 +1379,16 @@ if (!qs.lastLog || now - qs.lastLog >= MS_MIN - 1000) {
                 'pumpe_max_duty', 'fan1', 'fan2', 'verdichter_strom', 'aussen', 'verdichter_laufzeit_min', 'letzte_laufzeit_min', 'starts_heute', 'lauf_mittel_24h_min', 'defrost', 'warmwasser', 'softstart',
                 'raum_defizit', 'raum_defizit_name', 'raum_trend', 'waermeverteilung', 'quiet_prioritaet', 'taktung_kritisch', 'quiet_aussen_regel', 'test_moeglich', 'heizregelung', 'pumpenmodus',
                 'heizstab_intern', 'heizstab_extern', 'heizstab_raum_frei', 'heizstab_stunden', 'heizstab_start_delta', 'heizstab_verzoegerung_min',
-                'waechter_zustand', 'waechter_ausloeser', 'waechter_sperre', 'zeit_bis_soll_min', 'lauf_min', 'vl_minus_soll'];
+                'waechter_zustand', 'waechter_ausloeser', 'waechter_sperre', 'zeit_bis_soll_min', 'lauf_min', 'vl_minus_soll',
+                'zustand', 'shift_anlage', 'kz_radiator_an', 'kz_heizluefter_an', 'kz_heizluefter_w', 'kz_heizluefter_online'];
     var hv = function (n) { return HP[n] && typeof HP[n].v === 'number' ? HP[n].v : null; };
     var vals2 = [iso, qNow, targetNormal, target, next, nextP, why.filter(Boolean).join(' | ').replace(/,/g, ';'), locks.join(' + ').replace(/,/g, ';'), Math.ceil(holdLeft / MS_MIN), c(solVL), c(istVL), c(solRL), c(istRL), c(rlErr), c(qs.errS),
                  c(spread), c(zDelta), c(freq), c(pel), c(pthHs), c(pthCalc), c(copNow), c(flw), c(hv('Pump_Duty')), c(hv('Pump_Speed')), c(hv('Max_Pump_Duty')), c(fan1), c(hv('Fan2_Motor_Speed')),
                  c(hv('Compressor_Current')), c(at), c(rt), c(rtLast), c(startsToday), c(meanRun), defrost ? 1 : 0, dhw ? 1 : 0, ssRamp ? 1 : 0,
                  sFresh ? (S.deficit ? 1 : 0) : '', sFresh ? String(S.deficitRoom || '').replace(/,/g, ';') : '', sFresh ? c(S.coldTrend) : '', sFresh ? (S.distrib ? 1 : 0) : '', prio === null ? '' : prio, cycleBad ? 1 : 0, atWin ? 1 : 0, testOk ? 1 : 0, c(hv('Heating_Control')), c(hv('Pump_Flowrate_Mode')),
                  c(hv('Internal_Heater_State')), c(hv('External_Heater_State')), c(hv('Room_Heater_State')), c(hv('Room_Heater_Operations_Hours')), c(hv('Heater_Start_Delta')), c(hv('Heater_Delay_Time')),
-                 escKey, escWhyTxt.replace(/,/g, ';'), escGateTxt.replace(/,/g, ';'), (ES.reached !== null && !ES.late) ? c(ES.reached) : '', escRunMin !== null ? c(Math.round(escRunMin)) : '', c(escDev)];
+                 escKey, escWhyTxt.replace(/,/g, ';'), escGateTxt.replace(/,/g, ';'), (ES.reached !== null && !ES.late) ? c(ES.reached) : '', escRunMin !== null ? c(Math.round(escRunMin)) : '', c(escDev),
+                 zustandNow, c(shiftHpNow), kzRad, kzFanOn, c(kzFanW), kzFanOnline];
     var file = '/data/optimizer/quiet-' + month + '.csv', head = cols.join(',');
     var needHead = true;
     if (flow.get('qHead') === month + '|' + head) { needHead = false; }
@@ -2078,7 +2192,11 @@ if (P.status === 'ok') {                                                        
            {k: 'PV-Fenster', v: wf(sm2.pvWin), s: sm2.pvWin ? 'Ø ' + f(sm2.pvWin.v, 0, 'W') : 'keine Prognose'}];
 }
 out[0] = {payload: {rows: rows, plan: tab, chart: chartD, kpi: kpi}};
-global.set('OPT_plan', {ts: now, s0: P.s0, status: P.status, reserve: P.res || null, slots: P.slots ? P.slots.map(function (x) { return [x.t, x.rec, x.b, x.p, x.cost, x.cA]; }) : null});
+// Gebaeudemodell fuer die Entscheidungsmaschine (Regel Vorausschau): Lernstand, Gate, coefActivate; Sonne/Wind-Koeffizienten nur bei aktivem Modell
+var cfX = pl.learn.coef || {}, cfK = (cfX.aktiv && cfX.n >= 3) ? (cfX.maeWind !== null && cfX.maeWind !== undefined ? {bs: cfX.bsW || 0, bw: cfX.bw || 0} : {bs: cfX.bs || 0, bw: 0}) : {bs: 0, bw: 0};
+global.set('OPT_plan', {ts: now, s0: P.s0, status: P.status, reserve: P.res || null, slots: P.slots ? P.slots.map(function (x) { return [x.t, x.rec, x.b, x.p, x.cost, x.cA]; }) : null,
+                        model: {n: cfX.n || 0, minDays: pn('coefMinDays', 10), gate: !!(cfX.gate && cfX.gate.ok), why: (cfX.gate && cfX.gate.why) || [], aktiv: !!cfX.aktiv, bs: cfK.bs, bw: cfK.bw,
+                                ua: P.model ? P.model.ua : null, tbal: pn('tbalC', 15)}});
 flow.set('plan', pl);
 return out;
 """
@@ -2366,7 +2484,8 @@ try {
     global.set('OPT_shift_ts', now);
     flow.set('ctl', ctSt);
     var ctWorst = ctBelow.length ? ctPick(ctBelow, 'mLow') : null;                                  // Komfortzustand fuer die Quiet-Empfehlung
-    global.set('OPT_state', {ts: now, deficit: ctBelow.length > 0, deficitRoom: ctWorst ? ctWorst.x.name : '', coldTrend: ctWorst ? ctWorst.tr : null, distrib: ctDistrib, valid: valids.length, active: ctAct.length});
+    global.set('OPT_state', {ts: now, deficit: ctBelow.length > 0, deficitRoom: ctWorst ? ctWorst.x.name : '', coldTrend: ctWorst ? ctWorst.tr : null, distrib: ctDistrib, valid: valids.length, active: ctAct.length,
+                             korr: ctSt.cur, korrCode: ctCode, korrLead: ctLead ? ctLead.x.name : ''});      // korr*: Raumvorschlag (korrektur_vorschlag) fuer die Entscheidungsmaschine, nur lesen
     ctRes = {on: ctOn, probe: ctProbe, cur: ctSt.cur, want: ctWant, floorHit: ctFloorHit, applied: ctApplied, code: ctCode, lead: ctLead ? ctLead.x.name : '', distrib: ctDistrib,
              locks: ctLocks, holdLeft: ctHoldLeft, since: ctSt.since, startK: ctStart, relK: ctRel, holdMin: ctHold / MS_MIN, rtcOn: ctRtcOn};
 } catch (e) {
@@ -2911,6 +3030,11 @@ for _i, _t in enumerate(("panasonic_heat_pump/main/+", "panasonic_heat_pump/extr
             "broker": "opt_broker_nas", "nl": False, "rap": True, "rh": 0, "inputs": 0, "x": 160, "y": 1120 + 60 * _i, "wires": [["opt_hp_in"]]})
 upsert(fn("opt_hp_in", "Anlagenwerte lesen (nur lesen)", HP_IN_JS, 1, [["opt_f_qev"]], 440, 1180, FS))
 upsert(fn("opt_quiet", "Quiet-Empfehlung (Shadow)", QUIET_JS, 5, [["opt_t_quiet"], ["opt_t_qstats"], ["opt_f_quiet"], ["opt_f_qev"], ["opt_f_def"]], 700, 1060, FS))
+# Kinderzimmer oben: Radiator-Relais und Heizluefter nur mitlesen (Venus/Shelly-Broker); die Regelung dazu liegt im Tab Dashboard
+for _i, _t in enumerate(("shelly-radiator/events/rpc", "shelly-radiator/online", "shellies/shellyplug-s-heiz/relay/0", "shellies/shellyplug-s-heiz/relay/0/power", "shellies/shellyplug-s-heiz/online")):
+    upsert({"id": f"opt_mqtt_kz_{_i}", "type": "mqtt in", "z": TAB, "name": "", "topic": _t, "qos": "0", "datatype": "auto-detect",
+            "broker": "opt_broker_venus", "nl": False, "rap": True, "rh": 0, "inputs": 0, "x": 160, "y": 1400 + 60 * _i, "wires": [["opt_kz_in"]]})
+upsert(fn("opt_kz_in", "Kinderzimmer-Zustände lesen (nur lesen)", KZ_IN_JS, 1, [["opt_f_qev"]], 440, 1500, FS))
 for _fid, _name, _y in (("opt_f_qev", "Quiet-Ereignisse", 1180), ("opt_f_quiet", "Quiet-Protokoll", 1060), ("opt_f_def", "Abtau-Protokoll", 1120)):
     upsert({"id": _fid, "type": "file", "z": TAB, "name": _name, "filename": "filename", "filenameType": "msg", "appendNewline": False,
             "createDir": True, "overwriteFile": "false", "encoding": "utf8", "x": 960, "y": _y, "wires": [[]]})
@@ -3047,6 +3171,210 @@ upsert({"id": "opt_ui_dt_arm", "type": "ui_dropdown", "z": TAB, "name": "Schalte
         "payload": "", "topic": "arm", "topicType": "str", "className": "", "x": 440, "y": 1320, "wires": [["opt_dt"]]})
 upsert({"id": "opt_ui_dt_status", "type": "ui_text", "z": TAB, "group": "opt_g_dt", "order": 2, "width": 6, "height": 5,
         "name": "Status Verzögerungstest", "label": "", "format": "{{msg.payload}}", "layout": "col-center", "className": "", "x": 960, "y": 1320, "wires": []})
+
+# ---------------------------------------------------------------- Optimierer: Entscheidungsmaschine (Shadow), Punkte, Ein-Klick-Uebernahme (GESPERRT ausgeliefert)
+# Reiner Kern in tools/engine_core.js (in tools/engine_sim.js getestet). opt_engine rechnet jede Minute und schreibt nur OPT_* und Protokolle.
+# opt_apply ist der EINZIGE Sendeweg im Tab: nur auf Klick in der Karte "Aktueller Vorschlag", nur mit Hauptschalter (apply.json) und freigegebener Regel,
+# nur Whitelist-Befehle; der mqtt-out-Knoten ist standardmaessig deaktiviert (siehe APPLY_NODE_ACTIVE).
+ENGINE_CORE_JS = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "engine_core.js"), encoding="utf-8").read()
+
+ENGINE_WRAP_JS = r"""
+// ---------- Huelle der Entscheidungsmaschine (Shadow, schaltet NICHTS). Liest Anlagen- und Optimierer-Werte, ruft jede Minute den reinen Kern
+// ENGINE.step, schreibt decisions-YYYY-MM.jsonl (jede Auswertung), scores-YYYY-MM.jsonl (Punkte) und Ereignisse, baut die Seite "Optimierer".
+// Ausgaenge: 1 Vorschlag, 2 Regeln, 3 Punkte, 4 Entscheidungen, 5 Dateien. msg.topic "anzeige" (von der Uebernahme): nur die Anzeige neu aufbauen.
+var now = Date.now(), MIN = 60000;
+var G = function (k) { var v; try { v = global.get(k, 'file'); } catch (e) { v = undefined; } return v !== undefined ? v : global.get(k); };
+function num(v) { if (v === null || v === undefined || v === '' || typeof v === 'boolean') { return null; } v = Number(v); return isFinite(v) ? v : null; }
+function p2(x) { return (x < 10 ? '0' : '') + x; }
+function hm(ts) { return ts ? ENGINE.hhmm(ts) : '–'; }
+function dmhm(ts) { if (!ts) { return '–'; } var d = new Date(ts); return p2(d.getDate()) + '.' + p2(d.getMonth() + 1) + '. ' + ENGINE.hhmm(ts); }
+var CF = global.get('OPT_cfg') || {}, cfg = ENGINE.mergeCfg(CF.engine || {});
+var ST = flow.get('eng');
+if (!ST) {                                                                       // nach einem Neustart: Zustand aus der Datei (Faelle, Punkte, Zaehler), Zeitgeber neu
+    var F0 = null;
+    try { F0 = JSON.parse(fs.readFileSync('/data/optimizer/engine-state.json', 'utf8')); } catch (e) { F0 = null; }
+    ST = {S: (F0 && F0.S) ? ENGINE.fixState(F0.S, now) : null, V: (F0 && F0.V && Array.isArray(F0.V.ep)) ? F0.V : {ep: [], open: {}}, saved: 0, last: null};
+    if (ST.S) { ST.S.born = now; }
+}
+if (!ST.V) { ST.V = {ep: [], open: {}}; }                                         // aeltere Fassung im Flow-Kontext (Episoden statt Einzelzeilen)
+// ---------- Eingabe (Schnappschuss) aus den globalen Werten
+var HP = G('OPT_hp') || {}, hpTs = 0;
+Object.keys(HP).forEach(function (k) { if (k.charAt(0) !== '_' && HP[k] && typeof HP[k].ts === 'number' && HP[k].ts > hpTs) { hpTs = HP[k].ts; } });
+function hpv(n) { var e = HP[n]; return (e && typeof e.v === 'number' && now - e.ts < 30 * MIN) ? e.v : null; }
+// Einstellungen (Heizstab, Heizgrenze) aendern sich selten; meldet HeishaMon sie nur bei Aenderung, gilt der letzte Wert bis 24 h (sonst fiele die Heizstab-Sperre still aus)
+function hpSet(n) { var e = HP[n]; return (e && typeof e.v === 'number' && now - e.ts < 24 * 60 * MIN) ? e.v : null; }
+function pick(a, b) { return a !== null ? a : b; }
+var ss = G('F_SS') || {}, mq = G('MQTT') || {}, sol = G('F_SOLAR') || {}, rtc = G('F_RTC') || {}, nr = G('NightReductionWaterTemp') || {};
+var otherQ = [], otherS = [];
+if (ss.state === 1 && ss.QM_state === 1) { otherQ.push('HeishaMoNR-Quiet-Logik AN'); }
+if (mq.allow_scheduler === 1) { otherQ.push('Scheduler darf senden'); }
+if (sol.state === 1) { otherQ.push('Solar AN'); }
+if (HP.Quiet_Mode_Schedule && HP.Quiet_Mode_Schedule.v === 1) { otherQ.push('WP-Zeitplan AN'); }
+if (rtc.z1 && rtc.z1.state === 1) { otherS.push('Raumregelung (RTC) AN'); }
+if (nr.state === 1) { otherS.push('Nachtabsenkung AN'); }
+if (ss.state === 1) { otherS.push('Sanftanlauf eingeschaltet'); }
+var shFin = num(G('SHIFT_Final')); if (shFin !== null && shFin !== 0) { otherS.push('HeishaMoNR-Verschiebung ' + shFin + ' K'); }
+var at = num(G('TOP14_Outside_Temp'));
+var cvLo = num(G('Z1_Heat_Curve_Outside_Low_Temp')), cvHi = num(G('Z1_Heat_Curve_Outside_High_Temp')), cvTl = num(G('Z1_Heat_Curve_Target_Low_Temp')), cvTh = num(G('Z1_Heat_Curve_Target_High_Temp'));
+var sollKurve = (at === null || cvLo === null || cvHi === null || cvTl === null || cvTh === null || cvHi <= cvLo) ? null : (at <= cvLo ? cvTh : (at >= cvHi ? cvTl : cvTh + (cvTl - cvTh) * (at - cvLo) / (cvHi - cvLo)));
+var RO = global.get('OPT_rooms') || {};
+var rooms = (CF.rooms || []).map(function (rc) {
+    var r = RO[rc.id] || {}, a = r.ts ? (now - r.ts) / MIN : null, lim = rc.maxAgeMin || (CF.sensor && CF.sensor.maxAgeMin) || 90;
+    var band = isFinite(rc.min) && isFinite(rc.max) && rc.min < rc.max, on = rc.active !== false;
+    return {id: rc.id, name: rc.name, t: r.ema !== undefined ? r.ema : null, age: a, min: rc.min, max: rc.max, active: on && band, valid: on && band && r.ema !== undefined && a !== null && a <= lim};
+});
+var OS = G('OPT_state') || {}, korr = (OS.ts && now - OS.ts < 5 * MIN && typeof OS.korr === 'number') ? {v: OS.korr, code: String(OS.korrCode || ''), distrib: !!OS.distrib, lead: String(OS.korrLead || '')} : null;
+var KZ = G('OPT_kz') || {};
+var inp = {t: now, hpAge: hpTs ? (now - hpTs) / MIN : null,
+           hz: num(G('compressor_frequency')), vl: num(G('TOP6_Main_Outlet_Temp')), rl: num(G('TOP5_Main_Inlet_Temp')), soll: num(G('TOP42_Z1_Water_Target_Temp')), dT: num(G('TOP23_Heat_Delta')),
+           pel: num(G('TOP16_Heat_Energy_Consumption')), pth: hpv('Heat_Power_Production_Extra'), flow: num(G('TOP1_Pump_Flow')), pump: hpv('Pump_Speed'),
+           q: pick(hpv('Quiet_Mode_Level'), num(G('TOP18_Quiet_Mode_Level'))), qPrio: hpv('Quiet_Mode_Priority'), hc: hpv('Heating_Control'), at: at,
+           defrost: num(G('TOP26_Defrosting_State')) === 1 ? 1 : 0, dhw: num(G('TOP20_ThreeWay_Valve_State')) === 1 ? 1 : 0, ss: (ss.state === 1 && Math.abs(num(ss.correction_value) || 0) > 0) ? 1 : 0,
+           rt: num(G('compressor_runtime')), shift: pick(hpv('Z1_Heat_Request_Temp'), num(G('TOP27_Z1_Heat_Request_Temp'))), heatMode: num(G('TOP76_Heating_Mode')), z1Sensor: num(G('TOP111_Z1_Sensor_Settings')),
+           heaterI: hpv('Internal_Heater_State'), heaterE: hpv('External_Heater_State'), htrOnAT: hpSet('Heater_On_Outdoor_Temp'), htrStartDelta: hpSet('Heater_Start_Delta'), heatOffAT: hpSet('Heating_Off_Outdoor_Temp'),
+           sollKurve: sollKurve, block: mq.block_active === 1 ? 1 : 0, otherQ: otherQ.length ? otherQ.join(', ') : null, otherShift: otherS.length ? otherS.join(', ') : null,
+           kzRad: (KZ.rad && typeof KZ.rad.on === 'boolean') ? (KZ.rad.on ? 1 : 0) : null, rooms: rooms, korr: korr};
+// Vorausschau: OWM-Vorhersage und Gebaeudemodell des Waermefahrplans (Gate, coefActivate); Sonne/Wind nur bei aktivem Modell (sonst nicht in der Eingabe)
+var vsIn = null; try { vsIn = ENGINE.vorschau(G('OPT_weather'), G('OPT_plan'), G('OPT_plan_in'), at, now); } catch (e) { vsIn = null; }
+if (vsIn) { inp.vs = vsIn; }
+// ---------- rechnen (jede Minute), protokollieren
+var files = [], d0 = new Date(now), month = d0.getFullYear() + '-' + p2(d0.getMonth() + 1);
+if (msg.topic !== 'anzeige') {
+    var o;
+    try { o = ENGINE.step(ST.S, inp, cfg); } catch (e) { node.warn('Entscheidungsmaschine: ' + e.message); global.set('OPT_engine', {ts: 0, fehler: e.message}); return null; }
+    ST.S = o.S; ST.last = {t: now, res: o.res, prop: o.prop, ende: o.ende, locks: o.locks, anl: {z: o.d.zustand, lauf: o.d.runMin, hz: o.d.hz, q: o.d.q, vlR: o.d.vlRueck}};
+    ENGVIEW.track(ST.V, o.res, ST.S.rules, now);
+    files.push({filename: '/data/optimizer/decisions-' + month + '.jsonl', payload: JSON.stringify(o.rec) + '\n'});
+    if (o.scores.length) { files.push({filename: '/data/optimizer/scores-' + month + '.jsonl', payload: o.scores.map(function (x) { return JSON.stringify(x); }).join('\n') + '\n'}); }
+    var evl = o.ev.slice();
+    o.scores.forEach(function (x) { evl.push(['optimierer_punkte', x.regel + ' ' + x.typ + ' ' + (x.punkte > 0 ? '+' : '') + x.punkte + ': ' + x.text]); });
+    if (evl.length) {
+        var ef = '/data/optimizer/quiet-events-' + month + '.csv', eh = '';
+        try { fs.readFileSync(ef, 'utf8'); } catch (e) { eh = 'zeit,ereignis,wechsel\n'; }
+        files.push({filename: ef, payload: eh + evl.map(function (x) { return ENGINE.iso(now) + ',' + x[0] + ',' + String(x[1]).replace(/,/g, ';').replace(/\n/g, ' ') + '\n'; }).join('')});
+    }
+    global.set('OPT_engine', {ts: now, ver: ENGINE.VER, prop: o.prop, locks: o.locks, ende: o.ende, halten: o.halten, rules: o.res.map(function (r) { return {id: r.id, st: r.st}; })});
+    if (!ST.saved || now - ST.saved >= 10 * MIN || o.scores.length || o.ev.length) {
+        try { fs.mkdirSync('/data/optimizer', {recursive: true}); fs.writeFileSync('/data/optimizer/engine-state.json', JSON.stringify({S: ST.S, V: ST.V})); ST.saved = now; } catch (e) { node.warn('engine-state.json: ' + e.message); }
+    }
+}
+flow.set('eng', ST);
+if (!ST.last) { return null; }
+// ---------- Anzeige (Karten-Daten aus ENGVIEW.build, gezeichnet in den Vorlagen mit optEngUi)
+var V = ENGVIEW.build({now: now, last: ST.last, S: ST.S, V: ST.V, AP: global.get('OPT_apply') || {}, enabled: global.get('OPT_apply_enabled') === true, cfg: cfg});
+return [{payload: V.card}, {payload: V.rules}, {payload: V.score}, {payload: V.log}, files.length ? files : null];
+"""
+
+APPLY_WRAP_JS = r"""
+// ---------- Ein-Klick-Uebernahme (ausgeliefert GESPERRT). Einziger Sendeweg des Optimierer-Tabs, nur auf Klick in der Karte "Aktueller Vorschlag".
+// Pruefkette im Kern (ENGINE.applyRequest): Hauptschalter (apply.json, Standard AUS), freigegebene Regel, aktueller Vorschlag (ID + Pruefsumme), Alter,
+// Whitelist + Wertebereich, frische Daten, Abgleich mit dem Ist-Wert, MQTT-Notbremse, Rate und Tageslimit. Jede 15 s (tick): Ruecklesen, begrenzte
+// Wiederholung, Warnung bei Abweichung, Rueckweg. Alles in applied-YYYY-MM.jsonl. Ausgaenge: 1 mqtt out (deaktiviert ausgeliefert), 2 Meldung, 3 Dateien, 4 Anzeige.
+var now = Date.now(), MIN = 60000;
+var G = function (k) { var v; try { v = global.get(k, 'file'); } catch (e) { v = undefined; } return v !== undefined ? v : global.get(k); };
+function num(v) { if (v === null || v === undefined || v === '' || typeof v === 'boolean') { return null; } v = Number(v); return isFinite(v) ? v : null; }
+function p2(x) { return (x < 10 ? '0' : '') + x; }
+var AC = {enabled: false, rules: []};                                            // keine Datei, kaputte Datei oder enabled != true: gesperrt
+try { var j = JSON.parse(fs.readFileSync('/data/optimizer/apply.json', 'utf8')); if (j && j.enabled === true) { AC.enabled = true; } if (j && Array.isArray(j.rules)) { AC.rules = j.rules.filter(function (x) { return typeof x === 'string'; }); } } catch (e) { /* gesperrt */ }
+var A = flow.get('apply');
+if (!A) { try { A = JSON.parse(fs.readFileSync('/data/optimizer/apply-state.json', 'utf8')); } catch (e) { A = null; } }
+var A0 = JSON.stringify(A || null);
+var HP = G('OPT_hp') || {}, hpTs = 0;
+Object.keys(HP).forEach(function (k) { if (k.charAt(0) !== '_' && HP[k] && typeof HP[k].ts === 'number' && HP[k].ts > hpTs) { hpTs = HP[k].ts; } });
+function hpv(n) { var e = HP[n]; return (e && typeof e.v === 'number' && now - e.ts < 30 * MIN) ? e.v : null; }
+function pick(a, b) { return a !== null ? a : b; }
+var mq = G('MQTT') || {};
+var plant = {q: pick(hpv('Quiet_Mode_Level'), num(G('TOP18_Quiet_Mode_Level'))), shift: pick(hpv('Z1_Heat_Request_Temp'), num(G('TOP27_Z1_Heat_Request_Temp'))), hpAge: hpTs ? (now - hpTs) / MIN : null,
+             block: mq.block_active === 1 ? 1 : 0, heatMode: num(G('TOP76_Heating_Mode')), z1Sensor: num(G('TOP111_Z1_Sensor_Settings'))};
+var eng = global.get('OPT_engine') || {};
+var ctx = {now: now, enabled: AC.enabled, rules: AC.rules, eng: eng, plant: plant, cfg: ENGINE.mergeCfg(((global.get('OPT_cfg') || {}).engine) || {}), endReason: eng.ende || {}, halten: eng.halten || {}};
+var t = String(msg.topic || ''), r;
+try { r = t === 'tick' ? ENGINE.applyTick(A, ctx) : ENGINE.applyRequest(A, {topic: t, payload: (msg.payload && typeof msg.payload === 'object') ? {id: String(msg.payload.id || ''), sum: String(msg.payload.sum || '')} : {}}, ctx); }
+catch (e) { node.warn('Übernahme: ' + e.message); return [null, {topic: 'Optimierer', payload: 'Übernahme: Fehler (' + e.message + '). Nichts gesendet.', highlight: 'red'}, null, null]; }
+A = r.A;
+if (r.sperren) {                                                                  // Not-Aus aus dem Dashboard: Hauptschalter aus (Entsperren nur ueber apply.json)
+    AC.enabled = false;
+    try { fs.mkdirSync('/data/optimizer', {recursive: true}); fs.writeFileSync('/data/optimizer/apply.json', JSON.stringify({enabled: false, rules: AC.rules, gesperrt: ENGINE.iso(now), durch: 'Dashboard'}, null, 1)); } catch (e) { node.warn('apply.json: ' + e.message); }
+}
+global.set('OPT_apply_enabled', AC.enabled);
+// letzte Sicherung vor dem Ausgang: nur Whitelist-Topic, nur erlaubter Wert, nie bei Notbremse
+var out1 = [];
+r.send.forEach(function (m) {
+    var W = null; Object.keys(ENGINE.WHITELIST).forEach(function (k) { if (ENGINE.WHITELIST[k].topic === m.topic) { W = ENGINE.WHITELIST[k]; } });
+    var v = num(m.payload);
+    if (!W || v === null || W.werte.indexOf(v) < 0 || mq.block_active === 1) { node.warn('Übernahme: Befehl verworfen (' + m.topic + '=' + m.payload + ')'); return; }
+    global.set('MQTT_Source', m.source);                                          // Quelle fuer den Waechter und das HeishaMoNR-Protokoll
+    out1.push({topic: m.topic, payload: String(v), qos: 0, retain: false});
+});
+var d0 = new Date(now), month = d0.getFullYear() + '-' + p2(d0.getMonth() + 1), files = [];
+if (r.log.length) {
+    files.push({filename: '/data/optimizer/applied-' + month + '.jsonl', payload: r.log.map(function (x) { x.hauptschalter = AC.enabled; return JSON.stringify(x); }).join('\n') + '\n'});
+    var ef = '/data/optimizer/quiet-events-' + month + '.csv', eh = '';
+    try { fs.readFileSync(ef, 'utf8'); } catch (e) { eh = 'zeit,ereignis,wechsel\n'; }
+    files.push({filename: ef, payload: eh + r.log.map(function (x) { return x.t + ',optimierer_' + x.aktion + ',' + String((x.ergebnis || '') + ' ' + (x.befehl ? x.befehl + '=' + x.wert : '') + ' ' + (x.grund || '') + ' ' + (x.id || '')).replace(/,/g, ';').trim() + '\n'; }).join('')});
+}
+flow.set('apply', A);
+if (JSON.stringify(A) !== A0) { try { fs.mkdirSync('/data/optimizer', {recursive: true}); fs.writeFileSync('/data/optimizer/apply-state.json', JSON.stringify(A)); } catch (e) { node.warn('apply-state.json: ' + e.message); } }
+global.set('OPT_apply', {ts: now, aktiv: A.aktiv, pending: A.pending, alarm: A.alarm, verworfen: A.verworfen, n: A.n, enabled: AC.enabled, rules: AC.rules});
+var toast = r.toast ? {topic: 'Optimierer', payload: r.toast.text, highlight: r.toast.color || ''} : null;
+var refresh = (t !== 'tick' || r.log.length) ? {topic: 'anzeige'} : null;
+return [out1.length ? out1 : null, toast, files.length ? files : null, refresh];
+"""
+
+ENG_TAB = "opt_eng_ui_tab"                       # eigene Seite "Optimierer" (eigenes Kennzeichen, die Seitenpruefung der anderen vier Seiten bleibt unberuehrt)
+upsert({"id": ENG_TAB, "type": "ui_tab", "name": "Optimierer", "icon": "lightbulb_outline", "order": 12.55, "disabled": False, "hidden": False})
+for _ord, (_gid, _gname) in enumerate((("opt_g_eng_prop", "Entscheidungsmaschine"), ("opt_g_eng_rules", "Regeln"),
+                                       ("opt_g_eng_score", "Punkte"), ("opt_g_eng_log", "Entscheidungen")), start=1):
+    upsert({"id": _gid, "type": "ui_group", "name": _gname, "tab": ENG_TAB, "order": _ord, "disp": True, "width": 18, "collapse": False, "className": ""})
+
+ENGINE_VIEW_JS = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "engine_view.js"), encoding="utf-8").read()      # Karten-Daten (rein, getestet)
+ENG_UI_JS = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "eng_ui.js"), encoding="utf-8").read()              # Darstellung (rein, getestet)
+
+
+def eng_format(kind, with_chart=False):
+    """Karte der Seite "Optimierer": zeichnet die Nutzlast mit optEngUi (HTML aus reinen Funktionen), Knoepfe schicken nur Aktion + ID + Pruefsumme."""
+    return ('<div class="optfit"><div id="oe_' + kind + '"></div></div>'
+            + ("<script>" + UI_CHART_JS + "</script>" if with_chart else "")
+            + "<script>" + ENG_UI_JS + "</script><script>(function (scope) {\n"
+            "var last = null;\n"
+            "function draw() { var el = document.getElementById('oe_" + kind + "'); if (el && last && last.payload && window.optEngUi) { window.optEngUi.mount(el, '" + kind + "', last.payload, scope); } }\n"
+            "window.__optChMap = window.__optChMap || {}; window.__optChMap.oe_" + kind + " = draw;\n"
+            "if (!window.__optChRs) { window.__optChRs = true; var tm = null; window.addEventListener('resize', function () { clearTimeout(tm); tm = setTimeout(function () { Object.keys(window.__optChMap).forEach(function (k) { window.__optChMap[k](); }); }, 200); }); }\n"
+            "scope.$watch('msg', function (m) { last = m; setTimeout(draw, 40); });\n"
+            "})(scope);</script>")
+
+
+def eng_template(i, gid, name, height, fmt, y, wires=None):
+    return {"id": i, "type": "ui_template", "z": TAB, "group": gid, "name": name, "order": 1, "width": 0, "height": height,
+            "format": fmt + FIT_JS.replace("__ID__", i), "storeOutMessages": True, "fwdInMessages": False, "resendOnRefresh": True,
+            "templateScope": "local", "className": "", "x": 1260, "y": y, "wires": wires if wires is not None else [[]]}
+
+
+upsert(comment("opt_c_eng", "Optimierer: Entscheidungsmaschine (Shadow, schaltet nichts) · Übernahme nur per Klick, GESPERRT ausgeliefert", 380, 2040))
+upsert(eng_template("opt_t_eng_prop", "opt_g_eng_prop", "Status und Vorschlag", 3, eng_format("card"), 2060, [["opt_apply"]]))
+upsert(eng_template("opt_t_eng_rules", "opt_g_eng_rules", "Regeln", 3, eng_format("rules"), 2100))
+upsert(eng_template("opt_t_eng_score", "opt_g_eng_score", "Punkte", 6, eng_format("score", True), 2140))
+upsert(eng_template("opt_t_eng_log", "opt_g_eng_log", "Entscheidungen", 4, eng_format("log"), 2180))
+upsert(inject("opt_i_engine", "jede Minute", 60, 50, ["opt_engine"], 140, 2100))
+upsert(fn("opt_engine", "Entscheidungsmaschine (Shadow)", ENGINE_CORE_JS + ENGINE_VIEW_JS + ENGINE_WRAP_JS, 5,
+          [["opt_t_eng_prop"], ["opt_t_eng_rules"], ["opt_t_eng_score"], ["opt_t_eng_log"], ["opt_f_eng"]], 440, 2100, FS))
+upsert({"id": "opt_f_eng", "type": "file", "z": TAB, "name": "Entscheidungen, Punkte, Ereignisse", "filename": "filename", "filenameType": "msg", "appendNewline": False,
+        "createDir": True, "overwriteFile": "false", "encoding": "utf8", "x": 760, "y": 2160, "wires": [[]]})
+# Uebernahme: Klick (Karte) und Takt alle 15 s -> opt_apply -> (1) mqtt out GESPERRT, (2) Meldung, (3) Protokoll, (4) Anzeige neu
+upsert({"id": "opt_i_apply", "type": "inject", "z": TAB, "name": "alle 15 s (Rücklesen, Rückweg)", "props": [{"p": "payload"}, {"p": "topic", "vt": "str"}],
+        "repeat": "15", "crontab": "", "once": True, "onceDelay": "55", "topic": "tick", "payload": "", "payloadType": "date", "x": 160, "y": 2240, "wires": [["opt_apply"]]})
+upsert(fn("opt_apply", "Übernahme per Klick (gesperrt ausgeliefert)", ENGINE_CORE_JS + APPLY_WRAP_JS, 4,
+          [["opt_apply_mqtt"], ["opt_ui_toast"], ["opt_f_eng"], ["opt_engine"]], 440, 2240, FS))
+upsert({"id": "opt_broker_cmd", "type": "mqtt-broker", "name": "MQTT (NAS) Optimierer Übernahme", "broker": "10.10.10.128", "port": "1883",
+        "clientid": "nodered-optimizer-cmd", "autoConnect": True, "usetls": False, "protocolVersion": "4", "keepalive": "60",
+        "cleansession": True, "autoUnsubscribe": True, "birthTopic": "", "birthQos": "0", "birthRetain": "false", "birthPayload": "",
+        "birthMsg": {}, "closeTopic": "", "closeQos": "0", "closeRetain": "false", "closePayload": "", "closeMsg": {}, "willTopic": "",
+        "willQos": "0", "willRetain": "false", "willPayload": "", "willMsg": {}, "userProps": "", "sessionExpiry": ""})
+_apply_out = {"id": "opt_apply_mqtt", "type": "mqtt out", "z": TAB, "name": "Übernahme → HeishaMon (GESPERRT)", "topic": "", "qos": "0", "retain": "false",
+              "respTopic": "", "contentType": "", "userProps": "", "correl": "", "expiry": "", "broker": "opt_broker_cmd", "x": 760, "y": 2220, "wires": []}
+if not APPLY_NODE_ACTIVE:
+    _apply_out["d"] = True                      # deaktiviert: Node-RED legt den Knoten gar nicht an, nichts kann gesendet werden
+upsert(_apply_out)
 
 # the new page also belongs into the menu configuration (SYSTEM > menu), otherwise it can not be hidden/shown there
 form = B.get("e35b7df78bc6f722")
