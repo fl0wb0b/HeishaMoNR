@@ -278,7 +278,7 @@ console.log('--- (b) Punktesystem');
     check('Lueftungsverdacht: Raum faellt 1,2 K in einer Minute (Fenster) -> Eingriff von aussen, Bewertung neutral, kein Schaden', sc.some(s => s.typ === 'ausloeser' && s.ergebnis === 'neutral' && /Lüftungsverdacht \(Kinderzimmer oben −1,2 K/.test(s.text)) && !sc.some(s => s.typ === 'schaden'), sc.map(s => s.typ + ':' + s.ergebnis + ' ' + (s.text || '').slice(-80)).join(','));
     // S10: Bericht, Wochenuebersicht, Freigabereife
     const rep = E.report(A1.S), rq = rep.find(r => r.regel === 'quiet_freigabe');
-    check('Bericht je Regel: Punkte, Faelle, Treffer-/Fehlalarmquote, Brier-Skill, Schaden, Verpasst, Wirkung, Freigabereife mit Kriterien', rq && rq.punkte === 21 && rq.trefferquote === 1 && rq.fehlalarmquote === 0 && rq.skill !== null && rq.reif === false && rq.kriterien.length === 6 && rq.kriterien.find(k => k.k === 'faelle').ok === false, JSON.stringify(rq.kriterien.map(k => k.k + (k.ok ? '+' : '-'))));
+    check('Bericht je Regel: Punkte, Faelle, Treffer-/Fehlalarmquote, Brier-Skill (v4: bei 1 Fall "–", v3 rechnete ihn schon), Schaden, Verpasst, Wirkung, Freigabereife mit Kriterien', rq && rq.punkte === 21 && rq.trefferquote === 1 && rq.fehlalarmquote === 0 && rq.skill === null && E.report(runSeq(160, i => boost(i), null, E.mergeCfg({sv: 3})).S, 3).find(r => r.regel === 'quiet_freigabe').skill !== null && rq.reif === false && rq.kriterien.length === 6 && rq.kriterien.find(k => k.k === 'faelle').ok === false, JSON.stringify(rq.kriterien.map(k => k.k + (k.ok ? '+' : '-'))));
     check('Wochenuebersicht (ISO-Woche) mit Punkten, Faellen, Treffern', A1.S.sc.week['2026-W42'] && A1.S.sc.week['2026-W42'].quiet_freigabe.punkte === 21 && A1.S.sc.week['2026-W42'].quiet_freigabe.treffer === 1, JSON.stringify(A1.S.sc.week));
     check('Punkteverlauf fuer das Diagramm (Zeit, Regel, Summe)', A1.S.sc.hist.length >= 1 && A1.S.sc.hist[A1.S.sc.hist.length - 1][2] === 21, JSON.stringify(A1.S.sc.hist.slice(-1)));
     // S11: Messaufgabe Comfort gegen Efficiency: beide Seiten mit Quiet 0 und Rueckstand -> ein Befund mit Zahlen
@@ -286,6 +286,40 @@ console.log('--- (b) Punktesystem');
     for (let i = 0; i < 80; i++) { const hc = i < 40 ? 1 : 0, o = E.step(Sm, inp(T0 + i * MIN, {q: 0, hc: hc, rt: 30 + i, soll: 38, vl: 33, rl: 30, hz: hc ? 34 : 45, pel: hc ? 840 : 1150, pth: hc ? 5000 : 6500, at: 11}), cfg); Sm = o.S; ms = ms.concat(o.scores); }
     const mb = ms.find(s => s.typ === 'messaufgabe');
     check('Messaufgabe: Befund "Comfort bis 45 Hz, Efficiency bis 34 Hz" genau einmal, ohne Punkte', mb && mb.punkte === 0 && mb.comfort.hzMax === 45 && mb.efficiency.hzMax === 34 && ms.filter(s => s.typ === 'messaufgabe').length === 1 && /Comfort bis 45 Hz/.test(mb.text) && !E.messStatus(Sm).offen, mb && mb.text);
+    // S12 (Bewertungsregeln v4): Hinweise ohne Punkte, Skill erst ab 3 abgeschlossenen Faellen, offene Faelle veraendern den Skill nicht
+    R = runSeq(220, i => mild(i, 22.8)); sc = allSc(R);
+    const hz4 = sc.find(s => s.typ === 'ausloeser' && s.regel === 'heizgrenze_hinweis'), rh4 = E.report(R.S).find(r => r.regel === 'heizgrenze_hinweis');
+    check('v4: Hinweis-Regel Heizgrenze, Treffer (Raeume behalten die Reserve) = 0 Punkte; Ergebnis und Basisrate stehen weiter im Punktebuch, Fall/Treffer gezaehlt, Punkte/Skill/Freigabereife entfallen, nicht im Diagramm',
+          hz4 && hz4.ergebnis === 'treffer' && hz4.punkte === 0 && hz4.sv === 4 && hz4.horizonte[0].o === 1 && hz4.horizonte[0].punkte === 0 && /nur Hinweis, keine Punkte/.test(hz4.text) &&
+          rh4.punkte === null && rh4.ohnePunkte === true && rh4.faelle === 1 && rh4.treffer === 1 && rh4.skill === null && rh4.kriterien.length === 0 && rh4.reif === false && !R.S.sc.hist.some(h => h[1] === 'heizgrenze_hinweis') && R.S.sc.tot['heizgrenze_hinweis|v1|s4'].bs === 0,
+          hz4 && (hz4.ergebnis + ' ' + hz4.punkte + ' · ' + JSON.stringify({p: rh4.punkte, f: rh4.faelle, t: rh4.treffer, s: rh4.skill})));
+    R = runSeq(220, i => mild(i, Math.round((i < 40 ? 22.8 : 22.8 - (i - 40) * 0.01) * 10) / 10)); sc = allSc(R);
+    const hzd = sc.find(s => s.typ === 'schaden' && s.regel === 'heizgrenze_hinweis'), rhd = E.report(R.S).find(r => r.regel === 'heizgrenze_hinweis');
+    check('v4: Hinweis-Regel, Fehlalarm mit Schaden "zu kalt": gezaehlt (1 Fehlalarm, 1 Schaden), aber 0 Punkte', hzd && hzd.punkte === 0 && rhd.fehlalarm === 1 && rhd.schaden === 1 && rhd.punkte === null && sc.filter(s => s.regel === 'heizgrenze_hinweis').every(s => s.punkte === 0), sc.filter(s => s.regel === 'heizgrenze_hinweis').map(s => s.typ + ':' + s.punkte).join(','));
+    R = runSeq(220, i => mild(i, 22.8), null, E.mergeCfg({sv: 3})); sc = allSc(R);
+    const hz3 = sc.find(s => s.typ === 'ausloeser' && s.regel === 'heizgrenze_hinweis'), rh3 = E.report(R.S, 3).find(r => r.regel === 'heizgrenze_hinweis');
+    check('v3 bleibt nachrechenbar (cfg.sv = 3): derselbe Hinweis-Treffer zaehlt dort +9 (p 0,6 gegen b 0,5), Skill schon aus 1 Fall, im Diagramm; Datensaetze sv 3',
+          hz3 && hz3.punkte === 9 && hz3.sv === 3 && rh3.punkte === 9 && rh3.skill !== null && R.S.sc.hist.some(h => h[1] === 'heizgrenze_hinweis' && h[3] === 3) && R.outs[5].rec.sv === 3, hz3 && (hz3.punkte + ' · Skill ' + rh3.skill));
+    check('Befund 12.10. nachgerechnet (v3): Hinweis-Treffer mit p 0,6 gegen Basisrate 0,857 = -14,0, Skill 1 - 0,16/0,0204 = -6,84 (v4: 0 Punkte, Skill "–")', Math.abs(E.brier(0.6, 6 / 7, 1) + 14.0) < 0.1 && Math.abs((1 - 0.16 / Math.pow(1 - 6 / 7, 2)) + 6.84) < 0.01, E.brier(0.6, 6 / 7, 1).toFixed(2));
+    // offener Fall: erster Horizont (30 min) abgeschlossen, Fall noch offen (120 min) -> v4 keine Brier-Summen, kein Skill; v3 schon (Befund "Skill -25 bei 0 Faellen")
+    const open4 = runSeq(45, i => boost(i)), open3 = runSeq(45, i => boost(i), null, E.mergeCfg({sv: 3}));
+    const T4 = open4.S.sc.tot['quiet_freigabe|v1|s4'], T3 = open3.S.sc.tot['quiet_freigabe|v1|s3'], r4 = E.report(open4.S).find(r => r.regel === 'quiet_freigabe'), r3 = E.report(open3.S, 3).find(r => r.regel === 'quiet_freigabe');
+    check('v4: offener Fall veraendert den Skill nicht (Horizont 30 min abgeschlossen, Fall offen bis 120 min): bs/bsRef 0, Faelle 0, Skill "–"; v3 hatte hier schon bs > 0 und einen Skill bei 0 Faellen',
+          open4.S.sc.cases.length === 1 && open4.S.sc.cases[0].done.length === 1 && T4.bs === 0 && T4.bsRef === 0 && T4.faelle === 0 && r4.skill === null && T3.bs > 0 && T3.faelle === 0 && r3.skill !== null,
+          JSON.stringify({v4: [T4.bs, T4.bsRef, r4.skill], v3: [T3.bs, T3.bsRef, r3.skill]}));
+    // Skill erst ab 3 abgeschlossenen, bewerteten Faellen: drei Boost-Episoden (je 150 min Deckel, dann 3 h Pause ohne Lage)
+    { let S3 = null; const sk = [];
+      for (let k = 0; k < 3; k++) {
+          for (let i = 0; i < 330; i++) { const t = k * 330 + i; const o = E.step(S3, i < 150 ? boost(t, {rt: 30 + i}) : inp(T0 + t * MIN, {rt: 0, hz: 0, q: 3, soll: 30, sollKurve: 29.75, vl: 30, rl: 29, pump: 0}), cfg); S3 = o.S;
+                                    if (o.scores.some(s => s.typ === 'ausloeser' && s.regel === 'quiet_freigabe')) { const r = E.report(S3).find(x => x.regel === 'quiet_freigabe'); sk.push([r.bewertet, r.skill]); } }
+      }
+      check('v4: Skill erst ab 3 abgeschlossenen, bewerteten Faellen (nach Fall 1 und 2 "–", nach Fall 3 eine Zahl)', sk.length === 3 && sk[0][1] === null && sk[1][1] === null && sk[2][0] === 3 && sk[2][1] !== null, JSON.stringify(sk)); }
+    // Versionswechsel v3 -> v4 mitten in einem offenen Hinweis-Fall: der Fall wird mit v3 zu Ende bewertet (Punkte unter "|s3"), v4 beginnt bei 0
+    R = runSeq(60, i => mild(i, 22.8), null, E.mergeCfg({sv: 3})); const Sw = R.S, nOpen = Sw.sc.cases.filter(C => C.rule === 'heizgrenze_hinweis').length;
+    R = runSeq(160, i => mild(60 + i, 22.8), Sw); sc = allSc(R);
+    const hw = sc.find(s => s.typ === 'ausloeser' && s.regel === 'heizgrenze_hinweis');
+    check('Versionswechsel v3 -> v4: offener Hinweis-Fall endet mit seiner Version (sv 3, +9 unter "heizgrenze_hinweis|v1|s3"), v4-Summen dieser Regel bleiben leer',
+          nOpen === 1 && hw && hw.sv === 3 && hw.punkte === 9 && R.S.sc.tot['heizgrenze_hinweis|v1|s3'].punkte === 9 && R.S.sc.tot['heizgrenze_hinweis|v1|s4'].faelle === 0 && E.report(R.S).find(r => r.regel === 'heizgrenze_hinweis').sv === 4, hw && (hw.sv + ' ' + hw.punkte));
     const src = fs.readFileSync(path.join(__dirname, 'engine_core.js'), 'utf8'), bewertung = src.slice(src.indexOf('// ------------------------------------------------------------------ Punktesystem'), src.indexOf('// ------------------------------------------------------------------ Ein-Klick'));
     check('Verwerfen ist keine Bewertung: der Bewertungsteil des Kerns kennt weder Klicks noch den Uebernahme-Zustand (keine Nutzereingabe in den Punkten)', bewertung.length > 1000 && !/verworfen|lastClick|applyRequest|uebernehmen/.test(bewertung), bewertung.length + ' Zeichen geprueft');
 }
@@ -566,6 +600,13 @@ console.log('--- Seite "Optimierer": Karten-Daten und Darstellung');
     const A2 = runSeq(80, i => inp(T0 + i * MIN, {rt: 30 + i, soll: 38, sollKurve: 29.75, vl: 30, rl: 28.25, q: i === 0 ? 2 : 3, hz: 16, rooms: rooms({ki_oben: 21.2})}));
     const s2 = VW.build({now: T0 + 79 * MIN, last: {t: T0 + 79 * MIN, res: A2.outs[79].res, anl: {}}, S: A2.S, V: {}, AP: {}}).score, h2 = UI.html('score', s2);
     check('Punkte-Karte (v2): "verpasst waehrend Sperre" als Kennzahl je Befehlsregel (Quiet-Freigabe 1, sonst 0, Hinweis ohne), kein Warntext, Punkte 0', s2.sv === E.SCORE_VER && s2.tiles[0].sperre === 1 && s2.tiles[1].sperre === 0 && s2.tiles[3].sperre === null && s2.tiles[0].warn === '' && s2.tiles[0].punkte === '0' && h2.includes('<div class="oe-ln" data-k="sperre"><span>🔒 verpasst während Sperre</span><b>1</b></div>') && (h2.match(/data-k="sperre"/g) || []).length === 4, s2.tiles.map(t => t.sperre).join(','));
+    { const mildH = (i, t) => inp(T0 + i * MIN, {at: 13, rt: 20 + i, soll: 29, sollKurve: 29, vl: 30, rl: 28, rooms: [{id: 'ki_oben', name: 'Kinderzimmer oben', t: t, age: 10, min: 22, max: 23.5, valid: true, active: true}]});
+      const AH = runSeq(220, i => mildH(i, 22.8)), AH3 = runSeq(220, i => mildH(i, 22.8), null, E.mergeCfg({sv: 3}));
+      const bh = S0 => VW.build({now: T0 + 219 * MIN, last: {t: T0 + 219 * MIN, res: AH.outs[219].res, anl: {}}, S: S0, V: {}, AP: {}}).score;
+      const sh = bh(AH.S), th = sh.tiles.find(t => t.id === 'heizgrenze_hinweis'), hh = UI.html('score', sh), sh3 = bh(AH3.S);
+      check('Punkte-Karte (v4): Heizgrenze-Kachel "–" statt Punktezahl, "1 Fall · 1 Treffer · 0 Fehlalarm", kein Skill, "nur Hinweis", nicht im Diagramm (kein leeres Diagramm); v3 zeigte +9,0 mit Linie',
+            th.punkte === '–' && !th.neg && th.sub === '1 Fall · 1 Treffer · 0 Fehlalarm' && th.more === '' && th.reife === null && sh.series.length === 0 && !hh.includes('oe_chart') && hh.includes('<span>nur Hinweis</span>') && sh.tiles.length === 5 &&
+            sh3.tiles.find(t => t.id === 'heizgrenze_hinweis').punkte === '+9,0' && sh3.series.some(x => x.id === 'heizgrenze_hinweis'), JSON.stringify({p: th.punkte, sub: th.sub, more: th.more})); }
     if (fs.existsSync(path.join(dataDir, 'quiet-2026-10.csv'))) {
         const PV = require('./engine_ui_preview.js'), SN = PV.snapshots(dataDir), html = PV.page({A: SN.A, B: SN.B});
         check('Vorschau mit echten Daten: 10.10. 08:38 Vorschlag Quiet 3 -> 0 (Übernahme gesperrt), Ende ohne Vorschlag; Entscheidungen hoechstens 12 Episoden, keine Wiederholungen', SN.A.card.prop && SN.A.card.prop.was === 'Quiet-Stufe 3 → 0' && !SN.B.card.prop && SN.B.log.rows.length <= 12 && new Set(SN.B.log.rows.map(r => r.t + r.n)).size === SN.B.log.rows.length && html.length < 200000, SN.B.log.rows.length + ' Episoden, ' + html.length + ' Bytes');

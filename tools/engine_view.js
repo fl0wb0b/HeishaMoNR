@@ -117,7 +117,7 @@ var ENGVIEW = (function (E) {
         var sv = (S.sc && S.sc.sv) || E.SCORE_VER, rep = E.report(S, sv);
         var hist = ((S.sc && S.sc.hist) || []).filter(function (h) { return h[0] >= now - 30 * 24 * 60 * MIN && (h[3] || 1) === sv; });   // nur die aktuelle Bewertungsversion
         var t0 = hist.length ? Math.min(hist[0][0] - 60 * MIN, now - 24 * 60 * MIN) : now - 7 * 24 * 60 * MIN;
-        var series = E.RULES.map(function (R) {
+        var series = E.RULES.filter(function (R) { return sv < 4 || R.art !== 'hinweis'; }).map(function (R) {   // v4: Hinweise ohne Punkte, nicht im Diagramm
             var pts = hist.filter(function (h) { return h[1] === R.id; }).map(function (h) { return [h[0], h[2]]; });
             if (pts.length) { pts.unshift([t0, 0]); pts.push([now, pts[pts.length - 1][1]]); }
             return {id: R.id, n: R.kurz, c: COL[R.id], d: pts};
@@ -130,7 +130,7 @@ var ENGVIEW = (function (E) {
             if (r.art === 'befehl' && r.wirkung.kalib) { more.push(r.wirkung.kalib + ' Kalibrierfall' + (r.wirkung.kalib === 1 ? '' : 'e')); }
             var warn = []; if (r.schaden) { warn.push(r.schaden + ' × Schaden'); } if (r.verpasst) { warn.push(r.verpasst + ' × verpasst'); }
             var ok = r.kriterien.filter(function (k) { return k.ok; }).length;
-            return {id: r.regel, name: (E.RULE[r.regel] || {}).kachel || (E.RULE[r.regel] || {}).kurz || r.regel, c: COL[r.regel], punkte: E.sg(r.punkte, 1).replace(/^0,0$/, '0'), neg: r.punkte < 0, sub: sub, more: more.join(' · '), warn: warn.join(' · '),
+            return {id: r.regel, name: (E.RULE[r.regel] || {}).kachel || (E.RULE[r.regel] || {}).kurz || r.regel, c: COL[r.regel], punkte: r.ohnePunkte ? '–' : E.sg(r.punkte, 1).replace(/^0,0$/, '0'), neg: !r.ohnePunkte && r.punkte < 0, sub: sub, more: more.join(' · '), warn: warn.join(' · '),
                     sperre: r.art === 'befehl' ? (r.verpasstSperre || 0) : null,                                     // "verpasst" waehrend eigener Sperre (v2, neutral)
                     reife: r.art === 'befehl' ? {n: ok, m: r.kriterien.length, reif: r.reif} : null, krit: r.kriterien.map(function (k) { return [k.kurz, k.ok ? 1 : 0, k.text]; })};
         });

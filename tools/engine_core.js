@@ -9,12 +9,15 @@
 //   ENGINE.applyTick(A, ctx)            -> {A, send, toast, log}                         Ruecklesen, begrenzte Wiederholung, Rueckweg (alle 15 s)
 var ENGINE = (function () {
     var VER = 1;                 // Format der Entscheidungsdatensaetze
-    var SCORE_VER = 3;           // Bewertungsregeln (vorab festgelegt; jede Aenderung erhoeht die Version, alte Punkte bleiben getrennt)
+    var SCORE_VER = 4;           // Bewertungsregeln (vorab festgelegt; jede Aenderung erhoeht die Version, alte Punkte bleiben getrennt)
                                  // v2 (10.10.2026): "verpasst" waehrend einer EIGENEN Sperre/Wartezeit (Standardwerte, ohne Schaden) zaehlt neutral und
                                  // getrennt ("waehrend Sperre"). v1 bleibt nachrechenbar: cfg.sv = 1 (Replay alter Datensaetze).
                                  // v3 (11.10.2026): Verschiebungs-Arbitrierung. Sperren durch eine Gegenregel ("vorrang", "gegenrichtung") entschuldigen
                                  // "verpasst" wie eigene Sperren; eine Lage, fuer die eine andere Verschiebungs-Regel dieselbe Richtung vorschlaegt, gilt als
                                  // versorgt; Wirkung einer uebernommenen Verschiebung zaehlt fuer die Regel, deren Vorschlag uebernommen wurde. cfg.sv = 2 rechnet v2 nach.
+                                 // v4 (12.10.2026): Hinweis-Regeln (art 'hinweis') sammeln keine Punkte mehr (Treffer/Fehlalarm/neutral/Schaden nur gezaehlt, kein
+                                 // Skill, keine Freigabereife, nicht im Diagramm). Brier-Summen (bs/bsRef) kommen nur aus vollstaendig abgeschlossenen Faellen
+                                 // (ein offener Fall veraendert den Skill nicht); Skill erst ab SCORE.skillMinFaelle (3) bewerteten Faellen. cfg.sv = 3 rechnet v3 nach.
     var MIN = 60000;
 
     // ------------------------------------------------------------------ Hilfen (ohne Locale, damit jede Umgebung gleich rechnet)
@@ -415,7 +418,8 @@ var ENGINE = (function () {
                          schaden: {quiet_freigabe: ['komfort'], quiet_strecken: ['takt', 'ueberschwingen'], raum_offset: ['komfort'], vorausschau: ['komfort']}},
         raumAlterMax: 360,         // Bewertung (nicht Entscheidung): ein Raumwert bis 6 h alt zaehlt, weil die Shelly H&T Gen3 nur bei Aenderung >= 0,5 K melden
         lueftungK: 1.0,            // Raum faellt >= 1 K in <= 60 min: Lueftung (Eingriff), danach keine Gegenfaktik fuer Raum-Prognosen (nach dem Replay ergaenzt: 09.10. Wohnzimmer -3,3 K)
-        reife: {faelle: 10, tage: 14, skill: 0.2, wirkFaelle: 2, verpasst: 1}
+        reife: {faelle: 10, tage: 14, skill: 0.2, wirkFaelle: 2, verpasst: 1},
+        skillMinFaelle: 3          // ab v4: Brier-Skill erst ab 3 vollstaendig abgeschlossenen, bewerteten Faellen (vorher "–"; aus 1 Fall ist er wertlos)
     };
 
     // ------------------------------------------------------------------ Standardwerte (aus dem Regelwerk)
@@ -431,7 +435,7 @@ var ENGINE = (function () {
         if (over && typeof over === 'object') {
             if (over.locks) { Object.keys(c.locks).forEach(function (k) { if (have(num(over.locks[k]))) { c.locks[k] = num(over.locks[k]); } }); }
             if (over.rules) { Object.keys(c.rules).forEach(function (id) { var o = over.rules[id]; if (o) { Object.keys(c.rules[id]).forEach(function (k) { if (have(num(o[k]))) { c.rules[id][k] = num(o[k]); } }); } }); }
-            if (num(over.sv) === 1 || num(over.sv) === 2) { c.sv = num(over.sv); }     // Bewertungsregeln v1/v2 nachrechnen (nur Replay/Tests)
+            if (num(over.sv) === 1 || num(over.sv) === 2 || num(over.sv) === 3) { c.sv = num(over.sv); }     // Bewertungsregeln v1/v2/v3 nachrechnen (nur Replay/Tests)
         }
         return c;
     }
@@ -850,7 +854,8 @@ var ENGINE = (function () {
         if (rule === 'heizgrenze_hinweis') { return (have(d.heatOffAT) && d.heatOffAT > c.zielC && d.running && d.runMin >= c.laufMin && have(d.at) && d.at > c.zielC) ? {} : null; }
         return null;
     }
-    function svOf(cfg) { return cfg && (cfg.sv === 1 || cfg.sv === 2) ? cfg.sv : SCORE_VER; }
+    function svOf(cfg) { return cfg && (cfg.sv === 1 || cfg.sv === 2 || cfg.sv === 3) ? cfg.sv : SCORE_VER; }
+    function ohnePunkte(rule, sv) { return (sv || 1) >= 4 && !!RULE[rule] && RULE[rule].art === 'hinweis'; }   // v4: Hinweise werden gezaehlt, nicht gepunktet
     // Summen je Regel, Regelversion und Bewertungsversion (v1 behaelt den alten Schluessel "regel|vN", damit alte Punkte unveraendert getrennt bleiben)
     function tot(sc, rule, ver, sv) { var k = rule + '|v' + ver + (sv > 1 ? '|s' + sv : ''); return sc.tot[k] = sc.tot[k] || {rule: rule, ver: ver, sv: sv, since: 0, punkte: 0, faelle: 0, bewertet: 0, treffer: 0, fehlalarm: 0, neutral: 0, bs: 0, bsRef: 0, schaden: 0, verpasst: 0, verpasstSperre: 0, wirkN: 0, wirkP: 0, kalib: 0}; }
     function book(sc, recs, rec, now) {
@@ -866,7 +871,7 @@ var ENGINE = (function () {
         if (rec.typ === 'schaden') { w.schaden++; }
         if (rec.typ === 'verpasst') { w.verpasst++; }
         if (rec.typ === 'wirkung') { w.wirkung++; }
-        sc.hist.push([now, rec.regel, T.punkte, rec.sv]);
+        if (!ohnePunkte(rec.regel, rec.sv)) { sc.hist.push([now, rec.regel, T.punkte, rec.sv]); }   // v4: Hinweise nicht im Diagramm
         if (sc.hist.length > 2000) { sc.hist = sc.hist.slice(-2000); }
         var ks = Object.keys(sc.week).sort(); while (ks.length > 12) { delete sc.week[ks.shift()]; }
     }
@@ -890,10 +895,11 @@ var ENGINE = (function () {
             C.h.forEach(function (h) {
                 if (C.done.indexOf(h) >= 0 || now - C.t0 < h * MIN) { return; }
                 C.done.push(h);
-                var oc = outcome(C.tr, h), br = baseRate(sc, C.rule, h), pts = 0;
-                if (oc.o !== null) {
+                var oc = outcome(C.tr, h), br = baseRate(sc, C.rule, h), pts = 0, np = ohnePunkte(C.rule, C.sv);
+                if (oc.o !== null && !np) {
                     pts = brier(C.p, br.b, oc.o) / C.h.length;
-                    var T0 = tot(sc, C.rule, C.v, C.sv || 1); T0.bs += Math.pow(C.p - oc.o, 2); T0.bsRef += Math.pow(br.b - oc.o, 2);
+                    if ((C.sv || 1) >= 4) { C.bs = (C.bs || 0) + Math.pow(C.p - oc.o, 2); C.bsRef = (C.bsRef || 0) + Math.pow(br.b - oc.o, 2); }   // v4: erst beim Abschluss des Falls in die Summen
+                    else { var T0 = tot(sc, C.rule, C.v, C.sv || 1); T0.bs += Math.pow(C.p - oc.o, 2); T0.bsRef += Math.pow(br.b - oc.o, 2); }      // bis v3: schon je Horizont
                 }
                 C.hr.push({h: h, o: oc.o, b: r2(br.b), nb: br.n, punkte: r2(pts), why: oc.why});
                 C.pts += pts;
@@ -902,13 +908,15 @@ var ENGINE = (function () {
                 C.closed = true;
                 var T = tot(sc, C.rule, C.v, C.sv || 1), os = C.hr.filter(function (x) { return x.o !== null; });
                 var erg = os.length ? (os.filter(function (x) { return x.o === 1; }).length * 2 >= os.length ? 'treffer' : 'fehlalarm') : 'neutral';
+                var nP = ohnePunkte(C.rule, C.sv);
                 T.faelle++; if (os.length) { T.bewertet++; } if (erg === 'treffer') { T.treffer++; } else if (erg === 'fehlalarm') { T.fehlalarm++; } else { T.neutral++; }
+                if ((C.sv || 1) >= 4 && os.length && !nP) { T.bs += C.bs || 0; T.bsRef += C.bsRef || 0; }                      // v4: Brier-Summen nur aus abgeschlossenen Faellen
                 book(sc, recs, {t: iso(now), typ: 'ausloeser', regel: C.rule, v: C.v, sv: C.sv || 1, fall: C.id, p: C.p, horizonte: C.hr, ergebnis: erg, punkte: r2(C.pts),
-                                text: RULE[C.rule].prognose.text + ': ' + C.hr.map(function (x) { return x.h + ' min ' + (x.o === null ? 'neutral (' + x.why + ')' : (x.o ? 'ja' : 'nein') + ' (' + x.why + ', Basisrate ' + de(x.b, 2) + ')'); }).join(' · ')}, now);
+                                text: RULE[C.rule].prognose.text + ': ' + C.hr.map(function (x) { return x.h + ' min ' + (x.o === null ? 'neutral (' + x.why + ')' : (x.o ? 'ja' : 'nein') + ' (' + x.why + ', Basisrate ' + de(x.b, 2) + ')'); }).join(' · ') + (nP ? ' · nur Hinweis, keine Punkte' : '')}, now);
                 if (C.dmg.length) {
-                    var sum = 0; C.dmg.forEach(function (k) { sum += SCORE.schaden[k]; });
+                    var sum = 0; if (!nP) { C.dmg.forEach(function (k) { sum += SCORE.schaden[k]; }); }
                     T.schaden += C.dmg.length;
-                    book(sc, recs, {t: iso(now), typ: 'schaden', regel: C.rule, v: C.v, sv: C.sv || 1, fall: C.id, arten: C.dmg.slice(), punkte: sum, text: 'Hätte nach den Daten geschadet: ' + C.dmg.map(function (k) { return DMG_TEXT[k]; }).join(', ')}, now);
+                    book(sc, recs, {t: iso(now), typ: 'schaden', regel: C.rule, v: C.v, sv: C.sv || 1, fall: C.id, arten: C.dmg.slice(), punkte: sum, text: 'Hätte nach den Daten geschadet: ' + C.dmg.map(function (k) { return DMG_TEXT[k]; }).join(', ') + (nP ? ' (nur Hinweis, keine Punkte)' : '')}, now);
                 }
             }
         });
@@ -1212,16 +1220,17 @@ var ENGINE = (function () {
         sv = sv || sc.sv || SCORE_VER;
         RULES.forEach(function (R) {
             var T = tot(sc, R.id, R.ver, sv), days = T.since ? (S.last - T.since) / (24 * 60 * MIN) : 0;
-            var skill = T.bsRef > 0 ? 1 - T.bs / T.bsRef : null;
-            var crit = [
+            var nP = ohnePunkte(R.id, sv);
+            var skill = nP || (sv >= 4 && T.bewertet < SCORE.skillMinFaelle) ? null : (T.bsRef > 0 ? 1 - T.bs / T.bsRef : null);   // v4: erst ab 3 bewerteten Faellen, nie fuer Hinweise
+            var crit = nP ? [] : [
                 {k: 'faelle', ok: T.bewertet >= SCORE.reife.faelle, kurz: 'Fälle ' + T.bewertet + '/' + SCORE.reife.faelle, text: T.bewertet + ' von ' + SCORE.reife.faelle + ' bewerteten Fällen'},
                 {k: 'tage', ok: days >= SCORE.reife.tage, kurz: 'Tage ' + de(days, 1) + '/' + SCORE.reife.tage, text: de(days, 1) + ' von ' + SCORE.reife.tage + ' Tagen'},
                 {k: 'skill', ok: have(skill) && skill >= SCORE.reife.skill, kurz: 'Skill ' + (have(skill) ? de(skill, 2) : '–') + '/' + de(SCORE.reife.skill, 1), text: 'Brier-Skill ' + (have(skill) ? de(skill, 2) : '–') + ' (mindestens ' + de(SCORE.reife.skill, 1) + ')'},
                 {k: 'schaden', ok: T.schaden === 0, kurz: 'Schaden ' + T.schaden, text: T.schaden + ' × Schaden'},
                 {k: 'verpasst', ok: T.verpasst <= SCORE.reife.verpasst, kurz: 'Verpasst ' + T.verpasst + '/≤' + SCORE.reife.verpasst, text: T.verpasst + ' × verpasst (höchstens ' + SCORE.reife.verpasst + ')'}
             ];
-            if (R.art === 'befehl') { crit.push({k: 'wirkung', ok: T.wirkN - T.kalib >= SCORE.reife.wirkFaelle && T.wirkP > 0, kurz: 'Wirkung ' + (T.wirkN - T.kalib) + '/' + SCORE.reife.wirkFaelle, text: (T.wirkN - T.kalib) + ' von ' + SCORE.reife.wirkFaelle + ' Wirkungsfällen (ohne Kalibrierung), ' + sg(T.wirkP, 0) + ' Punkte'}); }
-            out.push({regel: R.id, name: R.name, v: R.ver, art: R.art, punkte: T.punkte, faelle: T.faelle, bewertet: T.bewertet, treffer: T.treffer, fehlalarm: T.fehlalarm, neutral: T.neutral,
+            if (R.art === 'befehl' && !nP) { crit.push({k: 'wirkung', ok: T.wirkN - T.kalib >= SCORE.reife.wirkFaelle && T.wirkP > 0, kurz: 'Wirkung ' + (T.wirkN - T.kalib) + '/' + SCORE.reife.wirkFaelle, text: (T.wirkN - T.kalib) + ' von ' + SCORE.reife.wirkFaelle + ' Wirkungsfällen (ohne Kalibrierung), ' + sg(T.wirkP, 0) + ' Punkte'}); }
+            out.push({regel: R.id, name: R.name, v: R.ver, art: R.art, punkte: nP ? null : T.punkte, ohnePunkte: nP, faelle: T.faelle, bewertet: T.bewertet, treffer: T.treffer, fehlalarm: T.fehlalarm, neutral: T.neutral,
                       trefferquote: T.bewertet ? r2(T.treffer / T.bewertet) : null, fehlalarmquote: T.bewertet ? r2(T.fehlalarm / T.bewertet) : null, skill: r2(skill), schaden: T.schaden, verpasst: T.verpasst, verpasstSperre: T.verpasstSperre || 0, sv: sv,
                       wirkung: {n: T.wirkN, kalib: T.kalib, punkte: T.wirkP}, tage: r2(days), reif: R.art === 'befehl' && crit.every(function (x) { return x.ok; }), kriterien: crit});
         });
