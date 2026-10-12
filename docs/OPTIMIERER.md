@@ -1,6 +1,6 @@
 # Optimierer: Entscheidungsmaschine, Punktesystem, Ein-Klick-Übernahme, Bonsai-Beobachter
 
-Stand 11.10.2026, Branch `optimizer-engine`. **Alles ist Shadow.** Die Maschine rechnet jede Minute aus, was sie schalten *würde*, und schreibt das auf. Sie sendet nichts. Der einzige Sendeweg ist ein Klick des Betreibers auf „Übernehmen“. Dieser Weg wird gesperrt ausgeliefert.
+Stand 12.10.2026, Branch `optimizer-engine`. **Alles ist Shadow.** Die Maschine rechnet jede Minute aus, was sie schalten *würde*, und schreibt das auf. Sie sendet nichts. Der einzige Sendeweg ist ein Klick des Betreibers auf „Übernehmen“. Dieser Weg wird gesperrt ausgeliefert.
 
 ## 1. Kurzfassung
 
@@ -11,6 +11,7 @@ Stand 11.10.2026, Branch `optimizer-engine`. **Alles ist Shadow.** Die Maschine 
   - Eine Wirkungsprognose wird nur bewertet, wenn eine gleichwertige Änderung wirklich passiert.
   - Dazu kommen Abzüge für Schaden und für verpasste Lagen. Unsicheres zählt 0.
   - Das Punktebuch steht in `scores-YYYY-MM.jsonl`. Die Freigabereife ist nur eine Anzeige.
+  - Seit den Bewertungsregeln v4 (12.10.) sammeln reine Hinweise keine Punkte mehr, und der Brier-Skill steht erst ab 3 abgeschlossenen Fällen.
 - **Ein-Klick-Übernahme** `opt_apply`: Es gibt die Knöpfe „Übernehmen“, „Verwerfen“, „Zurücksetzen“ und „Übernahme sperren“. Ausgeliefert wird sie doppelt gesperrt:
   1. Der `mqtt out` ist deaktiviert.
   2. Der Hauptschalter in `apply.json` fehlt, das heißt „aus“.
@@ -363,10 +364,17 @@ Je Minute eine Zeile. Beispiel aus dem Replay, Boost am 10.10., gekürzt:
 
 ## 6. Punktesystem (automatisch, ohne Nutzereingabe)
 
-Der Nutzer vergibt keine Punkte. Auch „Verwerfen“ ist keine Bewertung: der Bewertungsteil des Kerns kennt weder Klicks noch den Übernahme-Zustand, ein Test prüft das. Alle Regeln stehen vorab fest (`SCORE_VER` 2, seit 10.10. abends; v1 bis dahin). Jede Änderung erhöht die Version, Punkte verschiedener Versionen bleiben getrennt:
-- Die Summen stehen je Regel, Regelversion und Bewertungsversion im Zustand (`regel|v1` = v1 unverändert, `regel|v1|s2` = v2). Alte Punkte werden nicht neu gerechnet; die Kachel und das Diagramm zeigen nur die aktuelle Version (Freigabereife und Tage zählen ab dem Wechsel neu).
+Der Nutzer vergibt keine Punkte. Auch „Verwerfen“ ist keine Bewertung: der Bewertungsteil des Kerns kennt weder Klicks noch den Übernahme-Zustand, ein Test prüft das. Alle Regeln stehen vorab fest (`SCORE_VER` 4 seit 12.10.; v3 ab 11.10., v2 ab 10.10. abends, v1 bis dahin). Jede Änderung erhöht die Version, Punkte verschiedener Versionen bleiben getrennt:
+- Die Summen stehen je Regel, Regelversion und Bewertungsversion im Zustand (`regel|v1` = v1 unverändert, `regel|v1|s2` = v2, `…|s3` = v3, `…|s4` = v4). Alte Punkte werden nicht neu gerechnet; die Kachel und das Diagramm zeigen nur die aktuelle Version (Freigabereife und Tage zählen ab dem Wechsel neu).
 - Fälle und Wirkungsmessungen, die vor dem Wechsel begannen, werden mit ihrer Version zu Ende bewertet.
-- Nachrechnen mit den alten Regeln: `cfg.sv = 1` bzw. `node tools/engine_replay.js <Daten> --sv1`. Die Entscheidungen sind in beiden Versionen gleich, nur `sv` im Datensatz und die Bewertung unterscheiden sich (Test).
+- Nachrechnen mit den alten Regeln: `cfg.sv = 1`, `2` oder `3` bzw. `node tools/engine_replay.js <Daten> --sv1` (`--sv2`, `--sv3`). Die Entscheidungen sind in beiden Versionen gleich, nur `sv` im Datensatz und die Bewertung unterscheiden sich (Test).
+
+**Änderung v3 → v4 (12.10., Befund auf der Seite):** Die Kachel „Heizgrenze“ zeigte „1 Fall · 1 Treffer · 0 Fehlalarm“, aber −14,0 Punkte und Skill −6,84. Nachgerechnet: Ergebnis o = 1, Prognose p = 0,6, Basisrate b ≈ 0,857 → 100 × [(0,857 − 1)² − (0,6 − 1)²] = 100 × (0,0204 − 0,16) = −14,0; Skill = 1 − 0,16/0,0204 = −6,84. Die Mathematik stimmt. Aber p ist eine Annahme unter der echten Basisrate, also kann ein Treffer nie positiv punkten; die Regel ist nur ein Hinweis, und ein Skill aus einem Fall ist wertlos. Dieselbe Ursache hatte „Skill −25,01 bei 0 Fällen“ beim Raumeinfluss: bis v3 wuchsen ΣBS und ΣBS_ref schon beim Abschluss einzelner Horizonte, der Fall zählte erst nach allen.
+- **Hinweis-Regeln** (`art` „hinweis“, heute nur der Heizgrenze-Hinweis) sammeln keine Punkte. Treffer, Fehlalarm, neutral und Schaden werden weiter gezählt und im Punktebuch mit Ergebnis und Basisrate geschrieben (0 Punkte, „nur Hinweis, keine Punkte“). Punkte, Skill und Freigabereife entfallen („–“), die Regel steht nicht im Diagramm.
+- **Brier-Summen nur aus abgeschlossenen Fällen.** Jeder Fall sammelt seine Beiträge selbst; sie gehen erst in ΣBS/ΣBS_ref ein, wenn der Fall nach dem letzten Horizont abgeschlossen ist. Ein offener Fall verändert Skill und Kennzahlen nicht.
+- **Skill erst ab 3 bewerteten Fällen** (`SCORE.skillMinFaelle`), vorher „–“, in der Kachel und im Kriterium der Freigabereife.
+- Fälle, die unter v3 begannen, werden mit v3 zu Ende bewertet (Test). Nachrechnen: `cfg.sv = 3` (Test: derselbe Hinweis-Treffer zählt dort +9 bei b = 0,5, Skill schon aus 1 Fall).
+- **Nicht geändert, offene Entscheidung:** dieselbe Falle (p unter der Basisrate → Treffer mit Minuspunkten) betrifft auch Befehlsregeln, siehe Abschnitt 12.
 
 **Änderung v2 → v3 (11.10., Verschiebungs-Arbitrierung):**
 - Minuten, in denen eine Verschiebungs-Regel nur durch die Gegenregel (`vorrang`, `gegenrichtung`) zurückgehalten wird, zählen wie eigene Sperren (neutral, `verpasst_sperre`), nur mit den Standardwerten; harter Schaden hebt das wie in v2 auf.
@@ -391,7 +399,7 @@ Beispiele (gerechnet, auch Teil der Tests):
 |---|---|
 | Treffer, b = 0,5, p = 0,8 | 100 × (0,25 − 0,04) = **+21** je Fall (über die Horizonte verteilt) |
 | Fehlalarm, b = 0,5, p = 0,8 | 100 × (0,25 − 0,64) = **−39** |
-| Treffer bei hoher Basisrate, b = 0,86, p = 0,6 | **−14** (der Vorschlag kam nur dort, wo das Problem sowieso meist bleibt) |
+| Treffer bei hoher Basisrate, b = 0,86, p = 0,6 | **−14** (der Vorschlag kam nur dort, wo das Problem sowieso meist bleibt); seit v4 bei Hinweisen 0, bei Befehlsregeln weiter so (offene Entscheidung, Abschnitt 12) |
 
 **Kein Gaming:** Wer ohne Trennschärfe vorschlägt, also nur dort, wo das Ergebnis der Basisrate entspricht, bekommt im Mittel ≤ 0 Punkte, egal welches *p*. Der Brier-Score ist „proper“, die Sim prüft das für f = 0,1…0,9 und p = 0,1…0,9.
 
@@ -460,12 +468,12 @@ Sicherheits- und Datensperren entschuldigen ganz (wie in v1).
 | `punkte`, `summe` | Punkte und laufende Summe |
 | `text` | Klartext |
 
-Die Karte „Punkte“ zeigt den Verlauf der Summen je Regel als Diagramm (`ui_chart.js`) und je Regel eine Kachel: Summe, Fälle mit Treffern und Fehlalarmen, Brier-Skill = 1 − ΣBS/ΣBS_ref, Wirkung (Kalibrierfälle getrennt), Schaden und Verpasst nur wenn > 0, bei Befehlsregeln die Kennzahl „verpasst während Sperre“, Freigabereife. Die Wochenübersicht (ISO-Woche) steht weiter im Zustand und im Punktebuch, aber nicht mehr auf der Seite.
+Die Karte „Punkte“ zeigt den Verlauf der Summen je Befehlsregel als Diagramm (`ui_chart.js`) und je Regel eine Kachel: Summe (Hinweis: „–“), Fälle mit Treffern und Fehlalarmen, Brier-Skill = 1 − ΣBS/ΣBS_ref (nur abgeschlossene Fälle, ab 3 bewerteten), Wirkung (Kalibrierfälle getrennt), Schaden und Verpasst nur wenn > 0, bei Befehlsregeln die Kennzahl „verpasst während Sperre“, Freigabereife. Die Wochenübersicht (ISO-Woche) steht weiter im Zustand und im Punktebuch, aber nicht mehr auf der Seite.
 
 **Freigabereife** ist nur eine Anzeige, die Freigabe entscheidet der Nutzer. Bedingungen:
 - ≥ 10 bewertete Fälle
 - ≥ 14 Tage
-- Brier-Skill ≥ 0,2
+- Brier-Skill ≥ 0,2 (erst ab 3 bewerteten Fällen berechnet)
 - 0 × Schaden
 - ≤ 1 × verpasst
 - ≥ 2 Wirkungsfälle mit Punkten > 0, ohne Kalibrierung
@@ -574,7 +582,7 @@ Aufbau (Neufassung 10.10. abends):
 |---|---|
 | Entscheidungsmaschine | **Statuszeile** aus Chips: „Maschine läuft · hh:mm“ bzw. „Anlaufsperre bis …“, „keine HeishaMon-Daten“, „Maschine rechnet nicht“; Anlage kurz (Lauf · Hz · Quiet · Vorlauf-Abstand); Übernahme („🔒 Übernahme gesperrt“, „Übernahme frei: …“, „Übernommen …“, „wartet auf Bestätigung“); Warnung; „verworfen: …“. **Vorschlag** nur wenn einer da ist: hervorgehobener Kasten mit Regel, Was, Warum (eine Zeile mit Zahlen), Befehl, seit, gültig bis, Rückweg kurz; Erwartung und Rückweg-Text eingeklappt. **Knöpfe**: Übernehmen (deaktiviert mit Grund als Beschriftung), Verwerfen; Zurücksetzen nur bei aktiver Übernahme; Übernahme sperren nur wenn freigegeben |
 | Regeln | 5 Kacheln (eine Zeile, je ~180 px): kurzer Kachelname (`kachel`: Quiet-Freigabe, Laufzeit strecken, Raumeinfluss, Heizgrenze, Vorausschau), darunter Status-Chip (Vorschlag/Hinweis, wartet, gesperrt, prüft, ruht, keine Daten) und je Bedingung ein Segment (grün = erfüllt, Titel = Bedingung), eine Zeile mit dem Engpass und Balken: „Vorlauf-Rückstand 0,5 / 1,5 K“, „Haltezeit 4 / 10 min“, „🔒 Mindestabstand bis 09:38“, „🔒 Modell-Gate 1 / 10 Tage“, „seit 08:36 · gültig bis 09:06“. Texte brechen um statt abgeschnitten zu werden |
-| Punkte | Diagramm der Summen je Regel (nur wenn es Punkte gibt), 5 Kacheln (Summe, Fälle/Treffer/Fehlalarm, Skill, Wirkung, Schaden/Verpasst rot, Kennzahl „verpasst während Sperre“ (Befehlsregeln), Freigabereife n/m mit Balken, Kriterien eingeklappt), Messaufgabe Comfort/Efficiency als eine Zeile |
+| Punkte | Diagramm der Summen je Befehlsregel (nur wenn es Punkte gibt), 5 Kacheln (Summe, bei der Heizgrenze „–“ und „nur Hinweis“; Fälle/Treffer/Fehlalarm, Skill ab 3 Fällen, Wirkung, Schaden/Verpasst rot, Kennzahl „verpasst während Sperre“ (Befehlsregeln), Freigabereife n/m mit Balken, Kriterien eingeklappt), Messaufgabe Comfort/Efficiency als eine Zeile |
 | Entscheidungen | **Episoden** statt Minutenzeilen: je Regel von „alle Bedingungen erfüllt“ (wartet, gesperrt, Vorschlag/Hinweis) bis zum Ende, mit Verlauf als Chips und Ende-Grund; Dauerzustände („prüft“, „ruht“) und Datenlücken erzeugen keine Zeile, kurze „wartet“-Episoden unter 5 min ohne Sperre oder Vorschlag werden ausgeblendet; höchstens 12, neueste oben |
 
 **Vorschau ohne Dashboard:** `node tools/engine_ui_preview.js [Datenordner] [Ausgabe.html]` spielt die echten Protokolle durch den Kern und zeichnet vier Schnappschüsse (10.10. 08:38 mit Vorschlag; Replay-Ende; Hauptschalter an mit aktiver Übernahme; 5 Tage Kälte-Szenario mit Punkten) in eine HTML-Datei, die das Dashboard nachbildet (Gruppenbreite 966 px).
@@ -605,10 +613,10 @@ Der Beobachter schreibt nie an Anlage, NAS oder MQTT. Einen MQTT-Befundkanal zur
 
 ## 11. Tests
 
-| Befehl | Ergebnis (10.10.2026) |
+| Befehl | Ergebnis (12.10.2026) |
 |---|---|
 | `cp "flows (26.5.1 stable).json" /tmp/x.json && python3 tools/optimizer_phase1.py /tmp/x.json && node tools/optimizer_sim.js /tmp/x.json` | **607 OK** (vorher 605; neu: `OPT_plan.model` ohne und mit `coefActivate`) |
-| `node tools/engine_sim.js /tmp/x.json [Datenordner]` | Kern, Sperren, Mehrtages-Modell, Punktesystem, Nachprüfung, Seite (Karten-Daten, Darstellung, Vorschau), Hüllen im vm, gesperrte Übernahme, Replay: **215 OK** mit Flow-Datei und Daten (ohne Flow-Datei 166; neu am 11.10.: 53 Prüfungen Vorausschau/Arbitrierung inkl. Tagesgang, „verpasst“ der Vorausschau, 8-Tage-Fake-Uhr, Kacheln ohne Abschneiden, Replay mit Gate zu und testweise offen, Hülle mit Vorhersage; angepasst: Regelzahl 5, `SCORE_VER`, Datensatzgröße 2,7 MB/Tag, 5 Kachelspalten; neu in v2: Sperre entschuldigt, Schaden Komfort/Takt zählt, verlängerte Sperre entschuldigt nicht, v1 nachrechenbar, Versionswechsel, Replay v1/v2, Kachel) |
+| `node tools/engine_sim.js /tmp/x.json [Datenordner]` | **12.10. (v4): 206 OK mit Flow-Datei ohne Daten** (vorher 198; ohne Flow-Datei und Daten 157). Neu: Hinweis-Treffer = 0 Punkte, Hinweis-Fehlalarm mit Schaden 0 Punkte, v3 nachrechenbar (`cfg.sv = 3`, +9), Befund −14,0/−6,84 nachgerechnet, offener Fall ändert den Skill nicht, Skill erst ab 3 Fällen, Versionswechsel v3 → v4 mit offenem Hinweis-Fall, Punkte-Kachel „–“ ohne Diagramm; angepasst: Bericht (Skill bei 1 Fall „–“). Die Replay-Prüfungen brauchen die Datenkopie vom 10.10. 13:24; sie liegt nicht mehr vor (siehe Replay-Bericht, Nachtrag), mit ihr wären es 223. Mit `SIM_BASIS=1` zusätzlich die Basisraten je Regel und Horizont gegen p. Stand 11.10.: Kern, Sperren, Mehrtages-Modell, Punktesystem, Nachprüfung, Seite (Karten-Daten, Darstellung, Vorschau), Hüllen im vm, gesperrte Übernahme, Replay: **215 OK** mit Flow-Datei und Daten (ohne Flow-Datei 166; neu am 11.10.: 53 Prüfungen Vorausschau/Arbitrierung inkl. Tagesgang, „verpasst“ der Vorausschau, 8-Tage-Fake-Uhr, Kacheln ohne Abschneiden, Replay mit Gate zu und testweise offen, Hülle mit Vorhersage; angepasst: Regelzahl 5, `SCORE_VER`, Datensatzgröße 2,7 MB/Tag, 5 Kachelspalten; neu in v2: Sperre entschuldigt, Schaden Komfort/Takt zählt, verlängerte Sperre entschuldigt nicht, v1 nachrechenbar, Versionswechsel, Replay v1/v2, Kachel) |
 | `BEOBACHTER_TMP=<ordner> python3 tools/bonsai_beobachter_test.py [Datenordner]` | **9 OK**, LLM nur als Mock |
 | `node tools/engine_replay.js <Datenordner> [Ausgabe]` und `--md` | Replay der echten Protokolle |
 
@@ -658,5 +666,18 @@ Jeder andere `mqtt out` sowie jeder Link- und HTTP-in-Knoten im Tab bleibt verbo
 - Replay: Abrufzeit der Vorhersage = Zeile − `wetter_alter_min`, Stützpunkte jetzt/+1/+3/+6 h (Annahme, siehe `ASSUME` in `engine_replay.js`).
 - Datensatz: die Vorhersage steht im Schnappschuss (`in.vs`), damit Minuten nachspielbar bleiben; zusammen mit der fünften Regel ≈ 2,6 MB/Tag (≈ 78 MB/Monat statt 63).
 - Seite: fünf Kacheln mit kurzen Namen; statische Vorschau bei 1024, 1920 und 2560 px mit Prüfskript: 0 abgeschnittene Elemente (die Gruppe ist im Dashboard fest 966 px breit). Im echten Dashboard noch nicht angesehen.
+
+**Bewertungsregeln v4 (12.10.).** Geänderte Knoten für den Deploy: `opt_engine` und `opt_apply` (eingebetteter Kern bzw. Kern + Anzeige). Die vier Vorlagen `opt_t_eng_*` sind unverändert (`eng_ui.js` unverändert). Der Zustand bleibt erhalten: die v3-Summen bleiben unter `…|s3` stehen, Kachel und Diagramm beginnen für v4 bei 0, die Heizgrenze-Kachel zeigt „–“. Offene v3-Fälle enden mit v3.
+
+**Offene Entscheidung: Prognose p unter der Basisrate (Befehlsregeln).** Ein Treffer bringt nur Punkte, wenn p > b; liegt die feste Prognose p unter der Basisrate „bleibt, wie es ist“, kostet jeder Treffer Punkte, je sicherer die Lage, desto mehr. Das ist bei Befehlsregeln nicht eindeutig falsch (das Brier-Prinzip will genau das: eine Prognose, die schlechter ist als „bleibt so“, hat keinen Skill), aber es bestraft eine Regel, die nur in eindeutigen Lagen vorschlägt. Gemessen (`SIM_BASIS=1`, Teil-Replay):
+
+| Regel (p) | Basisrate b je Horizont | Folge |
+|---|---|---|
+| Raumeinfluss (0,7) | Teil-Replay 07.–09.10.: 0,84 / 0,78 / 0,50; 8-Tage-Sim 0,93 / 0,89 / 0,78; 5 Tage kälter 0,99 | Treffer 09.10. 10:02 −3,59; 5 Tage kälter: 14 Treffer, 0 Fehlalarme, **−122 Punkte**, Skill −32,9 |
+| Quiet-Freigabe (0,8) | Teil-Replay 0,13–0,20 (milde Tage, Kaltstarts lösen sich selbst); 3 Tage Boost 0,85 / 0,81 / 0,50; 5 Tage kälter 0,98–0,99 | 5 Tage kälter: 15 Treffer, 0 Fehlalarme, **−71 Punkte**; mild: +14 bzw. +17,6 |
+| Vorausschau (0,6) | 8-Tage-Sim 0,17–0,21 | keine Falle in der Sim (Gate live zu) |
+| Laufzeit strecken (0,7) | keine Vergleichslage in Replay und Sims | unbekannt |
+
+Mögliche Wege (je eine neue Bewertungsversion, nichts davon gebaut): (a) p je Regel/Horizont höher ansetzen (Annahme, wieder fest; bei b → 0,99 bleibt die Falle); (b) Treffer bei b ≥ p neutral zählen („keine Trennschärfe messbar“), Fehlalarme weiter voll; (c) p aus der eigenen Trefferquote der Regel lernen ((k + 1)/(n + 2), wie b) und nur die Trennschärfe gegen b punkten; (d) Raumeinfluss nur über die Wirkung bewerten (braucht Übernahmen). Der Replay-Bericht (Punkt 6) hatte schon festgehalten, p erst nach 14 Tagen Live-Daten neu festzulegen.
 
 **Zeitzone.** Wie im übrigen Optimierer ist sie die Ortszeit des Containers. Die Sim läuft mit Europe/Berlin, auch über die Zeitumstellung am 25.10.
