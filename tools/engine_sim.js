@@ -127,6 +127,14 @@ console.log('--- (a) Randfaelle: fehlende/unsinnige Werte, Neustart, Tageslimit,
 // ------------------------------------------------------------------ Mehrtages-Simulation mit einfachem Anlagenmodell (Takt, Kaltstart, Boost, Abtauen, Sensorausfall, Neustarts)
 // Spielzeug-Physik, nur fuer Ablauf und Sicherheit (nicht fuer Aussagen ueber die Anlage): Wasserkreis 0,4 kWh/K, Heizkoerper 0,25 kW/K, Haus UA 0,18 kW/K, 8 kWh/K,
 // innere Gewinne 0,9 kW (Opus 09.10.: 0,5-0,9 kW); Mindestleistung 2,1 kW deckt den Bedarf bis ~6 °C (wie gemessen: bei 4-6 °C Dauerlauf am Minimum).
+// Nur zur Auswertung (SIM_BASIS=1): Basisrate "bleibt, wie es ist" je Regel und Horizont gegen die Prognose p (Falle p < b: ein Treffer punktet negativ)
+function basisBericht(name, L) {
+    if (!process.env.SIM_BASIS || !L || !L.S) { return; }
+    console.log('    [Basisraten ' + name + '] ' + E.RULES.map(R => { const B = L.S.sc.base[R.id] || {}; return R.id + ' p ' + R.prognose.p + ': ' + R.prognose.h.map(h => h + ' min ' + (B[h] ? B[h][1] + '/' + B[h][0] + ' b ' + E.de(B[h][0] >= E.SCORE.baseMinN ? (B[h][1] + 1) / (B[h][0] + 2) : 0.5, 2) + ((B[h][0] >= E.SCORE.baseMinN ? (B[h][1] + 1) / (B[h][0] + 2) : 0.5) > R.prognose.p ? ' > p' : '') : '–')).join(', '); }).join(' | '));
+    console.log('    [Bericht ' + name + '] ' + E.report(L.S).map(r => r.regel + ' ' + (r.punkte === null ? '–' : r.punkte) + ' P, ' + r.faelle + ' F (' + r.treffer + ' T/' + r.fehlalarm + ' FA), Skill ' + (r.skill === null ? '–' : r.skill)).join(' | '));
+    const tr = L.scores.filter(x => x.typ === 'ausloeser' && x.ergebnis === 'treffer' && x.punkte < 0);
+    console.log('    [Treffer mit Minuspunkten ' + name + '] ' + (tr.map(x => x.fall + ' ' + x.punkte + ' (b ' + x.horizonte.map(h => h.b).join('/') + ')').join(', ') || 'keine'));
+}
 function plantSim(days, opts) {
     opts = opts || {};
     const P = {on: false, tw: 31, room: 22.3, over: 0, under: 0, q: opts.q !== undefined ? opts.q : 3, shift: 0, rt: 0, sollHand: null, defrost: 0};
@@ -182,6 +190,7 @@ console.log('--- (a) Mehrtages-Simulation (Anlagenmodell, Fake-Uhr)');
     const C = plantSim(3, {at: 9, boostAt: 9 * 60, applyQuiet: true});
     check('Boost mit "Klick" (Quiet 0 nach dem Vorschlag): Wirkungsfall wird bewertet (kein Kalibrierfall), Ausloeser-Fall neutral (Eingriff)', C.scores.some(s => s.typ === 'wirkung' && s.regel === 'quiet_freigabe' && s.kalibrierfall === 0) && C.scores.filter(s => s.typ === 'ausloeser' && s.regel === 'quiet_freigabe').every(s => s.ergebnis === 'neutral'), C.scores.filter(s => s.regel === 'quiet_freigabe').map(s => s.typ + ':' + s.punkte).join(', '));
     const D = plantSim(5, {at: 4, cool: 1.5});
+    basisBericht('5 Tage kaelter', D); basisBericht('4 Tage mild', A); basisBericht('3 Tage Boost', B);
     const perDay = {}; D.props.filter(p => p.rule === 'quiet_freigabe').forEach(p => { const k = E.iso(p.ts).slice(0, 10); perDay[k] = (perDay[k] || 0) + 1; });
     check('5 Tage kaelter werdend (4 -> -3,5 °C, Bedarf ueber der Mindestleistung): Quiet-Freigabe schlaegt an (Deckel-Lage), hoechstens 3 je Tag, kein Fehler', D.errors === 0 && Object.keys(perDay).length >= 3 && Object.keys(perDay).every(k => perDay[k] <= 3), JSON.stringify(perDay));
 }
@@ -545,12 +554,14 @@ function shiftSim(days, opts) {
     // Pruefung "kein Hin und Her" fuer eine Folge von Verschiebungs-Vorschlaegen (Shadow): Gegenrichtung erst 60 min nach dem Ende der vorigen, ohne Notfall 240 min
     const flips = L => { const bad = []; for (let k = 1; k < L.props.length; k++) { const a = L.props[k - 1], b = L.props[k], da = Math.sign(a.v - a.von), db = Math.sign(b.v - b.von); if (da && db && da === -db) { const end = (L.ev.find(e => e[0] >= a.t && e[1] === 'optimierer_ende' && e[2].indexOf(a.rule + ':') === 0) || [b.t])[0]; const gap = (b.t - end) / MIN; if (gap < 60 || (gap < 240 && !b.hart)) { bad.push(E.iso(b.t) + ' ' + b.rule + ' ' + gap + ' min'); } } } return bad; };
     const L1 = shiftSim(8, {});
+    basisBericht('8 Tage Verschiebung', L1);
     const byRule = r => L1.props.filter(p => p.rule === r).length;
     check('8 Tage (4 gewoehnliche Tage mit Tagesgang ±4 K, dann Kaelteeinbruch und Milderung), Gate offen, Shadow: kein Fehler, beide Verschiebungs-Regeln kommen vor, nie zwei Verschiebungs-Vorschlaege gleichzeitig', L1.errors === 0 && byRule('vorausschau') >= 1 && L1.conc === 0 && L1.props.filter(p => p.rule === 'vorausschau').every(p => (p.t - new Date(2026, 10, 2).getTime()) / 86400000 > 3.5), 'Vorausschau ' + byRule('vorausschau') + ', Raumeinfluss ' + byRule('raum_offset') + ': ' + L1.props.map(p => E.iso(p.t).slice(5, 16) + ' ' + p.rule + ' ' + p.v).join(', '));
     check('... kein Hin und Her: jede Gegenrichtung fruehestens 60 min nach dem Ende der vorigen Verschiebung, ohne Komfort-Notfall erst nach 240 min', flips(L1).length === 0, flips(L1).join(' | ') || (L1.props.length + ' Vorschlaege geprueft'));
     const L0 = shiftSim(8, {gate: false});
     check('... dieselben 8 Tage mit geschlossenem Gate: keine Vorausschau, der Raumeinfluss allein', L0.errors === 0 && !L0.props.some(p => p.rule === 'vorausschau'), L0.props.map(p => E.iso(p.t).slice(5, 16) + ' ' + p.rule + ' ' + p.v).join(', '));
     const L2 = shiftSim(8, {apply: true});
+    basisBericht('8 Tage uebernommen', L2);
     const chg = L2.plantChg, rev = []; for (let k = 1; k < chg.length; k++) { if (chg[k].t - chg[k - 1].t < 60 * MIN) { rev.push(E.iso(chg[k].t) + ' ' + chg[k].rule); } }
     const ap2 = L2.scores.filter(s => s.typ === 'wirkung');
     check('8 Tage, jeder Verschiebungs-Vorschlag sofort uebernommen (Rueckweg ueber Grund/Ablauf/halten): Anlage wechselt nie binnen 60 min, Wirkung je Regel ihrem Vorschlag zugeordnet', L2.errors === 0 && chg.length >= 2 && rev.length === 0 && ap2.length >= 1 && ap2.every(s => chg.some(c0 => c0.rule === s.regel)) && L2.conc === 0, chg.map(c0 => E.iso(c0.t).slice(5, 16) + ' ' + c0.rule + '=' + c0.v).join(', ') + (rev.length ? ' | zu schnell: ' + rev.join(', ') : ''));

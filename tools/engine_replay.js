@@ -1,7 +1,7 @@
 // Rueckwirkende Pruefung (Replay): spielt die echten Minutenprotokolle offline mit Fake-Uhr durch die Entscheidungsmaschine (tools/engine_core.js).
 // Nur lesen: quiet-YYYY-MM.csv (1 min; aeltere Stillstandszeilen 5 min), optimizer-v2-YYYY-MM.csv (5 min, Raeume + Raumvorschlag Phase 2).
-// Usage: node tools/engine_replay.js <Datenordner> [Ausgabeordner] [--sv1]   (schreibt decisions-*.jsonl, scores-*.jsonl, events.csv, report.json in den Ausgabeordner)
-//        --sv1: mit den Bewertungsregeln v1 nachrechnen (alte Punkte reproduzieren); Standard ist die aktuelle Version (ENGINE.SCORE_VER)
+// Usage: node tools/engine_replay.js <Datenordner> [Ausgabeordner] [--sv1|--sv2|--sv3]   (schreibt decisions-*.jsonl, scores-*.jsonl, events.csv, report.json in den Ausgabeordner)
+//        --sv1/--sv2/--sv3: mit den Bewertungsregeln v1/v2/v3 nachrechnen (alte Punkte reproduzieren); Standard ist die aktuelle Version (ENGINE.SCORE_VER)
 // Annahmen fuer Werte, die das Protokoll nicht enthaelt, stehen in ASSUME (und im Bericht).
 process.env.TZ = process.env.TZ_SIM || 'Europe/Berlin';
 const fs = require('fs');
@@ -150,7 +150,7 @@ function markdown(R) {                                                          
 module.exports.markdown = markdown;
 
 if (require.main === module) {
-    const sv1 = process.argv.indexOf('--sv1') > 0, ropt = sv1 ? {cfg: {sv: 1}} : {};
+    const svA = process.argv.map(a => /^--sv([123])$/.exec(a)).filter(Boolean)[0], ropt = svA ? {cfg: {sv: Number(svA[1])}} : {};
     if (process.argv.indexOf('--md') > 0) { console.log(markdown(replay(process.argv[2], ropt))); process.exit(0); }
     const dir = process.argv[2], out = process.argv[3] && process.argv[3].indexOf('--') !== 0 ? process.argv[3] : null;
     if (!dir) { console.error('Usage: node tools/engine_replay.js <Datenordner> [Ausgabeordner]'); process.exit(2); }
