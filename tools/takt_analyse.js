@@ -2,7 +2,7 @@
 // Dauer, Stopp-Art, Quiet, Frequenz, Ruecklauf-Rueckstand, Vorlauf-Anstieg und die Ausloeser der Regel "Laufzeit strecken" (v1 und Vorschlag v2).
 // Usage: node tools/takt_analyse.js <Datenordner> [--md]
 // Stopp-Art: "Thermo" = Vorlauf in den letzten 3 Laufminuten >= Soll +2,75 K (Abschaltgrenze Soll +3,0...+3,25 K, Handbuch: Vorlauf - interner Soll > 2 K 3 min);
-//            "Heizgrenze" = danach Pumpe < 1000 U/min; sonst "anders". Laeufe am Rand des Zeitraums (offen) werden gezaehlt, aber nicht als kurz/lang gewertet.
+//            "Heizgrenze" = binnen 5 min danach Pumpe < 1000 U/min; sonst "anders" (z. B. Soll von Hand gesenkt). Laeufe am Rand des Zeitraums (offen) werden gezaehlt, aber nicht als kurz/lang gewertet.
 process.env.TZ = process.env.TZ_SIM || 'Europe/Berlin';
 const path = require('path');
 const E = require('./engine_core.js');
@@ -27,7 +27,7 @@ function runs(inputs) {
     return out.map(R => {
         const r = R.rows, dur = (R.t1 - R.t0) / MIN, last3 = r.slice(-3), ab15 = r.filter((x, k) => k >= 15);
         const over = last3.length ? Math.min.apply(null, last3.map(x => x.vl - x.soll)) : null;
-        const pumpNach = R.nach.length ? Math.max.apply(null, R.nach.map(x => x.pump || 0)) : null;
+        const pumpNach = R.nach.length ? Math.min.apply(null, R.nach.map(x => have(x.pump) ? x.pump : 9999)) : null;   // Heizgrenze: Pumpe steht binnen 5 min nach dem Stopp
         const art = R.offenEnde ? 'offen' : (have(over) && over >= 2.75 ? 'Thermo' : (pumpNach !== null && pumpNach < 1000 ? 'Heizgrenze' : 'anders'));
         const rlR = x => (x.soll - x.dT) - x.rl;
         const w = (a, b) => r.filter((x, k) => k >= a && k < b);

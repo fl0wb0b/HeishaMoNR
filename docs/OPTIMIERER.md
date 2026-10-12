@@ -12,6 +12,8 @@ Stand 12.10.2026, Branch `optimizer-engine`. **Alles ist Shadow.** Die Maschine 
   - Dazu kommen Abzüge für Schaden und für verpasste Lagen. Unsicheres zählt 0.
   - Das Punktebuch steht in `scores-YYYY-MM.jsonl`. Die Freigabereife ist nur eine Anzeige.
   - Seit den Bewertungsregeln v4 (12.10.) sammeln reine Hinweise keine Punkte mehr, und der Brier-Skill steht erst ab 3 abgeschlossenen Fällen.
+  - Seit v5 (12.10., Entscheidung des Nutzers, Weg b) zählt ein Treffer neutral, wenn die Basisrate mindestens bei der Prognose liegt (b ≥ p); Fehlalarme bleiben voll im Abzug.
+- **Laufzeit strecken** ist seit Regel v2 (12.10.) an einen belegten Takt gebunden (letzter Lauf mit Abschaltung über den Vorlauf < 60 min oder ≥ 2 Starts in 3 h), siehe Abschnitt 12.
 - **Ein-Klick-Übernahme** `opt_apply`: Es gibt die Knöpfe „Übernehmen“, „Verwerfen“, „Zurücksetzen“ und „Übernahme sperren“. Ausgeliefert wird sie doppelt gesperrt:
   1. Der `mqtt out` ist deaktiviert.
   2. Der Hauptschalter in `apply.json` fehlt, das heißt „aus“.
@@ -21,7 +23,7 @@ Stand 12.10.2026, Branch `optimizer-engine`. **Alles ist Shadow.** Die Maschine 
   - Er rechnet den Tagesbericht selbst und deterministisch.
   - Das lokale LLM beantwortet nur kurze, belegte Fragen. Aussagen ohne gültigen Beleg werden verworfen.
   - Der Beobachter ist nie im Regelkreis.
-- **Replay** der echten Protokolle vom 07. bis 10.10.: siehe `docs/replay_2026-10-07_bis_10.md`.
+- **Replay** der echten Protokolle vom 07. bis 10.10.: siehe `docs/replay_2026-10-07_bis_10.md` (mit Nachtrag 07.–12.10., v5).
   - Die Quiet-Freigabe hätte genau einmal angeschlagen, am 10.10. um 08:36 im Boost, 4,7 min vor dem Klick des Nutzers.
   - Kaltstarts lösen sie nicht aus.
 
@@ -111,7 +113,7 @@ Abgeleitet je Minute (`abl` im Datensatz):
 | Regel | schaltet (würde), wenn ALLES gilt | dann Befehl | Rückweg |
 |---|---|---|---|
 | **Quiet-Freigabe** | Quiet ≥ 1 · Verdichter läuft seit ≥ 15 min · ≤ 20 Hz (am Deckel) · Vorlauf ≥ 1,5 K unter Soll · Rücklauf ≥ 1,5 K unter Soll-Rücklauf · Raum unter Minimum *oder* Sollvorlauf in diesem Lauf noch nicht erreicht · alles **10 min am Stück** · keine Sperre | `SetQuietMode = 0` (direkt, nicht schrittweise) | keiner automatisch (0 ist Standard); „Zurücksetzen“ = vorige Stufe |
-| **Laufzeit strecken** | Quiet < 3 · Lauf ≥ 15 min · ≥ 22 Hz · kein Raum unter Minimum und Rücklauf ≤ 1 K unter Soll · Takt-Indiz (Abschaltgrenze in ≤ 45 min, letzter Lauf < 60 min oder ≥ 2 Starts in 3 h) · 10 min am Stück · keine Sperre | `SetQuietMode = 3` | automatisch zurück auf 0 bei Raum unter Minimum, bei Rücklauf ≥ 2,5 K unter Soll seit 15 min, spätestens nach 4 h |
+| **Laufzeit strecken** (v2) | Quiet < 3 · Lauf ≥ 15 min · ≥ 22 Hz · kein Raum unter Minimum und Rücklauf ≤ 1 K unter Soll · Takt belegt (letzter Lauf endete mit Vorlauf ≥ Soll +2,75 K nach < 60 min, oder ≥ 2 Starts in 3 h; die Vorhersage „Abschaltgrenze in ≤ 45 min“ löst seit v2 nicht mehr aus) · 10 min am Stück · keine Sperre | `SetQuietMode = 3` | automatisch zurück auf 0 bei Raum unter Minimum, bei Rücklauf ≥ 2,5 K unter Soll seit 15 min, spätestens nach 4 h |
 | **Raumeinfluss ±1 K** | Raumvorschlag der Phase 2 (−1/0/+1) ≠ Verschiebung der Anlage · seit ≥ 60 min unverändert · bei −1: Soll bleibt ≥ 29 °C · kein Wärmeverteilungsproblem · keine Sperre (u. a. Heizkurvenmodus, Wasserfühler, kein Handeingriff am Soll) | `SetZ1HeatRequestTemperature = −1/0/+1` | automatisch auf 0, sobald der Raumvorschlag 15 min am Stück 0 ist, spätestens nach 6 h |
 | **Vorausschau ±1 K** | Gate des Gebäudemodells offen · Bedarfsänderung **aus dem Wetter** ≥ 2 K (Außentemperatur-Äquivalent: Vorhersage im Mittel +2…+5 h gegen jetzt, beide um den gewöhnlichen Tagesgang bereinigt; Tagesgang aus ≥ 3 Vortagen; Sonne/Wind nur mit `coefActivate`) · alle Räume gültig und im Band · Luft im Band ≥ 0,3 K (bei +1 K wärmster Raum unter Maximum, bei −1 K kältester über Minimum) · bei −1 K Soll ≥ 29 °C · Verschiebung steht auf 0 · **30 min am Stück** · keine Sperre, auch nicht „andere Regel“/„Gegenrichtung“ | `SetZ1HeatRequestTemperature = ±1` | automatisch auf 0, wenn die Vorhersage 15 min unter der halben Schwelle liegt, sofort, wenn ein Raum das Band in Gegenrichtung verlässt, spätestens nach 6 h; nicht, solange der Raumeinfluss denselben Wert verlangt |
 | **Heizgrenze-Hinweis** | Heizgrenze > 10 °C · Lauf ≥ 15 min bei Außentemperatur > 10 °C · alle aktiven Räume gültig und ≥ Minimum + 0,5 K · 15 min am Stück | nur Hinweis `SetHeatingOffOutdoorTemp = 10`, **nie per Klick** | Saisoneinstellung von Hand |
@@ -365,10 +367,18 @@ Je Minute eine Zeile. Beispiel aus dem Replay, Boost am 10.10., gekürzt:
 
 ## 6. Punktesystem (automatisch, ohne Nutzereingabe)
 
-Der Nutzer vergibt keine Punkte. Auch „Verwerfen“ ist keine Bewertung: der Bewertungsteil des Kerns kennt weder Klicks noch den Übernahme-Zustand, ein Test prüft das. Alle Regeln stehen vorab fest (`SCORE_VER` 4 seit 12.10.; v3 ab 11.10., v2 ab 10.10. abends, v1 bis dahin). Jede Änderung erhöht die Version, Punkte verschiedener Versionen bleiben getrennt:
-- Die Summen stehen je Regel, Regelversion und Bewertungsversion im Zustand (`regel|v1` = v1 unverändert, `regel|v1|s2` = v2, `…|s3` = v3, `…|s4` = v4). Alte Punkte werden nicht neu gerechnet; die Kachel und das Diagramm zeigen nur die aktuelle Version (Freigabereife und Tage zählen ab dem Wechsel neu).
+Der Nutzer vergibt keine Punkte. Auch „Verwerfen“ ist keine Bewertung: der Bewertungsteil des Kerns kennt weder Klicks noch den Übernahme-Zustand, ein Test prüft das. Alle Regeln stehen vorab fest (`SCORE_VER` 5 seit 12.10. abends; v4 ab 12.10., v3 ab 11.10., v2 ab 10.10. abends, v1 bis dahin). Jede Änderung erhöht die Version, Punkte verschiedener Versionen bleiben getrennt:
+- Die Summen stehen je Regel, Regelversion und Bewertungsversion im Zustand (`regel|v1` = v1 unverändert, `regel|v1|s2` = v2, `…|s3` = v3, `…|s4` = v4, `…|s5` = v5). Alte Punkte werden nicht neu gerechnet; die Kachel und das Diagramm zeigen nur die aktuelle Version (Freigabereife und Tage zählen ab dem Wechsel neu).
 - Fälle und Wirkungsmessungen, die vor dem Wechsel begannen, werden mit ihrer Version zu Ende bewertet.
-- Nachrechnen mit den alten Regeln: `cfg.sv = 1`, `2` oder `3` bzw. `node tools/engine_replay.js <Daten> --sv1` (`--sv2`, `--sv3`). Die Entscheidungen sind in beiden Versionen gleich, nur `sv` im Datensatz und die Bewertung unterscheiden sich (Test).
+- Nachrechnen mit den alten Regeln: `cfg.sv = 1` … `4` bzw. `node tools/engine_replay.js <Daten> --sv1` (`--sv2`, `--sv3`, `--sv4`). Die Entscheidungen sind in beiden Versionen gleich, nur `sv` im Datensatz und die Bewertung unterscheiden sich (Test).
+
+**Änderung v4 → v5 (12.10. abends, Entscheidung des Nutzers: Weg b):** Bei Befehlsregeln lag die feste Prognose p oft unter der gelernten Basisrate b „bleibt, wie es ist“; dann kostet jeder Treffer Punkte (Replay 07.–12.10.: Raumeinfluss 6 von 7 Treffern, aber −9,74 bei b 0,77–0,92 gegen p 0,7; 5-Tage-Kälte-Sim: Quiet-Freigabe 15 Treffer, 0 Fehlalarme, −71; Raumeinfluss 14 Treffer, −122).
+- **Treffer bei b ≥ p** (je Horizont): **neutral**, 0 Punkte, kein Beitrag zu ΣBS/ΣBS_ref (keine Trennschärfe messbar). Horizont-Feld `bp: "neutral"`, im Punktebuch-Text „Basisrate 0,92 ≥ Prognose 0,70: neutral“. Sind alle Treffer-Horizonte eines Treffer-Falls neutral, zählt er in der Kennzahl `trefferNeutral` (Kachel: „davon n Treffer neutral (Basisrate ≥ Prognose)“, Replay-Tabelle: „Treffer (davon neutral)“).
+- **Fehlalarm bei b ≥ p**: **voller Abzug**. Die Brier-Formel gäbe hier ein *Plus* (b liegt weiter vom Ergebnis 0 entfernt als p; Replay: Raumeinfluss 10.10. 10:26 „Raum wieder im Band“ +12,63 unter v4). Deshalb wird er gegen b = 0,5 gerechnet (`SCORE.fehlRefB`, wie vor dem Lernen der Basisrate): 100 × (0,25 − p²), p 0,7 → −24, p 0,8 → −39 (geteilt durch die Anzahl Horizonte), und geht so in den Skill ein (`bp: "abzug"`). Das ist meine Auslegung von „Fehlalarme bleiben voll im Abzug“; Alternativen siehe Abschnitt 12.
+- **b < p**: Brier wie bisher (Test: identisch mit v4).
+- **Kein Gaming** bleibt erhalten: ohne Trennschärfe (Ergebnis-Häufigkeit = b) ist der Erwartungswert ≤ 0, bei b ≥ p sind nur Abzüge möglich (Test für b 0,1…0,99, p 0,6…0,8).
+- **Skill** erst ab 3 Fällen **mit Brier-Beitrag** (mindestens ein nicht neutraler Horizont; `skillFaelle`). Folge für die Freigabereife siehe Abschnitt 12.
+- Fälle, die unter v4 begannen, enden mit v4 (Test). v5-Summen beginnen bei 0. Nachrechnen: `cfg.sv = 4` / `--sv4`.
 
 **Änderung v3 → v4 (12.10., Befund auf der Seite):** Die Kachel „Heizgrenze“ zeigte „1 Fall · 1 Treffer · 0 Fehlalarm“, aber −14,0 Punkte und Skill −6,84. Nachgerechnet: Ergebnis o = 1, Prognose p = 0,6, Basisrate b ≈ 0,857 → 100 × [(0,857 − 1)² − (0,6 − 1)²] = 100 × (0,0204 − 0,16) = −14,0; Skill = 1 − 0,16/0,0204 = −6,84. Die Mathematik stimmt. Aber p ist eine Annahme unter der echten Basisrate, also kann ein Treffer nie positiv punkten; die Regel ist nur ein Hinweis, und ein Skill aus einem Fall ist wertlos. Dieselbe Ursache hatte „Skill −25,01 bei 0 Fällen“ beim Raumeinfluss: bis v3 wuchsen ΣBS und ΣBS_ref schon beim Abschluss einzelner Horizonte, der Fall zählte erst nach allen.
 - **Hinweis-Regeln** (`art` „hinweis“, heute nur der Heizgrenze-Hinweis) sammeln keine Punkte. Treffer, Fehlalarm, neutral und Schaden werden weiter gezählt und im Punktebuch mit Ergebnis und Basisrate geschrieben (0 Punkte, „nur Hinweis, keine Punkte“). Punkte, Skill und Freigabereife entfallen („–“), die Regel steht nicht im Diagramm.
@@ -400,7 +410,8 @@ Beispiele (gerechnet, auch Teil der Tests):
 |---|---|
 | Treffer, b = 0,5, p = 0,8 | 100 × (0,25 − 0,04) = **+21** je Fall (über die Horizonte verteilt) |
 | Fehlalarm, b = 0,5, p = 0,8 | 100 × (0,25 − 0,64) = **−39** |
-| Treffer bei hoher Basisrate, b = 0,86, p = 0,6 | **−14** (der Vorschlag kam nur dort, wo das Problem sowieso meist bleibt); seit v4 bei Hinweisen 0, bei Befehlsregeln weiter so (offene Entscheidung, Abschnitt 12) |
+| Treffer bei hoher Basisrate, b = 0,86, p = 0,6 | bis v4 **−14** (der Vorschlag kam nur dort, wo das Problem sowieso meist bleibt); seit v4 bei Hinweisen 0, seit v5 auch bei Befehlsregeln **0** (neutral) |
+| Fehlalarm bei hoher Basisrate, b = 0,91, p = 0,8 | bis v4 **+18,8** (Brier-Plus), seit v5 **−39** (Abzug gegen b 0,5) |
 
 **Kein Gaming:** Wer ohne Trennschärfe vorschlägt, also nur dort, wo das Ergebnis der Basisrate entspricht, bekommt im Mittel ≤ 0 Punkte, egal welches *p*. Der Brier-Score ist „proper“, die Sim prüft das für f = 0,1…0,9 und p = 0,1…0,9.
 
@@ -432,7 +443,7 @@ Nicht messbar zählt 0. **Kalibrierfälle** zählen 0 Punkte: Das sind die Messu
 |---|---|
 | Quiet-Freigabe | 20 min am Deckel mit ≥ 2 K Rücklauf-Rückstand |
 | Raumeinfluss | Raum ≥ 0,5 K unter Minimum 180 min lang, kein Raum zu warm |
-| Laufzeit strecken | 10 min ≥ 22 Hz ohne Bedarf mit Abschaltung in ≤ 20 min |
+| Laufzeit strecken | 10 min ≥ 22 Hz ohne Bedarf mit Abschaltung in ≤ 20 min; seit Regel v2 zusätzlich Takt belegt (wie der Auslöser) |
 | Vorausschau (seit v3, Entscheidung 11.10.) | Gate offen und alle Bedingungen der Regel erfüllt (Bedarfsänderung aus dem Wetter ≥ 2 K, Räume im Band mit Luft) 60 min am Stück ohne Vorschlag, auch keiner einer anderen Verschiebungs-Regel in dieselbe Richtung, ohne Sicherheits-/Datensperre. **Gebucht wird nur, wenn die Lage wirklich eintritt** (bis zum Fensterende +5 h): ein Raum verlässt das Band in der vorhergesagten Richtung (sofort) oder die gemessene, um den Tagesgang bereinigte Außentemperatur zeigt im Fenster mindestens die halbe Schwelle (am Fensterende). Sonst kein Eintrag. Neutralität wie unten (eigene und Gegenregel-Sperren → `verpasst_sperre` 0; Raum > 1 K unter Minimum hebt das auf) |
 
 Sicherheits- und Datensperren entschuldigen ganz (wie in v1).
@@ -469,7 +480,7 @@ Sicherheits- und Datensperren entschuldigen ganz (wie in v1).
 | `punkte`, `summe` | Punkte und laufende Summe |
 | `text` | Klartext |
 
-Die Karte „Punkte“ zeigt den Verlauf der Summen je Befehlsregel als Diagramm (`ui_chart.js`) und je Regel eine Kachel: Summe (Hinweis: „–“), Fälle mit Treffern und Fehlalarmen, Brier-Skill = 1 − ΣBS/ΣBS_ref (nur abgeschlossene Fälle, ab 3 bewerteten), Wirkung (Kalibrierfälle getrennt), Schaden und Verpasst nur wenn > 0, bei Befehlsregeln die Kennzahl „verpasst während Sperre“, Freigabereife. Die Wochenübersicht (ISO-Woche) steht weiter im Zustand und im Punktebuch, aber nicht mehr auf der Seite.
+Die Karte „Punkte“ zeigt den Verlauf der Summen je Befehlsregel als Diagramm (`ui_chart.js`) und je Regel eine Kachel: Summe (Hinweis: „–“), Fälle mit Treffern und Fehlalarmen, seit v5 „davon n Treffer neutral (Basisrate ≥ Prognose)“, wenn n > 0, Brier-Skill = 1 − ΣBS/ΣBS_ref (nur abgeschlossene Fälle, ab 3 bewerteten), Wirkung (Kalibrierfälle getrennt), Schaden und Verpasst nur wenn > 0, bei Befehlsregeln die Kennzahl „verpasst während Sperre“, Freigabereife. Die Wochenübersicht (ISO-Woche) steht weiter im Zustand und im Punktebuch, aber nicht mehr auf der Seite.
 
 **Freigabereife** ist nur eine Anzeige, die Freigabe entscheidet der Nutzer. Bedingungen:
 - ≥ 10 bewertete Fälle
@@ -583,7 +594,7 @@ Aufbau (Neufassung 10.10. abends):
 |---|---|
 | Entscheidungsmaschine | **Statuszeile** aus Chips: „Maschine läuft · hh:mm“ bzw. „Anlaufsperre bis …“, „keine HeishaMon-Daten“, „Maschine rechnet nicht“; Anlage kurz (Lauf · Hz · Quiet · Vorlauf-Abstand); Übernahme („🔒 Übernahme gesperrt“, „Übernahme frei: …“, „Übernommen …“, „wartet auf Bestätigung“); Warnung; „verworfen: …“. **Vorschlag** nur wenn einer da ist: hervorgehobener Kasten mit Regel, Was, Warum (eine Zeile mit Zahlen), Befehl, seit, gültig bis, Rückweg kurz; Erwartung und Rückweg-Text eingeklappt. **Knöpfe**: Übernehmen (deaktiviert mit Grund als Beschriftung), Verwerfen; Zurücksetzen nur bei aktiver Übernahme; Übernahme sperren nur wenn freigegeben |
 | Regeln | 5 Kacheln (eine Zeile, je ~180 px): kurzer Kachelname (`kachel`: Quiet-Freigabe, Laufzeit strecken, Raumeinfluss, Heizgrenze, Vorausschau), darunter Status-Chip (Vorschlag/Hinweis, wartet, gesperrt, prüft, ruht, keine Daten) und je Bedingung ein Segment (grün = erfüllt, Titel = Bedingung), eine Zeile mit dem Engpass und Balken: „Vorlauf-Rückstand 0,5 / 1,5 K“, „Haltezeit 4 / 10 min“, „🔒 Mindestabstand bis 09:38“, „🔒 Modell-Gate 1 / 10 Tage“, „seit 08:36 · gültig bis 09:06“. Texte brechen um statt abgeschnitten zu werden |
-| Punkte | Diagramm der Summen je Befehlsregel (nur wenn es Punkte gibt), 5 Kacheln (Summe, bei der Heizgrenze „–“ und „nur Hinweis“; Fälle/Treffer/Fehlalarm, Skill ab 3 Fällen, Wirkung, Schaden/Verpasst rot, Kennzahl „verpasst während Sperre“ (Befehlsregeln), Freigabereife n/m mit Balken, Kriterien eingeklappt), Messaufgabe Comfort/Efficiency als eine Zeile |
+| Punkte | Diagramm der Summen je Befehlsregel (nur wenn es Punkte gibt), 5 Kacheln (Summe, bei der Heizgrenze „–“ und „nur Hinweis“; Fälle/Treffer/Fehlalarm, seit v5 „davon n Treffer neutral (Basisrate ≥ Prognose)“ wenn n > 0, Skill ab 3 Fällen, Wirkung, Schaden/Verpasst rot, Kennzahl „verpasst während Sperre“ (Befehlsregeln), Freigabereife n/m mit Balken, Kriterien eingeklappt), Messaufgabe Comfort/Efficiency als eine Zeile |
 | Entscheidungen | **Episoden** statt Minutenzeilen: je Regel von „alle Bedingungen erfüllt“ (wartet, gesperrt, Vorschlag/Hinweis) bis zum Ende, mit Verlauf als Chips und Ende-Grund; Dauerzustände („prüft“, „ruht“) und Datenlücken erzeugen keine Zeile, kurze „wartet“-Episoden unter 5 min ohne Sperre oder Vorschlag werden ausgeblendet; höchstens 12, neueste oben |
 
 **Vorschau ohne Dashboard:** `node tools/engine_ui_preview.js [Datenordner] [Ausgabe.html]` spielt die echten Protokolle durch den Kern und zeichnet vier Schnappschüsse (10.10. 08:38 mit Vorschlag; Replay-Ende; Hauptschalter an mit aktiver Übernahme; 5 Tage Kälte-Szenario mit Punkten) in eine HTML-Datei, die das Dashboard nachbildet (Gruppenbreite 966 px).
@@ -616,10 +627,11 @@ Der Beobachter schreibt nie an Anlage, NAS oder MQTT. Einen MQTT-Befundkanal zur
 
 | Befehl | Ergebnis (12.10.2026) |
 |---|---|
-| `cp "flows (26.5.1 stable).json" /tmp/x.json && python3 tools/optimizer_phase1.py /tmp/x.json && node tools/optimizer_sim.js /tmp/x.json` | **607 OK** (vorher 605; neu: `OPT_plan.model` ohne und mit `coefActivate`) |
-| `node tools/engine_sim.js /tmp/x.json [Datenordner]` | **12.10. (v4): 206 OK mit Flow-Datei ohne Daten** (vorher 198; ohne Flow-Datei und Daten 157). Neu: Hinweis-Treffer = 0 Punkte, Hinweis-Fehlalarm mit Schaden 0 Punkte, v3 nachrechenbar (`cfg.sv = 3`, +9), Befund −14,0/−6,84 nachgerechnet, offener Fall ändert den Skill nicht, Skill erst ab 3 Fällen, Versionswechsel v3 → v4 mit offenem Hinweis-Fall, Punkte-Kachel „–“ ohne Diagramm; angepasst: Bericht (Skill bei 1 Fall „–“). Die Replay-Prüfungen brauchen die Datenkopie vom 10.10. 13:24; sie liegt nicht mehr vor (siehe Replay-Bericht, Nachtrag), mit ihr wären es 223. Mit `SIM_BASIS=1` zusätzlich die Basisraten je Regel und Horizont gegen p. Stand 11.10.: Kern, Sperren, Mehrtages-Modell, Punktesystem, Nachprüfung, Seite (Karten-Daten, Darstellung, Vorschau), Hüllen im vm, gesperrte Übernahme, Replay: **215 OK** mit Flow-Datei und Daten (ohne Flow-Datei 166; neu am 11.10.: 53 Prüfungen Vorausschau/Arbitrierung inkl. Tagesgang, „verpasst“ der Vorausschau, 8-Tage-Fake-Uhr, Kacheln ohne Abschneiden, Replay mit Gate zu und testweise offen, Hülle mit Vorhersage; angepasst: Regelzahl 5, `SCORE_VER`, Datensatzgröße 2,7 MB/Tag, 5 Kachelspalten; neu in v2: Sperre entschuldigt, Schaden Komfort/Takt zählt, verlängerte Sperre entschuldigt nicht, v1 nachrechenbar, Versionswechsel, Replay v1/v2, Kachel) |
+| `cp "flows (26.5.1 stable).json" /tmp/x.json && python3 tools/optimizer_phase1.py /tmp/x.json && node tools/optimizer_sim.js /tmp/x.json` | **607 OK** (12.10. abends unverändert; vorher 605; neu am 12.10.: `OPT_plan.model` ohne und mit `coefActivate`) |
+| `node tools/engine_sim.js /tmp/x.json [Datenordner]` | **12.10. abends (v5, Laufzeit strecken v2): 219 OK mit Flow-Datei ohne Daten** (vorher 206). Neu v5: Treffer bei b ≥ p = 0 ohne Skill-Beitrag, Fehlalarm bei b ≥ p = −24/−39, b < p = v4, kein Gaming, Ablauf Treffer/Fehlalarm/b < p mit gelernter Basisrate, Versionswechsel v4 → v5 mit offenem Fall, 5-Tage-Kälte (Raumeinfluss 0 statt −122), Skill-Konsistenz, Kachel „davon … neutral“; neu Regel v2: Takt belegt → Vorschlag, Heizgrenze-Stopp → keiner, 2 Starts in 3 h → Vorschlag, alter Zustand → keiner; angepasst: „Takten während Sperre“ mit vorgegebenem Takt-Beleg, „Skill ab 3 Fällen“ mit `cfg.sv = 4`, v4-Prüfungen auf die aktuelle Version. Mit `SIM_BASIS=1` zusätzlich je Sim die Fälle mit Horizonten (b, neutral/Abzug). **12.10. (v4): 206 OK mit Flow-Datei ohne Daten** (vorher 198; ohne Flow-Datei und Daten 157). Neu: Hinweis-Treffer = 0 Punkte, Hinweis-Fehlalarm mit Schaden 0 Punkte, v3 nachrechenbar (`cfg.sv = 3`, +9), Befund −14,0/−6,84 nachgerechnet, offener Fall ändert den Skill nicht, Skill erst ab 3 Fällen, Versionswechsel v3 → v4 mit offenem Hinweis-Fall, Punkte-Kachel „–“ ohne Diagramm; angepasst: Bericht (Skill bei 1 Fall „–“). Die Replay-Prüfungen brauchen die Datenkopie vom 10.10. 13:24; sie liegt nicht mehr vor (siehe Replay-Bericht, Nachtrag), mit ihr wären es 223. Mit `SIM_BASIS=1` zusätzlich die Basisraten je Regel und Horizont gegen p. Stand 11.10.: Kern, Sperren, Mehrtages-Modell, Punktesystem, Nachprüfung, Seite (Karten-Daten, Darstellung, Vorschau), Hüllen im vm, gesperrte Übernahme, Replay: **215 OK** mit Flow-Datei und Daten (ohne Flow-Datei 166; neu am 11.10.: 53 Prüfungen Vorausschau/Arbitrierung inkl. Tagesgang, „verpasst“ der Vorausschau, 8-Tage-Fake-Uhr, Kacheln ohne Abschneiden, Replay mit Gate zu und testweise offen, Hülle mit Vorhersage; angepasst: Regelzahl 5, `SCORE_VER`, Datensatzgröße 2,7 MB/Tag, 5 Kachelspalten; neu in v2: Sperre entschuldigt, Schaden Komfort/Takt zählt, verlängerte Sperre entschuldigt nicht, v1 nachrechenbar, Versionswechsel, Replay v1/v2, Kachel) |
 | `BEOBACHTER_TMP=<ordner> python3 tools/bonsai_beobachter_test.py [Datenordner]` | **9 OK**, LLM nur als Mock |
-| `node tools/engine_replay.js <Datenordner> [Ausgabe]` und `--md` | Replay der echten Protokolle |
+| `node tools/engine_replay.js <Datenordner> [Ausgabe]` und `--md` (`--sv4` …) | Replay der echten Protokolle |
+| `node tools/takt_analyse.js <Datenordner>` | Läufe mit Stopp-Art, Frequenz, Rücklauf-Rückstand, Vorlauf-Anstieg; Treffsicherheit der Vorhersage „Abschaltgrenze in ≤ 45 min“ |
 
 Angepasste Sicherheitsprüfungen in `optimizer_sim.js` sind gezielt: Es ist **genau** `opt_apply_mqtt` erlaubt. Eine neue Prüfung verlangt:
 - er ist deaktiviert
@@ -642,7 +654,39 @@ Jeder andere `mqtt out` sowie jeder Link- und HTTP-in-Knoten im Tab bleibt verbo
 - Im Replay entstand daraus ein „verpasst“ (v1) bzw. „verpasst während Sperre“ (v2, Stabilitätszeit): Kinderzimmer oben lag ab 09.10. 18:47 über 3 h ≥ 0,5 K unter Minimum.
 - **Entscheidung des Nutzers:** Datenalter-Limit für die Gen3-Sensoren auf ~360 min setzen?
 
-**Laufzeit strecken.** Die Regel kam nie zum Zug. Bei mildem Wetter steht der Verdichter auch mit Quiet 0 und kleinem Rückstand am Minimum (10.10. 11:17). Kriterien und Erwartung stammen aus der Physik und einer Messung, nicht aus Fällen.
+**Laufzeit strecken (Regel v2, 12.10.).** Befund mit `node tools/takt_analyse.js <Daten>` (07.10. 16:55 bis 12.10. 17:44, 21 abgeschlossene Läufe):
+
+| Größe | Wert |
+|---|---|
+| Abschaltung über den Vorlauf (Vorlauf ≥ Soll +2,75 K in der letzten Laufminute) | 18 Läufe, 97–970 min, Median 148 min; gemessen immer +3,0 oder +3,25 K |
+| Takte (Abschaltung über den Vorlauf nach < 60 min) | **0** |
+| Läufe < 60 min | 2, beide an der Heizgrenze (Außentemperatur 14–15 °C, Pumpe danach aus): 08.10. 00:10, 40–45 min, Ende Soll +0,5 K; 10.10. 11:18, 32–33 min, Ende Soll −0,75 K |
+| Starts in 3 h | höchstens 1 |
+| Dauer nach Außentemperatur (Abschaltung über den Vorlauf) | ≤ 7 °C: 322–970 min; 8–10,5 °C: 97–261 min (Median 148); 11–13 °C: 116–184 min (Median 134) |
+| Quiet 0 gegen Quiet 3 | Median 143 min (7 Läufe, Ø 10,1 °C) gegen 148 min (11 Läufe, Ø 9,3 °C): kein Unterschied |
+| ≥ 22 Hz bei Quiet 0 ohne Boost | 4 Läufe (10.10. 14:50, 23:14; 11.10. 02:28, 11:32), je 21–44 min ≥ 22 Hz nach Pausen von 65–179 min; die Läufe dauerten trotzdem 113–204 min. Die Frequenz fällt von selbst auf 16–17 Hz, sobald der Rücklauf sein Ziel erreicht |
+| Rücklauf-Rückstand Minute 15–30 | trennt nicht: die kürzesten Läufe (97–119 min) hatten −1,28…+0,33 K, die langen −0,55…+1,83 K |
+| Vorhersage „Abschaltgrenze in ≤ 45 min“ (v1) | 990 Laufminuten, Stopp binnen Vorhersage + 15 min in 375; bei ≥ 22 Hz nur 5 von 96 Minuten; ohne Bedarf vorhergesagt 18–45 min, tatsächlich 36–156 min |
+
+Was kurze von langen Läufen unterscheidet, ist vor allem die Außentemperatur (Bedarf) und der Vorlauf-Anstieg am Ende des Laufs (0–3,5 K/h), nicht Quiet, Frequenz oder Rücklauf-Rückstand. Der einzige v1-Vorschlag (10.10. 15:39, Fehlalarm −24) stützte sich auf die unzuverlässige Vorhersage und auf „letzter Lauf nur 33 min“, der an der Heizgrenze endete.
+
+**Regel v2:** Takt belegt = letzter Lauf mit Abschaltung über den Vorlauf (`thermoStoppK` 2,75 K) kürzer als 60 min oder ≥ 2 Starts in 3 h. Die Vorhersage steht nur noch im Text. `S.runs` führt die Stopp-Art (`[Beginn, Dauer, 1/0]`); ältere Einträge ohne Stopp-Art gelten nicht als Beleg (vorsichtig). Replay: 0 Vorschläge statt 1 Fehlalarm; 137 Minuten „kein Takt belegt“, in denen alle anderen Bedingungen erfüllt waren. Ein echter Takt kam in den Daten nicht vor, der Auslöser ist deshalb nur in der Sim geprüft (Tests: Takt belegt → Vorschlag, Heizgrenze-Stopp → keiner, 2 Starts in 3 h → Vorschlag, alter Zustand → keiner).
+
+**Die Regel ruht bei Quiet 3 von Hand** (4266 von 7250 Replay-Minuten). Das ist gewollt: ihr einziger Hebel ist Quiet, und der steht dann schon. Ein zweiter Hebel wäre die Heizkurven-Verschiebung, siehe Entwurf unten.
+
+**Entwurf (nicht gebaut): „Laufzeit strecken über Heizkurve +1 K“.** Idee: bei Quiet 0 (oder Quiet 3 von Hand, dann ist es der einzige Hebel) die Verschiebung auf +1 K, solange Takt belegt ist. Die Verschiebung hebt Stopp- **und** Startschwelle um 1 K (Handbuch: Stopp bei Vorlauf − interner Soll > 2 K für 3 min, Leisha gemessen Soll +3,0…+3,25 K; Start 6–13 min nach Vorlauf < Soll −3,25 K, Handbuch: Vorlauf < gespeicherter Rücklauf −3 K).
+
+| Größe | aus den Daten 07.–12.10. (18 Läufe mit Abschaltung über den Vorlauf) | Folge von +1 K (Schätzung) |
+|---|---|---|
+| Vorlauf-Anstieg in den letzten 30 min vor dem Stopp | 0–3,5 K/h, Median 1,5 K/h (≤ 7 °C: 0–1 K/h) | Lauf **+20…60 min** (1 K / Anstieg), bei ≤ 1 K/h Dauerlauf bis sich der Bedarf ändert; passt zu „+40–60 min je Lauf“ aus den Sollsprüngen 07.–10.10. |
+| Zeit von Soll −2,25 K bis Soll −3,25 K in der Pause | 11–67 min, Median 18 min | Pause **−11…67 min** (Median −18 min), weil der Start 1 K früher kommt |
+| Zyklus bei 8–10 °C | Lauf 135–190 min + Pause 66–74 min | z. B. 135 + 74 → ~175 + 56 min: Starts je Tag ~6,9 → ~6,2 (−10 %) |
+| Strom | Vorlauf +1 K | +2,5–3 % (8,5 W/K), COP etwas schlechter |
+| Räume | mehr Wärme je Zyklus | wärmer; 10.–11.10. lagen Wohnzimmer/Kinderzimmer unten mehrfach über Maximum (Raumeinfluss −1 K) |
+
+Entwurf der Bedingungen: Quiet 0 oder 3 · Takt belegt (wie Regel v2) · Lauf ≥ 15 min · kein Raum über Maximum − 0,3 K · Verschiebung 0 und frei (Arbitrierung: Größe `shift`, Priorität nach Raumeinfluss, Komfort-Notfall in Gegenrichtung beendet sie) · nicht bei Handeingriff/Sanftanlauf/Nachtabsenkung · 10 min am Stück. Rückweg: nach zwei Zyklen ohne Takt, sobald ein Raum über Maximum steigt, spätestens nach 6 h. Prognose: „mit +1 K dauert der nächste Lauf ≥ 60 min“.
+
+Risiken: (1) **nichts zu beheben**: in den Daten gab es keinen Takt, die Regel hätte nie ausgelöst; (2) **Gegenspieler Raumeinfluss**: +1 K heizt, genau in milden Lagen, in denen die Räume eher zu warm sind, das erzeugt Hin und Her mit −1 K (Arbitrierung verhindert es, aber dann wirkt die Regel nicht); (3) die Pause wird kürzer, der Gewinn an Zyklen ist kleiner als die Laufverlängerung vermuten lässt (geschätzt −10 % Starts); (4) Mehrverbrauch +2,5–3 %; (5) **Wirkung nicht gemessen**: ob die Stoppschwelle am angezeigten oder an einem internen Soll (+1 K?) hängt und wie sich der Startverzug verschiebt, zeigt erst der Verzögerungstest; vorher wäre jede Prognose eine Annahme. Empfehlung: erst bauen, wenn Takte (< 60 min mit Abschaltung über den Vorlauf) tatsächlich auftreten und der Verzögerungstest die Schwellen bestätigt.
 
 **Heizgrenze-Hinweis.** Die Bewertung ist ein Stellvertreter: „Räume bleiben ≥ Minimum + 0,5 K“.
 - Die Reserve von 0,5 K ist eine **Annahme**.
@@ -670,7 +714,11 @@ Jeder andere `mqtt out` sowie jeder Link- und HTTP-in-Knoten im Tab bleibt verbo
 
 **Bewertungsregeln v4 (12.10.).** Geänderte Knoten für den Deploy: `opt_engine` und `opt_apply` (eingebetteter Kern bzw. Kern + Anzeige). Die vier Vorlagen `opt_t_eng_*` sind unverändert (`eng_ui.js` unverändert). Der Zustand bleibt erhalten: die v3-Summen bleiben unter `…|s3` stehen, Kachel und Diagramm beginnen für v4 bei 0, die Heizgrenze-Kachel zeigt „–“. Offene v3-Fälle enden mit v3.
 
-**Offene Entscheidung: Prognose p unter der Basisrate (Befehlsregeln).** Ein Treffer bringt nur Punkte, wenn p > b; liegt die feste Prognose p unter der Basisrate „bleibt, wie es ist“, kostet jeder Treffer Punkte, je sicherer die Lage, desto mehr. Das ist bei Befehlsregeln nicht eindeutig falsch (das Brier-Prinzip will genau das: eine Prognose, die schlechter ist als „bleibt so“, hat keinen Skill), aber es bestraft eine Regel, die nur in eindeutigen Lagen vorschlägt. Gemessen (`SIM_BASIS=1`, Teil-Replay):
+**Bewertungsregeln v5 und Laufzeit strecken v2 (12.10. abends).** Geänderte Knoten für den Deploy: `opt_engine` und `opt_apply` (eingebetteter Kern bzw. Kern + Anzeige). Die vier Vorlagen `opt_t_eng_*` sind unverändert (`eng_ui.js` unverändert; die Kennzahl „davon … neutral“ kommt aus `engine_view.js` in `opt_engine`). Der Zustand bleibt erhalten: v4-Summen unter `…|s4`, v5 beginnt bei 0; offene v4-Fälle enden mit v4. „Laufzeit strecken“ v2 zählt unter `quiet_strecken|v2|s5` neu; Läufe aus dem alten Zustand haben keine Stopp-Art und gelten nicht als Takt-Beleg, bis der erste neue Lauf endet.
+
+**Entschieden 12.10.: Weg (b), umgesetzt als Bewertungsregeln v5** (Abschnitt 6). Die frühere Darstellung der offenen Entscheidung bleibt zur Nachvollziehbarkeit stehen:
+
+**(Früher offen) Prognose p unter der Basisrate (Befehlsregeln).** Ein Treffer bringt nur Punkte, wenn p > b; liegt die feste Prognose p unter der Basisrate „bleibt, wie es ist“, kostet jeder Treffer Punkte, je sicherer die Lage, desto mehr. Das ist bei Befehlsregeln nicht eindeutig falsch (das Brier-Prinzip will genau das: eine Prognose, die schlechter ist als „bleibt so“, hat keinen Skill), aber es bestraft eine Regel, die nur in eindeutigen Lagen vorschlägt. Gemessen (`SIM_BASIS=1`, Teil-Replay):
 
 | Regel (p) | Basisrate b je Horizont | Folge |
 |---|---|---|
@@ -679,6 +727,23 @@ Jeder andere `mqtt out` sowie jeder Link- und HTTP-in-Knoten im Tab bleibt verbo
 | Vorausschau (0,6) | 8-Tage-Sim 0,17–0,21 | keine Falle in der Sim (Gate live zu) |
 | Laufzeit strecken (0,7) | keine Vergleichslage in Replay und Sims | unbekannt |
 
-Mögliche Wege (je eine neue Bewertungsversion, nichts davon gebaut): (a) p je Regel/Horizont höher ansetzen (Annahme, wieder fest; bei b → 0,99 bleibt die Falle); (b) Treffer bei b ≥ p neutral zählen („keine Trennschärfe messbar“), Fehlalarme weiter voll; (c) p aus der eigenen Trefferquote der Regel lernen ((k + 1)/(n + 2), wie b) und nur die Trennschärfe gegen b punkten; (d) Raumeinfluss nur über die Wirkung bewerten (braucht Übernahmen). Der Replay-Bericht (Punkt 6) hatte schon festgehalten, p erst nach 14 Tagen Live-Daten neu festzulegen.
+Mögliche Wege (je eine neue Bewertungsversion; gewählt wurde (b)): (a) p je Regel/Horizont höher ansetzen (Annahme, wieder fest; bei b → 0,99 bleibt die Falle); (b) Treffer bei b ≥ p neutral zählen („keine Trennschärfe messbar“), Fehlalarme weiter voll; (c) p aus der eigenen Trefferquote der Regel lernen ((k + 1)/(n + 2), wie b) und nur die Trennschärfe gegen b punkten; (d) Raumeinfluss nur über die Wirkung bewerten (braucht Übernahmen). Der Replay-Bericht (Punkt 6) hatte schon festgehalten, p erst nach 14 Tagen Live-Daten neu festzulegen.
+
+**Ergebnis v5 (Replay 07.10. 16:55 bis 12.10. 17:44, Regel „Laufzeit strecken“ v2, Entscheidungen in v4 und v5 identisch):**
+
+| Regel | v4 | v5 | Anmerkung |
+|---|---|---|---|
+| Quiet-Freigabe | 0,00 (1 Fall neutral) | 0,00 | Eingriff durch den Nutzer |
+| Laufzeit strecken | 0,00 (Regel v1: −24,00) | 0,00 | Regel v2: kein Vorschlag |
+| Raumeinfluss | −9,74, Skill −0,09 | **−23,49**, Skill −0,49 (4 Fälle mit Beitrag) | 6 Treffer, davon 4 ganz neutral; der Fehlalarm 10.10. 10:26 kostet jetzt −19,52 statt +12,63, der 240-min-Horizont 11.10. 09:10 −8,00 statt +0,95 |
+| Heizgrenze-Hinweis | – | – | nur Hinweis |
+| Vorausschau | 0,00 | 0,00 | Gate zu |
+
+5-Tage-Kälte-Sim: Raumeinfluss 14 Treffer **0** (v4 −122,3), Quiet-Freigabe 15 Treffer **−19** (v4 −71,2; der erste Fall +21 vor dem Lernen der Basisrate, 14 neutral, Minus nur aus einzelnen Fehl-Horizonten −13). 8-Tage-Sim (Verschiebung, Shadow): Raumeinfluss 0 (+16, 0, 0, −16), Vorausschau −23,67 (1 Fehlalarm vor dem Lernen der Basisrate, unverändert).
+
+**Neue offene Entscheidungen aus v5:**
+1. **Höhe des Fehlalarm-Abzugs bei b ≥ p.** Gewählt: gegen b = 0,5 (p 0,7 → −24). Das ist bei b = p unstetig (knapp darunter kostet ein Fehlalarm fast 0, darauf −24). Raumeinfluss im Replay: gewählt −23,5; wörtlich „Brier wie bisher“ (Fehlalarm bei b > p als Plus) +17,5; stetige Variante −|Brier| (Abzug wächst mit b − p) −16,7. Die Plus-Variante belohnt Fehlalarme und widerspricht „voll im Abzug“.
+2. **Freigabereife und Skill.** Neutrale Treffer tragen nicht zum Skill bei. In Dauer-Lagen (b > p an allen Horizonten, z. B. Raumeinfluss 14 Treffer in der Kälte-Sim) bleibt der Skill „–“, das Kriterium „Skill ≥ 0,2“ ist dort nie erfüllbar; positiv werden kann er nur aus Horizonten mit b < p, ein Fehlalarm bei b ≥ p drückt ihn stark (Replay Raumeinfluss −0,49). Der Skill ist damit konsistent mit den Punkten, aber die Freigabereife einer Regel, die meist in eindeutigen Lagen vorschlägt, hängt an wenigen Horizonten. Vorschlag (nicht gebaut): Kriterium „Skill ≥ 0,2 **oder** (≥ 10 Treffer-Fälle neutral, 0 Fehlalarme bei b ≥ p und ≥ 2 Wirkungsfälle > 0)“ – die Wirkung kommt erst mit Übernahmen.
+3. **p neu festlegen** nach 14 Tagen Live-Daten bleibt sinnvoll; mit v5 verliert eine zu niedrige p aber ihren Schaden.
 
 **Zeitzone.** Wie im übrigen Optimierer ist sie die Ortszeit des Containers. Die Sim läuft mit Europe/Berlin, auch über die Zeitumstellung am 25.10.
