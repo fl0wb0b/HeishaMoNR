@@ -117,13 +117,14 @@ var ENGVIEW = (function (E) {
         var sv = (S.sc && S.sc.sv) || E.SCORE_VER, rep = E.report(S, sv);
         var hist = ((S.sc && S.sc.hist) || []).filter(function (h) { return h[0] >= now - 30 * 24 * 60 * MIN && (h[3] || 1) === sv; });   // nur die aktuelle Bewertungsversion
         var t0 = hist.length ? Math.min(hist[0][0] - 60 * MIN, now - 24 * 60 * MIN) : now - 7 * 24 * 60 * MIN;
-        var series = E.RULES.filter(function (R) { return sv < 4 || R.art !== 'hinweis'; }).map(function (R) {   // v4: Hinweise ohne Punkte, nicht im Diagramm
+        var series = E.RULES.filter(function (R) { return sv < 4 || R.art !== 'hinweis'; }).map(function (R) {   // ab v4: Hinweise ohne Punkte, nicht im Diagramm
             var pts = hist.filter(function (h) { return h[1] === R.id; }).map(function (h) { return [h[0], h[2]]; });
             if (pts.length) { pts.unshift([t0, 0]); pts.push([now, pts[pts.length - 1][1]]); }
             return {id: R.id, n: R.kurz, c: COL[R.id], d: pts};
         }).filter(function (x) { return x.d.length; });
         var tiles = rep.map(function (r) {
             var sub = r.faelle ? r.faelle + ' ' + (r.faelle === 1 ? 'Fall' : 'Fälle') + ' · ' + r.treffer + ' Treffer · ' + r.fehlalarm + ' Fehlalarm' : 'noch kein Fall', more = [];
+            if (r.trefferNeutral) { more.push('davon ' + r.trefferNeutral + ' Treffer neutral (Basisrate ≥ Prognose)'); }     // v5: Treffer bei hoher Basisrate 0 Punkte
             if (r.skill !== null) { more.push('Skill ' + E.de(r.skill, 2)); }
             var wn = r.wirkung.n - r.wirkung.kalib;
             if (r.art === 'befehl' && wn) { more.push('Wirkung ' + E.sg(r.wirkung.punkte, 0) + ' aus ' + wn + (wn === 1 ? ' Fall' : ' Fällen')); }

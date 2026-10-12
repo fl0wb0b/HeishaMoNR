@@ -165,7 +165,7 @@ function plantSim(days, opts) {
                    korr: {v: korrV, code: korrV ? 'Raum ausserhalb' : 'alle im Band', distrib: false, lead: 'Kinderzimmer oben'}};
         if (opts.restartEvery && i > 0 && i % opts.restartEvery === 0 && S) { S = JSON.parse(JSON.stringify(S)); S.born = t; }
         try {
-            const o = E.step(S, x, cfg); S = o.S; log.recs++; log.minutes++;
+            const o = E.step(S, x, opts.cfg || cfg); S = o.S; log.recs++; log.minutes++;
             o.res.forEach(r => { log.statuses[r.st] = (log.statuses[r.st] || 0) + 1; if (r.neu) { log.props.push(S.rules[r.id].prop); if (r.locks.length) { log.lockedProp++; } } });
             if (o.prop && o.prop.art === 'befehl' && (x.block === 1 || stale || x.defrost === 1)) { log.maxSendable++; }
             o.scores.forEach(s => log.scores.push(s)); o.ev.forEach(e => log.ev.push(e));
@@ -191,6 +191,14 @@ console.log('--- (a) Mehrtages-Simulation (Anlagenmodell, Fake-Uhr)');
     check('Boost mit "Klick" (Quiet 0 nach dem Vorschlag): Wirkungsfall wird bewertet (kein Kalibrierfall), Ausloeser-Fall neutral (Eingriff)', C.scores.some(s => s.typ === 'wirkung' && s.regel === 'quiet_freigabe' && s.kalibrierfall === 0) && C.scores.filter(s => s.typ === 'ausloeser' && s.regel === 'quiet_freigabe').every(s => s.ergebnis === 'neutral'), C.scores.filter(s => s.regel === 'quiet_freigabe').map(s => s.typ + ':' + s.punkte).join(', '));
     const D = plantSim(5, {at: 4, cool: 1.5});
     basisBericht('5 Tage kaelter', D); basisBericht('4 Tage mild', A); basisBericht('3 Tage Boost', B);
+    { const D4 = plantSim(5, {at: 4, cool: 1.5, cfg: E.mergeCfg({sv: 4})}), r5 = E.report(D.S), r4 = E.report(D4.S, 4), g = (r, id) => r.find(x => x.regel === id);
+      const hz = D.scores.filter(s => s.typ === 'ausloeser' && s.regel === 'quiet_freigabe').reduce((a, s) => a.concat(s.horizonte), []);
+      check('v5 im 5-Tage-Kaelte-Szenario (Befund 12.10.: v4 Raumeinfluss 14 Treffer -122, Quiet-Freigabe 15 Treffer -71): Raumeinfluss alle Treffer neutral, 0 Punkte; Quiet-Freigabe ohne Treffer-Abzug (Treffer-Horizonte bei b >= p 0 Punkte, vor dem Lernen der Basisrate Plus; Minus nur aus einzelnen Fehl-Horizonten mit vollem Abzug -13); v4 nachrechenbar',
+            g(r5, 'raum_offset').treffer >= 10 && g(r5, 'raum_offset').trefferNeutral === g(r5, 'raum_offset').treffer && g(r5, 'raum_offset').punkte === 0 && g(r4, 'raum_offset').punkte < -100 &&
+            hz.filter(h => h.o === 1).every(h => h.bp === 'neutral' ? h.punkte === 0 : (h.b < 0.8 && h.punkte > 0)) && hz.filter(h => h.o === 1 && h.bp === 'neutral').length >= 30 && hz.filter(h => h.o === 0).every(h => h.bp === 'abzug' ? Math.abs(h.punkte + 13) < 0.01 : h.b < 0.8) && g(r5, 'quiet_freigabe').punkte > g(r4, 'quiet_freigabe').punkte && g(r4, 'quiet_freigabe').punkte < -60,
+            'v5: Raumeinfluss ' + g(r5, 'raum_offset').punkte + ' (' + g(r5, 'raum_offset').treffer + ' T, ' + g(r5, 'raum_offset').trefferNeutral + ' neutral), Quiet-Freigabe ' + g(r5, 'quiet_freigabe').punkte + ' (' + g(r5, 'quiet_freigabe').treffer + ' T, ' + g(r5, 'quiet_freigabe').trefferNeutral + ' neutral) · v4: ' + g(r4, 'raum_offset').punkte + ' / ' + g(r4, 'quiet_freigabe').punkte);
+      check('v5 Skill-Konsistenz: Treffer ohne Brier-Beitrag zaehlen nicht fuer den Skill -> Raumeinfluss nach 14 neutralen Treffern Skill "–" (0 Faelle mit Beitrag), Kriterium "Skill" der Freigabereife damit in Dauer-Lagen unerreichbar (offene Entscheidung)',
+            g(r5, 'raum_offset').skill === null && g(r5, 'raum_offset').skillFaelle === 0 && !g(r5, 'raum_offset').kriterien.find(k => k.k === 'skill').ok, 'Skill ' + g(r5, 'raum_offset').skill + ', Faelle mit Beitrag ' + g(r5, 'raum_offset').skillFaelle); }
     const perDay = {}; D.props.filter(p => p.rule === 'quiet_freigabe').forEach(p => { const k = E.iso(p.ts).slice(0, 10); perDay[k] = (perDay[k] || 0) + 1; });
     check('5 Tage kaelter werdend (4 -> -3,5 °C, Bedarf ueber der Mindestleistung): Quiet-Freigabe schlaegt an (Deckel-Lage), hoechstens 3 je Tag, kein Fehler', D.errors === 0 && Object.keys(perDay).length >= 3 && Object.keys(perDay).every(k => perDay[k] <= 3), JSON.stringify(perDay));
 }
@@ -299,8 +307,8 @@ console.log('--- (b) Punktesystem');
     R = runSeq(220, i => mild(i, 22.8)); sc = allSc(R);
     const hz4 = sc.find(s => s.typ === 'ausloeser' && s.regel === 'heizgrenze_hinweis'), rh4 = E.report(R.S).find(r => r.regel === 'heizgrenze_hinweis');
     check('v4: Hinweis-Regel Heizgrenze, Treffer (Raeume behalten die Reserve) = 0 Punkte; Ergebnis und Basisrate stehen weiter im Punktebuch, Fall/Treffer gezaehlt, Punkte/Skill/Freigabereife entfallen, nicht im Diagramm',
-          hz4 && hz4.ergebnis === 'treffer' && hz4.punkte === 0 && hz4.sv === 4 && hz4.horizonte[0].o === 1 && hz4.horizonte[0].punkte === 0 && /nur Hinweis, keine Punkte/.test(hz4.text) &&
-          rh4.punkte === null && rh4.ohnePunkte === true && rh4.faelle === 1 && rh4.treffer === 1 && rh4.skill === null && rh4.kriterien.length === 0 && rh4.reif === false && !R.S.sc.hist.some(h => h[1] === 'heizgrenze_hinweis') && R.S.sc.tot['heizgrenze_hinweis|v1|s4'].bs === 0,
+          hz4 && hz4.ergebnis === 'treffer' && hz4.punkte === 0 && hz4.sv === E.SCORE_VER && hz4.horizonte[0].o === 1 && hz4.horizonte[0].punkte === 0 && /nur Hinweis, keine Punkte/.test(hz4.text) &&
+          rh4.punkte === null && rh4.ohnePunkte === true && rh4.faelle === 1 && rh4.treffer === 1 && rh4.skill === null && rh4.kriterien.length === 0 && rh4.reif === false && !R.S.sc.hist.some(h => h[1] === 'heizgrenze_hinweis') && R.S.sc.tot['heizgrenze_hinweis|v1|s' + E.SCORE_VER].bs === 0,
           hz4 && (hz4.ergebnis + ' ' + hz4.punkte + ' · ' + JSON.stringify({p: rh4.punkte, f: rh4.faelle, t: rh4.treffer, s: rh4.skill})));
     R = runSeq(220, i => mild(i, Math.round((i < 40 ? 22.8 : 22.8 - (i - 40) * 0.01) * 10) / 10)); sc = allSc(R);
     const hzd = sc.find(s => s.typ === 'schaden' && s.regel === 'heizgrenze_hinweis'), rhd = E.report(R.S).find(r => r.regel === 'heizgrenze_hinweis');
@@ -312,23 +320,51 @@ console.log('--- (b) Punktesystem');
     check('Befund 12.10. nachgerechnet (v3): Hinweis-Treffer mit p 0,6 gegen Basisrate 0,857 = -14,0, Skill 1 - 0,16/0,0204 = -6,84 (v4: 0 Punkte, Skill "–")', Math.abs(E.brier(0.6, 6 / 7, 1) + 14.0) < 0.1 && Math.abs((1 - 0.16 / Math.pow(1 - 6 / 7, 2)) + 6.84) < 0.01, E.brier(0.6, 6 / 7, 1).toFixed(2));
     // offener Fall: erster Horizont (30 min) abgeschlossen, Fall noch offen (120 min) -> v4 keine Brier-Summen, kein Skill; v3 schon (Befund "Skill -25 bei 0 Faellen")
     const open4 = runSeq(45, i => boost(i)), open3 = runSeq(45, i => boost(i), null, E.mergeCfg({sv: 3}));
-    const T4 = open4.S.sc.tot['quiet_freigabe|v1|s4'], T3 = open3.S.sc.tot['quiet_freigabe|v1|s3'], r4 = E.report(open4.S).find(r => r.regel === 'quiet_freigabe'), r3 = E.report(open3.S, 3).find(r => r.regel === 'quiet_freigabe');
+    const T4 = open4.S.sc.tot['quiet_freigabe|v1|s' + E.SCORE_VER], T3 = open3.S.sc.tot['quiet_freigabe|v1|s3'], r4 = E.report(open4.S).find(r => r.regel === 'quiet_freigabe'), r3 = E.report(open3.S, 3).find(r => r.regel === 'quiet_freigabe');
     check('v4: offener Fall veraendert den Skill nicht (Horizont 30 min abgeschlossen, Fall offen bis 120 min): bs/bsRef 0, Faelle 0, Skill "–"; v3 hatte hier schon bs > 0 und einen Skill bei 0 Faellen',
           open4.S.sc.cases.length === 1 && open4.S.sc.cases[0].done.length === 1 && T4.bs === 0 && T4.bsRef === 0 && T4.faelle === 0 && r4.skill === null && T3.bs > 0 && T3.faelle === 0 && r3.skill !== null,
           JSON.stringify({v4: [T4.bs, T4.bsRef, r4.skill], v3: [T3.bs, T3.bsRef, r3.skill]}));
     // Skill erst ab 3 abgeschlossenen, bewerteten Faellen: drei Boost-Episoden (je 150 min Deckel, dann 3 h Pause ohne Lage)
     { let S3 = null; const sk = [];
       for (let k = 0; k < 3; k++) {
-          for (let i = 0; i < 330; i++) { const t = k * 330 + i; const o = E.step(S3, i < 150 ? boost(t, {rt: 30 + i}) : inp(T0 + t * MIN, {rt: 0, hz: 0, q: 3, soll: 30, sollKurve: 29.75, vl: 30, rl: 29, pump: 0}), cfg); S3 = o.S;
-                                    if (o.scores.some(s => s.typ === 'ausloeser' && s.regel === 'quiet_freigabe')) { const r = E.report(S3).find(x => x.regel === 'quiet_freigabe'); sk.push([r.bewertet, r.skill]); } }
+          for (let i = 0; i < 330; i++) { const t = k * 330 + i; const o = E.step(S3, i < 150 ? boost(t, {rt: 30 + i}) : inp(T0 + t * MIN, {rt: 0, hz: 0, q: 3, soll: 30, sollKurve: 29.75, vl: 30, rl: 29, pump: 0}), E.mergeCfg({sv: 4})); S3 = o.S;
+                                    if (o.scores.some(s => s.typ === 'ausloeser' && s.regel === 'quiet_freigabe')) { const r = E.report(S3, 4).find(x => x.regel === 'quiet_freigabe'); sk.push([r.bewertet, r.skill]); } }
       }
-      check('v4: Skill erst ab 3 abgeschlossenen, bewerteten Faellen (nach Fall 1 und 2 "–", nach Fall 3 eine Zahl)', sk.length === 3 && sk[0][1] === null && sk[1][1] === null && sk[2][0] === 3 && sk[2][1] !== null, JSON.stringify(sk)); }
+      check('v4 (cfg.sv = 4): Skill erst ab 3 abgeschlossenen, bewerteten Faellen (nach Fall 1 und 2 "–", nach Fall 3 eine Zahl; v5 siehe S13: hier lernt die Basisrate b >= p, die Treffer sind neutral)', sk.length === 3 && sk[0][1] === null && sk[1][1] === null && sk[2][0] === 3 && sk[2][1] !== null, JSON.stringify(sk)); }
     // Versionswechsel v3 -> v4 mitten in einem offenen Hinweis-Fall: der Fall wird mit v3 zu Ende bewertet (Punkte unter "|s3"), v4 beginnt bei 0
     R = runSeq(60, i => mild(i, 22.8), null, E.mergeCfg({sv: 3})); const Sw = R.S, nOpen = Sw.sc.cases.filter(C => C.rule === 'heizgrenze_hinweis').length;
     R = runSeq(160, i => mild(60 + i, 22.8), Sw); sc = allSc(R);
     const hw = sc.find(s => s.typ === 'ausloeser' && s.regel === 'heizgrenze_hinweis');
     check('Versionswechsel v3 -> v4: offener Hinweis-Fall endet mit seiner Version (sv 3, +9 unter "heizgrenze_hinweis|v1|s3"), v4-Summen dieser Regel bleiben leer',
-          nOpen === 1 && hw && hw.sv === 3 && hw.punkte === 9 && R.S.sc.tot['heizgrenze_hinweis|v1|s3'].punkte === 9 && R.S.sc.tot['heizgrenze_hinweis|v1|s4'].faelle === 0 && E.report(R.S).find(r => r.regel === 'heizgrenze_hinweis').sv === 4, hw && (hw.sv + ' ' + hw.punkte));
+          nOpen === 1 && hw && hw.sv === 3 && hw.punkte === 9 && R.S.sc.tot['heizgrenze_hinweis|v1|s3'].punkte === 9 && R.S.sc.tot['heizgrenze_hinweis|v1|s' + E.SCORE_VER].faelle === 0 && E.report(R.S).find(r => r.regel === 'heizgrenze_hinweis').sv === E.SCORE_VER, hw && (hw.sv + ' ' + hw.punkte));
+    // S13 (Bewertungsregeln v5, Weg b, Entscheidung des Nutzers 12.10.): Treffer bei b >= p neutral, Fehlalarm voll im Abzug, b < p unveraendert
+    { const H = E.hPunkte;
+      check('v5 je Horizont: Treffer bei b >= p = 0 Punkte ohne Skill-Beitrag (b 0,92/p 0,7 und b = p); Fehlalarm bei b >= p = Abzug gegen b 0,5 (p 0,7 -> -24, p 0,8 -> -39) statt Brier-Plus (v4: b 0,92/p 0,7 Fehlalarm +35,6); b < p unveraendert',
+            H(0.7, 0.92, 1, 5).pts === 0 && H(0.7, 0.92, 1, 5).bRef === null && H(0.7, 0.7, 1, 5).pts === 0 && Math.abs(H(0.7, 0.92, 0, 5).pts + 24) < 1e-9 && Math.abs(H(0.8, 0.99, 0, 5).pts + 39) < 1e-9 &&
+            Math.abs(H(0.7, 0.92, 0, 4).pts - 35.64) < 1e-9 && Math.abs(H(0.7, 0.92, 1, 4).pts + 8.36) < 1e-9 && [0, 0.18, 0.5, 0.69].every(b => [0, 1].every(o => H(0.7, b, o, 5).pts === H(0.7, b, o, 4).pts && H(0.7, b, o, 5).bp === '')),
+            [H(0.7, 0.92, 1, 5).pts, H(0.7, 0.92, 0, 5).pts, H(0.7, 0.92, 0, 4).pts.toFixed(2), H(0.7, 0.92, 1, 4).pts.toFixed(2)].join(' / '));
+      const ev5 = (p, b, f) => f * H(p, b, 1, 5).pts + (1 - f) * H(p, b, 0, 5).pts;
+      check('v5 kein Gaming: ohne Trennschaerfe (Ergebnis-Haeufigkeit f = Basisrate b) im Mittel <= 0 Punkte, auch bei b >= p (dort nur Abzuege moeglich); b 0,1..0,99, p 0,6..0,8',
+            [0.1, 0.3, 0.5, 0.6, 0.7, 0.8, 0.9, 0.99].every(b => [0.6, 0.7, 0.8].every(p => ev5(p, b, b) <= 1e-9)), [0.5, 0.9].map(b => 'b' + b + ':' + ev5(0.7, b, b).toFixed(1)).join(' '));
+      const seed = (k, n) => { const S0 = E.newState(T0 - MIN); S0.sc.base.quiet_freigabe = {30: [n, k], 60: [n, k], 120: [n, k]}; return S0; };    // gelernte Basisrate vorgeben (k von n "bleibt")
+      const fall = R0 => allSc(R0).find(s => s.typ === 'ausloeser' && s.regel === 'quiet_freigabe');
+      const hi5 = runSeq(160, i => boost(i), seed(19, 20)), hi4 = runSeq(160, i => boost(i), seed(19, 20), E.mergeCfg({sv: 4}));
+      const a5 = fall(hi5), a4 = fall(hi4), rp5 = E.report(hi5.S).find(r => r.regel === 'quiet_freigabe');
+      check('v5 Ablauf: Quiet-Freigabe bleibt 150 min am Deckel bei gelernter Basisrate 0,91 >= p 0,8 -> Treffer, 0 Punkte, alle Horizonte "neutral", Kennzahl trefferNeutral 1, kein Skill-Beitrag; cfg.sv = 4 rechnet denselben Fall nach (Treffer mit Minus, Datensatz sv 4)',
+            a5 && a5.ergebnis === 'treffer' && a5.punkte === 0 && a5.sv === 5 && a5.horizonte.every(h => h.bp === 'neutral' && h.punkte === 0) && a5.treffer_neutral === 1 && /Basisrate 0,9\d ≥ Prognose 0,80: neutral/.test(a5.text) &&
+            rp5.trefferNeutral === 1 && rp5.skillFaelle === 0 && rp5.skill === null && hi5.S.sc.tot['quiet_freigabe|v1|s5'].bs === 0 && a4 && a4.sv === 4 && a4.punkte < 0 && !a4.horizonte.some(h => h.bp) && hi4.outs[5].rec.sv === 4,
+            (a5 && a5.punkte) + ' / v4 ' + (a4 && a4.punkte));
+      const lo5 = runSeq(160, i => boost(i, i >= 15 ? {vl: 38, rl: 35.5} : {}), seed(19, 20)), lo4 = runSeq(160, i => boost(i, i >= 15 ? {vl: 38, rl: 35.5} : {}), seed(19, 20), E.mergeCfg({sv: 4}));
+      const f5 = fall(lo5), f4 = fall(lo4);
+      check('v5 Ablauf: Fehlalarm (Problem loest sich nach 5 min) bei Basisrate 0,91 >= p 0,8 -> voller Abzug -39 (wie gegen b 0,5), Horizonte "abzug", geht in den Skill ein; v4 gab dafuer +' + E.de(f4 && f4.punkte, 1),
+            f5 && f5.ergebnis === 'fehlalarm' && Math.abs(f5.punkte + 39) < 0.01 && f5.horizonte.every(h => h.bp === 'abzug') && E.report(lo5.S).find(r => r.regel === 'quiet_freigabe').skillFaelle === 1 && f4 && f4.punkte > 0, (f5 && f5.punkte) + ' / v4 ' + (f4 && f4.punkte));
+      const b5 = fall(runSeq(160, i => boost(i), seed(1, 20))), b4 = fall(runSeq(160, i => boost(i), seed(1, 20), E.mergeCfg({sv: 4})));
+      check('v5 Ablauf: b < p (gelernte Basisrate 0,09) -> Brier wie bisher, Treffer = v4 (+' + E.de(b5 && b5.punkte, 2) + '), kein Horizont neutral', b5 && b4 && b5.punkte === b4.punkte && b5.punkte > 50 && !b5.horizonte.some(h => h.bp) && !b5.treffer_neutral, (b5 && b5.punkte) + ' / ' + (b4 && b4.punkte));
+      // Versionswechsel v4 -> v5 mitten in einem offenen Fall: der Fall endet mit v4 (Brier gegen b, "|s4"), die v5-Summen beginnen bei 0
+      const W4 = runSeq(60, i => boost(i), seed(19, 20), E.mergeCfg({sv: 4})), W5 = runSeq(100, i => boost(60 + i), W4.S), aw = fall(W5);
+      check('Versionswechsel v4 -> v5: offener Fall endet mit v4 (sv 4, Brier gegen b, unter "quiet_freigabe|v1|s4"), v5-Summen der Regel bleiben leer, Datensaetze ab dem Wechsel sv 5',
+            aw && aw.sv === 4 && aw.punkte < 0 && !aw.horizonte.some(h => h.bp) && W5.S.sc.tot['quiet_freigabe|v1|s4'].faelle === 1 && W5.S.sc.tot['quiet_freigabe|v1|s5'].faelle === 0 && W5.outs[0].rec.sv === 5 && E.report(W5.S).find(r => r.regel === 'quiet_freigabe').sv === 5,
+            aw && (aw.sv + ' ' + aw.punkte)); }
     const src = fs.readFileSync(path.join(__dirname, 'engine_core.js'), 'utf8'), bewertung = src.slice(src.indexOf('// ------------------------------------------------------------------ Punktesystem'), src.indexOf('// ------------------------------------------------------------------ Ein-Klick'));
     check('Verwerfen ist keine Bewertung: der Bewertungsteil des Kerns kennt weder Klicks noch den Uebernahme-Zustand (keine Nutzereingabe in den Punkten)', bewertung.length > 1000 && !/verworfen|lastClick|applyRequest|uebernehmen/.test(bewertung), bewertung.length + ' Zeichen geprueft');
 }
@@ -618,6 +654,11 @@ console.log('--- Seite "Optimierer": Karten-Daten und Darstellung');
       check('Punkte-Karte (v4): Heizgrenze-Kachel "–" statt Punktezahl, "1 Fall · 1 Treffer · 0 Fehlalarm", kein Skill, "nur Hinweis", nicht im Diagramm (kein leeres Diagramm); v3 zeigte +9,0 mit Linie',
             th.punkte === '–' && !th.neg && th.sub === '1 Fall · 1 Treffer · 0 Fehlalarm' && th.more === '' && th.reife === null && sh.series.length === 0 && !hh.includes('oe_chart') && hh.includes('<span>nur Hinweis</span>') && sh.tiles.length === 5 &&
             sh3.tiles.find(t => t.id === 'heizgrenze_hinweis').punkte === '+9,0' && sh3.series.some(x => x.id === 'heizgrenze_hinweis'), JSON.stringify({p: th.punkte, sub: th.sub, more: th.more})); }
+    { const S0 = E.newState(T0 - MIN); S0.sc.base.quiet_freigabe = {30: [20, 19], 60: [20, 19], 120: [20, 19]};
+      const AQ = runSeq(160, i => inp(T0 + i * MIN, {rt: 30 + i, soll: 38, sollKurve: 29.75, vl: 30, rl: 28.25, q: 3, hz: 16, rooms: rooms({ki_oben: 21.2})}), S0);
+      const sq = VW.build({now: T0 + 159 * MIN, last: {t: T0 + 159 * MIN, res: AQ.outs[159].res, anl: {}}, S: AQ.S, V: {}, AP: {}}).score, tq = sq.tiles[0];
+      check('Punkte-Karte (v5): Treffer bei hoher Basisrate als Kennzahl "davon 1 Treffer neutral (Basisrate ≥ Prognose)" in der Kachel, Summe 0, kein Skill',
+            tq.sub === '1 Fall · 1 Treffer · 0 Fehlalarm' && tq.more === 'davon 1 Treffer neutral (Basisrate ≥ Prognose)' && tq.punkte === '0' && UI.html('score', sq).includes('davon 1 Treffer neutral (Basisrate ≥ Prognose)'), JSON.stringify({sub: tq.sub, more: tq.more, p: tq.punkte})); }
     if (fs.existsSync(path.join(dataDir, 'quiet-2026-10.csv'))) {
         const PV = require('./engine_ui_preview.js'), SN = PV.snapshots(dataDir), html = PV.page({A: SN.A, B: SN.B});
         check('Vorschau mit echten Daten: 10.10. 08:38 Vorschlag Quiet 3 -> 0 (Übernahme gesperrt), Ende ohne Vorschlag; Entscheidungen hoechstens 12 Episoden, keine Wiederholungen', SN.A.card.prop && SN.A.card.prop.was === 'Quiet-Stufe 3 → 0' && !SN.B.card.prop && SN.B.log.rows.length <= 12 && new Set(SN.B.log.rows.map(r => r.t + r.n)).size === SN.B.log.rows.length && html.length < 200000, SN.B.log.rows.length + ' Episoden, ' + html.length + ' Bytes');

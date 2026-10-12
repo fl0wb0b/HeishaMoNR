@@ -9,7 +9,7 @@
 //   ENGINE.applyTick(A, ctx)            -> {A, send, toast, log}                         Ruecklesen, begrenzte Wiederholung, Rueckweg (alle 15 s)
 var ENGINE = (function () {
     var VER = 1;                 // Format der Entscheidungsdatensaetze
-    var SCORE_VER = 4;           // Bewertungsregeln (vorab festgelegt; jede Aenderung erhoeht die Version, alte Punkte bleiben getrennt)
+    var SCORE_VER = 5;           // Bewertungsregeln (vorab festgelegt; jede Aenderung erhoeht die Version, alte Punkte bleiben getrennt)
                                  // v2 (10.10.2026): "verpasst" waehrend einer EIGENEN Sperre/Wartezeit (Standardwerte, ohne Schaden) zaehlt neutral und
                                  // getrennt ("waehrend Sperre"). v1 bleibt nachrechenbar: cfg.sv = 1 (Replay alter Datensaetze).
                                  // v3 (11.10.2026): Verschiebungs-Arbitrierung. Sperren durch eine Gegenregel ("vorrang", "gegenrichtung") entschuldigen
@@ -18,6 +18,10 @@ var ENGINE = (function () {
                                  // v4 (12.10.2026): Hinweis-Regeln (art 'hinweis') sammeln keine Punkte mehr (Treffer/Fehlalarm/neutral/Schaden nur gezaehlt, kein
                                  // Skill, keine Freigabereife, nicht im Diagramm). Brier-Summen (bs/bsRef) kommen nur aus vollstaendig abgeschlossenen Faellen
                                  // (ein offener Fall veraendert den Skill nicht); Skill erst ab SCORE.skillMinFaelle (3) bewerteten Faellen. cfg.sv = 3 rechnet v3 nach.
+                                 // v5 (12.10.2026, Entscheidung des Nutzers, Weg b): liegt die Basisrate b eines Horizonts mindestens bei der Prognose p (b >= p),
+                                 // zaehlt ein Treffer dort neutral (0 Punkte, kein Beitrag zum Skill: keine Trennschaerfe messbar); ein Fehlalarm dort bleibt ein Abzug
+                                 // gegen die Basisrate SCORE.fehlRefB (0,5, wie vor dem Lernen der Basisrate), weil die Brier-Formel ihn bei b > p sonst mit PLUS
+                                 // belohnen wuerde. b < p: Brier wie bisher. Skill erst ab 3 Faellen mit Brier-Beitrag. cfg.sv = 4 rechnet v4 nach.
     var MIN = 60000;
 
     // ------------------------------------------------------------------ Hilfen (ohne Locale, damit jede Umgebung gleich rechnet)
@@ -419,7 +423,8 @@ var ENGINE = (function () {
         raumAlterMax: 360,         // Bewertung (nicht Entscheidung): ein Raumwert bis 6 h alt zaehlt, weil die Shelly H&T Gen3 nur bei Aenderung >= 0,5 K melden
         lueftungK: 1.0,            // Raum faellt >= 1 K in <= 60 min: Lueftung (Eingriff), danach keine Gegenfaktik fuer Raum-Prognosen (nach dem Replay ergaenzt: 09.10. Wohnzimmer -3,3 K)
         reife: {faelle: 10, tage: 14, skill: 0.2, wirkFaelle: 2, verpasst: 1},
-        skillMinFaelle: 3          // ab v4: Brier-Skill erst ab 3 vollstaendig abgeschlossenen, bewerteten Faellen (vorher "–"; aus 1 Fall ist er wertlos)
+        skillMinFaelle: 3,         // ab v4: Brier-Skill erst ab 3 vollstaendig abgeschlossenen, bewerteten Faellen (vorher "–"; aus 1 Fall ist er wertlos); ab v5: Faelle mit Brier-Beitrag
+        fehlRefB: 0.5              // ab v5: Fehlalarm bei b >= p wird gegen diese Basisrate gerechnet (Abzug wie vor dem Lernen der Basisrate: p 0,7 -> -24, p 0,8 -> -39)
     };
 
     // ------------------------------------------------------------------ Standardwerte (aus dem Regelwerk)
@@ -435,7 +440,7 @@ var ENGINE = (function () {
         if (over && typeof over === 'object') {
             if (over.locks) { Object.keys(c.locks).forEach(function (k) { if (have(num(over.locks[k]))) { c.locks[k] = num(over.locks[k]); } }); }
             if (over.rules) { Object.keys(c.rules).forEach(function (id) { var o = over.rules[id]; if (o) { Object.keys(c.rules[id]).forEach(function (k) { if (have(num(o[k]))) { c.rules[id][k] = num(o[k]); } }); } }); }
-            if (num(over.sv) === 1 || num(over.sv) === 2 || num(over.sv) === 3) { c.sv = num(over.sv); }     // Bewertungsregeln v1/v2/v3 nachrechnen (nur Replay/Tests)
+            if ([1, 2, 3, 4].indexOf(num(over.sv)) >= 0) { c.sv = num(over.sv); }                         // Bewertungsregeln v1 ... v4 nachrechnen (nur Replay/Tests)
         }
         return c;
     }
@@ -838,6 +843,15 @@ var ENGINE = (function () {
         return {o: null, why: 'unklar (' + Math.round(f * 100) + ' %)'};
     }
     function brier(p, b, o) { return SCORE.brierFaktor * (Math.pow(b - o, 2) - Math.pow(p - o, 2)); }   // > 0, wenn die Prognose p naeher am Ergebnis liegt als die Basisrate b
+    // Punkte eines Horizonts (vor der Teilung durch die Anzahl Horizonte) je Bewertungsversion: {pts, bp ('' | 'neutral' | 'abzug'), bRef (Basisrate der Rechnung, null = kein Skill-Beitrag)}
+    // v5 (Weg b): b >= p -> Treffer neutral (0, kein Skill-Beitrag), Fehlalarm Abzug gegen SCORE.fehlRefB (hoechstens 0); b < p und bis v4: Brier gegen b
+    function hPunkte(p, b, o, sv) {
+        if ((sv || 1) >= 5 && b >= p) {
+            if (o === 1) { return {pts: 0, bp: 'neutral', bRef: null}; }
+            return {pts: Math.min(0, brier(p, SCORE.fehlRefB, o)), bp: 'abzug', bRef: SCORE.fehlRefB};
+        }
+        return {pts: brier(p, b, o), bp: '', bRef: b};
+    }
     function baseRate(sc, rule, h) { var b = (sc.base[rule] || {})[h]; if (!b || b[0] < SCORE.baseMinN) { return {b: 0.5, n: b ? b[0] : 0}; } return {b: (b[1] + 1) / (b[0] + 2), n: b[0]}; }
     function candidateNow(rule, d, cfg) {                                            // Vergleichslage fuer die Basisrate (schwaecher als der Ausloeser)
         var c = cfg.rules[rule];
@@ -854,10 +868,10 @@ var ENGINE = (function () {
         if (rule === 'heizgrenze_hinweis') { return (have(d.heatOffAT) && d.heatOffAT > c.zielC && d.running && d.runMin >= c.laufMin && have(d.at) && d.at > c.zielC) ? {} : null; }
         return null;
     }
-    function svOf(cfg) { return cfg && (cfg.sv === 1 || cfg.sv === 2 || cfg.sv === 3) ? cfg.sv : SCORE_VER; }
+    function svOf(cfg) { return cfg && [1, 2, 3, 4].indexOf(cfg.sv) >= 0 ? cfg.sv : SCORE_VER; }
     function ohnePunkte(rule, sv) { return (sv || 1) >= 4 && !!RULE[rule] && RULE[rule].art === 'hinweis'; }   // v4: Hinweise werden gezaehlt, nicht gepunktet
     // Summen je Regel, Regelversion und Bewertungsversion (v1 behaelt den alten Schluessel "regel|vN", damit alte Punkte unveraendert getrennt bleiben)
-    function tot(sc, rule, ver, sv) { var k = rule + '|v' + ver + (sv > 1 ? '|s' + sv : ''); return sc.tot[k] = sc.tot[k] || {rule: rule, ver: ver, sv: sv, since: 0, punkte: 0, faelle: 0, bewertet: 0, treffer: 0, fehlalarm: 0, neutral: 0, bs: 0, bsRef: 0, schaden: 0, verpasst: 0, verpasstSperre: 0, wirkN: 0, wirkP: 0, kalib: 0}; }
+    function tot(sc, rule, ver, sv) { var k = rule + '|v' + ver + (sv > 1 ? '|s' + sv : ''); return sc.tot[k] = sc.tot[k] || {rule: rule, ver: ver, sv: sv, since: 0, punkte: 0, faelle: 0, bewertet: 0, treffer: 0, fehlalarm: 0, neutral: 0, bs: 0, bsRef: 0, schaden: 0, verpasst: 0, verpasstSperre: 0, wirkN: 0, wirkP: 0, kalib: 0, trefferNeutral: 0, skillN: 0}; }
     function book(sc, recs, rec, now) {
         recs.push(rec);
         var T = tot(sc, rec.regel, rec.v, rec.sv);
@@ -895,13 +909,17 @@ var ENGINE = (function () {
             C.h.forEach(function (h) {
                 if (C.done.indexOf(h) >= 0 || now - C.t0 < h * MIN) { return; }
                 C.done.push(h);
-                var oc = outcome(C.tr, h), br = baseRate(sc, C.rule, h), pts = 0, np = ohnePunkte(C.rule, C.sv);
+                var oc = outcome(C.tr, h), br = baseRate(sc, C.rule, h), pts = 0, np = ohnePunkte(C.rule, C.sv), bp = '';
                 if (oc.o !== null && !np) {
-                    pts = brier(C.p, br.b, oc.o) / C.h.length;
-                    if ((C.sv || 1) >= 4) { C.bs = (C.bs || 0) + Math.pow(C.p - oc.o, 2); C.bsRef = (C.bsRef || 0) + Math.pow(br.b - oc.o, 2); }   // v4: erst beim Abschluss des Falls in die Summen
-                    else { var T0 = tot(sc, C.rule, C.v, C.sv || 1); T0.bs += Math.pow(C.p - oc.o, 2); T0.bsRef += Math.pow(br.b - oc.o, 2); }      // bis v3: schon je Horizont
+                    var hp = hPunkte(C.p, br.b, oc.o, C.sv || 1), bRef = hp.bRef; bp = hp.bp;
+                    if (bRef !== null) {
+                        pts = hp.pts / C.h.length;
+                        if ((C.sv || 1) >= 4) { C.bs = (C.bs || 0) + Math.pow(C.p - oc.o, 2); C.bsRef = (C.bsRef || 0) + Math.pow(bRef - oc.o, 2); C.bsN = (C.bsN || 0) + 1; }   // v4: erst beim Abschluss des Falls in die Summen
+                        else { var T0 = tot(sc, C.rule, C.v, C.sv || 1); T0.bs += Math.pow(C.p - oc.o, 2); T0.bsRef += Math.pow(bRef - oc.o, 2); }      // bis v3: schon je Horizont
+                    }
                 }
-                C.hr.push({h: h, o: oc.o, b: r2(br.b), nb: br.n, punkte: r2(pts), why: oc.why});
+                var hrec = {h: h, o: oc.o, b: r2(br.b), nb: br.n, punkte: r2(pts), why: oc.why}; if (bp) { hrec.bp = bp; }
+                C.hr.push(hrec);
                 C.pts += pts;
             });
             if (C.done.length === C.h.length && !C.closed) {
@@ -910,9 +928,14 @@ var ENGINE = (function () {
                 var erg = os.length ? (os.filter(function (x) { return x.o === 1; }).length * 2 >= os.length ? 'treffer' : 'fehlalarm') : 'neutral';
                 var nP = ohnePunkte(C.rule, C.sv);
                 T.faelle++; if (os.length) { T.bewertet++; } if (erg === 'treffer') { T.treffer++; } else if (erg === 'fehlalarm') { T.fehlalarm++; } else { T.neutral++; }
-                if ((C.sv || 1) >= 4 && os.length && !nP) { T.bs += C.bs || 0; T.bsRef += C.bsRef || 0; }                      // v4: Brier-Summen nur aus abgeschlossenen Faellen
-                book(sc, recs, {t: iso(now), typ: 'ausloeser', regel: C.rule, v: C.v, sv: C.sv || 1, fall: C.id, p: C.p, horizonte: C.hr, ergebnis: erg, punkte: r2(C.pts),
-                                text: RULE[C.rule].prognose.text + ': ' + C.hr.map(function (x) { return x.h + ' min ' + (x.o === null ? 'neutral (' + x.why + ')' : (x.o ? 'ja' : 'nein') + ' (' + x.why + ', Basisrate ' + de(x.b, 2) + ')'); }).join(' · ') + (nP ? ' · nur Hinweis, keine Punkte' : '')}, now);
+                // v5: Treffer, dessen Treffer-Horizonte alle wegen b >= p neutral zaehlten (eigene Kennzahl "davon neutral")
+                var hitH = os.filter(function (x) { return x.o === 1; }), tn = erg === 'treffer' && hitH.length > 0 && hitH.every(function (x) { return x.bp === 'neutral'; });
+                if (tn) { T.trefferNeutral = (T.trefferNeutral || 0) + 1; }
+                if ((C.sv || 1) >= 4 && os.length && !nP && ((C.sv || 1) < 5 || C.bsN)) { T.bs += C.bs || 0; T.bsRef += C.bsRef || 0; T.skillN = (T.skillN || 0) + 1; }   // v4: Brier-Summen nur aus abgeschlossenen Faellen; v5: nur mit Brier-Beitrag
+                var rec0 = {t: iso(now), typ: 'ausloeser', regel: C.rule, v: C.v, sv: C.sv || 1, fall: C.id, p: C.p, horizonte: C.hr, ergebnis: erg, punkte: r2(C.pts),
+                            text: RULE[C.rule].prognose.text + ': ' + C.hr.map(function (x) { return x.h + ' min ' + (x.o === null ? 'neutral (' + x.why + ')' : (x.o ? 'ja' : 'nein') + ' (' + x.why + ', Basisrate ' + de(x.b, 2) + (x.bp === 'neutral' ? ' ≥ Prognose ' + de(C.p, 2) + ': neutral' : (x.bp === 'abzug' ? ' ≥ Prognose ' + de(C.p, 2) + ': Abzug gegen Basisrate ' + de(SCORE.fehlRefB, 2) : '')) + ')'); }).join(' · ') + (nP ? ' · nur Hinweis, keine Punkte' : '')};
+                if (tn) { rec0.treffer_neutral = 1; }
+                book(sc, recs, rec0, now);
                 if (C.dmg.length) {
                     var sum = 0; if (!nP) { C.dmg.forEach(function (k) { sum += SCORE.schaden[k]; }); }
                     T.schaden += C.dmg.length;
@@ -1221,7 +1244,7 @@ var ENGINE = (function () {
         RULES.forEach(function (R) {
             var T = tot(sc, R.id, R.ver, sv), days = T.since ? (S.last - T.since) / (24 * 60 * MIN) : 0;
             var nP = ohnePunkte(R.id, sv);
-            var skill = nP || (sv >= 4 && T.bewertet < SCORE.skillMinFaelle) ? null : (T.bsRef > 0 ? 1 - T.bs / T.bsRef : null);   // v4: erst ab 3 bewerteten Faellen, nie fuer Hinweise
+            var skill = nP || (sv >= 4 && (sv >= 5 ? T.skillN : T.bewertet) < SCORE.skillMinFaelle) ? null : (T.bsRef > 0 ? 1 - T.bs / T.bsRef : null);   // v4: erst ab 3 bewerteten Faellen, nie fuer Hinweise; v5: ab 3 Faellen mit Brier-Beitrag
             var crit = nP ? [] : [
                 {k: 'faelle', ok: T.bewertet >= SCORE.reife.faelle, kurz: 'Fälle ' + T.bewertet + '/' + SCORE.reife.faelle, text: T.bewertet + ' von ' + SCORE.reife.faelle + ' bewerteten Fällen'},
                 {k: 'tage', ok: days >= SCORE.reife.tage, kurz: 'Tage ' + de(days, 1) + '/' + SCORE.reife.tage, text: de(days, 1) + ' von ' + SCORE.reife.tage + ' Tagen'},
@@ -1230,7 +1253,7 @@ var ENGINE = (function () {
                 {k: 'verpasst', ok: T.verpasst <= SCORE.reife.verpasst, kurz: 'Verpasst ' + T.verpasst + '/≤' + SCORE.reife.verpasst, text: T.verpasst + ' × verpasst (höchstens ' + SCORE.reife.verpasst + ')'}
             ];
             if (R.art === 'befehl' && !nP) { crit.push({k: 'wirkung', ok: T.wirkN - T.kalib >= SCORE.reife.wirkFaelle && T.wirkP > 0, kurz: 'Wirkung ' + (T.wirkN - T.kalib) + '/' + SCORE.reife.wirkFaelle, text: (T.wirkN - T.kalib) + ' von ' + SCORE.reife.wirkFaelle + ' Wirkungsfällen (ohne Kalibrierung), ' + sg(T.wirkP, 0) + ' Punkte'}); }
-            out.push({regel: R.id, name: R.name, v: R.ver, art: R.art, punkte: nP ? null : T.punkte, ohnePunkte: nP, faelle: T.faelle, bewertet: T.bewertet, treffer: T.treffer, fehlalarm: T.fehlalarm, neutral: T.neutral,
+            out.push({regel: R.id, name: R.name, v: R.ver, art: R.art, punkte: nP ? null : T.punkte, ohnePunkte: nP, faelle: T.faelle, bewertet: T.bewertet, treffer: T.treffer, trefferNeutral: T.trefferNeutral || 0, skillFaelle: T.skillN || 0, fehlalarm: T.fehlalarm, neutral: T.neutral,
                       trefferquote: T.bewertet ? r2(T.treffer / T.bewertet) : null, fehlalarmquote: T.bewertet ? r2(T.fehlalarm / T.bewertet) : null, skill: r2(skill), schaden: T.schaden, verpasst: T.verpasst, verpasstSperre: T.verpasstSperre || 0, sv: sv,
                       wirkung: {n: T.wirkN, kalib: T.kalib, punkte: T.wirkP}, tage: r2(days), reif: R.art === 'befehl' && crit.every(function (x) { return x.ok; }), kriterien: crit});
         });
@@ -1356,7 +1379,7 @@ var ENGINE = (function () {
     }
 
     return {VER: VER, SCORE_VER: SCORE_VER, RULES: RULES, RULE: RULE, LOCKS: LOCKS, LOCK_CFG: LOCK_CFG, SCORE: SCORE, WHITELIST: WHITELIST, APPLY: APPLY,
-            brier: brier, vorschau: vorschau, bedarfK: bedarfK, tagesgang: tagesgang, defaults: defaults, mergeCfg: mergeCfg, newState: newState, fixState: fixState, step: step, report: report, messStatus: messStatus, MESS: MESS, snapshot: snapshot, unsnap: unsnap,
+            brier: brier, hPunkte: hPunkte, vorschau: vorschau, bedarfK: bedarfK, tagesgang: tagesgang, defaults: defaults, mergeCfg: mergeCfg, newState: newState, fixState: fixState, step: step, report: report, messStatus: messStatus, MESS: MESS, snapshot: snapshot, unsnap: unsnap,
             checksum: checksum, newApply: newApply, applyRequest: applyRequest, applyTick: applyTick, iso: iso, hhmm: hhmm, isoWeek: isoWeek, de: de, sg: sg};
 })();
 if (typeof module !== 'undefined' && module.exports) { module.exports = ENGINE; }

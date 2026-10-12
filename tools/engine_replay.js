@@ -1,7 +1,7 @@
 // Rueckwirkende Pruefung (Replay): spielt die echten Minutenprotokolle offline mit Fake-Uhr durch die Entscheidungsmaschine (tools/engine_core.js).
 // Nur lesen: quiet-YYYY-MM.csv (1 min; aeltere Stillstandszeilen 5 min), optimizer-v2-YYYY-MM.csv (5 min, Raeume + Raumvorschlag Phase 2).
-// Usage: node tools/engine_replay.js <Datenordner> [Ausgabeordner] [--sv1|--sv2|--sv3]   (schreibt decisions-*.jsonl, scores-*.jsonl, events.csv, report.json in den Ausgabeordner)
-//        --sv1/--sv2/--sv3: mit den Bewertungsregeln v1/v2/v3 nachrechnen (alte Punkte reproduzieren); Standard ist die aktuelle Version (ENGINE.SCORE_VER)
+// Usage: node tools/engine_replay.js <Datenordner> [Ausgabeordner] [--sv1|--sv2|--sv3|--sv4]   (schreibt decisions-*.jsonl, scores-*.jsonl, events.csv, report.json in den Ausgabeordner)
+//        --sv1 ... --sv4: mit den Bewertungsregeln v1 ... v4 nachrechnen (alte Punkte reproduzieren); Standard ist die aktuelle Version (ENGINE.SCORE_VER)
 // Annahmen fuer Werte, die das Protokoll nicht enthaelt, stehen in ASSUME (und im Bericht).
 process.env.TZ = process.env.TZ_SIM || 'Europe/Berlin';
 const fs = require('fs');
@@ -139,8 +139,8 @@ function markdown(R) {                                                          
     R.events.forEach(e => L.push('| ' + e[0].slice(0, 16) + ' | ' + e[1] + ' | ' + String(e[2]).replace(/\|/g, '/') + ' |'));
     L.push('', '#### Punktebuch (scores)', '', '| Zeit | Typ | Regel | Punkte | Summe | Text |', '|---|---|---|---|---|---|');
     R.scores.forEach(s => L.push('| ' + s.t.slice(0, 16) + ' | ' + s.typ + ' | ' + s.regel + ' | ' + de(s.punkte, 2) + ' | ' + de(s.summe, 2) + ' | ' + String(s.text).replace(/\|/g, '/') + ' |'));
-    L.push('', '#### Stand je Regel am Ende (Bewertungsregeln v' + (R.report[0] ? R.report[0].sv : E.SCORE_VER) + ')', '', '| Regel | Punkte | Fälle (bewertet) | Treffer | Fehlalarm | neutral | Brier-Skill | Schaden | Verpasst | während Sperre (0 Punkte) | Wirkung (davon Kalibrierung) | Freigabereife |', '|---|---|---|---|---|---|---|---|---|---|---|---|');
-    R.report.forEach(r => L.push('| ' + r.name + ' | ' + de(r.punkte, 2) + ' | ' + r.faelle + ' (' + r.bewertet + ') | ' + r.treffer + ' | ' + r.fehlalarm + ' | ' + r.neutral + ' | ' + (r.skill === null ? '–' : de(r.skill, 2)) + ' | ' + r.schaden + ' | ' + r.verpasst + ' | ' + (r.art === 'befehl' ? r.verpasstSperre : '–') + ' | ' + r.wirkung.n + ' (' + r.wirkung.kalib + '), ' + de(r.wirkung.punkte, 0) + ' | ' + (r.art === 'befehl' ? (r.reif ? 'reif' : 'nein: ' + r.kriterien.filter(k => !k.ok).map(k => k.k).join(', ')) : 'Hinweis') + ' |'));
+    L.push('', '#### Stand je Regel am Ende (Bewertungsregeln v' + (R.report[0] ? R.report[0].sv : E.SCORE_VER) + ')', '', '| Regel | Punkte | Fälle (bewertet) | Treffer (davon neutral, b ≥ p) | Fehlalarm | neutral | Brier-Skill | Schaden | Verpasst | während Sperre (0 Punkte) | Wirkung (davon Kalibrierung) | Freigabereife |', '|---|---|---|---|---|---|---|---|---|---|---|---|');
+    R.report.forEach(r => L.push('| ' + r.name + ' | ' + de(r.punkte, 2) + ' | ' + r.faelle + ' (' + r.bewertet + ') | ' + r.treffer + ' (' + r.trefferNeutral + ') | ' + r.fehlalarm + ' | ' + r.neutral + ' | ' + (r.skill === null ? '–' : de(r.skill, 2)) + ' | ' + r.schaden + ' | ' + r.verpasst + ' | ' + (r.art === 'befehl' ? r.verpasstSperre : '–') + ' | ' + r.wirkung.n + ' (' + r.wirkung.kalib + '), ' + de(r.wirkung.punkte, 0) + ' | ' + (r.art === 'befehl' ? (r.reif ? 'reif' : 'nein: ' + r.kriterien.filter(k => !k.ok).map(k => k.k).join(', ')) : 'Hinweis') + ' |'));
     L.push('', '#### Basisraten „bleibt, wie es ist“ am Ende (n Vergleichslagen, k Problem bestand)', '', '| Regel | Horizont | n | k | b |', '|---|---|---|---|---|');
     Object.keys(R.S.sc.base).forEach(id => Object.keys(R.S.sc.base[id]).forEach(h => { const b = R.S.sc.base[id][h]; L.push('| ' + names[id] + ' | ' + h + ' min | ' + b[0] + ' | ' + b[1] + ' | ' + (b[0] >= E.SCORE.baseMinN ? de((b[1] + 1) / (b[0] + 2), 2) : '0,50 (zu wenig)') + ' |'); }));
     L.push('', '#### Messaufgabe Comfort/Efficiency', '', E.messStatus(R.S).text);
@@ -150,7 +150,7 @@ function markdown(R) {                                                          
 module.exports.markdown = markdown;
 
 if (require.main === module) {
-    const svA = process.argv.map(a => /^--sv([123])$/.exec(a)).filter(Boolean)[0], ropt = svA ? {cfg: {sv: Number(svA[1])}} : {};
+    const svA = process.argv.map(a => /^--sv([1234])$/.exec(a)).filter(Boolean)[0], ropt = svA ? {cfg: {sv: Number(svA[1])}} : {};
     if (process.argv.indexOf('--md') > 0) { console.log(markdown(replay(process.argv[2], ropt))); process.exit(0); }
     const dir = process.argv[2], out = process.argv[3] && process.argv[3].indexOf('--') !== 0 ? process.argv[3] : null;
     if (!dir) { console.error('Usage: node tools/engine_replay.js <Datenordner> [Ausgabeordner]'); process.exit(2); }
