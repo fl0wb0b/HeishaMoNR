@@ -170,7 +170,7 @@ Tabellen aus dem Regelwerk, erzeugt mit `node tools/engine_doc.js`. Die Sim prü
 | Regel | Version | Art | Stellgröße / Befehl | Richtung | Prognose (p, Horizonte) | Sperren |
 |---|---|---|---|---|---|---|
 | Quiet-Freigabe (`quiet_freigabe`) | 1 | befehl | `SetQuietMode` | mehr_leistung | Ohne Freigabe bleibt der Verdichter am Deckel (≤ 20 Hz) und der Rücklauf-Rückstand ≥ 1 K – p = 0,8, 30/60/120 min | anlauf, daten, mqtt_sperre, abtauen, warmwasser, sanftanlauf, laufbeginn, heizgrenze_aus, regler, abstand, tageslimit, abkuehlzeit, takt |
-| Laufzeit strecken (Quiet 3) (`quiet_strecken`) | 1 | befehl | `SetQuietMode` | weniger_leistung | Ohne Deckel endet der Lauf binnen 60 min (kurzer Lauf) – p = 0,7, 60 min | anlauf, daten, mqtt_sperre, abtauen, warmwasser, sanftanlauf, laufbeginn, heizgrenze_aus, regler, abstand, tageslimit, abkuehlzeit, takt, heizstab |
+| Laufzeit strecken (Quiet 3) (`quiet_strecken`) | 2 | befehl | `SetQuietMode` | weniger_leistung | Ohne Deckel endet der Lauf binnen 60 min (kurzer Lauf) – p = 0,7, 60 min | anlauf, daten, mqtt_sperre, abtauen, warmwasser, sanftanlauf, laufbeginn, heizgrenze_aus, regler, abstand, tageslimit, abkuehlzeit, takt, heizstab |
 | Raumeinfluss (Heizkurve ±1 K) (`raum_offset`) | 2 | befehl | `SetZ1HeatRequestTemperature` | verschiebung | Ohne Verschiebung bleibt der Führungsraum außerhalb seines Bandes – p = 0,7, 60/120/240 min | anlauf, daten, mqtt_sperre, abtauen, warmwasser, sanftanlauf, laufbeginn, heizgrenze_aus, regler, vorrang, gegenrichtung, abstand, tageslimit, abkuehlzeit, takt, heizstab |
 | Heizgrenze 12 → 10 °C (nur Hinweis) (`heizgrenze_hinweis`) | 1 | hinweis | `SetHeatingOffOutdoorTemp` | weniger_waerme | Alle Räume bleiben mindestens Minimum + Reserve (der Lauf war nicht nötig) – p = 0,6, 180 min | anlauf, daten |
 | Vorausschau (Heizkurve ±1 K) (`vorausschau`) | 1 | befehl | `SetZ1HeatRequestTemperature` | verschiebung | Ohne Verschiebung gerät der knappste Raum an den Bandrand (+1 K: höchstens Reserve über Minimum, −1 K: höchstens Reserve unter Maximum) – p = 0,6, 120/240/360 min | anlauf, daten, modell, mqtt_sperre, abtauen, warmwasser, sanftanlauf, laufbeginn, heizgrenze_aus, regler, vorrang, gegenrichtung, abstand, tageslimit, abkuehlzeit, takt, heizstab |
@@ -198,20 +198,20 @@ Tabellen aus dem Regelwerk, erzeugt mit `node tools/engine_doc.js`. Die Sim prü
 
 *Kalibriermessungen (Wirkungsfälle dort zählen 0 Punkte):* 2026-10-10 08:40, 2026-10-08 22:54, 2026-10-10 11:17
 
-#### Laufzeit strecken (Quiet 3) (`quiet_strecken` v1)
+#### Laufzeit strecken (Quiet 3) (`quiet_strecken` v2)
 
-*Zweck:* Läuft der Verdichter ohne Bedarf deutlich über Minimum und droht ein kurzer Lauf, die Leistung mit Quiet 3 deckeln, damit er länger bei niedriger Leistung läuft. Rückkehr auf 0, sobald der Grund endet.
+*Zweck:* Läuft der Verdichter ohne Bedarf deutlich über Minimum und ist Takten belegt, die Leistung mit Quiet 3 deckeln, damit er länger bei niedriger Leistung läuft. Rückkehr auf 0, sobald der Grund endet. Seit v2 löst nur ein belegter Takt aus (letzter Lauf endete über den Vorlauf nach weniger als 60 min oder viele Starts); die Vorhersage „Abschaltgrenze in ≤ 45 min“ allein nicht mehr (Replay 07.–12.10.: bei ≥ 22 Hz traf sie in 5 von 96 Minuten, die Läufe gingen noch 72–154 min).
 
-*Eingänge:* Quiet-Stufe, Verdichterfrequenz, Vorlauf und Anstieg, Rücklauf-Rückstand, Räume, letzte Läufe/Starts
+*Eingänge:* Quiet-Stufe, Verdichterfrequenz, Rücklauf-Rückstand, Räume, letzte Läufe (Dauer, Stopp-Art)/Starts, Vorlauf-Anstieg (nur Text)
 
 | Schwelle | Standard | Einheit | Herkunft |
 |---|---|---|---|
 | `hzHoch` | 22 | Hz | Minimum gemessen 16–17 Hz; 22 Hz = deutlich darüber (ANNAHME) |
 | `laufMin` | 15 | min | Startroutine (siehe Quiet-Freigabe) |
 | `rlRueckMaxK` | 1 | K | kein Bedarf: Rücklauf höchstens 1 K unter Soll (ANNAHME, vgl. Quiet-Freigabe 1,5 K) |
-| `stoppBaldMin` | 45 | min | Takt-Indiz: Vorlauf erreicht beim aktuellen Anstieg binnen 45 min Soll +3,25 K (ANNAHME) |
-| `kurzerLaufMin` | 60 | min | Takt-Indiz: letzter Lauf kürzer als 60 min (Opus: Mindestlauf 60 min) |
-| `starts3h` | 2 | Starts | Takt-Indiz: mindestens 2 Starts in 3 h (07.–10.10.: höchstens 1) |
+| `kurzerLaufMin` | 60 | min | Takt belegt: letzter Lauf mit Abschaltung über den Vorlauf kürzer als 60 min (Opus: Mindestlauf 60 min). Replay 07.–12.10.: 21 abgeschlossene Läufe, 18 Abschaltungen über den Vorlauf mit 96–969 min, keine unter 60 min |
+| `thermoStoppK` | 2,75 | K | Stopp-Art: der Lauf endete mit Vorlauf ≥ Soll +2,75 K = Abschaltung über den Vorlauf (gemessen +3,0…+3,25 K bei 18 von 18; Handbuch: Vorlauf − interner Soll > 2 K für 3 min). Läufe, die an der Heizgrenze oder nach einem Sollsprung nach unten enden, sind kein Takt (08.10. 00:49 und 10.10. 11:49: 40 und 32 min bei 14 °C, Ende bei Soll +0,5 bzw. −0,75 K; v1 wertete den zweiten als „letzter Lauf nur 33 min“) |
+| `starts3h` | 2 | Starts | Takt belegt: mindestens 2 Starts in 3 h (07.–12.10.: höchstens 1) |
 | `haltMin` | 10 | min | wie Quiet-Freigabe |
 | `proTag` | 2 | Vorschläge | ANNAHME |
 | `gueltigMin` | 30 | min | ANNAHME |
