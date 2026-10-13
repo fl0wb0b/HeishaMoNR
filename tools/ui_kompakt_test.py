@@ -15,6 +15,7 @@ import importlib.util
 import itertools
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -39,6 +40,10 @@ src = sys.argv[1]
 live, kompakt = P.laden(src)
 M0 = P.Modell(live)
 seiten = [t for t in M0.tabs if not t.get("hidden") and not t["id"].startswith("opt_")]
+
+if P.plan(live, "einklappen", False)[1]:
+    print("Hinweis: %s ist schon (teilweise) gepatcht - die Pruefungen brauchen einen Export VOR dem Patch (nach Teil A des Generators ist in Ordnung)." % src)
+    sys.exit(2)
 
 # 1 Modell gegen Live-Vermessung
 h0 = {t["name"]: M0.seite(t, P.VERSTECKT.get(t["name"], ()), 1920)[0] for t in seiten}
@@ -65,6 +70,27 @@ fmt_ids = [i for i in ids if A[i].get("format") != B[i].get("format")]
 check("Format nur bei den Hilfetexten (Line - Instructions text, Flow WP Help)", fmt_ids and all(A[i]["name"].startswith("Line - Instructions text") and A[i]["z"] == P.HELP_FLOW for i in fmt_ids), len(fmt_ids))
 check("Hilfetexte: Inhalt unveraendert in <details>, Ueberschrift Hilfe, Einpassen mit eigener Kennung, Hoehe 1",
       all(P.hilfe_unwrap(B[i]["format"]) == A[i]["format"] and "<summary>Hilfe" in B[i]["format"] and ("var id = '%s'" % i) in B[i]["format"] and B[i]["height"] == 1 for i in fmt_ids))
+
+# Einpass-Skript der Hilfetexte mit Seiten-Attrappe (node): zugeklappt 1 Einheit, aufgeklappt passend, wieder zu 1
+HARNESS = r"""
+const vm = require('vm'); const src = require('fs').readFileSync(0, 'utf8');
+let bottom = 140, lis = {}, attrs = {'ui-card-size': '18x1'}, calls = [], timers = [];
+const det = {getBoundingClientRect: () => ({bottom}), addEventListener: (e, f) => { lis[e] = f; }};
+const card = {getAttribute: k => attrs[k], setAttribute: (k, v) => { attrs[k] = v; }, offsetParent: {}, querySelector: q => q === 'details.nrhilfe' ? det : null,
+              getBoundingClientRect: () => ({top: 100}), closest: () => ({parentElement: {}})};
+const angular = {element: () => ({injector: () => ({get: () => ({sy: 48, cy: 6})}), controller: n => n === 'uiCardPanel' ? {refreshLayout: cb => { calls.push('p'); cb(); }} : {refreshLayout: () => calls.push('m')}})};
+vm.runInNewContext(src, {document: {querySelector: () => card}, angular, setTimeout: f => { timers.push(f); return 1; }, Math});
+const run = () => { while (timers.length) { timers.shift()(); } };
+run(); const a = attrs['ui-card-size']; bottom = 1000; lis.toggle(); run(); const b = attrs['ui-card-size'], c = calls.join(); bottom = 140; lis.toggle(); run();
+console.log(JSON.stringify([a, b, c, attrs['ui-card-size']]));
+"""
+try:
+    js = re.search(r"<script>([\s\S]*?)</script>", B[fmt_ids[0]]["format"]).group(1)
+    r = subprocess.run(["node", "-e", HARNESS], input=js, capture_output=True, text=True, timeout=30)
+    res = json.loads(r.stdout.strip().splitlines()[-1])
+    check("Hilfetext-Einpassen (Attrappe): zugeklappt 1 Einheit, aufgeklappt 17 Einheiten fuer 900 px, Gruppe und Seite neu angeordnet, wieder zu 1", res == [res[0].split("x")[0] + "x1", res[0].split("x")[0] + "x17", "p,m", res[0].split("x")[0] + "x1"], res)
+except (OSError, ValueError, IndexError, AttributeError, subprocess.SubprocessError) as e:
+    check("Hilfetext-Einpassen (Attrappe, braucht node)", False, e)
 
 # 3 Anwenden, idempotent, Rueckbau
 with tempfile.TemporaryDirectory() as d:
