@@ -1,6 +1,7 @@
 // Pruefungen der Takt-/Mindestleistungs-Messung (engine_core: taktStep, taktKennzahlen, mindestLeistung, copTabelle) und Replay mit echten Minutenlogs.
 // Usage: node tools/takt_sim.js [Datenordner mit quiet-2026-10.csv / optimizer-v2-2026-10.csv]
 process.env.TZ = process.env.TZ_SIM || 'Europe/Berlin';
+const fs = require('fs'), path = require('path');
 const E = require('./engine_core.js');
 const MIN = 60000, T0 = Date.UTC(2026, 9, 1, 0, 0);
 let oks = 0, fails = 0;
@@ -27,15 +28,19 @@ const nul = n => Array.from({length: n}, () => ({hz: null}));
 // Mindestleistung und COP
 { const seq = [].concat(off(2)); [[-3, 2500], [1, 2000], [5, 2600], [9, 2400]].forEach(([at, p]) => { seq.push(...off(5), ...on(80, {at: at, pth: p}).map((x, i) => Object.assign({}, x, {pth: p + (i % 10) * 50}))); }); seq.push(...off(5));
   const ML = E.mindestLeistung(feed(seq));
-  check('Mindestleistung: 10-%-Quantil je 2-K-Bin nur ab Laufminute 15 (65 Proben je Bin), monoton von kalt nach warm nicht fallend', ML.length === 4 && ML[0][2] === 65 && ML.map(b => b[0]).join() === '-4,0,4,8' && ML[1][1] < ML[0][1] && ML[1][3] === ML[0][3] && ML[3][3] === ML[2][3] && ML.every((b, i) => i === 0 || b[3] >= ML[i - 1][3]), JSON.stringify(ML)); }
+  check('Mindestleistung: 10-%-Quantil je 2-K-Band nur ab Laufminute 15 (65 Proben je Band); monoton als laufendes Minimum von warm nach kalt (stooklijn): roh 2550/2050/2650/2450 -> 2050/2050/2450/2450', ML.length === 4 && ML[0][2] === 65 && ML.map(b => b[0]).join() === '-4,0,4,8' && ML.map(b => b[1]).join() === '2550,2050,2650,2450' && ML.map(b => b[3]).join() === '2050,2050,2450,2450', JSON.stringify(ML)); }
 { const T = feed([].concat(off(2), on(90, {hc: 0, q: 0, at: 5, pel: 500, pth: 2800}), off(5), on(90, {hc: 1, q: 0, at: 5, pel: 600, pth: 3000}), off(5), on(90, {hc: 0, q: 2, at: 12, defrost: 1}), off(3)));
-  const C = E.copTabelle(T);
-  check('COP je Modus x Quiet x Band: Comfort Q0 3…7 = 5,6, Efficiency Q0 3…7 = 5,0 (je 75 stabile min); Abtau-Minuten zaehlen nicht', C.length === 2 && C[0].join() === 'Comfort,0,3…7,5.6,75' && C[1].join() === 'Efficiency,0,3…7,5,75', JSON.stringify(C)); }
+  const C = E.copTabelle(T), C2 = E.copTabelle(T, E.mergeCfg({takt: {copMinMin: 80}}).takt);
+  check('COP je Modus x Quiet x Band: Comfort Q0 3…7 = 5,6, Efficiency Q0 3…7 = 5,0 (je 75 stabile min); Abtau-Minuten zaehlen nicht; Mindestdaten 60 min (Nutzerentscheidung 13.10.) einstellbar (80 min -> leer)', C.length === 2 && C[0].join() === 'Comfort,0,3…7,5.6,75' && C[1].join() === 'Efficiency,0,3…7,5,75' && C2.length === 0 && E.taktCfg(null).copMinMin === 60 && /Nutzerentscheidung 13\.10\.2026, vorläufig/.test(E.TAKT_SCHWELLEN.find(x => x.key === 'copMinMin').herkunft), JSON.stringify(C)); }
+{ const D = 24 * 60 * MIN, seq = []; let T = E.taktNew();
+  for (let day = 0; day < 40; day++) { for (let i = 0; i < 100; i++) { T = E.taktStep(T, {t: T0 + day * D + i * MIN, hpAge: 0, hz: i < 95 ? 30 : 0, at: 5, pel: 500, pth: day < 10 ? 1000 : 3000, q: 0, hc: 1}); } }
+  const C = E.copTabelle(T, null, T0 + 39 * D), dk = Object.keys(T.copT);
+  check('COP-Fenster: nur die letzten 30 Tage (aeltere Tage fallen aus dem Speicher und der Summe; die ersten 10 Tage mit COP 2 sind weg -> COP 6)', dk.length === 30 && C.length === 1 && C[0][3] === 6 && C[0][4] === 30 * 80, JSON.stringify(C) + ' Tage ' + dk.length); }
 // Engine-Integration: Datensatz und Karte
-{ let S = null, last; const seq = [].concat(off(5), on(30), off(10), on(30), off(5));
-  seq.forEach((x, i) => { last = E.step(S, Object.assign({t: T0 + i * MIN, hpAge: 0, vl: 30, rl: 27, soll: 30, dT: 3, pump: 1500}, x)); S = last.S; });
-  const tk = last.rec.abl.takt;
-  check('Engine: Datensatz abl.takt traegt Starts 24 h, Starts/h, Anteil kurzer Laeufe, Pausen-Typen', tk && tk.starts_24h === 2 && tk.kurz_anteil === 1 && tk.minutenpausen === 1 && tk.bedarfspausen === 0, JSON.stringify(tk));
+{ let S = null, last; const seq = [].concat(off(5), on(30), off(10), on(30), off(5)), tks = [];
+  seq.forEach((x, i) => { last = E.step(S, Object.assign({t: T0 + i * MIN, hpAge: 0, vl: 30, rl: 27, soll: 30, dT: 3, pump: 1500}, x)); S = last.S; if (last.rec.abl.tk) { tks.push([i, last.rec.abl.tk]); } });
+  const tk = tks[tks.length - 1][1];
+  check('Engine: Datensatz abl.tk kompakt [Starts 24 h, Anteil kurzer Laeufe, Minutenpausen, Bedarfspausen], nur bei Aenderung und zur vollen Stunde (hier ' + tks.length + ' von ' + seq.length + ' Minuten)', JSON.stringify(tk) === '[2,1,1,0]' && tks.length <= 8 && tks.length >= 3 && !('takt' in last.rec.abl), JSON.stringify(tks));
   const V = require('./engine_view.js'), b = V.build({now: S.last, last: {t: S.last, res: last.res, prop: null, anl: {}}, S: S, V: {}, AP: {}, enabled: false});
   check('Anzeige: Zeile Takt (Starts, Laeufe, Pausen), Mindestleistung und COP je Modus/Quiet ohne Fehler', /^Starts 24 h 2 \(0,08\/h\) · Läufe 2, davon < 60 min 2/.test(b.score.takt.t) && b.score.takt.chip === 'ruhig' && b.score.takt.min === '4…6 °C 3,0 kW', b.score.takt.t + ' | ' + b.score.takt.chip + ' | ' + b.score.takt.min);
   const S2 = E.fixState(JSON.parse(JSON.stringify(Object.assign({}, S, {takt: undefined}))), S.last);
@@ -54,6 +59,37 @@ if (dir) {
     console.log('Mindestleistung (Bin, Q10 W th, n, monoton): ' + JSON.stringify(E.mindestLeistung(T)));
     console.log('COP je Modus x Quiet x Band (>= 60 min): ' + JSON.stringify(E.copTabelle(T)));
     check('Replay laeuft ohne Fehler und findet Laeufe', all.length > 0, '');
+    // Nachladen wie in der Huelle (stueckweise, nur ganze Zeilen; Vormonat fehlt) muss dasselbe ergeben wie das Replay ueber buildInputs
+    const nachladenSim = (files, chunk) => {
+        const T2 = E.taktNew(); T2.nl = E.nlNeu(files, 0); const buf = Buffer.alloc(chunk); let reads = 0;
+        while (T2.nl.laeuft) {
+            const nl = T2.nl; if (nl.i >= nl.dateien.length) { E.nlEnde(T2, null, 1); break; }
+            let n = 0, fd = null; try { fd = fs.openSync(nl.dateien[nl.i], 'r'); n = fs.readSync(fd, buf, 0, chunk, nl.pos); } catch (e) { n = 0; } if (fd !== null) { fs.closeSync(fd); } reads++;
+            const cut = n > 0 ? buf.lastIndexOf(10, n - 1) : -1;
+            if (cut < 0) { if (n >= chunk) { nl.pos += n; } else { nl.i++; nl.pos = 0; } continue; }
+            E.nlZeilen(T2, buf.toString('utf8', 0, cut + 1), null); nl.pos += cut + 1;
+        }
+        T2.reads = reads; return T2;
+    };
+    const same = (A, B) => ['starts', 'runs', 'pausen', 'bins', 'copT', 'on', 't0', 'tStop'].every(k => JSON.stringify(A[k]) === JSON.stringify(B[k]));
+    const files2 = [path.join(dir, 'quiet-2026-09.csv'), path.join(dir, 'quiet-2026-10.csv')];
+    const Ta = nachladenSim(files2, 65536), Tb = nachladenSim(files2, 1 << 20), Tc = nachladenSim(files2, 4096);
+    check('Nachladen (Stuecke 4 kB, 64 kB, 1 MB; Vormonat fehlt) = Replay ueber buildInputs: Starts, Laeufe, Pausen, Baender und COP identisch; Zeilen ' + Ta.nl.zeilen + ', Minuten ' + Ta.nl.minuten, same(Ta, T) && same(Tb, T) && same(Tc, T) && Ta.nl.minuten === inputs.length && Ta.reads > Tb.reads,
+          ['starts', 'runs', 'pausen', 'bins', 'copT'].filter(k => JSON.stringify(Ta[k]) !== JSON.stringify(T[k])).join(',') + ' Minuten ' + Ta.nl.minuten + '/' + inputs.length);
+    const ML = E.mindestLeistung(Ta);
+    console.log('Mindestleistung nach Nachladen (Band, Q10, n, monoton): ' + JSON.stringify(ML));
+    check('Befund Echtdaten: Laeufe im 48-h-Fenster 113–970 min, Pausen 57–142 min (Bedarfspausen), Mindestleistung (monoton) 1,7–1,8 kW in allen Baendern', Ta.runs.length && Math.min(...Ta.runs.map(r => r[1])) === 113 && Math.max(...Ta.runs.map(r => r[1])) === 970 && Math.min(...Ta.pausen.map(p => p[1])) === 57 && Math.max(...Ta.pausen.map(p => p[1])) === 142 && Ta.pausen.every(p => p[2] === 'bedarf') && ML.every(b => b[3] >= 1650 && b[3] <= 1850), JSON.stringify(ML.map(b => b[3])));
 }
+// Nachladen: Kopfzeilen-Versionen, Luecken, rueckwaerts laufende Zeit, unvollstaendige Zeilen
+{ const z = (m, hz, extra) => { const d = new Date(2026, 9, 1, 0, 0, 0).getTime() + m * MIN + 12000, x = new Date(d), p2 = v => (v < 10 ? '0' : '') + v; return x.getFullYear() + '-' + p2(x.getMonth() + 1) + '-' + p2(x.getDate()) + ' ' + p2(x.getHours()) + ':' + p2(x.getMinutes()) + ':' + p2(x.getSeconds()) + ',' + hz + ',5,600,3000,0' + (extra === undefined ? '' : ',' + extra); };
+  let txt = 'zeit,verdichter_hz,aussen,leistung_el_w,leistung_th_heisha_w,quiet_aktuell\n';
+  for (let m = 0; m < 10; m++) { txt += z(m, 0) + '\n'; }
+  for (let m = 10; m < 50; m++) { txt += z(m, 30) + '\n'; }
+  txt += 'zeit,verdichter_hz,aussen,leistung_el_w,leistung_th_heisha_w,quiet_aktuell,heizregelung\n';
+  for (let m = 50; m < 80; m++) { txt += z(m, 30, 1) + '\n'; }
+  txt += z(60, 30, 1) + '\n' + 'kaputt,1\n';                                                 // Zeit rueckwaerts und kaputte Zeile: entfallen
+  for (let m = 200; m < 260; m++) { txt += z(m, m < 230 ? 0 : 30, 1) + '\n'; }               // Luecke 80 -> 200 min (keine Daten): Lauf endet nicht als Stopp
+  const T = E.taktNew(); T.nl = E.nlNeu(['x'], 0); E.nlZeilen(T, txt, null); E.nlEnde(T, null, 5);
+  check('Nachladen: zwei Kopfzeilen-Versionen (heizregelung erst ab der zweiten), kaputte und rueckwaerts laufende Zeilen entfallen, Datenluecke ist kein Stopp; danach nicht mehr "laeuft"', T.nl.laeuft === false && T.nl.zeilen === 140 && T.starts.length === 2 && T.runs.length === 1 && T.on === true && Object.keys(T.copT).length >= 1 && JSON.stringify(Object.keys(T.copT[Object.keys(T.copT)[0]])).indexOf('Efficiency|0|3…7') >= 0 && JSON.stringify(Object.keys(T.copT[Object.keys(T.copT)[0]])).indexOf('?|0|3…7') >= 0, JSON.stringify({n: T.nl, starts: T.starts.length, runs: T.runs, cop: T.copT})); }
 console.log('\nERGEBNIS takt_sim: ' + oks + ' OK, ' + fails + ' FAIL');
 process.exit(fails ? 1 : 0);

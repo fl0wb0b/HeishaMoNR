@@ -3162,8 +3162,31 @@ var inp = {t: now, hpAge: hpTs ? (now - hpTs) / MIN : null,
 // Vorausschau: OWM-Vorhersage und Gebaeudemodell des Waermefahrplans (Gate, coefActivate); Sonne/Wind nur bei aktivem Modell (sonst nicht in der Eingabe)
 var vsIn = null; try { vsIn = ENGINE.vorschau(G('OPT_weather'), G('OPT_plan'), G('OPT_plan_in'), at, now); } catch (e) { vsIn = null; }
 if (vsIn) { inp.vs = vsIn; }
-// ---------- rechnen (jede Minute), protokollieren
+// ---------- Takt-Messung: einmalig aus quiet-YYYY-MM.csv (Vormonat und laufender Monat) nachladen, stueckweise (je Minute hoechstens 4 MB bzw. 300 ms);
+// waehrend des Nachladens fuehrt der Kern die Live-Eingabe nicht in die Takt-Messung (die Datei enthaelt diese Minuten), danach normal weiter
 var files = [], d0 = new Date(now), month = d0.getFullYear() + '-' + p2(d0.getMonth() + 1);
+function nachladen(T) {
+    var nl = T.nl, NLC = (CF.engine && CF.engine.nachladen) || {}, chunk = num(NLC.chunkBytes) || 1048576, maxB = num(NLC.maxBytes) || 4194304, maxMs = num(NLC.maxMs) || 300;
+    var t0 = Date.now(), done = 0, buf = Buffer.alloc(chunk);
+    while (T.nl.laeuft && done < maxB && Date.now() - t0 < maxMs) {
+        if (nl.i >= nl.dateien.length) { ENGINE.nlEnde(T, cfg.takt, now); break; }
+        var fd = null, n = 0;
+        try { fd = fs.openSync(nl.dateien[nl.i], 'r'); n = fs.readSync(fd, buf, 0, chunk, nl.pos); } catch (e) { n = 0; }
+        if (fd !== null) { try { fs.closeSync(fd); } catch (e2) { /* egal */ } }
+        var cut = n > 0 ? buf.lastIndexOf(10, n - 1) : -1;
+        if (cut < 0) { if (n >= chunk) { nl.pos += n; } else { nl.i++; nl.pos = 0; } continue; }   // Datei zu Ende (oder fehlt) -> naechste; ueberlange Zeile ueberspringen
+        ENGINE.nlZeilen(T, buf.toString('utf8', 0, cut + 1), cfg.takt);
+        nl.pos += cut + 1; done += cut + 1;
+    }
+}
+if (msg.topic !== 'anzeige' && ST.S) {
+    if (!ST.S.takt || !ST.S.takt.nl) {
+        var dP = new Date(d0.getFullYear(), d0.getMonth() - 1, 1);
+        ST.S.takt = ENGINE.taktNew(); ST.S.takt.nl = ENGINE.nlNeu(['/data/optimizer/quiet-' + dP.getFullYear() + '-' + p2(dP.getMonth() + 1) + '.csv', '/data/optimizer/quiet-' + month + '.csv'], now);
+    }
+    if (ST.S.takt.nl.laeuft) { try { nachladen(ST.S.takt); } catch (e) { node.warn('Takt nachladen: ' + e.message); ENGINE.nlEnde(ST.S.takt, cfg.takt, now); } }
+}
+// ---------- rechnen (jede Minute), protokollieren
 if (msg.topic !== 'anzeige') {
     var o;
     try { o = ENGINE.step(ST.S, inp, cfg); } catch (e) { node.warn('Entscheidungsmaschine: ' + e.message); global.set('OPT_engine', {ts: 0, fehler: e.message}); return null; }

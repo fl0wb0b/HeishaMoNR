@@ -758,7 +758,11 @@ if (flowsFile) {
     let NOW = new Date(2026, 9, 12, 8, 0, 0).getTime();
     class FD extends Date { constructor(...a) { if (a.length === 0) { super(NOW); } else { super(...a); } } static now() { return NOW; } }
     let gstore = {}, fstores = {}, files = {}, warns = [];
-    const fsm = {readFileSync: p => { if (!(p in files)) { const e = new Error('ENOENT ' + p); e.code = 'ENOENT'; throw e; } return files[p]; }, writeFileSync: (p, d) => { files[p] = String(d); }, mkdirSync: () => {}, chmodSync: () => {}};
+    const fds = {}; let fdN = 10;
+    const fsm = {readFileSync: p => { if (!(p in files)) { const e = new Error('ENOENT ' + p); e.code = 'ENOENT'; throw e; } return files[p]; }, writeFileSync: (p, d) => { files[p] = String(d); }, mkdirSync: () => {}, chmodSync: () => {},
+                 openSync: p => { if (!(p in files)) { const e = new Error('ENOENT ' + p); e.code = 'ENOENT'; throw e; } fds[++fdN] = p; return fdN; },
+                 readSync: (fd, buf, off, len, pos) => { const b = Buffer.from(files[fds[fd]], 'utf8'); if (pos >= b.length) { return 0; } return b.copy(buf, off, pos, Math.min(b.length, pos + len)); },
+                 closeSync: fd => { delete fds[fd]; }};
     const comp = {};
     const ctx = st => ({get: (k, s) => (s === 'file' ? undefined : st[k]), set: (k, v) => { st[k] = v; }});
     function runN(id, msg) {
@@ -920,6 +924,22 @@ if (flowsFile) {
     let A5 = E.newApply(); A5.aktiv = {id: 'r', rule: 'raum_offset', groesse: 'shift', name: 'SetZ1HeatRequestTemperature', value: 1, von: 0, ts: NOW - 3600000, bis: NOW + 3600000, bestaetigt: true};
     const en5 = E.applyTick(A5, {now: NOW, plant: {shift: 1, hpAge: 0.3, block: 0}, endReason: {raum_offset: 'Raumvorschlag ist wieder 0 K'}});
     check('Rueckweg, wenn der Grund endet (Raumvorschlag 0): ein Befehl zurueck auf 0 mit Grund im Protokoll', en5.send.length === 1 && en5.send[0].payload === '0' && /Raumvorschlag ist wieder 0 K/.test(en5.log[0].grund), JSON.stringify(en5.log[0]));
+    // Takt-Messung: einmaliges Nachladen aus quiet-YYYY-MM.csv in der Huelle (stueckweise ueber mehrere Minuten), waehrenddessen "laedt", danach normal weiter
+    { const p2 = v => (v < 10 ? '0' : '') + v, st = tt => { const x = new Date(tt); return x.getFullYear() + '-' + p2(x.getMonth() + 1) + '-' + p2(x.getDate()) + ' ' + p2(x.getHours()) + ':' + p2(x.getMinutes()) + ':' + p2(x.getSeconds()); };
+      const head = 'zeit,quiet_aktuell,verdichter_hz,leistung_el_w,leistung_th_heisha_w,aussen,defrost,warmwasser,heizregelung';
+      let txt = head + '\n'; const t0c = NOW - 8 * 3600000;
+      for (let m = 0; m < 8 * 60 - 1; m++) { const tt = t0c + m * 60000 + 5000, runA = (m >= 30 && m < 150) || (m >= 230 && m < 400); txt += st(tt) + ',0,' + (runA ? 25 : 0) + ',' + (runA ? 450 : 30) + ',' + (runA ? 2600 : 0) + ',6,0,0,1\n'; }
+      const month = st(NOW).slice(0, 7); files['/data/optimizer/quiet-' + month + '.csv'] = txt;
+      const ST0 = fstores.opt_engine.eng; delete ST0.S.takt; world(); gstore.compressor_frequency = 0;
+      gstore.OPT_cfg.engine = Object.assign({}, gstore.OPT_cfg.engine || {}, {nachladen: {chunkBytes: 4096, maxBytes: 8192}});
+      const Rl = minute(1), sc1 = Rl.eng[0][2].payload.takt;
+      const laeuft1 = fstores.opt_engine.eng.S.takt.nl.laeuft;
+      let k = 0; while (fstores.opt_engine.eng.S.takt.nl.laeuft && k < 40) { minute(1); k++; }
+      const T = fstores.opt_engine.eng.S.takt, Rz = minute(1), sc2 = Rz.eng[0][2].payload.takt;
+      check('Huelle Nachladen: ohne Nachlade-Stand wird S.takt aus quiet-YYYY-MM.csv gefuellt, stueckweise (8 kB je Minute -> ' + (k + 1) + ' Minuten), Anzeige "lädt", danach 2 Laeufe (120 und 170 min), 1 Start mit Pause 80 min, COP Efficiency Q0 3…7; Vormonat fehlt ohne Fehler',
+            laeuft1 === true && sc1.chip === 'lädt' && k >= 1 && T.nl.laeuft === false && T.nl.zeilen === 8 * 60 - 1 && T.runs.length === 2 && T.runs[0][1] === 120 && T.runs[1][1] === 170 && T.starts.length === 2 && T.pausen.length === 1 && T.pausen[0][1] === 80 && sc2.chip !== 'lädt' && /Efficiency Q0/.test(sc2.cop) && !warns.some(w => /Takt nachladen/.test(w)),
+            JSON.stringify({k, nl: T.nl, runs: T.runs, starts: T.starts.length, pausen: T.pausen, chip: sc2.chip, cop: sc2.cop}));
+      delete gstore.OPT_cfg.engine; }
     // Lange Fahrt mit Hauptschalter AN und ALLEN Regeln freigegeben, aber ohne Klick: nie ein Befehl
     files['/data/optimizer/apply.json'] = '{"enabled": true, "rules": ["quiet_freigabe", "quiet_strecken", "raum_offset"]}';
     files['/data/optimizer/apply-state.json'] = JSON.stringify(E.newApply()); restart(); NOW += 3600000; world();
