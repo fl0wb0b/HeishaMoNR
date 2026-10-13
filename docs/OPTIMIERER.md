@@ -1,6 +1,6 @@
 # Optimierer: Entscheidungsmaschine, Punktesystem, Ein-Klick-Übernahme, Bonsai-Beobachter
 
-Stand 12.10.2026, Branch `optimizer-engine`. **Alles ist Shadow.** Die Maschine rechnet jede Minute aus, was sie schalten *würde*, und schreibt das auf. Sie sendet nichts. Der einzige Sendeweg ist ein Klick des Betreibers auf „Übernehmen“. Dieser Weg wird gesperrt ausgeliefert.
+Stand 13.10.2026, Branch `todo-umsetzung` (Änderungen gegenüber 12.10.: Abschnitt 13). **Alles ist Shadow.** Die Maschine rechnet jede Minute aus, was sie schalten *würde*, und schreibt das auf. Sie sendet nichts. Der einzige Sendeweg ist ein Klick des Betreibers auf „Übernehmen“. Dieser Weg wird gesperrt ausgeliefert.
 
 ## 1. Kurzfassung
 
@@ -648,6 +648,7 @@ Der Beobachter schreibt nie an Anlage, NAS oder MQTT. Einen MQTT-Befundkanal zur
 | `node tools/engine_sim.js /tmp/x.json [Datenordner]` | **12.10. abends (v5, Laufzeit strecken v2): 219 OK mit Flow-Datei ohne Daten** (vorher 206). Neu v5: Treffer bei b ≥ p = 0 ohne Skill-Beitrag, Fehlalarm bei b ≥ p = −24/−39, b < p = v4, kein Gaming, Ablauf Treffer/Fehlalarm/b < p mit gelernter Basisrate, Versionswechsel v4 → v5 mit offenem Fall, 5-Tage-Kälte (Raumeinfluss 0 statt −122), Skill-Konsistenz, Kachel „davon … neutral“; neu Regel v2: Takt belegt → Vorschlag, Heizgrenze-Stopp → keiner, 2 Starts in 3 h → Vorschlag, alter Zustand → keiner; angepasst: „Takten während Sperre“ mit vorgegebenem Takt-Beleg, „Skill ab 3 Fällen“ mit `cfg.sv = 4`, v4-Prüfungen auf die aktuelle Version. Mit `SIM_BASIS=1` zusätzlich je Sim die Fälle mit Horizonten (b, neutral/Abzug). **12.10. (v4): 206 OK mit Flow-Datei ohne Daten** (vorher 198; ohne Flow-Datei und Daten 157). Neu: Hinweis-Treffer = 0 Punkte, Hinweis-Fehlalarm mit Schaden 0 Punkte, v3 nachrechenbar (`cfg.sv = 3`, +9), Befund −14,0/−6,84 nachgerechnet, offener Fall ändert den Skill nicht, Skill erst ab 3 Fällen, Versionswechsel v3 → v4 mit offenem Hinweis-Fall, Punkte-Kachel „–“ ohne Diagramm; angepasst: Bericht (Skill bei 1 Fall „–“). Die Replay-Prüfungen brauchen die Datenkopie vom 10.10. 13:24; sie liegt nicht mehr vor (siehe Replay-Bericht, Nachtrag), mit ihr wären es 223. Mit `SIM_BASIS=1` zusätzlich die Basisraten je Regel und Horizont gegen p. Stand 11.10.: Kern, Sperren, Mehrtages-Modell, Punktesystem, Nachprüfung, Seite (Karten-Daten, Darstellung, Vorschau), Hüllen im vm, gesperrte Übernahme, Replay: **215 OK** mit Flow-Datei und Daten (ohne Flow-Datei 166; neu am 11.10.: 53 Prüfungen Vorausschau/Arbitrierung inkl. Tagesgang, „verpasst“ der Vorausschau, 8-Tage-Fake-Uhr, Kacheln ohne Abschneiden, Replay mit Gate zu und testweise offen, Hülle mit Vorhersage; angepasst: Regelzahl 5, `SCORE_VER`, Datensatzgröße 2,7 MB/Tag, 5 Kachelspalten; neu in v2: Sperre entschuldigt, Schaden Komfort/Takt zählt, verlängerte Sperre entschuldigt nicht, v1 nachrechenbar, Versionswechsel, Replay v1/v2, Kachel) |
 | `BEOBACHTER_TMP=<ordner> python3 tools/bonsai_beobachter_test.py [Datenordner]` | **9 OK**, LLM nur als Mock |
 | `node tools/engine_replay.js <Datenordner> [Ausgabe]` und `--md` (`--sv4` …) | Replay der echten Protokolle |
+| 13.10. (Branch `todo-umsetzung`) | `optimizer_sim` **632 OK**, `engine_sim` **230 OK** (mit `replay_data` 07.–12.10.: 244 OK, 3 datensatzabhängige FAIL wie auf `0beb6b0`), `node tools/takt_sim.js <Datenordner>` **26 OK**, `node tools/kern_chain_sim.js <flows>` **15 OK** (Kern-Paket, nicht im Deploy) |
 | `node tools/takt_analyse.js <Datenordner>` | Läufe mit Stopp-Art, Frequenz, Rücklauf-Rückstand, Vorlauf-Anstieg; Treffsicherheit der Vorhersage „Abschaltgrenze in ≤ 45 min“ |
 
 Angepasste Sicherheitsprüfungen in `optimizer_sim.js` sind gezielt: Es ist **genau** `opt_apply_mqtt` erlaubt. Eine neue Prüfung verlangt:
@@ -764,3 +765,29 @@ Mögliche Wege (je eine neue Bewertungsversion; gewählt wurde (b)): (a) p je Re
 3. **p neu festlegen** nach 14 Tagen Live-Daten bleibt sinnvoll; mit v5 verliert eine zu niedrige p aber ihren Schaden.
 
 **Zeitzone.** Wie im übrigen Optimierer ist sie die Ortszeit des Containers. Die Sim läuft mit Europe/Berlin, auch über die Zeitumstellung am 25.10.
+
+## 13. Umsetzung TODO A–H (13.10.2026, Branch `todo-umsetzung`)
+
+**Nutzerentscheidungen 13.10.2026:** Quiet und Comfort/Efficiency richten sich nach der gemessenen Effizienz (keine feste Quiet-0-Regel mehr). Mindestdaten je Kombination Modus × Quiet × Außenband: 60 min (vorläufig). Sonne `bs` ≤ 0,5, Wind `bw` ≤ 0,0125 kWh/(K·m/s·h), Wind erst über 4 m/s. „Laufzeit strecken“ auch aus Quiet 1/2.
+
+| Punkt | Was | Wo |
+|---|---|---|
+| A Sonne/Wind | `coefSafe()` begrenzt `bs`/`bw` vor jeder Nutzung (Plan, Kandidat, `OPT_plan.model`, Vorausschau); Gate kennt „negativ“, „nicht endlich“, „unplausibel“; Hysterese endet bei hartem Fehler; Sonnenterm bei gleichförmigen PV-Tagen eingefroren. Wind-Merkmal `max(0, v − 4)` in Tagessummen (Tageseintrag 13/14), Fit, Plan und Vorausschau (`VS_LIM`); Modellversion 2: alte Koeffizienten werden neu gerechnet, ihr „aktiv“ nicht übernommen | `opt_plan`, `engine_core` |
+| C Takt-Messung | entprellter Start-Zähler, Pausen-Typen, Mindestleistung je 2-K-Band (laufendes Minimum von warm nach kalt), COP je Heizregelung × Quiet × Außenband über 30 Tage; Schwellen mit Herkunft in `TAKT_SCHWELLEN` (`cfg.takt`, Tabelle oben); einmaliges Nachladen aus `quiet-YYYY-MM.csv` (Vormonat und Monat, stückweise ≤ 4 MB bzw. 300 ms je Minute); Datensatz `abl.tk` nur bei Änderung/zur vollen Stunde | `engine_core`, Hülle `opt_engine` |
+| Laufzeit strecken v3 | Auslöser wie v2 (belegter Takt); Zielstufe = höhere Stufe mit dem besten COP (≥ 60 min Daten für jetzige und Zielstufe, deckelt nachweislich < 22 Hz, COP höchstens 3 % unter der jetzigen); ohne Daten kein Vorschlag und kein „verpasst“; Rückweg auf die vorherige Stufe | `engine_core` |
+| B Lern-Hygiene | Plausibilitätsbereiche je Eingang (Plan und Maschine, außerhalb = fehlend); Tages-Gate: Warmwasser > 120 min, Abtauen > 90 min, Datenlücke > 60 min, Eingriff > 60 min, unplausibel > 60 min → Tag lernt nicht mit (Tageseintrag 15–20); Drift des Plan-Modells als CUSUM auf den A/B-Tagen | `opt_plan` („Lern-Gate“, „Bedarfsmodell Drift“) |
+| D Validierung | Überanpassungs-Quote Test/Training > 1,5 als Gate-Grund; Schnappschuss-Ring der aktiven Lernwerte; Rückfall: CUSUM auf (\|q−k\| − \|q−b\|)/Streuung, bei Alarm Kandidat aus und 7 Tage gesperrt | `opt_plan` |
+| E Auswertung | Wirkzeit Raum (Idee ClimateOptimizer `lag.py`, ereignisbasiert); Heizkurven-Bias (tvofi `curve_learning.py`: −0,2 K nach 3 Tagen mit ≥ 0,3 K Luft, Komfortmiss → 0); beide nur Anzeige | `engine_core` (Kachel „Punkte“) |
+| H | beobachtete Heizgrenze (Außentemperatur am Ende von Läufen ≥ 30 min, 7 Tage) | `engine_core` |
+| G Kern-Robustheit | **vorbereitet, nicht im Deploy:** `tools/kern_patch.py` (Ist/Soll-Abgleich nur nach unten, Filter-Platzhalter, Summenfunktion jede Minute), `tools/kern_chain_sim.js`; Bericht `repo-analyse/kern-robustheit.md` | Kern-Tabs nur mit Go |
+
+Befunde aus den Echtdaten 07.–12.10.:
+- Takt: keine Minutenpausen, Pausen 57–142 min, Läufe 113–970 min.
+- Mindestleistung 1,70–1,76 kW.
+- COP Efficiency: 7–11 °C Quiet 0 5,91 gegen Quiet 3 6,15; 11–15 °C 6,89 gegen 6,76.
+- Laufzeit strecken v3: 0 Vorschläge, weil kein Takt belegt war.
+- Drift: CUSUM 3,8 von 4 (Ist 30,0/36,0 kWh gegen Plan-Modell 19,7/31,1 kWh am 11./12.10.).
+- Wirkzeit: je 2 von 3 nötigen Ereignissen.
+- Heizkurven-Bias 0: an keinem Tag ≥ 0,3 K Luft in allen Räumen.
+- Heizgrenze beobachtet: Ø 10,6 °C, höchstens 15 °C (21 Läufe).
+
