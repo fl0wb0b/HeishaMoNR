@@ -1521,7 +1521,8 @@ var ENGINE = (function () {
     function cmdOk(name, value) { var W = WHITELIST[name]; if (!W) { return 'Befehl ' + name + ' steht nicht auf der Whitelist'; } if (W.werte.indexOf(value) < 0) { return 'Wert ' + value + ' für ' + name + ' nicht erlaubt (' + W.werte.join(', ') + ')'; } return null; }
     function cmdMsg(name, value, source) { return {topic: WHITELIST[name].topic, payload: String(value), source: source}; }
     function fresh(plant) { return have(num(plant.hpAge)) && num(plant.hpAge) <= APPLY.hpMaxAgeMin; }
-    // ctx: {now, enabled (Hauptschalter), rules (freigegebene Regel-IDs), eng (OPT_engine: {ts, prop, locks}), plant ({q, shift, hpAge, block, heatMode, z1Sensor}), cfg, endReason, halten}
+    // ctx: {now, enabled (Hauptschalter), knoten (false = Sendeknoten opt_apply_mqtt deaktiviert erzeugt), rules (freigegebene Regel-IDs), eng (OPT_engine: {ts, prop, locks}),
+    //       plant ({q, shift, hpAge, block, heatMode, z1Sensor}), cfg, endReason, halten}
     function applyRequest(A, req, ctx) {
         A = (A && A.mv === VER) ? A : newApply();
         var now = ctx.now, out = {A: A, send: [], toast: null, log: []}, act = req && req.topic, pl = (req && req.payload) || {}, plant = ctx.plant || {};
@@ -1542,6 +1543,7 @@ var ENGINE = (function () {
         // ---- Prüfkette für "Übernehmen" (jede Stufe mit eigenem Grund; nichts vom Browser wird ungeprüft übernommen)
         if (A.lastClick && A.lastClick.id === pl.id && now - A.lastClick.ts < APPLY.doppelMs) { return deny('Schon übernommen (Doppelklick ignoriert).', 'orange'); }
         if (ctx.enabled !== true) { return deny('Übernahme gesperrt: Hauptschalter OPT_apply_enabled ist aus. Nichts gesendet.'); }
+        if (ctx.knoten === false) { return deny('Übernahme gesperrt: der Sendeknoten opt_apply_mqtt ist deaktiviert (Flows ohne --uebernahme-knoten-aktiv erzeugt). Nichts gesendet.'); }
         var eng = ctx.eng || {}, p = eng.prop;
         if (!eng.ts || now - eng.ts > APPLY.maxAlterMin * MIN) { return deny('Die Entscheidungsmaschine hat seit über 2 min nicht gerechnet. Nichts gesendet.'); }
         if (!p || p.id !== pl.id) { return deny('Der angezeigte Vorschlag ist nicht mehr aktuell. Nichts gesendet.'); }
@@ -1550,6 +1552,7 @@ var ENGINE = (function () {
         if ((ctx.rules || []).indexOf(p.rule) < 0) { return deny('Übernahme für die Regel „' + p.rule + '“ ist nicht freigegeben. Nichts gesendet.'); }
         if (now >= p.bis) { return deny('Der Vorschlag ist abgelaufen. Nichts gesendet.'); }
         var bad = cmdOk(p.cmd.name, p.cmd.value); if (bad) { return deny(bad + '. Nichts gesendet.'); }
+        var badR = cmdOk(p.cmd.name, num(p.von)); if (badR) { return deny('Rückweg unmöglich: Ausgangswert ' + p.von + ' liegt außerhalb der Whitelist (' + WHITELIST[p.cmd.name].werte.join(', ') + '). Nichts gesendet.'); }
         var W = WHITELIST[p.cmd.name];
         if (W.topic !== p.cmd.topic) { return deny('Topic passt nicht zur Whitelist. Nichts gesendet.'); }
         if (num(plant.block) === 1) { return deny('Alle MQTT-Befehle sind gesperrt (MQTT.block_active). Nichts gesendet.'); }
@@ -1575,7 +1578,7 @@ var ENGINE = (function () {
     }
     function startReturn(A, ctx, out, why) {
         var now = ctx.now, a = A.aktiv, bad = cmdOk(a.name, a.von);
-        if (bad) { A.alarm = {ts: now, text: 'Rückweg unmöglich: ' + bad}; out.toast = {text: A.alarm.text, color: 'red'}; out.log.push({t: iso(now), aktion: 'rueckweg', ergebnis: 'abgelehnt', grund: bad}); return out; }
+        if (bad) { a.rueckFehl = now; A.alarm = {ts: now, text: 'Rückweg unmöglich: ' + bad + '. Bitte von Hand einstellen.'}; out.toast = {text: A.alarm.text, color: 'red'}; out.log.push({t: iso(now), aktion: 'rueckweg', ergebnis: 'abgelehnt', grund: bad}); return out; }   // einmal melden, nicht in jedem Takt
         if (A.pending && A.pending.art === 'rueckweg') { out.toast = {text: 'Der Rückweg läuft bereits.', color: 'orange'}; return out; }
         A.pending = {name: a.name, value: a.von, ts: now, versuche: 1, art: 'rueckweg', id: a.id};
         A.lastSend = now;
@@ -1609,6 +1612,8 @@ var ENGINE = (function () {
                     // Anlage steht nachweislich noch auf dem Ausgangswert: es gibt nichts zurueckzusetzen, die Uebernahme endet (sonst blockierte sie diese
                     // Groesse fuer jeden weiteren Klick, bei der Quiet-Freigabe ohne Ablaufzeit fuer immer). Unklarer Ist-Wert: aktiv lassen, "Zuruecksetzen" bleibt moeglich.
                     if (P.art === 'uebernahme' && A.aktiv) { if (ist === A.aktiv.von && fresh(plant)) { A.aktiv = null; } else { A.aktiv.unbestaetigt = true; } }
+                    // Rueckweg ohne Bestaetigung: nicht automatisch neu starten (sonst alle 4,5 min wieder 3 Befehle, ohne Ende); "Zuruecksetzen" bleibt moeglich
+                    if (P.art === 'rueckweg' && A.aktiv) { A.aktiv.rueckFehl = now; }
                 }
             }
             return out;
@@ -1616,6 +1621,16 @@ var ENGINE = (function () {
         var a = A.aktiv;
         if (!a) { return out; }
         var W2 = WHITELIST[a.name], ist2 = num(plant[W2.ruecklese]);
+        if (a.rueckFehl) {                                                               // Rueckweg abgebrochen: nichts mehr automatisch senden, nur den Ist-Wert beobachten
+            if (have(ist2) && fresh(plant) && ist2 === a.von) {
+                A.aktiv = null; out.toast = {text: W2.text + ' steht wieder auf ' + a.von + ' (nachträglich bestätigt). Übernahme beendet.', color: 'green'};
+                out.log.push({t: iso(now), aktion: 'bestaetigt', art: 'rueckweg', befehl: a.name, wert: a.von, nachtraeglich: true});
+            } else if (have(ist2) && fresh(plant) && ist2 !== a.value) {
+                A.alarm = {ts: now, text: W2.text + ' wurde von außen auf ' + ist2 + ' geändert (Übernahme ' + a.value + '). Kein automatischer Rückweg.'};
+                out.toast = {text: A.alarm.text, color: 'orange'}; out.log.push({t: iso(now), aktion: 'fremde_aenderung', befehl: a.name, soll: a.value, ist: ist2}); A.aktiv = null;
+            }
+            return out;
+        }
         if (a.bestaetigt && have(ist2) && ist2 !== a.value && fresh(plant)) {            // fremde Aenderung: nicht zuruecksetzen, nur warnen und die Uebernahme beenden
             A.alarm = {ts: now, text: W2.text + ' wurde von außen auf ' + ist2 + ' geändert (Übernahme ' + a.value + '). Kein automatischer Rückweg.'};
             out.toast = {text: A.alarm.text, color: 'orange'}; out.log.push({t: iso(now), aktion: 'fremde_aenderung', befehl: a.name, soll: a.value, ist: ist2}); A.aktiv = null; return out;

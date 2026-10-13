@@ -27,6 +27,9 @@ const sent = [];
 // opt_apply gespeist (Klick in der Karte "Aktueller Vorschlag" bzw. 15-s-Takt), ist standardmaessig deaktiviert und nutzt einen eigenen Broker-Client.
 // Jeder andere Sendeweg bleibt verboten (Pruefung "Uebernahme-Pfad" unten; Verhalten des Pfads in tools/engine_sim.js).
 const APPLY_OUT = 'opt_apply_mqtt';
+// Einspielen MIT aktivem Uebernahme-Knoten (nur nach dem Go des Nutzers, Generator mit --uebernahme-knoten-aktiv): muss ausdrücklich angesagt werden
+// (UEBERNAHME_KNOTEN_AKTIV=1, setzt deploy_opt.sh mit GEN_ARGS). Dann wird "aktiv" verlangt, sonst "deaktiviert"; alle uebrigen Strukturregeln gelten unveraendert.
+const APPLY_AKTIV = process.env.UEBERNAHME_KNOTEN_AKTIV === '1';
 const otherOut = n => n.z === 'opt_tab' && n.type === 'mqtt out' && n.id !== APPLY_OUT;
 const gfile = {};                                                              // Speicher "file" (HeishaMoNR legt dort Anlagenwerte ab); normalerweise leer -> Rueckfall auf den Standardspeicher
 function makeCtx(store, fileStore) { return { get: (k, s) => (s === 'file' ? (fileStore ? fileStore[k] : undefined) : store[k]), set: (k, v) => { store[k] = v; } }; }
@@ -834,8 +837,8 @@ check('Sicherheit: "SetQuietMode"/commands kennen nur der Waechter (lesend), die
 { // Uebernahme-Pfad: genau ein mqtt out, deaktiviert ausgeliefert, nur von opt_apply erreichbar, eigener Broker-Client; opt_engine fuehrt nicht dorthin
   const outs = flowsQ.filter(n => n.z === 'opt_tab' && n.type === 'mqtt out'), ap = flowsQ.find(n => n.id === 'opt_apply'), en = flowsQ.find(n => n.id === 'opt_engine'), br = flowsQ.find(n => n.id === 'opt_broker_cmd');
   const feeders = flowsQ.filter(n => (n.wires || []).some(w => w.indexOf(APPLY_OUT) >= 0)).map(n => n.id), toApply = flowsQ.filter(n => (n.wires || []).some(w => w.indexOf('opt_apply') >= 0)).map(n => n.id).sort();
-  check('Sicherheit (Uebernahme-Pfad): genau ein mqtt out im Tab (opt_apply_mqtt), deaktiviert ausgeliefert, gespeist nur von opt_apply, Eingaenge nur Karte + Takt, eigener Broker-Client, opt_engine hat keinen Weg dorthin',
-        outs.length === 1 && outs[0].id === APPLY_OUT && outs[0].d === true && JSON.stringify(feeders) === '["opt_apply"]' && JSON.stringify(toApply) === '["opt_i_apply","opt_t_eng_prop"]' && JSON.stringify(ap.wires[0]) === '["opt_apply_mqtt"]' && br && br.clientid === 'nodered-optimizer-cmd' && outs[0].broker === 'opt_broker_cmd' && !en.wires.some(w => w.indexOf(APPLY_OUT) >= 0 || w.indexOf('opt_apply') >= 0),
+  check('Sicherheit (Uebernahme-Pfad): genau ein mqtt out im Tab (opt_apply_mqtt), ' + (APPLY_AKTIV ? 'AKTIV (ausdruecklich angesagt: UEBERNAHME_KNOTEN_AKTIV=1)' : 'deaktiviert ausgeliefert') + ', gespeist nur von opt_apply, Eingaenge nur Karte + Takt, eigener Broker-Client, opt_engine hat keinen Weg dorthin',
+        outs.length === 1 && outs[0].id === APPLY_OUT && (APPLY_AKTIV ? outs[0].d !== true : outs[0].d === true) && JSON.stringify(feeders) === '["opt_apply"]' && JSON.stringify(toApply) === '["opt_i_apply","opt_t_eng_prop"]' && JSON.stringify(ap.wires[0]) === '["opt_apply_mqtt"]' && br && br.clientid === 'nodered-optimizer-cmd' && outs[0].broker === 'opt_broker_cmd' && !en.wires.some(w => w.indexOf(APPLY_OUT) >= 0 || w.indexOf('opt_apply') >= 0),
         JSON.stringify({outs: outs.map(n => n.id + (n.d ? '(aus)' : '(AN)')), feeders: feeders, toApply: toApply}));
 }
 check('Sicherheit: Abonnements nur lesend: Anlagenwerte und genau die Befehle Quiet, Quiet-Prioritaet, Heizregelung, Pumpenmodus, max. Pumpenleistung (nur mitlesen, wer sie schickt); eigener Client im NAS-Broker, kein mqtt out im Tab', flowsQ.filter(n => n.z === 'opt_tab' && n.type === 'mqtt in' && /^opt_mqtt_hp_/.test(n.id)).map(n => n.topic).join() === 'panasonic_heat_pump/main/+,panasonic_heat_pump/extra/+,panasonic_heat_pump/commands/SetQuietMode,panasonic_heat_pump/commands/SetHeatingControl,panasonic_heat_pump/commands/SetPumpFlowrateMode,panasonic_heat_pump/commands/SetMaxPumpDuty,panasonic_heat_pump/commands/SetQuietModePriority' && !flowsQ.some(otherOut), '');

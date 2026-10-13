@@ -692,16 +692,22 @@ console.log('--- Seite "Optimierer": Karten-Daten und Darstellung');
       check('kurze "wartet"-Episoden (< 5 min ohne Sperre/Vorschlag) werden ausgefiltert, die Liste bleibt leer', V2.ep.length === 4 && VW.logRows(V2, T0 + 40 * MIN).length === 0, V2.ep.length + ' Episoden'); }
     const evil = JSON.parse(JSON.stringify(B)); evil.card.prop.warum = '<script>alert(1)</script>'; evil.rules.rules[1].line.l = '<img src=x onerror=1>';
     check('Darstellung: Texte werden maskiert (kein HTML aus Gruenden/Namen)', !/<script>alert|<img src=x/.test(UI.html('card', evil.card) + UI.html('rules', evil.rules)), '');
-    const hc = UI.html('card', B.card);
-    check('Vorschlagskarte: hervorgehoben, Knoepfe Übernehmen (gesperrt, deaktiviert) und Verwerfen; Erwartung/Rückweg nur eingeklappt', /class="oe-prop"/.test(hc) && /<button data-a="uebernehmen" disabled>Übernahme gesperrt<\/button>/.test(hc) && /data-a="verwerfen"/.test(hc) && !/data-a="zuruecksetzen"|data-a="sperren"/.test(hc) && /<details data-k="prop"><summary>Erwartung und Rückweg<\/summary>/.test(hc), '');
-    const hC = UI.html('card', VW.build({now: last.t, last: last, S: S, V: V, AP: {aktiv: {name: 'SetQuietMode', value: 0, von: 3, ts: last.t - 5 * MIN, bestaetigt: true}, rules: ['quiet_freigabe']}, enabled: true}).card);
-    check('Hauptschalter AN, Regel frei, aktive Übernahme: Übernehmen aktiv, Zurücksetzen und Übernahme sperren sichtbar', /<button data-a="uebernehmen">Übernehmen<\/button>/.test(hC) && /data-a="zuruecksetzen"/.test(hC) && /data-a="sperren"/.test(hC), '');
-    check('Textmenge: Statuskarte ohne Vorschlag < 160 Zeichen, Regelkarte < 400, Entscheidungen je Zeile < 160', txt(UI.html('card', snap.card)).length < 160 && txt(UI.html('rules', B.rules)).length < 400 && B.log.rows.every(r => txt(UI.html('log', {rows: [r]})).length < 160 + 30), txt(UI.html('card', snap.card)).length + ' / ' + txt(UI.html('rules', B.rules)).length);
-    check('Kacheln: 5 Spalten gleicher Breite (eine je Regel; bei 18 Einheiten = 966 px je Kachel ~180 px), Kacheltexte abgeschnitten statt umgebrochen', /\.oe-grid\{display:grid;grid-template-columns:repeat\(5,minmax\(0,1fr\)\)/.test(UI.css) && /\.oe-nm\{[^}]*text-overflow:ellipsis/.test(UI.css) && Math.floor((18 * 48 + 17 * 6 - 24 - 4 * 8) / 5) >= 175, '');
+    const hc = UI.html('card', B.card), pB = B.card.prop;
+    check('Vorschlagskarte (13.10.): hervorgehoben, Befehl, Zielwert, Begruendung, erwartete Wirkung und Rueckweg offen sichtbar (nicht eingeklappt), Knopf Übernehmen grau mit Grund "gesperrt: Hauptschalter aus", Verwerfen',
+          /class="oe-prop"/.test(hc) && /<button data-a="uebernehmen" disabled>Übernehmen<\/button>/.test(hc) && /🔒 gesperrt: Hauptschalter aus/.test(hc) && /data-a="verwerfen"/.test(hc) && !/data-a="zuruecksetzen"|data-a="sperren"/.test(hc) && !/<details/.test(hc) &&
+          ['Befehl', 'Zielwert', 'Begründung', 'Erwartete Wirkung', 'Rückweg'].every(k => hc.includes('<dt>' + k + '</dt>')) && pB.befehl === 'SetQuietMode = 0' && pB.ziel === 'Quiet 0 (jetzt Quiet 3)' &&
+          pB.erwartung === 'Verdichter ≥ 25 Hz binnen 5 min, elektrische Leistung +350 bis +650 W, Vorlauf +2 K in 30 min' && hc.includes('title="' + pB.erwartungLang.slice(0, 40)) && /^kein automatischer · „Zurücksetzen“ stellt Quiet 3 wieder her$/.test(pB.rueck) && B.card.knopf.grund === 'gesperrt: Hauptschalter aus',
+          JSON.stringify({befehl: pB.befehl, ziel: pB.ziel, rueck: pB.rueck, knopf: B.card.knopf}));
+    const hC = UI.html('card', VW.build({now: last.t, last: last, S: S, V: V, AP: {aktiv: {name: 'SetZ1HeatRequestTemperature', value: 1, von: 0, ts: last.t - 5 * MIN, bestaetigt: true, groesse: 'shift', rule: 'raum_offset'}, rules: ['quiet_freigabe']}, enabled: true}).card);
+    check('Hauptschalter AN, Regel frei, aktive Übernahme einer anderen Größe: Übernehmen aktiv ("frei · heute 0/6 Befehle"), Zurücksetzen und Übernahme sperren sichtbar', /<button data-a="uebernehmen">Übernehmen<\/button>/.test(hC) && /frei · heute 0\/6 Befehle/.test(hC) && /data-a="zuruecksetzen"/.test(hC) && /data-a="sperren"/.test(hC), '');
+    check('Textmenge: Statuskarte ohne Vorschlag < 300 Zeichen (Letzter Vorschlag, letzte 24 h, Übernahme), Regelkarte < 400, Entscheidungen je Zeile < 160', txt(UI.html('card', snap.card)).length < 300 && txt(UI.html('rules', B.rules)).length < 400 && B.log.rows.every(r => txt(UI.html('log', {rows: [r]})).length < 160 + 30), txt(UI.html('card', snap.card)).length + ' / ' + txt(UI.html('rules', B.rules)).length);
+    check('Kacheln: 5 Spalten gleicher Breite (eine je Regel; bei 17 Einheiten = 912 px je Kachel ~170 px), Kachelnamen mit "…" statt Ueberlauf', /\.oe-grid\{display:grid;grid-template-columns:repeat\(5,minmax\(0,1fr\)\)/.test(UI.css) && /\.oe-nm\{[^}]*text-overflow:ellipsis/.test(UI.css) && Math.floor((17 * 48 + 16 * 6 - 24 - 4 * 8) / 5) >= 170, '');
     check('Kacheln ohne Abschneiden (Nutzer 11.10.): kurze Kachelnamen (hoechstens 17 Zeichen, ~140 px), Status-Chip unter dem Namen, Zeilentexte umbrechen statt "…" (geprueft in der statischen Vorschau bei 1024/1920/2560 px: 0 abgeschnitten)',
           E.RULES.every(R0 => R0.kachel && R0.kachel.length <= 17) && B.rules.rules.map(r => r.name).join(',') === 'Quiet-Freigabe,Laufzeit strecken,Raumeinfluss,Heizgrenze,Vorausschau' && /<div class="oe-st"><span class="oe-chip/.test(UI.html('rules', B.rules)) && /\.oe-ln span\{white-space:normal/.test(UI.css) && !/\.oe-sub\{[^}]*ellipsis/.test(UI.css), B.rules.rules.map(r => r.name).join(','));
-    const sc = B.score;
-    check('Punkte-Karte: 4 Kacheln mit Punkten, Freigabereife n/m (Kriterien nur eingeklappt), Messaufgabe als eine Zeile; ohne Punkteverlauf kein leeres Diagramm', sc.tiles.length === 5 && sc.tiles[0].reife.m === 6 && sc.tiles[3].reife === null && !UI.html('score', sc).includes('oe_chart') && /<details data-k="reife_quiet_freigabe"><summary>Kriterien<\/summary>/.test(UI.html('score', sc)) && /^Comfort 0\/10 min · Efficiency 0\/10 min$/.test(sc.mess.t), sc.mess.t);
+    const sc = B.score, msA = B.mess.takt.find(t => /^Messaufgabe/.test(t.k));
+    check('Punkte-Karte: 4 Kacheln mit Punkten, Freigabereife n/m (Kriterien nur eingeklappt), keine Mess-/Lernzeilen mehr (eigene Karte "Messwerte & Lernen", dort die Messaufgabe als Kachel); ohne Punkteverlauf kein leeres Diagramm',
+          sc.tiles.length === 5 && sc.tiles[0].reife.m === 6 && sc.tiles[3].reife === null && !UI.html('score', sc).includes('oe_chart') && /<details data-k="reife_quiet_freigabe"><summary>Kriterien<\/summary>/.test(UI.html('score', sc)) &&
+          !('mess' in sc) && !('takt' in sc) && !/Takt|Mindestleistung|COP|Wirkzeit|Heizkurven-Bias|Heizgrenze beobachtet|Messaufgabe/.test(txt(UI.html('score', sc))) && msA.v === 'offen' && msA.s === 'C 0/10 · E 0/10 min', JSON.stringify(msA));
     const A1 = runSeq(160, i => inp(T0 + i * MIN, {rt: 30 + i, soll: 38, sollKurve: 29.75, vl: 30, rl: 28.25, q: 3, hz: 16, rooms: rooms({ki_oben: 21.2})}));
     const s1 = VW.build({now: T0 + 159 * MIN, last: {t: T0 + 159 * MIN, res: A1.outs[159].res, anl: {}}, S: A1.S, V: {}, AP: {}}).score;
     check('Punkte-Diagramm: Summe je Regel als Stufenlinie ab 0 bis jetzt (SVG-Baukasten), Kachel +21', s1.series.length === 1 && s1.series[0].d[0][1] === 0 && s1.series[0].d[s1.series[0].d.length - 1][0] === T0 + 159 * MIN && s1.tiles[0].punkte === '+21,0' && /<svg/.test(require('./ui_chart.js').svg(UI.chartSpec(s1), 940).svg) && UI.html('score', s1).includes('id="oe_chart"'), JSON.stringify(s1.series[0].d));
@@ -765,10 +771,17 @@ if (fs.existsSync(path.join(dataDir, 'quiet-2026-10.csv'))) {
 }
 
 // ================================================================== (c) Node-RED-Huellen (opt_engine, opt_apply) und gesperrte Uebernahme, mit der erzeugten Flow-Datei
-function applyPathProblems(nodes) {                                              // Strukturregeln des Sendewegs (wie in optimizer_sim.js), hier auch fuer verfaelschte Kopien
+// Einspielen MIT aktivem Uebernahme-Knoten nur ausdruecklich angesagt (UEBERNAHME_KNOTEN_AKTIV=1, setzt deploy_opt.sh mit GEN_ARGS --uebernahme-knoten-aktiv):
+// dann muss er aktiv sein und opt_apply den Generator-Schalter KNOTEN = true tragen; sonst deaktiviert und KNOTEN = false. Alle anderen Regeln unveraendert.
+const APPLY_AKTIV = process.env.UEBERNAHME_KNOTEN_AKTIV === '1';
+function applyPathProblems(nodes, aktiv) {                                       // Strukturregeln des Sendewegs (wie in optimizer_sim.js), hier auch fuer verfaelschte Kopien
+    aktiv = aktiv === undefined ? APPLY_AKTIV : aktiv;
     const P = [], tab = nodes.filter(n => n.z === 'opt_tab'), outs = tab.filter(n => n.type === 'mqtt out');
     if (outs.length !== 1 || outs[0].id !== 'opt_apply_mqtt') { P.push('mqtt out im Tab: ' + outs.map(n => n.id).join(',')); }
-    if (outs.some(n => n.d !== true)) { P.push('Uebernahme-Knoten nicht deaktiviert'); }
+    if (!aktiv && outs.some(n => n.d !== true)) { P.push('Uebernahme-Knoten nicht deaktiviert'); }
+    if (aktiv && outs.some(n => n.d === true)) { P.push('Uebernahme-Knoten deaktiviert, angesagt war aktiv'); }
+    const apf = nodes.find(n => n.id === 'opt_apply');
+    if (apf && !(apf.func || '').includes('var KNOTEN = ' + (aktiv ? 'true' : 'false') + ';')) { P.push('opt_apply: Schalter KNOTEN passt nicht zum Sendeknoten'); }
     if (tab.some(n => ['link out', 'link in', 'link call', 'http in', 'http response'].includes(n.type))) { P.push('Link/HTTP-Knoten im Tab'); }
     const feeders = nodes.filter(n => (n.wires || []).some(w => w.indexOf('opt_apply_mqtt') >= 0)).map(n => n.id);
     if (JSON.stringify(feeders) !== '["opt_apply"]') { P.push('mqtt out gespeist von ' + feeders.join(',')); }
@@ -787,10 +800,19 @@ if (flowsFile) {
     check('Flow-Datei: Huellen opt_engine/opt_apply enthalten den Kern unveraendert (Text identisch mit tools/engine_core.js)', ['opt_engine', 'opt_apply'].every(id => FN[id] && FN[id].indexOf(fs.readFileSync(path.join(__dirname, 'engine_core.js'), 'utf8')) === 0), '');
     check('Struktur des Sendewegs: genau ein deaktivierter mqtt out, nur von opt_apply, Eingaenge nur Karte + Takt', applyPathProblems(NODES).length === 0, applyPathProblems(NODES).join(' | '));
     const mut = (f) => { const c = JSON.parse(JSON.stringify(NODES)); f(c); return applyPathProblems(c); };
-    check('Strukturpruefung schlaegt an: Knoten aktiviert / zweiter mqtt out / opt_engine direkt verdrahtet / Link im Tab', mut(c => { delete c.find(n => n.id === 'opt_apply_mqtt').d; }).length > 0 && mut(c => { c.push({id: 'opt_x', type: 'mqtt out', z: 'opt_tab', wires: []}); }).length > 0 && mut(c => { c.find(n => n.id === 'opt_engine').wires[4].push('opt_apply_mqtt'); }).length > 0 && mut(c => { c.push({id: 'opt_l', type: 'link out', z: 'opt_tab', wires: []}); }).length > 0, '');
-    const tplP = NODES.find(n => n.id === 'opt_t_eng_prop'), grp = NODES.filter(n => n.type === 'ui_group' && n.tab === 'opt_eng_ui_tab');
-    check('Seite "Optimierer": vier gleich breite Gruppen (18, Masonry-Falle vermieden), Karte mit Uebernehmen/Verwerfen/Zuruecksetzen/Sperren, Klick schickt nur Aktion + ID + Pruefsumme (genau vier send-Aufrufe)', grp.length === 4 && grp.every(g => g.width === 18) && tplP.format.includes("scope.send({topic: 'uebernehmen', payload: {id: P.prop.id, sum: P.prop.sum}})") && tplP.format.includes("scope.send({topic: 'verwerfen', payload: {id: P.prop.id}})") && tplP.format.includes("scope.send({topic: 'zuruecksetzen', payload: {}})") && tplP.format.includes("scope.send({topic: 'sperren', payload: {}})") && (tplP.format.match(/scope\.send\(/g) || []).length === 4 && tplP.format.includes("(P.knopf && P.knopf.ok ? '' : ' disabled')") && ['opt_t_eng_rules', 'opt_t_eng_score', 'opt_t_eng_log'].every(id => JSON.stringify(NODES.find(n => n.id === id).wires) === '[[]]'), grp.map(g => g.name + ':' + g.width).join(', '));
-    check('Seite "Optimierer": keine erklaerenden Hinweiszeilen (nur Daten, Status, Knoepfe)', !/class="note"|optq-note/.test(['opt_t_eng_prop', 'opt_t_eng_rules', 'opt_t_eng_score', 'opt_t_eng_log'].map(id => NODES.find(n => n.id === id).format).join('')), '');
+    check('Strukturpruefung schlaegt an: Knoten ' + (APPLY_AKTIV ? 'deaktiviert' : 'aktiviert') + ' / Schalter KNOTEN falsch / zweiter mqtt out / opt_engine direkt verdrahtet / Link im Tab',
+          mut(c => { const n = c.find(x => x.id === 'opt_apply_mqtt'); if (APPLY_AKTIV) { n.d = true; } else { delete n.d; } }).length > 0 &&
+          mut(c => { const a = c.find(x => x.id === 'opt_apply'); a.func = a.func.replace(/var KNOTEN = (true|false);/, (m, v) => 'var KNOTEN = ' + (v === 'true' ? 'false' : 'true') + ';'); }).length > 0 && mut(c => { c.push({id: 'opt_x', type: 'mqtt out', z: 'opt_tab', wires: []}); }).length > 0 && mut(c => { c.find(n => n.id === 'opt_engine').wires[4].push('opt_apply_mqtt'); }).length > 0 && mut(c => { c.push({id: 'opt_l', type: 'link out', z: 'opt_tab', wires: []}); }).length > 0, '');
+    const tplP = NODES.find(n => n.id === 'opt_t_eng_prop'), grp = NODES.filter(n => n.type === 'ui_group' && n.tab === 'opt_eng_ui_tab').sort((a, b) => a.order - b.order);
+    const TPL = ['opt_t_eng_prop', 'opt_t_eng_rules', 'opt_t_eng_score', 'opt_t_eng_mess', 'opt_t_eng_log'], tpl = TPL.map(id => NODES.find(n => n.id === id));
+    check('Seite "Optimierer" (13.10.): fuenf gleich breite Gruppen (17 Einheiten, Masonry-Falle vermieden) in der Reihenfolge Aktueller Vorschlag, Regeln, Punkte, Messwerte & Lernen, Entscheidungen; je Gruppe genau eine Karte; Karte mit Uebernehmen/Verwerfen/Zuruecksetzen/Sperren, Klick schickt nur Aktion + ID + Pruefsumme (genau vier send-Aufrufe)',
+          grp.length === 5 && grp.every(g => g.width === 17) && grp.map(g => g.name).join('|') === 'Aktueller Vorschlag|Regeln|Punkte|Messwerte & Lernen|Entscheidungen' && tpl.every((t, i) => t && t.group === grp[i].id && t.width === 0 && NODES.filter(n => n.group === grp[i].id).length === 1) &&
+          tplP.format.includes("scope.send({topic: 'uebernehmen', payload: {id: P.prop.id, sum: P.prop.sum}})") && tplP.format.includes("scope.send({topic: 'verwerfen', payload: {id: P.prop.id}})") && tplP.format.includes("scope.send({topic: 'zuruecksetzen', payload: {}})") && tplP.format.includes("scope.send({topic: 'sperren', payload: {}})") && (tplP.format.match(/scope\.send\(/g) || []).length === 4 && tplP.format.includes("(P.knopf && P.knopf.ok ? '' : ' disabled')") && TPL.slice(1).every(id => JSON.stringify(NODES.find(n => n.id === id).wires) === '[[]]'), grp.map(g => g.name + ':' + g.width).join(', '));
+    check('Seite "Optimierer": keine erklaerenden Hinweiszeilen (nur Daten, Status, Knoepfe)', !/class="note"|optq-note/.test(tpl.map(t => t.format).join('')), '');
+    check('Seite "Optimierer": jede Karte passt sich nach dem Zeichnen sofort ein (FIT_JS der eigenen Karte, nicht nur im 1,5-s-Takt, der bei verdecktem Fenster ruht); Starthoehen 4/3/9/10/12 Einheiten',
+          tpl.every(t => t.format.includes("F.fns['" + t.id + "']") && t.format.includes("var id = '" + t.id + "'") && /class="optfit"/.test(t.format)) && tpl.map(t => t.height).join('/') === '4/3/9/10/12', tpl.map(t => t.height).join('/'));
+    check('opt_engine: sechs Ausgaenge (Vorschlag, Regeln, Punkte, Entscheidungen, Dateien, Messwerte & Lernen), Dateien bleiben Ausgang 5',
+          (() => { const en = NODES.find(n => n.id === 'opt_engine'); return en.outputs === 6 && JSON.stringify(en.wires) === '[["opt_t_eng_prop"],["opt_t_eng_rules"],["opt_t_eng_score"],["opt_t_eng_log"],["opt_f_eng"],["opt_t_eng_mess"]]'; })(), '');
     // ---- vm-Harness (wie optimizer_sim.js): Fake-Uhr, Speicher, Dateien
     let NOW = new Date(2026, 9, 12, 8, 0, 0).getTime();
     class FD extends Date { constructor(...a) { if (a.length === 0) { super(NOW); } else { super(...a); } } static now() { return NOW; } }
@@ -849,7 +871,9 @@ if (flowsFile) {
     const decFile = Object.keys(files).find(f => /decisions-2026-10\.jsonl$/.test(f));
     check('Huelle: decisions-YYYY-MM.jsonl bekommt jede Minute genau einen Datensatz', decFile && files[decFile].trim().split('\n').length === 25 && JSON.parse(files[decFile].trim().split('\n')[24]).vorschlag === eng.prop.id, decFile);
     check('Huelle: ohne Klick sendet nichts (25 min, 100 Takte der Uebernahme)', sends(R).length === 0 && R.eng.every(o => !o || !o[4] || o[4].every(m => /^\/data\/optimizer\//.test(m.filename))), '');
-    check('Huelle: Karte zeigt den Vorschlag mit Pruefsumme, Knopf "Übernahme gesperrt", Statuszeile "Übernahme gesperrt" (Hauptschalter aus)', (() => { const c = R.eng[24][0].payload; return c.prop && c.prop.id === eng.prop.id && c.prop.sum === eng.prop.sum && c.knopf.ok === false && c.knopf.text === 'Übernahme gesperrt' && c.status.some(s => s.t === 'Übernahme gesperrt' && s.c === 'lock') && c.status[0].c === 'ok' && /^Maschine läuft/.test(c.status[0].t); })(), JSON.stringify(R.eng[24][0].payload.status));
+    check('Huelle: Karte zeigt den Vorschlag mit Pruefsumme, Knopf "Übernehmen" gesperrt mit Grund "gesperrt: Hauptschalter aus", Statuszeile "Übernahme gesperrt" (Hauptschalter aus)', (() => { const c = R.eng[24][0].payload; return c.prop && c.prop.id === eng.prop.id && c.prop.sum === eng.prop.sum && c.knopf.ok === false && c.knopf.text === 'Übernehmen' && c.knopf.grund === 'gesperrt: Hauptschalter aus' && c.status.some(s => s.t === 'Übernahme gesperrt' && s.c === 'lock') && c.status[0].c === 'ok' && /^Maschine läuft/.test(c.status[0].t); })(), JSON.stringify(R.eng[24][0].payload.status));
+    check('Huelle: Karte "Messwerte & Lernen" kommt ueber Ausgang 6 (Takt-Kacheln, Mindestleistung, COP-Matrix oder "sammelt", Lernen mit Gebaeudemodell aus OPT_plan 1/10 Tage, Gate zu)',
+          (() => { const m = R.eng[24][5] && R.eng[24][5].payload; return m && m.takt.length === 5 && Array.isArray(m.ml) && m.lern.length === 6 && m.lern[0].k === 'Gebäudemodell' && m.lern[0].v === '1/10 Tage' && m.lern[0].chip === 'Gate zu' && m.lern[1].chip === 'keine Daten'; })(), JSON.stringify(R.eng[24][5] && R.eng[24][5].payload.lern.slice(0, 2)));
     check('Huelle: Regelkacheln (5 Regeln mit Status-Chip, Bedingungen, einer Zeile), Punkte-Kacheln (5), Entscheidungen als Episoden (Quiet-Freigabe: wartet > Vorschlag, laeuft)', R.eng[24][1].payload.rules.length === 5 && R.eng[24][1].payload.rules.every(r => r.chip && r.line && typeof r.line.l === 'string') && R.eng[24][2].payload.tiles.length === 5 && (() => { const rw = R.eng[24][3].payload.rows; return rw.length === 1 && rw[0].offen && rw[0].steps.map(s => s[0].split(' ')[0]).join('>') === 'wartet>Vorschlag'; })(), JSON.stringify(R.eng[24][3].payload.rows));
     { const hs = gstore.OPT_hp.Heating_Off_Outdoor_Temp; gstore.OPT_hp.Heater_On_Outdoor_Temp = {v: 0, ts: NOW - 3 * 3600000}; const keep = Object.assign({}, hs); hs.ts = NOW - 3 * 3600000;
       NOW += 60000; runN('opt_engine', {topic: '', payload: NOW}); const last = JSON.parse(files[decFile].trim().split('\n').pop()); Object.assign(hs, keep); delete gstore.OPT_hp.Heater_On_Outdoor_Temp;
@@ -866,6 +890,14 @@ if (flowsFile) {
     // 2) Klick bei Hauptschalter AUS
     let r = click('uebernehmen', {id: gstore.OPT_engine.prop.id, sum: gstore.OPT_engine.prop.sum});
     check('Klick, Hauptschalter AUS (keine apply.json): nichts gesendet, rote Meldung, Protokoll "abgelehnt"', !r[0] && r[1] && r[1].highlight === 'red' && /Hauptschalter/.test(r[1].payload) && /"ergebnis":"abgelehnt"/.test(r[2][0].payload), r[1] && r[1].payload);
+    if (!APPLY_AKTIV) {                                                               // wie ausgeliefert: Sendeknoten deaktiviert, opt_apply weiss das (KNOTEN = false)
+        files['/data/optimizer/apply.json'] = '{"enabled": true, "rules": ["quiet_freigabe"]}';
+        r = click('uebernehmen', {id: gstore.OPT_engine.prop.id, sum: gstore.OPT_engine.prop.sum});
+        const cK = minute(1).eng[0][0].payload;
+        check('Wie ausgeliefert (Sendeknoten deaktiviert, KNOTEN = false): auch mit Hauptschalter AN und freigegebener Regel sendet ein Klick nichts, die Meldung nennt den Sendeknoten; Karte "Übernahme gesperrt: Sendeknoten deaktiviert", Knopf grau mit diesem Grund',
+              !r[0] && /Sendeknoten opt_apply_mqtt ist deaktiviert/.test(r[1].payload) && gstore.OPT_apply.knoten === false && cK.status.some(s => s.t === 'Übernahme gesperrt: Sendeknoten deaktiviert' && s.c === 'lock') && cK.knopf.ok === false && cK.knopf.grund === 'gesperrt: Sendeknoten deaktiviert', r[1].payload);
+        FN.opt_apply = FN.opt_apply.replace('var KNOTEN = false;', 'var KNOTEN = true;'); delete comp.opt_apply;   // ab hier: opt_apply wie mit --uebernahme-knoten-aktiv erzeugt
+    }
     files['/data/optimizer/apply.json'] = '{"enabled": true, "rules": []}';
     r = click('uebernehmen', {id: gstore.OPT_engine.prop.id, sum: gstore.OPT_engine.prop.sum});
     check('Klick, Hauptschalter AN, Regel nicht freigegeben: nichts gesendet', !r[0] && /nicht freigegeben/.test(r[1].payload), r[1].payload);
@@ -969,13 +1001,13 @@ if (flowsFile) {
       const month = st(NOW).slice(0, 7); files['/data/optimizer/quiet-' + month + '.csv'] = txt;
       const ST0 = fstores.opt_engine.eng; delete ST0.S.takt; world(); gstore.compressor_frequency = 0;
       gstore.OPT_cfg.engine = Object.assign({}, gstore.OPT_cfg.engine || {}, {nachladen: {chunkBytes: 4096, maxBytes: 8192}});
-      const Rl = minute(1), sc1 = Rl.eng[0][2].payload.takt;
+      const Rl = minute(1), sc1 = Rl.eng[0][5].payload.takt[0];
       const laeuft1 = fstores.opt_engine.eng.S.takt.nl.laeuft;
       let k = 0; while (fstores.opt_engine.eng.S.takt.nl.laeuft && k < 40) { minute(1); k++; }
-      const T = fstores.opt_engine.eng.S.takt, Rz = minute(1), sc2 = Rz.eng[0][2].payload.takt;
-      check('Huelle Nachladen: ohne Nachlade-Stand wird S.takt aus quiet-YYYY-MM.csv gefuellt, stueckweise (8 kB je Minute -> ' + (k + 1) + ' Minuten), Anzeige "lädt", danach 2 Laeufe (120 und 170 min), 1 Start mit Pause 80 min, COP Efficiency Q0 3…7; Vormonat fehlt ohne Fehler',
-            laeuft1 === true && sc1.chip === 'lädt' && k >= 1 && T.nl.laeuft === false && T.nl.zeilen === 8 * 60 - 1 && T.runs.length === 2 && T.runs[0][1] === 120 && T.runs[1][1] === 170 && T.starts.length === 2 && T.pausen.length === 1 && T.pausen[0][1] === 80 && sc2.chip !== 'lädt' && /Efficiency Q0/.test(sc2.cop) && !warns.some(w => /Takt nachladen/.test(w)),
-            JSON.stringify({k, nl: T.nl, runs: T.runs, starts: T.starts.length, pausen: T.pausen, chip: sc2.chip, cop: sc2.cop}));
+      const T = fstores.opt_engine.eng.S.takt, Rz = minute(1), sc2 = Rz.eng[0][5].payload.takt[0], cop2 = Rz.eng[0][5].payload.cop;
+      check('Huelle Nachladen: ohne Nachlade-Stand wird S.takt aus quiet-YYYY-MM.csv gefuellt, stueckweise (8 kB je Minute -> ' + (k + 1) + ' Minuten), Kachel Takt "lädt", danach 2 Laeufe (120 und 170 min), 1 Start mit Pause 80 min, COP-Matrix Spalte Efficiency Q0, Zeile 3…7 °C; Vormonat fehlt ohne Fehler',
+            laeuft1 === true && sc1.chip === 'lädt' && k >= 1 && T.nl.laeuft === false && T.nl.zeilen === 8 * 60 - 1 && T.runs.length === 2 && T.runs[0][1] === 120 && T.runs[1][1] === 170 && T.starts.length === 2 && T.pausen.length === 1 && T.pausen[0][1] === 80 && sc2.chip !== 'lädt' && cop2 && cop2.spalten.join() === 'Efficiency Q0' && cop2.zeilen[0].band === '3…7 °C' && !warns.some(w => /Takt nachladen/.test(w)),
+            JSON.stringify({k, nl: T.nl, runs: T.runs, starts: T.starts.length, pausen: T.pausen, chip: sc2.chip, cop: cop2}));
       delete gstore.OPT_cfg.engine; }
     // Lange Fahrt mit Hauptschalter AN und ALLEN Regeln freigegeben, aber ohne Klick: nie ein Befehl
     files['/data/optimizer/apply.json'] = '{"enabled": true, "rules": ["quiet_freigabe", "quiet_strecken", "raum_offset"]}';

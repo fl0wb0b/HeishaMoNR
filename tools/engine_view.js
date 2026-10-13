@@ -1,9 +1,9 @@
 // == ENGINE-VIEW ==
-// Anzeige der Entscheidungsmaschine (Seite "Optimierer"): reine Funktionen, die aus Zustand und letzter Auswertung die vier Karten-Daten bauen.
+// Anzeige der Entscheidungsmaschine (Seite "Optimierer"): reine Funktionen, die aus Zustand und letzter Auswertung die Karten-Daten bauen.
 // Wird vom Generator hinter den Kern in opt_engine eingebettet und in tools/engine_sim.js sowie tools/engine_ui_preview.js direkt getestet.
 //   ENGVIEW.track(V, res, rules, now)   Episoden fuer die Karte "Entscheidungen": je Regel ein Eintrag von "alle Bedingungen erfuellt" (wartet,
 //                                       gesperrt, Vorschlag) bis zum Ende; Dauerzustaende ("prueft", "ruht") erzeugen keine Zeilen
-//   ENGVIEW.build(o)                    -> {card, rules, score, log}
+//   ENGVIEW.build(o)                    -> {card, rules, score, mess, log}
 var ENGVIEW = (function (E) {
     var MIN = 60000;
     var STAGE = {wartet: 1, gesperrt: 2, abgelaufen: 3, vorschlag: 3, hinweis: 3};
@@ -21,6 +21,11 @@ var ENGVIEW = (function (E) {
     function clamp(x) { return Math.max(0, Math.min(1, x)); }
     function isDaten(r) { return r.st === 'gesperrt' && r.naechste && r.naechste.b === 'daten'; }
     function short(t) { return String(t || '').replace(/^kein Vorschlag: /, '').replace(/^Bedingung entfallen: /, '').replace(/^würde schalten, aber gesperrt: /, '').replace(/^gesperrt: /, '').replace(/\s*\([^()]*\)\s*$/, ''); }
+    function endeText(r) {                                                          // Ende einer Episode: bei Dauersperre (Modell-Gate) zaehlt die fehlende Bedingung nach "außerdem"
+        var g = String(r.ende || (isDaten(r) ? 'keine HeishaMon-Daten' : r.grund) || ''), i = g.indexOf('; außerdem ');
+        return short(r.dauer && i >= 0 ? g.slice(i + 11) : g);
+    }
+    function ohneKlammern(t) { return String(t || '').replace(/\s*\([^()]*\)/g, '').replace(/\s+([,;.])/g, '$1').trim(); }   // Kernaussage; der volle Text steht im Tooltip
 
     // ---------------------------------------------------------------- Episoden
     function track(V, res, rules, now) {
@@ -34,7 +39,7 @@ var ENGVIEW = (function (E) {
                 if (!last || last[0] !== r.st || last[2] !== lock) { op.st.push([r.st, now, lock, (r.st === 'vorschlag' || r.st === 'hinweis') && pr ? pr.was : '']); if (op.st.length > 8) { op.st.splice(1, op.st.length - 8); } }
                 op.t1 = now;
             } else if (op) {
-                op.t1 = now; op.end = short(r.ende || (isDaten(r) ? 'keine HeishaMon-Daten' : r.grund));
+                op.t1 = now; op.end = endeText(r);
                 V.ep.push(op); delete V.open[r.id];
             }
         });
@@ -58,6 +63,19 @@ var ENGVIEW = (function (E) {
                     steps: steps, was: prop ? prop[3] : '', ende: open ? 'läuft' : (ep.end || ''), offen: open};
         });
     }
+    function letzterVorschlag(V) {                                                   // juengste Episode mit Vorschlag oder Hinweis (Karte "Aktueller Vorschlag" ohne Vorschlag)
+        var all = ((V && V.ep) || []).concat(Object.keys((V && V.open) || {}).map(function (k) { return V.open[k]; }));
+        var best = null, bs = null;
+        all.forEach(function (ep) { ep.st.forEach(function (s) { if ((s[0] === 'vorschlag' || s[0] === 'hinweis') && (!bs || s[1] > bs[1])) { best = ep; bs = s; } }); });
+        if (!best) { return null; }
+        var R = E.RULE[best.id] || {}, open = !best.end && V.open && V.open[best.id] === best;
+        return {name: R.kurz || best.id, c: COL[best.id] || '#607d8b', was: bs[3] || '', t: dm(bs[1]) + ' ' + hm(bs[1]) + (best.t1 > bs[1] ? '–' + hm(best.t1) : ''), ende: open ? 'läuft' : (best.end || '')};
+    }
+    function zaehle24h(V, now) {                                                    // Vorschlaege und Hinweise, die in den letzten 24 h begannen
+        var all = ((V && V.ep) || []).concat(Object.keys((V && V.open) || {}).map(function (k) { return V.open[k]; })), n = {vorschlag: 0, hinweis: 0};
+        all.forEach(function (ep) { ep.st.forEach(function (s) { if ((s[0] === 'vorschlag' || s[0] === 'hinweis') && s[1] >= now - 24 * 60 * MIN) { n[s[0]]++; } }); });
+        return n;
+    }
 
     // ---------------------------------------------------------------- Regelkacheln
     function lineOf(r, prop, now) {
@@ -75,11 +93,106 @@ var ENGVIEW = (function (E) {
         return {l: miss ? miss[0] : short(r.grund), v: '', f: null};
     }
 
+    // ---------------------------------------------------------------- Karte "Aktueller Vorschlag": Zielwert, Rueckweg, Zustand des Knopfs
+    function zielTxt(name, v) {
+        if (!have(v)) { return '–'; }
+        if (name === 'SetQuietMode') { return 'Quiet ' + v; }
+        if (name === 'SetZ1HeatRequestTemperature') { return 'Verschiebung ' + E.sg(v, 0) + ' K'; }
+        if (name === 'SetHeatingOffOutdoorTemp') { return 'Heizgrenze ' + E.de(v, 0) + ' °C'; }
+        return name + ' ' + v;
+    }
+    // Der Knopf zeigt, was die Pruefkette des Servers (ENGINE.applyRequest) ablehnen wuerde; entscheidend bleibt der Server.
+    function knopfOf(p, AP, en, knoten, rel, now) {
+        var R = E.RULE[p.rule] || {}, X = E.APPLY, heute = AP.day === E.ymd(now) ? (AP.n || 0) : 0;
+        function zu(g) { return {ok: false, text: 'Übernehmen', grund: g}; }
+        if (p.art === 'hinweis') { return zu('nur Hinweis, von Hand einstellen'); }
+        if (!en) { return zu('gesperrt: Hauptschalter aus'); }
+        if (!knoten) { return zu('gesperrt: Sendeknoten deaktiviert'); }
+        if (rel.indexOf(p.rule) < 0) { return zu('gesperrt: Regel nicht freigegeben'); }
+        if (AP.pending) { return zu('wartet auf Bestätigung der Anlage'); }
+        if (AP.aktiv && AP.aktiv.groesse === R.groesse) { return zu('gesperrt: Übernahme ' + ((E.RULE[AP.aktiv.rule] || {}).kachel || AP.aktiv.name) + ' läuft'); }
+        if (AP.lastSend && now - AP.lastSend < X.abstandMin * MIN) { return zu('gesperrt bis ' + hm(AP.lastSend + X.abstandMin * MIN) + ' (Abstand ' + X.abstandMin + ' min)'); }
+        if (heute >= X.proTag) { return zu('gesperrt: Tageslimit ' + heute + '/' + X.proTag + ' Befehle'); }
+        return {ok: true, text: 'Übernehmen', grund: 'frei · heute ' + heute + '/' + X.proTag + ' Befehle'};
+    }
+
+    // ---------------------------------------------------------------- Karte "Messwerte & Lernen"
+    function copMatrix(TK, tc, now) {                                                 // Zeilen = Aussenband, Spalten = vorhandene Kombinationen Modus x Quiet ("?" zaehlt nicht)
+        var S = E.copSumme(TK, tc, now), bands = [], cols = {}, rows = {}, x0;
+        for (x0 = -40; x0 <= 45; x0++) { if (bands.indexOf(E.bandOf(x0)) < 0) { bands.push(E.bandOf(x0)); } }       // Reihenfolge der Baender aus dem Kern (kalt -> warm)
+        Object.keys(S).forEach(function (k) {
+            var p = k.split('|'); if (p.length !== 3 || (p[0] !== 'Comfort' && p[0] !== 'Efficiency') || !/^[0-3]$/.test(p[1])) { return; }
+            var a = S[k]; if (!(a[2] > 0)) { return; }
+            cols[p[0] + '|' + p[1]] = 1; (rows[p[2]] = rows[p[2]] || {})[p[0] + '|' + p[1]] = a;
+        });
+        var sp = Object.keys(cols).sort(function (a, b) { var x = a.split('|'), y = b.split('|'); return x[0] < y[0] ? -1 : (x[0] > y[0] ? 1 : +x[1] - +y[1]); });   // Comfort vor Efficiency, Quiet aufsteigend
+        if (!sp.length) { return null; }
+        Object.keys(rows).forEach(function (b) { if (bands.indexOf(b) < 0) { bands.push(b); } });
+        var zeilen = bands.filter(function (b) { return rows[b]; }).map(function (b) {
+            var zellen = sp.map(function (k) {
+                var a = rows[b][k]; if (!a) { return null; }
+                var cop = a[0] > 0 ? Math.round(a[1] / a[0] * 100) / 100 : null, x = k.split('|');
+                return {cop: cop, v: have(cop) ? E.de(cop, 2) : '–', h: E.de(a[2] / 60, 1) + ' h', grau: a[2] < tc.copMinMin || !have(cop), best: false,
+                        title: x[0] + ' Quiet ' + x[1] + ' · ' + b + ' °C: COP ' + (have(cop) ? E.de(cop, 2) : '–') + ' aus ' + Math.round(a[2]) + ' stabilen Minuten (mindestens ' + tc.copMinMin + ')' +
+                               (a[3] ? ' · Ø ' + E.de(a[3] / a[2], 0) + ' Hz' : '') + (have(a[4]) ? ' · max ' + E.de(a[4], 0) + ' Hz' : '') + ' · ' + E.de(a[0] / 1000, 1) + ' kWh el / ' + E.de(a[1] / 1000, 1) + ' kWh th'};
+            });
+            var ok = zellen.filter(function (z) { return z && !z.grau; });
+            if (ok.length >= 2) { var mx = Math.max.apply(null, ok.map(function (z) { return z.cop; })); ok.forEach(function (z) { z.best = z.cop === mx; }); }   // bester Wert nur, wenn es etwas zu vergleichen gibt
+            return {band: b + ' °C', zellen: zellen};
+        });
+        return {spalten: sp.map(function (k) { var x = k.split('|'); return x[0] + ' Q' + x[1]; }), zeilen: zeilen, minMin: tc.copMinMin};
+    }
+    function messBuild(S, now, cfg, plan) {
+        var tc = cfg.takt || E.taktCfg(null), TK = S.takt || {}, nl = TK.nl || null, laedt = !!(nl && nl.laeuft);
+        var tk = E.taktKennzahlen(TK, now, tc), hgB = E.heizgrenzeBeob(TK, now), ms = E.messStatus(S), takt;
+        if (laedt) {
+            var nlT = 'liest quiet-*.csv: ' + (nl.zeilen || 0) + ' Zeilen' + (nl.von ? ' ab ' + dm(nl.von) : '');
+            takt = [{k: 'Takt', v: '–', chip: 'lädt', c: 'mute', title: nlT}, {k: 'Läufe 24 h', v: '–', title: nlT}, {k: 'Pausen 24 h', v: '–', title: nlT}];
+        } else {
+            takt = [{k: 'Takt', v: tk.takt ? 'Takt' : 'ruhig', vc: tk.takt ? 'warn' : 'ok', s: tk.starts24h + ' Starts in 24 h',
+                     title: 'Starts 24 h ' + tk.starts24h + ' (' + E.de(tk.startsH, 2) + '/h) · „Takt“ ab mehr als ' + tc.startsTagWarn + ' Starts in 24 h oder mehr als ' + E.de(tc.kurzAnteilWarn * 100, 0) + ' % kurzen Läufen (ab 4 Läufen)'},
+                    {k: 'Läufe 24 h', v: String(tk.laeufe), s: (have(tk.mittelLaufMin) ? 'Ø ' + tk.mittelLaufMin + ' min · ' : '') + 'kurz ' + tk.kurz, title: 'kurz = unter ' + tc.kurzMin + ' min'},
+                    {k: 'Pausen 24 h', v: String(tk.minutenPausen + tk.bedarfPausen), s: 'unter ' + tc.minutenPauseMin + ' min: ' + tk.minutenPausen, title: 'Minutenpause = unter ' + tc.minutenPauseMin + ' min, sonst Bedarfspause'}];
+        }
+        takt.push({k: 'Heizgrenze beobachtet', v: hgB ? E.de(hgB.at, 1) + ' °C' : '–', s: hgB ? 'max ' + E.de(hgB.max, 1) + ' °C · ' + hgB.n + ' Läufe' : 'noch kein Lauf ≥ ' + E.HG.laufMin + ' min',
+                   title: 'Außentemperatur am Ende von Läufen ≥ ' + E.HG.laufMin + ' min, Mittel der letzten ' + E.HG.tage + ' Tage'});
+        takt.push(ms.offen ? {k: 'Messaufgabe Comfort/Efficiency', v: 'offen', vc: 'warn', s: 'C ' + Math.min(ms.comfortMin, E.MESS.minMin) + '/' + E.MESS.minMin + ' · E ' + Math.min(ms.efficiencyMin, E.MESS.minMin) + '/' + E.MESS.minMin + ' min', title: ms.text}
+                           : {k: 'Messaufgabe Comfort/Efficiency', v: 'erledigt', vc: 'ok', s: 'C bis ' + E.de(ms.befund && ms.befund.comfort && ms.befund.comfort.hzMax, 0) + ' Hz · E bis ' + E.de(ms.befund && ms.befund.efficiency && ms.befund.efficiency.hzMax, 0) + ' Hz', title: (ms.befund && ms.befund.text) || ms.text});
+        var ml = laedt ? [] : E.mindestLeistung(TK, tc).map(function (b) {
+            return {band: E.de(b[0], 0) + '…' + E.de(b[0] + E.TAKT.binK, 0) + ' °C', v: E.de(b[3] / 1000, 1) + ' kW',
+                    title: E.de(b[0], 0) + '…' + E.de(b[0] + E.TAKT.binK, 0) + ' °C: 10-%-Quantil ' + E.de(b[1] / 1000, 2) + ' kW, laufendes Minimum von warm nach kalt ' + E.de(b[3] / 1000, 2) + ' kW, ' + b[2] + ' stabile Minuten'};
+        });
+        // Lernen: Wirkzeit, Heizkurven-Bias (Kern) und Gebaeudemodell, Lern-Gate, Drift (Waermefahrplan, OPT_plan)
+        var LG = S.lag && S.lag.res, puf = (S.lag && S.lag.o) ? S.lag.o.length : 0, pufN = Math.round(E.LAG.fensterMin / E.LAG.stepMin) + 2;
+        var wz = function (x, k) {                                                     // Kennzahl + kurzer Status-Chip, Einzelheiten im Tooltip
+            var n = x ? x.n : 0, t = 'Sollsprung ≥ ' + E.LAG.sollK + ' K bis zur halben Raumreaktion im ' + E.de(E.LAG.fensterMin / 60, 0) + '-h-Fenster, Median aus mindestens ' + E.LAG.minEreignisse + ' Ereignissen · Puffer ' + puf + ' von ' + pufN + ' Proben (15 min; fehlt ein Raumwert, beginnt er neu)';
+            return x && have(x.min) ? {k: k, v: E.de(x.min, 0) + ' min', chip: 'gemessen', c: 'ok', s: n + ' Ereignisse', title: t} : {k: k, v: '–', chip: 'sammelt', c: 'mute', s: n + '/' + E.LAG.minEreignisse + ' Ereignisse', title: t};
+        };
+        var K = S.kb || null, kb = K && have(K.bias)
+            ? {k: 'Heizkurven-Bias', v: E.sg(K.bias, 1) + ' K', chip: K.bias < 0 ? 'Absenkung' : 'sammelt', c: K.bias < 0 ? 'ok' : 'mute', s: K.bias < 0 ? K.resets + ' Rücksetzungen' : Math.min(K.tage, E.KB.tage) + '/' + E.KB.tage + ' Tage',
+               title: 'Tage in Folge mit ≥ ' + E.de(E.KB.luftK, 1) + ' K Luft in allen Räumen: ' + K.tage + ' von ' + E.KB.tage + ' · Rücksetzungen ' + K.resets + ' · ausgewertet ' + (K.tageGesamt || 0) + ' Tage' + (have(K.luft) ? ' · knappste Luft heute ' + E.sg(K.luft, 1) + ' K' : '') + ' · nur Anzeige'}
+            : {k: 'Heizkurven-Bias', v: '–', chip: 'keine Daten', c: 'mute'};
+        var M = (plan && plan.model) || null, LN = (plan && plan.lern) || null, lern = [];
+        lern.push(M ? {k: 'Gebäudemodell', v: (M.n || 0) + '/' + (M.minDays || 10) + ' Tage', chip: M.gate ? (M.aktiv ? 'aktiv' : 'Gate offen') : 'Gate zu', c: M.gate ? 'ok' : 'mute', title: (M.why || []).join(' · ')}
+                    : {k: 'Gebäudemodell', v: '–', chip: 'keine Daten', c: 'mute'});
+        if (LN) {
+            var dr = LN.drift || {}, an = dr.upAn ? 'Mehrbedarf' : (dr.dnAn ? 'Minderbedarf' : (dr.n ? 'ruhig' : '–'));
+            lern.push({k: 'Lern-Gate heute', v: LN.heute ? 'gesperrt' : 'frei', vc: LN.heute ? 'warn' : 'ok', s: (LN.verw || 0) + ' Tage verworfen',
+                       title: (LN.heute ? 'heute gesperrt: ' + LN.heuteTxt : 'heute frei') + (LN.verw ? ' · verworfen: ' + LN.verwTxt : '')});
+            lern.push({k: 'Bedarfsmodell Drift', v: an, vc: (dr.upAn || dr.dnAn) ? 'warn' : (dr.n ? 'ok' : ''), s: dr.n ? 'CUSUM ' + E.de(Math.max(dr.up || 0, dr.dn || 0), 1) + ' von ' + E.de(dr.h, 0) + ' · ' + dr.n + ' Tage' : 'noch kein A/B-Tag',
+                       title: 'Mehrbedarf ' + E.de(dr.up || 0, 1) + ' · Minderbedarf ' + E.de(dr.dn || 0, 1) + ' (Alarm ab ' + E.de(dr.h, 0) + ')' + (LN.rueckfall ? ' · Kandidat zurückgenommen, gesperrt bis ' + dm(LN.rueckfall.bis) : '') + (LN.rb ? ' · Rückfall-CUSUM ' + E.de(LN.rb.s, 1) + ' von ' + E.de(LN.rb.h, 0) : '')});
+        } else {
+            lern.push({k: 'Lern-Gate heute', v: '–', chip: 'keine Daten', c: 'mute'}, {k: 'Bedarfsmodell Drift', v: '–', chip: 'keine Daten', c: 'mute'});
+        }
+        lern.push(wz(LG && LG.auf, 'Wirkzeit Raum ↑'), wz(LG && LG.ab, 'Wirkzeit Raum ↓'), kb);
+        return {takt: takt, ml: ml, mlLeer: laedt ? 'lädt' : 'sammelt', cop: laedt ? null : copMatrix(TK, tc, now), lern: lern};
+    }
+
     // ---------------------------------------------------------------- alle Karten
-    // o = {now, last: {t, res, prop, anl}, S, V, AP (OPT_apply), enabled, cfg}
+    // o = {now, last: {t, res, prop, anl}, S, V, AP (OPT_apply), enabled, cfg, plan (OPT_plan)}
     function build(o) {
-        var now = o.now, L = o.last, S = o.S, AP = o.AP || {}, en = o.enabled === true, rel = Array.isArray(AP.rules) ? AP.rules : [], cfg = o.cfg || E.defaults();
-        var p = L.prop, verw = !!(p && Array.isArray(AP.verworfen) && AP.verworfen.indexOf(p.id) >= 0);
+        var now = o.now, L = o.last, S = o.S, AP = o.AP || {}, en = o.enabled === true, knoten = AP.knoten !== false, rel = Array.isArray(AP.rules) ? AP.rules : [], cfg = o.cfg || E.defaults();
+        var p = L.prop, verw = !!(p && Array.isArray(AP.verworfen) && AP.verworfen.indexOf(p.id) >= 0), heute = AP.day === E.ymd(now) ? (AP.n || 0) : 0;
         // Statuszeile
         var st = [], born = S.born || 0, anl = born + cfg.locks.warmupMin * MIN, A = L.anl || {};
         if (now - L.t > 3 * MIN) { st.push({t: 'Maschine rechnet nicht · Stand ' + hm(L.t), c: 'bad'}); }
@@ -91,21 +204,24 @@ var ENGVIEW = (function (E) {
         if (AP.pending) { st.push({t: 'Befehl ' + hm(AP.pending.ts) + ' gesendet · wartet auf Bestätigung', c: 'warn'}); }
         else if (AP.aktiv) { st.push({t: 'Übernommen ' + hm(AP.aktiv.ts) + ': ' + AP.aktiv.name + ' = ' + AP.aktiv.value + (AP.aktiv.bis ? ' · zurück auf ' + AP.aktiv.von + ' um ' + hm(AP.aktiv.bis) : ''), c: AP.aktiv.bestaetigt ? 'ok' : 'warn'}); }
         if (!en) { st.push({t: 'Übernahme gesperrt', c: 'lock'}); }
-        else { st.push({t: rel.length ? 'Übernahme frei: ' + rel.map(function (x) { return (E.RULE[x] && E.RULE[x].kurz) || x; }).join(', ') : 'Übernahme frei: keine Regel', c: rel.length ? 'ok' : 'mute'}); }
+        else if (!knoten) { st.push({t: 'Übernahme gesperrt: Sendeknoten deaktiviert', c: 'lock'}); }
+        else { st.push({t: rel.length ? 'Übernahme frei: ' + rel.map(function (x) { return (E.RULE[x] && E.RULE[x].kachel) || x; }).join(', ') + ' · heute ' + heute + '/' + E.APPLY.proTag : 'Übernahme frei: keine Regel', c: rel.length ? 'ok' : 'mute'}); }
         if (AP.alarm) { st.push({t: AP.alarm.text, c: 'bad'}); }
         if (verw) { st.push({t: 'verworfen: ' + p.was, c: 'mute'}); }
-        var card = {status: st, prop: null, knopf: {ok: false, text: 'Übernahme gesperrt'}, reset: !!AP.aktiv, enabled: en, verworfen: verw ? p.id : null};
+        var card = {status: st, prop: null, knopf: {ok: false, text: 'Übernehmen', grund: 'kein Vorschlag'}, reset: !!AP.aktiv, enabled: en, verworfen: verw ? p.id : null, leer: null};
         if (p && !verw) {
-            var R = E.RULE[p.rule] || {}, cr = cfg.rules[p.rule] || {}, hinweis = p.art === 'hinweis';
+            var R = E.RULE[p.rule] || {}, cr = cfg.rules[p.rule] || {}, hinweis = p.art === 'hinweis', von = zielTxt(p.cmd.name, p.von);
             card.prop = {id: p.id, sum: p.sum, rule: p.rule, name: R.kurz || p.rule, c: COL[p.rule] || '#1976d2', hinweis: hinweis, was: p.was, warum: p.warum,
-                         befehl: hinweis ? p.cmd.name + ' = ' + p.cmd.value : p.cmd.name + ' = ' + p.cmd.value + ' (jetzt ' + p.von + ')',
-                         seit: hm(p.ts), bis: hm(p.bis), rueck: hinweis ? 'von Hand' : (have(cr.maxDauerMin) ? 'automatisch, spätestens nach ' + E.de(cr.maxDauerMin / 60, 0) + ' h' : 'keiner (Standard)'),
-                         erwartung: p.erwartung, rueckweg: p.rueckweg};
-            if (hinweis) { card.knopf = {ok: false, text: 'nur Hinweis'}; }
-            else if (!en) { card.knopf = {ok: false, text: 'Übernahme gesperrt'}; }
-            else if (rel.indexOf(p.rule) < 0) { card.knopf = {ok: false, text: 'Regel nicht freigegeben'}; }
-            else if (AP.pending) { card.knopf = {ok: false, text: 'wartet auf Bestätigung'}; }
-            else { card.knopf = {ok: true, text: 'Übernehmen'}; }
+                         befehl: p.cmd.name + ' = ' + p.cmd.value, ziel: zielTxt(p.cmd.name, p.cmd.value) + (have(p.von) ? ' (jetzt ' + von + ')' : ''),
+                         seit: hm(p.ts), bis: hm(p.bis), erwartung: ohneKlammern(p.erwartung), erwartungLang: p.erwartung,
+                         rueck: hinweis ? 'von Hand (Saisoneinstellung)' : (have(cr.maxDauerMin) ? 'automatisch zurück auf ' + von + ', spätestens nach ' + E.de(cr.maxDauerMin / 60, 0) + ' h' : 'kein automatischer · „Zurücksetzen“ stellt ' + von + ' wieder her'),
+                         rueckweg: p.rueckweg};
+            card.knopf = knopfOf(p, AP, en, knoten, rel, now);
+        } else {
+            var z24 = zaehle24h(o.V || {}, now);
+            card.leer = {letzter: letzterVorschlag(o.V || {}), h24: z24.vorschlag + (z24.vorschlag === 1 ? ' Vorschlag' : ' Vorschläge') + ' · ' + z24.hinweis + (z24.hinweis === 1 ? ' Hinweis' : ' Hinweise'),
+                         uebernahme: !en ? 'gesperrt · Hauptschalter aus (apply.json)' : (!knoten ? 'gesperrt · Sendeknoten deaktiviert' :
+                                     (rel.length ? 'frei für ' + rel.map(function (x) { return (E.RULE[x] && E.RULE[x].kachel) || x; }).join(', ') : 'frei, aber keine Regel freigegeben') + ' · heute ' + heute + '/' + E.APPLY.proTag + ' Befehle'), lock: !en || !knoten};
         }
         // Regelkacheln
         var rules = L.res.map(function (r) {
@@ -135,26 +251,10 @@ var ENGVIEW = (function (E) {
                     sperre: r.art === 'befehl' ? (r.verpasstSperre || 0) : null,                                     // "verpasst" waehrend eigener Sperre (v2, neutral)
                     reife: r.art === 'befehl' ? {n: ok, m: r.kriterien.length, reif: r.reif} : null, krit: r.kriterien.map(function (k) { return [k.kurz, k.ok ? 1 : 0, k.text]; })};
         });
-        var ms = E.messStatus(S), mess;
-        if (ms.offen) { mess = {t: 'Comfort ' + Math.min(ms.comfortMin, E.MESS.minMin) + '/' + E.MESS.minMin + ' min · Efficiency ' + Math.min(ms.efficiencyMin, E.MESS.minMin) + '/' + E.MESS.minMin + ' min', c: 'warn', chip: 'offen'}; }
-        else { var b = ms.befund || {}; mess = {t: 'Comfort bis ' + E.de(b.comfort && b.comfort.hzMax, 0) + ' Hz · Efficiency bis ' + E.de(b.efficiency && b.efficiency.hzMax, 0) + ' Hz', c: 'ok', chip: 'erledigt'}; }
-        var tc = cfg.takt || E.taktCfg(null), TK = S.takt || {}, nl = TK.nl || null;
-        var tk = E.taktKennzahlen(TK, now, tc), ml = E.mindestLeistung(TK, tc), cpt = E.copTabelle(TK, tc, now), takt;
-        if (nl && nl.laeuft) { takt = {t: 'lädt Daten aus quiet-*.csv (' + (nl.zeilen || 0) + ' Zeilen' + (nl.von ? ' ab ' + dm(nl.von) : '') + ')', c: 'mute', chip: 'lädt', min: '–', cop: '–'}; }
-        else {
-            takt = {t: 'Starts 24 h ' + tk.starts24h + ' (' + E.de(tk.startsH, 2) + '/h) · Läufe ' + tk.laeufe + ', davon < ' + tc.kurzMin + ' min ' + tk.kurz + ' · Pausen < ' + tc.minutenPauseMin + ' min ' + tk.minutenPausen + ' · länger ' + tk.bedarfPausen + (have(tk.mittelLaufMin) ? ' · Ø Lauf ' + tk.mittelLaufMin + ' min' : ''),
-                    c: tk.takt ? 'warn' : 'ok', chip: tk.takt ? 'Takt' : 'ruhig',
-                    min: ml.length ? ml.map(function (b) { return E.de(b[0], 0) + '…' + E.de(b[0] + E.TAKT.binK, 0) + ' °C ' + E.de(b[3] / 1000, 1) + ' kW'; }).join(' · ') : 'noch zu wenig stabile Laufminuten',
-                    cop: cpt.length ? cpt.map(function (r) { return r[2] + ' °C ' + r[0] + ' Q' + r[1] + ' ' + E.de(r[3], 2) + ' (' + E.de(r[4] / 60, 1) + ' h)'; }).join(' · ') : 'noch zu wenig stabile Laufminuten'};
-        }
-        var LG = S.lag && S.lag.res, lagT = function (x) { return x && have(x.min) ? E.de(x.min, 0) + ' min (' + x.n + ' Ereignisse)' : 'zu wenige Ereignisse (' + (x ? x.n : 0) + ' von ' + E.LAG.minEreignisse + ')'; };
-        var wirk = LG ? 'Anstieg ' + lagT(LG.auf) + ' · Abfall ' + lagT(LG.ab) : 'Puffer ' + ((S.lag && S.lag.o) ? S.lag.o.length : 0) + ' von ' + (Math.round(E.LAG.fensterMin / E.LAG.stepMin) + 2) + ' Proben';
-        var K = S.kb || null, kb = K ? E.sg(K.bias, 1) + ' K · ' + K.tage + ' von ' + E.KB.tage + ' Tagen mit ≥ ' + E.de(E.KB.luftK, 1) + ' K Luft · ' + K.resets + ' Rücksetzungen · ' + (K.tageGesamt || 0) + ' Tage ausgewertet' : '–';
-        var hgB = E.heizgrenzeBeob(S.takt, now), hg = hgB ? 'Ende langer Läufe (≥ ' + E.HG.laufMin + ' min) bei Ø ' + E.de(hgB.at, 1) + ' °C, höchstens ' + E.de(hgB.max, 1) + ' °C (' + hgB.n + ' Läufe, ' + E.HG.tage + ' Tage)' : 'noch kein Lauf ≥ ' + E.HG.laufMin + ' min';
-        var score = {now: now, t0: t0, series: series, tiles: tiles, mess: mess, takt: takt, wirk: wirk, kb: kb, hg: hg, sv: sv};
-        return {card: card, rules: {rules: rules}, score: score, log: {rows: logRows(o.V || {}, now, 12)}};
+        var score = {now: now, t0: t0, series: series, tiles: tiles, sv: sv};
+        return {card: card, rules: {rules: rules}, score: score, mess: messBuild(S, now, cfg, o.plan || null), log: {rows: logRows(o.V || {}, now, 12)}};
     }
-    return {track: track, build: build, logRows: logRows, COL: COL, CHIP: CHIP};
+    return {track: track, build: build, logRows: logRows, copMatrix: copMatrix, messBuild: messBuild, zielTxt: zielTxt, knopfOf: knopfOf, COL: COL, CHIP: CHIP};
 })(typeof ENGINE !== 'undefined' ? ENGINE : require('./engine_core.js'));
 if (typeof module !== 'undefined' && module.exports) { module.exports = ENGVIEW; }
 // == ENGINE-VIEW-ENDE ==

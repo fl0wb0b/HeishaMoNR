@@ -2275,9 +2275,19 @@ if (P.status === 'ok') {                                                        
 out[0] = {payload: {rows: rows, plan: tab, chart: chartD, kpi: kpi}};
 // Gebaeudemodell fuer die Entscheidungsmaschine (Regel Vorausschau): Lernstand, Gate, coefActivate; Sonne/Wind-Koeffizienten nur bei aktivem Modell
 var cfX = pl.learn.coef || {}, cfK = coefSafe((cfX.aktiv && cfX.n >= 3) ? (cfX.maeWind !== null && cfX.maeWind !== undefined ? {bs: cfX.bsW || 0, bw: cfX.bw || 0} : {bs: cfX.bs || 0, bw: 0}) : {bs: 0, bw: 0});
+// Lernstand (B Lern-Gate, D Drift/Rueckfall) fuer die Seite "Optimierer", Karte "Messwerte & Lernen": dieselben Groessen wie die Zeilen "Lern-Gate" und
+// "Bedarfsmodell Drift" unter "Details und Modell", aber unabhaengig davon, ob gerade ein Plan steht (nur Werte, keine Texte ausser den Gruenden)
+var lern = (function () {
+    var dy = pl.day || {}, fH = lgFlags({dhwM: dy.dhwM || 0, defM: dy.defM || 0, gapM: dy.gapM || 0, engM: dy.engM || 0, unpM: dy.unpM || 0}), vw = pl.lgVerw || [], cnt = {};
+    vw.forEach(function (x) { LG_TEXT.forEach(function (t) { if (x[1] & t[0]) { cnt[t[1]] = (cnt[t[1]] || 0) + 1; } }); });
+    var L = pl.learn.lg || {}, rf = pl.learn.rueckfall, r1 = function (v) { return Math.round((v || 0) * 10) / 10; };
+    return {heute: fH, heuteTxt: lgTxt(fH), verw: vw.length, verwTxt: Object.keys(cnt).map(function (k) { return k + ' ' + cnt[k]; }).join(', '),
+            drift: {n: L.n || 0, up: r1(L.up && L.up.s), dn: r1(L.dn && L.dn.s), upAn: !!(L.up && L.up.an), dnAn: !!(L.dn && L.dn.an), h: DRIFT.h},
+            rueckfall: (rf && now < rf.bis) ? {ts: rf.ts, bis: rf.bis} : null, rb: (cfX.aktiv && L.rb) ? {s: r1(L.rb.s), h: DRIFT.rbH} : null};
+})();
 global.set('OPT_plan', {ts: now, s0: P.s0, status: P.status, reserve: P.res || null, slots: P.slots ? P.slots.map(function (x) { return [x.t, x.rec, x.b, x.p, x.cost, x.cA]; }) : null,
                         model: {n: cfX.n || 0, minDays: pn('coefMinDays', 10), gate: !!(cfX.gate && cfX.gate.ok), why: (cfX.gate && cfX.gate.why) || [], aktiv: !!cfX.aktiv, bs: cfK.bs, bw: cfK.bw,
-                                ua: P.model ? P.model.ua : null, tbal: pn('tbalC', 15), windTot: WIND_TOT, ver: MODELL_VER}});
+                                ua: P.model ? P.model.ua : null, tbal: pn('tbalC', 15), windTot: WIND_TOT, ver: MODELL_VER}, lern: lern});
 flow.set('plan', pl);
 return out;
 """
@@ -3173,7 +3183,7 @@ ENGINE_CORE_JS = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "
 ENGINE_WRAP_JS = r"""
 // ---------- Huelle der Entscheidungsmaschine (Shadow, schaltet NICHTS). Liest Anlagen- und Optimierer-Werte, ruft jede Minute den reinen Kern
 // ENGINE.step, schreibt decisions-YYYY-MM.jsonl (jede Auswertung), scores-YYYY-MM.jsonl (Punkte) und Ereignisse, baut die Seite "Optimierer".
-// Ausgaenge: 1 Vorschlag, 2 Regeln, 3 Punkte, 4 Entscheidungen, 5 Dateien. msg.topic "anzeige" (von der Uebernahme): nur die Anzeige neu aufbauen.
+// Ausgaenge: 1 Vorschlag, 2 Regeln, 3 Punkte, 4 Entscheidungen, 5 Dateien, 6 Messwerte & Lernen. msg.topic "anzeige" (von der Uebernahme): nur die Anzeige neu aufbauen.
 var now = Date.now(), MIN = 60000;
 var G = function (k) { var v; try { v = global.get(k, 'file'); } catch (e) { v = undefined; } return v !== undefined ? v : global.get(k); };
 function num(v) { if (v === null || v === undefined || v === '' || typeof v === 'boolean') { return null; } v = Number(v); return isFinite(v) ? v : null; }
@@ -3275,9 +3285,9 @@ if (msg.topic !== 'anzeige') {
 }
 flow.set('eng', ST);
 if (!ST.last) { return null; }
-// ---------- Anzeige (Karten-Daten aus ENGVIEW.build, gezeichnet in den Vorlagen mit optEngUi)
-var V = ENGVIEW.build({now: now, last: ST.last, S: ST.S, V: ST.V, AP: global.get('OPT_apply') || {}, enabled: global.get('OPT_apply_enabled') === true, cfg: cfg});
-return [{payload: V.card}, {payload: V.rules}, {payload: V.score}, {payload: V.log}, files.length ? files : null];
+// ---------- Anzeige (Karten-Daten aus ENGVIEW.build, gezeichnet in den Vorlagen mit optEngUi); Lernstand des Waermefahrplans aus OPT_plan (nur lesen)
+var V = ENGVIEW.build({now: now, last: ST.last, S: ST.S, V: ST.V, AP: global.get('OPT_apply') || {}, enabled: global.get('OPT_apply_enabled') === true, cfg: cfg, plan: G('OPT_plan') || null});
+return [{payload: V.card}, {payload: V.rules}, {payload: V.score}, {payload: V.log}, files.length ? files : null, {payload: V.mess}];
 """
 
 APPLY_WRAP_JS = r"""
@@ -3286,6 +3296,7 @@ APPLY_WRAP_JS = r"""
 // Whitelist + Wertebereich, frische Daten, Abgleich mit dem Ist-Wert, MQTT-Notbremse, Rate und Tageslimit. Jede 15 s (tick): Ruecklesen, begrenzte
 // Wiederholung, Warnung bei Abweichung, Rueckweg. Alles in applied-YYYY-MM.jsonl. Ausgaenge: 1 mqtt out (deaktiviert ausgeliefert), 2 Meldung, 3 Dateien, 4 Anzeige.
 var now = Date.now(), MIN = 60000;
+var KNOTEN = __KNOTEN__;                                                         // vom Generator: false = Sendeknoten opt_apply_mqtt deaktiviert erzeugt (Standard), true = mit --uebernahme-knoten-aktiv
 var G = function (k) { var v; try { v = global.get(k, 'file'); } catch (e) { v = undefined; } return v !== undefined ? v : global.get(k); };
 function num(v) { if (v === null || v === undefined || v === '' || typeof v === 'boolean') { return null; } v = Number(v); return isFinite(v) ? v : null; }
 function p2(x) { return (x < 10 ? '0' : '') + x; }
@@ -3302,7 +3313,7 @@ var mq = G('MQTT') || {};
 var plant = {q: pick(hpv('Quiet_Mode_Level'), num(G('TOP18_Quiet_Mode_Level'))), shift: pick(hpv('Z1_Heat_Request_Temp'), num(G('TOP27_Z1_Heat_Request_Temp'))), hpAge: hpTs ? (now - hpTs) / MIN : null,
              block: mq.block_active === 1 ? 1 : 0, heatMode: num(G('TOP76_Heating_Mode')), z1Sensor: num(G('TOP111_Z1_Sensor_Settings'))};
 var eng = global.get('OPT_engine') || {};
-var ctx = {now: now, enabled: AC.enabled, rules: AC.rules, eng: eng, plant: plant, cfg: ENGINE.mergeCfg(((global.get('OPT_cfg') || {}).engine) || {}), endReason: eng.ende || {}, halten: eng.halten || {}};
+var ctx = {now: now, enabled: AC.enabled, knoten: KNOTEN, rules: AC.rules, eng: eng, plant: plant, cfg: ENGINE.mergeCfg(((global.get('OPT_cfg') || {}).engine) || {}), endReason: eng.ende || {}, halten: eng.halten || {}};
 var t = String(msg.topic || ''), r;
 try { r = t === 'tick' ? ENGINE.applyTick(A, ctx) : ENGINE.applyRequest(A, {topic: t, payload: (msg.payload && typeof msg.payload === 'object') ? {id: String(msg.payload.id || ''), sum: String(msg.payload.sum || '')} : {}}, ctx); }
 catch (e) { node.warn('Übernahme: ' + e.message); return [null, {topic: 'Optimierer', payload: 'Übernahme: Fehler (' + e.message + '). Nichts gesendet.', highlight: 'red'}, null, null]; }
@@ -3330,7 +3341,7 @@ if (r.log.length) {
 }
 flow.set('apply', A);
 if (JSON.stringify(A) !== A0) { try { fs.mkdirSync('/data/optimizer', {recursive: true}); fs.writeFileSync('/data/optimizer/apply-state.json', JSON.stringify(A)); } catch (e) { node.warn('apply-state.json: ' + e.message); } }
-global.set('OPT_apply', {ts: now, aktiv: A.aktiv, pending: A.pending, alarm: A.alarm, verworfen: A.verworfen, n: A.n, enabled: AC.enabled, rules: AC.rules});
+global.set('OPT_apply', {ts: now, aktiv: A.aktiv, pending: A.pending, alarm: A.alarm, verworfen: A.verworfen, n: A.n, day: A.day, lastSend: A.lastSend, enabled: AC.enabled, knoten: KNOTEN, rules: AC.rules});
 var toast = r.toast ? {topic: 'Optimierer', payload: r.toast.text, highlight: r.toast.color || ''} : null;
 var refresh = (t !== 'tick' || r.log.length) ? {topic: 'anzeige'} : null;
 return [out1.length ? out1 : null, toast, files.length ? files : null, refresh];
@@ -3338,21 +3349,32 @@ return [out1.length ? out1 : null, toast, files.length ? files : null, refresh];
 
 ENG_TAB = "opt_eng_ui_tab"                       # eigene Seite "Optimierer" (eigenes Kennzeichen, die Seitenpruefung der anderen vier Seiten bleibt unberuehrt)
 upsert({"id": ENG_TAB, "type": "ui_tab", "name": "Optimierer", "icon": "lightbulb_outline", "order": 12.55, "disabled": False, "hidden": False})
-for _ord, (_gid, _gname) in enumerate((("opt_g_eng_prop", "Entscheidungsmaschine"), ("opt_g_eng_rules", "Regeln"),
-                                       ("opt_g_eng_score", "Punkte"), ("opt_g_eng_log", "Entscheidungen")), start=1):
-    upsert({"id": _gid, "type": "ui_group", "name": _gname, "tab": ENG_TAB, "order": _ord, "disp": True, "width": 18, "collapse": False, "className": ""})
+# Gruppenbreite (13.10.): alle Karten gleich breit (Masonry-Falle). 17 Einheiten = 912 px: ab ~1840 px Fensterbreite zwei Spalten (1920 und 2560),
+# bei 1024 px eine Spalte ohne waagrechtes Scrollen (Inhalt ~1007 px). Breiter als 18 (966 px) scrollt bei 1024 waagrecht; 16 und schmaler schneidet
+# die fuenf Kacheln je Zeile (Kachelnamen bis 17 Zeichen). Die Karte "Aktueller Vorschlag" ist immer hoeher als "Regeln" (Mindesthoehe ohne Vorschlag),
+# damit die Masonry die Karten mit und ohne Vorschlag gleich anordnet: links Vorschlag, Messwerte; rechts Regeln, Punkte, Entscheidungen.
+ENG_W = 17
+# [Gruppe, Titel, Vorlage, Art, Starthoehe in Einheiten (passt ohne Einpassen fuer den ueblichen Inhalt, statische Vorschau 13.10.), y im Editor]
+ENG_GROUPS = (("opt_g_eng_prop", "Aktueller Vorschlag", "opt_t_eng_prop", "card", 4, 2060), ("opt_g_eng_rules", "Regeln", "opt_t_eng_rules", "rules", 3, 2100),
+              ("opt_g_eng_score", "Punkte", "opt_t_eng_score", "score", 9, 2140), ("opt_g_eng_mess", "Messwerte & Lernen", "opt_t_eng_mess", "mess", 10, 2160),
+              ("opt_g_eng_log", "Entscheidungen", "opt_t_eng_log", "log", 12, 2180))
+for _ord, _g in enumerate(ENG_GROUPS, start=1):
+    upsert({"id": _g[0], "type": "ui_group", "name": _g[1], "tab": ENG_TAB, "order": _ord, "disp": True, "width": ENG_W, "collapse": False, "className": ""})
 
 ENGINE_VIEW_JS = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "engine_view.js"), encoding="utf-8").read()      # Karten-Daten (rein, getestet)
 ENG_UI_JS = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "eng_ui.js"), encoding="utf-8").read()              # Darstellung (rein, getestet)
 
 
-def eng_format(kind, with_chart=False):
-    """Karte der Seite "Optimierer": zeichnet die Nutzlast mit optEngUi (HTML aus reinen Funktionen), Knoepfe schicken nur Aktion + ID + Pruefsumme."""
+def eng_format(kind, node_id, with_chart=False):
+    """Karte der Seite "Optimierer": zeichnet die Nutzlast mit optEngUi (HTML aus reinen Funktionen), Knoepfe schicken nur Aktion + ID + Pruefsumme.
+    Nach jedem Zeichnen passt sich die Karte sofort ein (FIT_JS dieser Karte), nicht erst im 1,5-s-Takt: der Takt ruht, solange das Fenster
+    verdeckt ist (document.visibilityState), dann blieben die Starthoehen stehen und der Inhalt scrollte in der Karte."""
     return ('<div class="optfit"><div id="oe_' + kind + '"></div></div>'
             + ("<script>" + UI_CHART_JS + "</script>" if with_chart else "")
             + "<script>" + ENG_UI_JS + "</script><script>(function (scope) {\n"
             "var last = null;\n"
-            "function draw() { var el = document.getElementById('oe_" + kind + "'); if (el && last && last.payload && window.optEngUi) { window.optEngUi.mount(el, '" + kind + "', last.payload, scope); } }\n"
+            "function draw() { var el = document.getElementById('oe_" + kind + "'); if (el && last && last.payload && window.optEngUi) { window.optEngUi.mount(el, '" + kind + "', last.payload, scope);"
+            " var F = window.__optFit; if (F && F.fns && F.fns['" + node_id + "']) { setTimeout(F.fns['" + node_id + "'], 60); } } }\n"
             "window.__optChMap = window.__optChMap || {}; window.__optChMap.oe_" + kind + " = draw;\n"
             "if (!window.__optChRs) { window.__optChRs = true; var tm = null; window.addEventListener('resize', function () { clearTimeout(tm); tm = setTimeout(function () { Object.keys(window.__optChMap).forEach(function (k) { window.__optChMap[k](); }); }, 200); }); }\n"
             "scope.$watch('msg', function (m) { last = m; setTimeout(draw, 40); });\n"
@@ -3366,19 +3388,18 @@ def eng_template(i, gid, name, height, fmt, y, wires=None):
 
 
 upsert(comment("opt_c_eng", "Optimierer: Entscheidungsmaschine (Shadow, schaltet nichts) · Übernahme nur per Klick, GESPERRT ausgeliefert", 380, 2040))
-upsert(eng_template("opt_t_eng_prop", "opt_g_eng_prop", "Status und Vorschlag", 3, eng_format("card"), 2060, [["opt_apply"]]))
-upsert(eng_template("opt_t_eng_rules", "opt_g_eng_rules", "Regeln", 3, eng_format("rules"), 2100))
-upsert(eng_template("opt_t_eng_score", "opt_g_eng_score", "Punkte", 6, eng_format("score", True), 2140))
-upsert(eng_template("opt_t_eng_log", "opt_g_eng_log", "Entscheidungen", 4, eng_format("log"), 2180))
+for _g in ENG_GROUPS:
+    upsert(eng_template(_g[2], _g[0], _g[1], _g[4], eng_format(_g[3], _g[2], _g[3] == "score"), _g[5], [["opt_apply"]] if _g[3] == "card" else None))
 upsert(inject("opt_i_engine", "jede Minute", 60, 50, ["opt_engine"], 140, 2100))
-upsert(fn("opt_engine", "Entscheidungsmaschine (Shadow)", ENGINE_CORE_JS + ENGINE_VIEW_JS + ENGINE_WRAP_JS, 5,
-          [["opt_t_eng_prop"], ["opt_t_eng_rules"], ["opt_t_eng_score"], ["opt_t_eng_log"], ["opt_f_eng"]], 440, 2100, FS))
+# Ausgaenge: 1 Vorschlag, 2 Regeln, 3 Punkte, 4 Entscheidungen, 5 Dateien, 6 Messwerte & Lernen (hinten angefuegt, damit die Dateien Ausgang 5 bleiben)
+upsert(fn("opt_engine", "Entscheidungsmaschine (Shadow)", ENGINE_CORE_JS + ENGINE_VIEW_JS + ENGINE_WRAP_JS, 6,
+          [["opt_t_eng_prop"], ["opt_t_eng_rules"], ["opt_t_eng_score"], ["opt_t_eng_log"], ["opt_f_eng"], ["opt_t_eng_mess"]], 440, 2100, FS))
 upsert({"id": "opt_f_eng", "type": "file", "z": TAB, "name": "Entscheidungen, Punkte, Ereignisse", "filename": "filename", "filenameType": "msg", "appendNewline": False,
         "createDir": True, "overwriteFile": "false", "encoding": "utf8", "x": 760, "y": 2160, "wires": [[]]})
 # Uebernahme: Klick (Karte) und Takt alle 15 s -> opt_apply -> (1) mqtt out GESPERRT, (2) Meldung, (3) Protokoll, (4) Anzeige neu
 upsert({"id": "opt_i_apply", "type": "inject", "z": TAB, "name": "alle 15 s (Rücklesen, Rückweg)", "props": [{"p": "payload"}, {"p": "topic", "vt": "str"}],
         "repeat": "15", "crontab": "", "once": True, "onceDelay": "55", "topic": "tick", "payload": "", "payloadType": "date", "x": 160, "y": 2240, "wires": [["opt_apply"]]})
-upsert(fn("opt_apply", "Übernahme per Klick (gesperrt ausgeliefert)", ENGINE_CORE_JS + APPLY_WRAP_JS, 4,
+upsert(fn("opt_apply", "Übernahme per Klick (gesperrt ausgeliefert)", ENGINE_CORE_JS + APPLY_WRAP_JS.replace("__KNOTEN__", "true" if APPLY_NODE_ACTIVE else "false"), 4,
           [["opt_apply_mqtt"], ["opt_ui_toast"], ["opt_f_eng"], ["opt_engine"]], 440, 2240, FS))
 upsert({"id": "opt_broker_cmd", "type": "mqtt-broker", "name": "MQTT (NAS) Optimierer Übernahme", "broker": "10.10.10.128", "port": "1883",
         "clientid": "nodered-optimizer-cmd", "autoConnect": True, "usetls": False, "protocolVersion": "4", "keepalive": "60",

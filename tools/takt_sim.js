@@ -42,7 +42,10 @@ const nul = n => Array.from({length: n}, () => ({hz: null}));
   const tk = tks[tks.length - 1][1];
   check('Engine: Datensatz abl.tk kompakt [Starts 24 h, Anteil kurzer Laeufe, Minutenpausen, Bedarfspausen], nur bei Aenderung und zur vollen Stunde (hier ' + tks.length + ' von ' + seq.length + ' Minuten)', JSON.stringify(tk) === '[2,1,1,0]' && tks.length <= 8 && tks.length >= 3 && !('takt' in last.rec.abl), JSON.stringify(tks));
   const V = require('./engine_view.js'), b = V.build({now: S.last, last: {t: S.last, res: last.res, prop: null, anl: {}}, S: S, V: {}, AP: {}, enabled: false});
-  check('Anzeige: Zeile Takt (Starts, Laeufe, Pausen), Mindestleistung und COP je Modus/Quiet ohne Fehler', /^Starts 24 h 2 \(0,08\/h\) · Läufe 2, davon < 60 min 2/.test(b.score.takt.t) && b.score.takt.chip === 'ruhig' && b.score.takt.min === '4…6 °C 3,0 kW', b.score.takt.t + ' | ' + b.score.takt.chip + ' | ' + b.score.takt.min);
+  const tkK = b.mess.takt, mlK = b.mess.ml;
+  check('Anzeige (Karte "Messwerte & Lernen", 13.10.): Kacheln Takt (ruhig, 2 Starts in 24 h), Laeufe 2 (kurz 2), Pausen; Mindestleistung je Band als Zelle "4…6 °C" / "3,0 kW"; COP ohne Fehler',
+        tkK[0].k === 'Takt' && tkK[0].v === 'ruhig' && tkK[0].s === '2 Starts in 24 h' && /0,08\/h/.test(tkK[0].title) && tkK[1].v === '2' && /kurz 2$/.test(tkK[1].s) && mlK.length === 1 && mlK[0].band === '4…6 °C' && mlK[0].v === '3,0 kW' && !('takt' in b.score),
+        JSON.stringify(tkK.slice(0, 2)) + ' | ' + JSON.stringify(mlK));
   const S2 = E.fixState(JSON.parse(JSON.stringify(Object.assign({}, S, {takt: undefined}))), S.last);
   check('Aelterer Zustand ohne takt: wird ergaenzt, kein Absturz', S2.takt && Array.isArray(S2.takt.runs), ''); }
 

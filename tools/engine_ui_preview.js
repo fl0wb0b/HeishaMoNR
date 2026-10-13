@@ -1,5 +1,8 @@
 // Statische Vorschau der Seite "Optimierer": spielt die echten Protokolle durch den Kern (Replay), baut die Karten-Daten mit ENGVIEW.build und
-// zeichnet sie mit optEngUi in eine HTML-Datei, die das Dashboard nachbildet (Gruppen 18 Einheiten = 966 px breit, Kartentitel, grauer Grund).
+// zeichnet sie mit optEngUi in eine HTML-Datei, die das Dashboard nachbildet: Rastermasse wie ui_base (sx/sy 48, Abstaende 6), Gruppen GRUPPE_W Einheiten
+// breit, Masonry (jede Gruppe an die hoechste freie Stelle, links zuerst), Karten mit fester Hoehe und innerem Scrollen wie ui_template, Einpassen wie FIT_JS.
+// Ein Pruefskript in der Seite meldet inneres Scrollen, abgeschnittene Elemente, horizontales Scrollen der Seite und Ueberlappung der Gruppen
+// (window.__pruef und Kopfzeile). Bilder und Pruefung je Breite: node tools/ui_vorschau_pruefen.js <seite.html> <ordner>.
 // Usage: node tools/engine_ui_preview.js [Datenordner] [Ausgabe.html]
 //   Schnappschuesse: A = 10.10. 08:38 (Quiet-Freigabe aktiv, Uebernahme gesperrt), B = Ende des Replays, C = wie B mit Hauptschalter AN,
 //   aktiver Uebernahme und Warnung (nur Anzeige-Test, ausgedachte Uebernahme-Daten), D = 5 Tage Kaelte-Szenario mit Punkten (Spielzeug-Anlage)
@@ -11,6 +14,10 @@ const VW = require('./engine_view.js');
 const UI = require('./eng_ui.js');
 const CH = require('./ui_chart.js');
 const MIN = 60000;
+const GRUPPE_W = 17;                                                              // wie ENG_W im Generator
+// Gebaeudemodell/Lernstand des Waermefahrplans (OPT_plan) fuer die Vorschau: Werte wie im Bericht 13.10. (4 von 10 Tagen, Drift-CUSUM 3,8 von 4)
+const PLAN_BSP = {model: {n: 4, minDays: 10, gate: false, why: ['weniger als 10 Tage', 'PV-Tage zu gleichfoermig'], aktiv: false},
+                  lern: {heute: 0, heuteTxt: '', verw: 0, verwTxt: '', drift: {n: 2, up: 3.8, dn: 0, upAn: false, dnAn: false, h: 4}, rueckfall: null, rb: null}};
 
 function snapshots(dataDir) {
     const { replay } = require('./engine_replay.js');
@@ -20,11 +27,11 @@ function snapshots(dataDir) {
     const R = replay(dataDir, {keepRecs: false, onStep: (o, inp) => {
         VW.track(V, o.res, o.S.rules, inp.t);
         last = {t: inp.t, res: o.res, prop: o.prop, anl: {z: o.d.zustand, lauf: o.d.runMin, hz: o.d.hz, q: o.d.q, vlR: o.d.vlRueck}};
-        if (inp.t === tA) { out.A = VW.build({now: inp.t, last: last, S: o.S, V: JSON.parse(JSON.stringify(V)), AP: {}, enabled: false}); }
+        if (inp.t === tA) { out.A = VW.build({now: inp.t, last: last, S: JSON.parse(JSON.stringify(o.S)), V: JSON.parse(JSON.stringify(V)), AP: {}, enabled: false, plan: PLAN_BSP}); }
     }});
-    out.B = VW.build({now: last.t, last: last, S: R.S, V: V, AP: {}, enabled: false});
-    const AP = {aktiv: {name: 'SetQuietMode', value: 0, von: 3, ts: last.t - 40 * MIN, bis: null, bestaetigt: true}, rules: ['quiet_freigabe'], alarm: null};
-    out.C = VW.build({now: last.t, last: last, S: R.S, V: V, AP: AP, enabled: true});
+    out.B = VW.build({now: last.t, last: last, S: R.S, V: V, AP: {}, enabled: false, plan: PLAN_BSP});
+    const AP = {aktiv: {name: 'SetQuietMode', value: 0, von: 3, ts: last.t - 40 * MIN, bis: null, bestaetigt: true, groesse: 'quiet', rule: 'quiet_freigabe'}, rules: ['quiet_freigabe', 'quiet_strecken', 'raum_offset'], alarm: null, n: 1, day: E.ymd(last.t), lastSend: last.t - 40 * MIN};
+    out.C = VW.build({now: last.t, last: last, S: R.S, V: V, AP: AP, enabled: true, plan: PLAN_BSP});
     return out;
 }
 function coldScenario() {                                                         // 5 Tage kaelter werdend, Klick auf jeden Quiet-Vorschlag: Punkte, Wirkung, Episoden
@@ -45,27 +52,93 @@ function coldScenario() {                                                       
         last = {t: t, res: o.res, prop: o.prop, anl: {z: o.d.zustand, lauf: o.d.runMin, hz: o.d.hz, q: o.d.q, vlR: o.d.vlRueck}};
         if (o.prop && o.prop.rule === 'quiet_freigabe' && t - o.prop.ts >= 3 * MIN) { P.q = 0; }
     }
-    return VW.build({now: last.t, last: last, S: S, V: V, AP: {}, enabled: false});
+    return VW.build({now: last.t, last: last, S: S, V: V, AP: {}, enabled: false, plan: null});
 }
-function staticCard(kind, P) {                                                     // wie optEngUi.mount, aber ohne DOM: Diagramm direkt als SVG
+function staticCard(kind, P, w) {                                                  // wie optEngUi.mount, aber ohne DOM: Diagramm direkt als SVG (Breite des Karteninhalts)
     let h = UI.html(kind, P);
-    if (kind === 'score' && P.series && P.series.length) { const spec = UI.chartSpec(P); h = h.replace('<div id="oe_chart" style="margin-bottom:8px"></div>', '<div id="oe_chart" style="margin-bottom:8px">' + CH.legend(spec) + CH.svg(spec, 940).svg + '</div>'); }
+    if (kind === 'score' && P.series && P.series.length) { const spec = UI.chartSpec(P); h = h.replace('<div id="oe_chart" style="margin-bottom:8px"></div>', '<div id="oe_chart" style="margin-bottom:8px">' + CH.legend(spec) + CH.svg(spec, w || 880).svg + '</div>'); }
     return h;
 }
-const GROUPS = [['card', 'Entscheidungsmaschine'], ['rules', 'Regeln'], ['score', 'Punkte'], ['log', 'Entscheidungen']];
-function page(snaps) {
-    const css = '<style>body{margin:0;background:#eeeeee;font-family:Roboto,"Helvetica Neue",Arial,sans-serif}h1{font-size:15px;color:#37474f;margin:18px 14px 4px;font-weight:600}' +
-        '.grp{width:966px;margin:8px 14px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.25)}.grp>.hd{padding:8px 12px 4px;font-size:15px;color:#0094ce;font-weight:500}.grp>.bd{padding:4px 12px 12px}</style>';
-    return '<!doctype html><html lang="de"><head><meta charset="utf-8"><title>Optimierer Vorschau</title>' + css + UI.css + '</head><body>' +
-        Object.keys(snaps).map(k => '<h1>' + k + '</h1>' + GROUPS.map(g => '<div class="grp" data-g="' + g[0] + '"><div class="hd">' + g[1] + '</div><div class="bd">' + staticCard(g[0], snaps[k][g[0] === 'card' ? 'card' : g[0]]) + '</div></div>').join('')).join('') +
-        '</body></html>';
+// Gruppen der Seite in Generator-Reihenfolge: [Art, Titel, Starthoehe in Einheiten] (Starthoehen wie ENG_GROUPS in tools/optimizer_phase1.py)
+const GROUPS = [['card', 'Aktueller Vorschlag', 4], ['rules', 'Regeln', 3], ['score', 'Punkte', 9], ['mess', 'Messwerte & Lernen', 10], ['log', 'Entscheidungen', 12]];
+const PAD = 8;                                                                    // Innenabstand der Karte links/rechts (Annahme; das Dashboard setzt die Karte auf die Gruppenbreite)
+// Prueft im Browser: Masonry wie das Dashboard, Einpassen wie FIT_JS, dann Ueberlauf. Ergebnis in window.__pruef und in der Kopfzeile.
+const CHECK_JS = `(function () {
+var SX = 48, SY = 48, CX = 6, CY = 6, GX = 6, GY = 6, UNIT = SX + GX;
+function masonry(box) {
+    var W = box.clientWidth, cols = Math.max(1, Math.floor((W + GX) / UNIT)), hts = [], gs = box.querySelectorAll(':scope > .grp'), i, x, y;
+    for (i = 0; i < cols; i++) { hts.push(0); }
+    Array.prototype.forEach.call(gs, function (g) {
+        var w = +g.getAttribute('data-w'), bx = 0, by = Infinity;
+        for (x = 0; x + w <= Math.max(cols, w); x++) { y = 0; for (i = x; i < x + w; i++) { y = Math.max(y, hts[i] || 0); } if (y < by) { by = y; bx = x; } }
+        g.style.left = (bx * UNIT) + 'px'; g.style.top = by + 'px';
+        for (i = bx; i < bx + w; i++) { hts[i] = by + g.offsetHeight + GY; }
+        g.setAttribute('data-pos', 'Spalte ' + (bx === 0 ? 1 : 1 + Math.round(bx / w)) + ' · y ' + by);
+    });
+    box.style.height = Math.max.apply(null, hts) + 'px';
 }
-module.exports = {snapshots: snapshots, coldScenario: coldScenario, staticCard: staticCard, page: page};
+function units(px) { return Math.max(1, Math.ceil((px + CY) / (SY + CY))); }
+function hOf(u) { return u * SY + (u - 1) * CY; }
+function need(card) { var last = card.querySelector('.optfit').lastElementChild; return last.getBoundingClientRect().bottom - card.getBoundingClientRect().top + card.scrollTop + 10; }
+function run() {
+    var res = {breite: document.documentElement.clientWidth, fehler: [], karten: [], spalten: 0};
+    var boxes = document.querySelectorAll('.mas');
+    Array.prototype.forEach.call(boxes, function (box) {
+        Array.prototype.forEach.call(box.querySelectorAll('.crd'), function (c) { c.style.height = hOf(+c.getAttribute('data-u')) + 'px'; });
+        masonry(box);
+        Array.prototype.forEach.call(box.querySelectorAll('.crd'), function (c) {                        // Starthoehe reicht? (gilt, solange das Einpassen nicht gelaufen ist)
+            var n = need(c); c.setAttribute('data-px', Math.round(n)); c.setAttribute('data-start', units(n) <= +c.getAttribute('data-u') ? 'reicht' : 'zu klein');
+            c.setAttribute('data-need', units(n));
+        });
+        Array.prototype.forEach.call(box.querySelectorAll('.crd'), function (c) { c.style.height = hOf(+c.getAttribute('data-need')) + 'px'; });   // FIT_JS
+        masonry(box); masonry(box);
+        var gs = box.querySelectorAll(':scope > .grp'), cols = {};
+        Array.prototype.forEach.call(gs, function (g) { cols[g.style.left] = 1; });
+        res.spalten = Math.max(res.spalten, Object.keys(cols).length);
+        Array.prototype.forEach.call(box.querySelectorAll('.crd'), function (c) {
+            var k = c.getAttribute('data-k'), r = c.getBoundingClientRect(), g = c.closest('.grp');
+            res.karten.push(box.getAttribute('data-s') + ':' + k + ' ' + c.getAttribute('data-need') + ' Einh. = ' + c.getAttribute('data-px') + ' px Inhalt (Start ' + c.getAttribute('data-u') + ', ' + c.getAttribute('data-start') + ') · ' + g.getAttribute('data-pos'));
+            if (c.scrollHeight > c.clientHeight + 1) { res.fehler.push(k + ': inneres Scrollen senkrecht (' + c.scrollHeight + ' > ' + c.clientHeight + ')'); }
+            if (c.scrollWidth > c.clientWidth + 1) { res.fehler.push(k + ': inneres Scrollen waagrecht (' + c.scrollWidth + ' > ' + c.clientWidth + ')'); }
+            Array.prototype.forEach.call(c.querySelectorAll('*'), function (e) {
+                var cs = getComputedStyle(e), q = e.getBoundingClientRect();
+                if (q.width === 0 && q.height === 0) { return; }
+                if ((cs.textOverflow === 'ellipsis' || cs.overflowX === 'hidden' || cs.overflowX === 'clip') && e.scrollWidth > e.clientWidth + 1 && e.tagName !== 'svg') { res.fehler.push(k + ': abgeschnitten <' + e.tagName.toLowerCase() + ' class="' + e.className + '"> "' + (e.textContent || '').slice(0, 40) + '"'); }
+                if (q.right > r.right - ${PAD} + 1.5 && e.closest('.optfit')) { res.fehler.push(k + ': ragt rechts heraus <' + e.tagName.toLowerCase() + ' class="' + e.className + '"> um ' + Math.round(q.right - r.right + ${PAD}) + ' px'); }
+            });
+            Array.prototype.forEach.call(c.querySelectorAll('.oe-kpi,.oe-tile,.oe-mlc,.oe-prop,.oe-leer'), function (bx) {          // nichts ragt aus seiner Kachel
+                var br = bx.getBoundingClientRect();
+                Array.prototype.forEach.call(bx.querySelectorAll('*'), function (e) { var q = e.getBoundingClientRect(); if ((q.width || q.height) && (q.right > br.right + 0.5 || q.left < br.left - 0.5)) { res.fehler.push(k + ': ragt aus der Kachel <' + e.tagName.toLowerCase() + ' class="' + e.className + '"> "' + (e.textContent || '').slice(0, 30) + '" um ' + Math.round(q.right - br.right) + ' px'); } });
+            });
+        });
+        for (var i = 0; i < gs.length; i++) { for (var j = i + 1; j < gs.length; j++) { var a = gs[i].getBoundingClientRect(), b = gs[j].getBoundingClientRect(); if (a.left < b.right - 1 && b.left < a.right - 1 && a.top < b.bottom - 1 && b.top < a.bottom - 1) { res.fehler.push('Gruppen ueberlappen: ' + gs[i].getAttribute('data-g') + ' / ' + gs[j].getAttribute('data-g')); } } }
+    });
+    if (document.documentElement.scrollWidth > document.documentElement.clientWidth + 1) { res.fehler.push('Seite scrollt waagrecht (' + document.documentElement.scrollWidth + ' > ' + document.documentElement.clientWidth + ')'); }
+    window.__pruef = res;
+    var pr = document.getElementById('pr');
+    pr.textContent = 'Prüfung bei ' + res.breite + ' px Inhaltsbreite: ' + (res.fehler.length ? res.fehler.length + ' Fehler: ' + res.fehler.slice(0, 4).join(' | ') : 'kein inneres Scrollen, nichts abgeschnitten, kein waagrechtes Scrollen, keine Überlappung') + ' · Spalten: ' + res.spalten;
+    pr.className = 'pr ' + (res.fehler.length ? 'f' : 'ok');
+}
+window.addEventListener('load', function () { setTimeout(run, 50); });
+})();`;
+function page(snaps, opt) {
+    opt = opt || {};
+    const W = opt.w || GRUPPE_W, gw = W * 48 + (W - 1) * 6, cw = gw - 2 * PAD;
+    const css = '<style>html{overflow-y:scroll}body{margin:0;background:#fafafa;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Oxygen-Sans,Ubuntu,Cantarell,"Helvetica Neue",sans-serif}' +
+        '.tb{height:48px;background:#0094ce;color:#fff;font-size:20px;line-height:48px;padding:0 16px}.pr{font-size:12px;padding:4px 8px;font-family:monospace}.pr.ok{background:#e8f5e9;color:#1b5e20}.pr.f{background:#ffebee;color:#b71c1c}' +
+        'h1{font-size:13px;color:#546e7a;margin:10px 0 4px;font-weight:600}.mas{position:relative;margin:0}' +
+        '.grp{position:absolute;width:' + gw + 'px;background:#fff}.grp>.ttl{padding:6px ' + PAD + 'px 2px;font-size:15px;color:#1bbfff;line-height:24px}.crd{box-sizing:border-box;width:' + gw + 'px;padding:0 ' + PAD + 'px;overflow-y:auto;margin-bottom:6px}</style>';
+    return '<!doctype html><html lang="de"><head><meta charset="utf-8"><title>Optimierer Vorschau</title>' + css + UI.css + '</head><body><div id="pr" class="pr">Prüfung läuft …</div><div class="tb">Optimierer</div>' +
+        Object.keys(snaps).map(k => '<h1>' + k + '</h1><div class="mas" data-s="' + k.charAt(0) + '">' + GROUPS.map(g => '<div class="grp" data-g="' + g[0] + '" data-w="' + W + '"><div class="ttl">' + g[1] + '</div>' +
+            '<div class="crd" data-k="' + g[0] + '" data-u="' + g[2] + '"><div class="optfit">' + staticCard(g[0], snaps[k][g[0]], cw) + '</div></div></div>').join('') + '</div>').join('') +
+        '<script>' + CHECK_JS + '</script></body></html>';
+}
+module.exports = {snapshots: snapshots, coldScenario: coldScenario, staticCard: staticCard, page: page, GROUPS: GROUPS, PLAN_BSP: PLAN_BSP, GRUPPE_W: GRUPPE_W};
 if (require.main === module) {
     const dataDir = process.argv[2] || path.join(__dirname, '..', '..', 'engine_brief', 'data');
     const outFile = process.argv[3] || path.join(__dirname, '..', '..', 'engine_work', 'optimierer_vorschau.html');
     const S = snapshots(dataDir);
-    const snaps = {'A · 10.10. 08:38 (Replay, Quiet-Freigabe, Übernahme gesperrt)': S.A, 'B · 10.10. 13:24 (Replay-Ende)': S.B, 'C · wie B, Hauptschalter AN, Übernahme aktiv': S.C, 'D · 5 Tage kälter werdend (Spielzeug-Anlage, Klicks)': coldScenario()};
+    const snaps = {'A · 10.10. 08:38 (Replay, Quiet-Freigabe, Übernahme gesperrt)': S.A, 'B · Replay-Ende 12.10. (kein Vorschlag)': S.B, 'C · wie B, Hauptschalter AN, Übernahme aktiv': S.C, 'D · 5 Tage kälter werdend (Spielzeug-Anlage, Klicks)': coldScenario()};
     fs.mkdirSync(path.dirname(outFile), {recursive: true});
     fs.writeFileSync(outFile, page(snaps));
     Object.keys(snaps).forEach(k => { const one = {}; one[k] = snaps[k]; fs.writeFileSync(outFile.replace(/\.html$/, '_' + k.charAt(0) + '.html'), page(one)); });   // je Schnappschuss eine Seite (Bildschirmfoto)
