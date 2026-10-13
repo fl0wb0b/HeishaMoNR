@@ -1557,6 +1557,7 @@ check('Quiet-Hinweis: mit gemessener Leistung (Stufe 3, 3 kW bei 3-7 °C) wird d
 // ---- 7) Status ohne Daten: kein Plan, keine erfundenen Werte; sobald die Daten da sind, geht es weiter
 pworld({wide: true, noWeather: true}); r = step(1); P = planNow();
 check('Ohne Wetterprognose: Status "keine Wetterprognose", keine Tabelle, kein Schnappschuss', P.status === 'keine Wetterprognose' && r[0][0].payload.plan.length === 0 && !r[0][3] && /Kein Plan/.test(r[0][0].payload.rows[0][1]), P.status);
+check('Ohne Plan (keine Wetterprognose) legt opt_plan den Lernstand trotzdem ab (OPT_plan.lern fuer die Seite "Optimierer"; die Zeilen unter "Details und Modell" gibt es nur mit Plan)', gstore.OPT_plan && gstore.OPT_plan.status === 'keine Wetterprognose' && gstore.OPT_plan.lern && typeof gstore.OPT_plan.lern.heute === 'number' && gstore.OPT_plan.lern.drift && gstore.OPT_plan.lern.drift.h === 4 && !r[0][0].payload.rows.some(x => x[0] === 'Lern-Gate'), JSON.stringify(gstore.OPT_plan && gstore.OPT_plan.lern));
 O.noWeather = false; r = step(1); P = planNow();
 check('Wetter kommt: der Plan wird sofort (nicht erst im naechsten Slot) berechnet', P.status === 'ok', P.status);
 pworld({wide: true, noPrice: true}); step(1); P = planNow();
@@ -1897,15 +1898,18 @@ check('Dateien: Ist, Vergleich, Schnappschuesse und Zustand unter /data/optimize
           dG && dG[15] === 17 && dG[16] === 130 && dG[20] === 75 && Math.abs(dG[1] - (240 - 75 / 60 * 10)) < 1.5, JSON.stringify(dG && dG.slice(13)));
     step(2); const rG = (planRows().find(r => r[0] === 'Lern-Gate') || [])[1];
     check('Anzeige "Lern-Gate": heute frei, 1 verworfener Tag (Warmwasser 1, unplausibel 1); der Tag fehlt im Gebaeudemodell', /^heute frei · verworfene Tage 1 \(Warmwasser 1, unplausibel 1\)$/.test(rG) && fstore.plan.lgVerw.length === 1 && (fstore.plan.learn.coef || {n: 0}).n === 0, rG);
+    { const LN = gstore.OPT_plan.lern; check('OPT_plan.lern stimmt mit der Zeile "Lern-Gate" ueberein: heute 0 (frei), 1 verworfener Tag "Warmwasser 1, unplausibel 1"', LN.heute === 0 && LN.heuteTxt === '' && LN.verw === 1 && LN.verwTxt === 'Warmwasser 1, unplausibel 1', JSON.stringify(LN)); }
     step(1, () => { gstore.MQTT = {block_active: 1}; }); for (let i = 0; i < 61; i++) { step(1, () => { gstore.MQTT = {block_active: 1}; }); }
     const rG2 = (planRows().find(r => r[0] === 'Lern-Gate') || [])[1];
-    check('Anzeige "Lern-Gate": nach 62 min MQTT-Sperre heute "gesperrt (Eingriff)"', /^heute gesperrt \(Eingriff\)/.test(rG2), rG2); }
+    check('Anzeige "Lern-Gate": nach 62 min MQTT-Sperre heute "gesperrt (Eingriff)"', /^heute gesperrt \(Eingriff\)/.test(rG2), rG2);
+    check('OPT_plan.lern: heute gesperrt (Bitmaske 8 = Eingriff, Text "Eingriff") wie die Zeile', gstore.OPT_plan.lern.heute === 8 && gstore.OPT_plan.lern.heuteTxt === 'Eingriff', JSON.stringify(gstore.OPT_plan.lern)); }
   { pworld({wide: true, atBase: 5, running: true, hp: 2500, atNow: 5}); delete gstore.OPT_hp; O.hp = 0; step(70);
     check('Lern-Gate live: Anlagendaten fehlen (kein OPT_hp) -> Datenluecke wird gezaehlt (70 min) und heute gesperrt', fstore.plan.day.gapM >= 69 && /heute gesperrt \(Datenlücke\)/.test((planRows().find(r => r[0] === 'Lern-Gate') || [])[1]), String(fstore.plan.day.gapM)); }
   { pworld({wide: true}); step(2); fstore.plan.learn.ab = [{d0: 1, L6: {n: 96, q: 29.97, b: 19.72, k: 19.72}}, {d0: 2, L6: {n: 96, q: 35.98, b: 31.05, k: 31.05}, L24: {n: 30, q: 10.8, b: 6.2, k: 6.2}}]; delete fstore.plan.learn.lg; step(1);
     const rD = (planRows().find(r => r[0] === 'Bedarfsmodell Drift') || [])[1], lg = fstore.plan.learn.lg;
     const lg3 = JSON.parse(JSON.stringify(lg)); PUA.abSchritt(lg3, {L6: {n: 96, q: 33, b: 30, k: 30}}, false);
     check('Drift-Zaehler werden einmalig aus den gesicherten A/B-Tagen nachgerechnet (Echtdaten 11./12.10., 6-h-Vorlauf: Ist 30,0/36,0 kWh gegen Plan-Modell 19,7/31,1 kWh -> CUSUM 3,8 von 4, noch "ruhig"); ein dritter Tag mit +10 % meldet "Mehrbedarf"', lg.n === 2 && lg.up.an === false && Math.abs(lg.up.s - 3.79) < 0.01 && /^ruhig \(CUSUM \+ 3,8 \/ − 0,0, 2 Tage\)$/.test(rD) && lg3.up.an === true, rD); }
+    { const D = gstore.OPT_plan.lern.drift; check('OPT_plan.lern.drift wie die Zeile "Bedarfsmodell Drift": 2 A/B-Tage, Mehrbedarf-CUSUM 3,8 (gerundet), Minderbedarf 0, kein Alarm, Alarmschwelle 4', D.n === 2 && D.up === 3.8 && D.dn === 0 && D.upAn === false && D.dnAn === false && D.h === 4, JSON.stringify(D)); }
   // Absicherung (D): Rueckfall im laufenden Fluss (Tageswechsel mit A/B-Tag) und Sperre bei der naechsten Neuberechnung
   { pworld({wide: true, pvPeak: 6000, windF: 4, start: 18 * HH, cfg: {coefActivate: 1}}); step(2); fstore.plan.bf = {days: [], v: 2}; fstore.plan.learn.days = sunDays(12); delete fstore.plan.learn.coef; fstore.plan.planSlot = 0; step(1);
     const akt0 = fstore.plan.learn.coef.aktiv, hist0 = (fstore.plan.learn.coefHist || []).length;
@@ -1914,6 +1918,7 @@ check('Dateien: Ist, Vergleich, Schnappschuesse und Zustand unter /data/optimize
     check('Rueckfall (D): aktiver Kandidat (Gate ok, coefActivate), A/B-Tag mit Kandidat 24 kWh daneben (Plan-Modell 4) -> nach Mitternacht zurueckgenommen (aktiv false), Sperre 7 Tage, Grund mit CUSUM; Anzeige "Kandidat zurückgenommen"; Schnappschuss der aktiven Lernwerte vorhanden',
           akt0 === true && hist0 >= 1 && rf && /Kandidat im A\/B schlechter als das Plan-Modell \(CUSUM [\d.]+\)/.test(rf.grund) && Math.abs(rf.bis - rf.ts - 7 * 86400000) < 1 && cfR.aktiv === false && /Kandidat zurückgenommen \d\d\.\d\d\., gesperrt bis \d\d\.\d\d\./.test(rD) && rf.stand && rf.stand.bs > 0 && (gstore.OPT_plan.model || {}).aktiv === false,
           JSON.stringify({akt0, rf, rD}).slice(0, 400));
+    check('OPT_plan.lern.rueckfall nach dem Rueckfall: Zeitpunkt und Sperre bis (7 Tage) fuer die Kachel "Bedarfsmodell Drift" (Tooltip)', gstore.OPT_plan.lern.rueckfall && gstore.OPT_plan.lern.rueckfall.bis === rf.bis && gstore.OPT_plan.lern.rueckfall.ts === rf.ts, JSON.stringify(gstore.OPT_plan.lern.rueckfall));
     delete fstore.plan.learn.coef; step(1); const cfN = fstore.plan.learn.coef;
     check('Rueckfall-Sperre: bei der naechsten Neuberechnung bleibt der Kandidat trotz bestandenem Gate gesperrt (Gate-Grund "Rückfall bis …")', cfN.aktiv === false && cfN.gate.why.some(w => /^Rückfall bis \d\d\.\d\d\.$/.test(w)), JSON.stringify(cfN.gate.why));
     fstore.plan.learn.rueckfall.bis = NOW - 1; delete fstore.plan.learn.coef; step(1);

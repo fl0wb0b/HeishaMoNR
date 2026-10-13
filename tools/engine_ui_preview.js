@@ -5,7 +5,8 @@
 // (window.__pruef und Kopfzeile). Bilder und Pruefung je Breite: node tools/ui_vorschau_pruefen.js <seite.html> <ordner>.
 // Usage: node tools/engine_ui_preview.js [Datenordner] [Ausgabe.html]
 //   Schnappschuesse: A = 10.10. 08:38 (Quiet-Freigabe aktiv, Uebernahme gesperrt), B = Ende des Replays, C = wie B mit Hauptschalter AN,
-//   aktiver Uebernahme und Warnung (nur Anzeige-Test, ausgedachte Uebernahme-Daten), D = 5 Tage Kaelte-Szenario mit Punkten (Spielzeug-Anlage)
+//   aktiver Uebernahme und Warnung (nur Anzeige-Test, ausgedachte Uebernahme-Daten), D = 5 Tage Kaelte-Szenario mit Punkten (Spielzeug-Anlage),
+//   E = wie A mit Hauptschalter AN, Sendeknoten aktiv und freigegebener Regel (Knopf "Übernehmen" aktiv)
 process.env.TZ = process.env.TZ_SIM || 'Europe/Berlin';
 const fs = require('fs');
 const path = require('path');
@@ -27,7 +28,10 @@ function snapshots(dataDir) {
     const R = replay(dataDir, {keepRecs: false, onStep: (o, inp) => {
         VW.track(V, o.res, o.S.rules, inp.t);
         last = {t: inp.t, res: o.res, prop: o.prop, anl: {z: o.d.zustand, lauf: o.d.runMin, hz: o.d.hz, q: o.d.q, vlR: o.d.vlRueck}};
-        if (inp.t === tA) { out.A = VW.build({now: inp.t, last: last, S: JSON.parse(JSON.stringify(o.S)), V: JSON.parse(JSON.stringify(V)), AP: {}, enabled: false, plan: PLAN_BSP}); }
+        if (inp.t === tA) {
+            out.A = VW.build({now: inp.t, last: last, S: JSON.parse(JSON.stringify(o.S)), V: JSON.parse(JSON.stringify(V)), AP: {}, enabled: false, plan: PLAN_BSP});
+            out.E = VW.build({now: inp.t, last: last, S: JSON.parse(JSON.stringify(o.S)), V: JSON.parse(JSON.stringify(V)), AP: {rules: ['quiet_freigabe', 'quiet_strecken', 'raum_offset'], knoten: true, n: 0, day: E.ymd(inp.t)}, enabled: true, plan: PLAN_BSP});
+        }
     }});
     out.B = VW.build({now: last.t, last: last, S: R.S, V: V, AP: {}, enabled: false, plan: PLAN_BSP});
     const AP = {aktiv: {name: 'SetQuietMode', value: 0, von: 3, ts: last.t - 40 * MIN, bis: null, bestaetigt: true, groesse: 'quiet', rule: 'quiet_freigabe'}, rules: ['quiet_freigabe', 'quiet_strecken', 'raum_offset'], alarm: null, n: 1, day: E.ymd(last.t), lastSend: last.t - 40 * MIN};
@@ -138,7 +142,7 @@ if (require.main === module) {
     const dataDir = process.argv[2] || path.join(__dirname, '..', '..', 'engine_brief', 'data');
     const outFile = process.argv[3] || path.join(__dirname, '..', '..', 'engine_work', 'optimierer_vorschau.html');
     const S = snapshots(dataDir);
-    const snaps = {'A · 10.10. 08:38 (Replay, Quiet-Freigabe, Übernahme gesperrt)': S.A, 'B · Replay-Ende 12.10. (kein Vorschlag)': S.B, 'C · wie B, Hauptschalter AN, Übernahme aktiv': S.C, 'D · 5 Tage kälter werdend (Spielzeug-Anlage, Klicks)': coldScenario()};
+    const snaps = {'A · 10.10. 08:38 (Replay, Quiet-Freigabe, Übernahme gesperrt)': S.A, 'B · Replay-Ende 12.10. (kein Vorschlag)': S.B, 'C · wie B, Hauptschalter AN, Übernahme aktiv': S.C, 'D · 5 Tage kälter werdend (Spielzeug-Anlage, Klicks)': coldScenario(), 'E · wie A, Hauptschalter AN, Sendeknoten aktiv, Regel frei': S.E};
     fs.mkdirSync(path.dirname(outFile), {recursive: true});
     fs.writeFileSync(outFile, page(snaps));
     Object.keys(snaps).forEach(k => { const one = {}; one[k] = snaps[k]; fs.writeFileSync(outFile.replace(/\.html$/, '_' + k.charAt(0) + '.html'), page(one)); });   // je Schnappschuss eine Seite (Bildschirmfoto)
