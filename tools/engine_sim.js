@@ -510,6 +510,12 @@ console.log('--- (d) Sonne/Wind nur mit coefActivate, Bewertung und Neutralitaet
     const vInj = Object.assign({}, vOff, {pv: [9000, 9000, 9000, 9000, 9000, 9000, 9000], wind: [15, 15, 15, 15, 15, 15, 15], bs: 0.9, bw: 0.1}), B10 = {at: [0, 0, 0, 0, 0, 0, 0], pv: [0, 0, 0, 0, 0, 0, 0]};
     check('coefActivate aus: selbst eingeschleuste Sonne/Wind-Werte aendern die Bedarfsaenderung nicht (nur Temperatur)', E.bedarfK(vInj, c, B10) === E.bedarfK(vOff, c, B10) && E.bedarfK(vOff, c, B10) !== null, E.bedarfK(vOff, c, B10) + ' / ' + E.bedarfK(vInj, c, B10));
     check('coefActivate an (Gate offen): Wind und PV-Prognose gehen ein und veraendern die Bedarfsaenderung', vOn.aktiv === 1 && vOn.pv.length === 7 && vOn.pv[3] === 4000 && vOn.wind[3] === 9 && E.bedarfK(vOn, c, B10) !== E.bedarfK(vOff, c, B10), E.bedarfK(vOff, c, B10) + ' -> ' + E.bedarfK(vOn, c, B10));
+    // Nutzerentscheidung 13.10.2026: Wind erst ueber 4 m/s (Totzone), bw hoechstens 0,0125 (wie im Waermefahrplan)
+    const vW = (w, bwv) => Object.assign({}, vOn, {wind: [w, w, w, w, w, w, w], bw: bwv, bs: 0, pv: [0, 0, 0, 0, 0, 0, 0]});
+    const vClamp = E.vorschau(W, {model: Object.assign({}, PLon.model, {bw: 0.1, bs: 0.9})}, PI, 11, now), vTot = E.vorschau(W, {model: Object.assign({}, PLon.model, {windTot: 5})}, PI, 11, now);
+    check('Wind-Totzone: Wind 4 m/s wirkt wie kein Wind, 7 m/s veraendert die Bedarfsaenderung; vorschau klemmt bw 0,1 -> 0,0125 und bs 0,9 -> 0,5, Totzone 4 m/s (aus OPT_plan.model.windTot, sonst Standard)',
+          E.bedarfK(vW(4, 0.0125), c, B10) === E.bedarfK(vW(0, 0.0125), c, B10) && E.bedarfK(vW(7, 0.0125), c, B10) !== E.bedarfK(vW(0, 0.0125), c, B10) && vClamp.bw === 0.0125 && vClamp.bs === 0.5 && vClamp.windTot === 4 && vTot.windTot === 5 && E.VS_LIM.bw === 0.0125,
+          [E.bedarfK(vW(0, 0.0125), c, B10), E.bedarfK(vW(4, 0.0125), c, B10), E.bedarfK(vW(7, 0.0125), c, B10), vClamp.bw, vClamp.windTot].join(' / '));
     // Tagesgang herausgerechnet: ein gewoehnlicher Tag (Vorhersage = gestern zur selben Uhrzeit) ergibt 0, Wetter ergibt die Aenderung
     const day = hs => 6 + 4 * Math.sin(2 * Math.PI * ((new Date(hs).getHours() + 0.5) - 9) / 24), t15 = new Date(2026, 9, 12, 15, 30).getTime();
     const Sd = seedS(day, t15), base = E.tagesgang(Sd, t15), fc = off => vsx([0, 1, 2, 3, 4, 5, 6].map(h => Math.round((day(t15 + h * H) + (h >= 2 ? off : 0)) * 10) / 10));

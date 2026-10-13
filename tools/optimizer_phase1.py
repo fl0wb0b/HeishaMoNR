@@ -1466,28 +1466,28 @@ function parseCsv(text) {                                                       
 function d0Of(key) { var p = key.split('-'); return new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2])).getTime(); }
 function dayFromArr(a) {                                                                             // Eintrag aus learn.days (4er-Array oder 13er-Array) als Objekt
     var g = function (i) { return (a.length > i && isN(a[i])) ? a[i] : null; };
-    return {d0: a[0], kh: g(1), q: g(2), n: g(3), s: g(4), wk: g(5), khW: g(6), wkW: g(7), dtr: g(8)};
+    return {d0: a[0], kh: g(1), q: g(2), n: g(3), s: g(4), wk: g(5), khW: g(6), wkW: g(7), dtr: g(8), wkT: g(13), wkWT: g(14)};
 }
 function daysFromRows(rows, tbal) {                                                                  // Tagesaggregate aus plan-actuals-Zeilen (Ortszeit-Datum des Stempels, ein Slot = 15 min)
     var days = {}, order = [];
     rows.forEach(function (r) {
         var st = r.slot_start; if (!st || st.length < 16) { return; }
         var key = st.slice(0, 10), d = days[key];
-        if (!d) { d = days[key] = {d0: d0Of(key), n: 0, kh: 0, q: 0, s: 0, wk: 0, khW: 0, wkW: 0, sN: 0, wN: 0, owN: 0, wwN: 0, r0: {}, rl: {}}; order.push(key); }
+        if (!d) { d = days[key] = {d0: d0Of(key), n: 0, kh: 0, q: 0, s: 0, wk: 0, khW: 0, wkW: 0, wkT: 0, wkWT: 0, sN: 0, wN: 0, owN: 0, wwN: 0, r0: {}, rl: {}}; order.push(key); }
         d.n += 15;
         var at = nz(r.ist_aussen), q = nz(r.ist_waerme_kwh), pv = nz(r.ist_pv_w), wd = nz(r.ist_wind_ms), ow = nz(r.ist_aussen_owm);
         if (at !== null) { d.kh += Math.max(0, tbal - at) * 0.25; }
         if (q !== null) { d.q += q; }
         if (pv !== null) { d.s += pv * 0.25 / 1000; d.sN += 15; }
         if (ow !== null) { d.khW += Math.max(0, tbal - ow) * 0.25; d.owN += 15; }
-        if (wd !== null && at !== null) { d.wk += Math.max(0, tbal - at) * wd * 0.25; d.wN += 15; }
-        if (wd !== null && ow !== null) { d.wkW += Math.max(0, tbal - ow) * wd * 0.25; d.wwN += 15; }
+        if (wd !== null && at !== null) { d.wk += Math.max(0, tbal - at) * wd * 0.25; d.wkT += Math.max(0, tbal - at) * windEff(wd) * 0.25; d.wN += 15; }
+        if (wd !== null && ow !== null) { d.wkW += Math.max(0, tbal - ow) * wd * 0.25; d.wkWT += Math.max(0, tbal - ow) * windEff(wd) * 0.25; d.wwN += 15; }
         Object.keys(r).forEach(function (k) { if (k.indexOf('ist_raum_') === 0) { var v = nz(r[k]); if (v !== null) { if (d.r0[k] === undefined) { d.r0[k] = v; } d.rl[k] = v; } } });
     });
     return order.map(function (k) {
         var d = days[k], part = function (v, cnt) { return cnt >= 0.9 * d.n ? v : null; }, dl = [];
         Object.keys(d.r0).forEach(function (rk) { dl.push(d.rl[rk] - d.r0[rk]); });
-        return {d0: d.d0, kh: d.kh, q: d.q, n: d.n, s: part(d.s, d.sN), wk: part(d.wk, d.wN), khW: part(d.khW, d.owN), wkW: part(d.wkW, d.wwN), dtr: dl.length ? dl.reduce(function (x, y) { return x + y; }, 0) / dl.length : null};
+        return {d0: d.d0, kh: d.kh, q: d.q, n: d.n, s: part(d.s, d.sN), wk: part(d.wk, d.wN), khW: part(d.khW, d.owN), wkW: part(d.wkW, d.wwN), wkT: part(d.wkT, d.wN), wkWT: part(d.wkWT, d.wwN), dtr: dl.length ? dl.reduce(function (x, y) { return x + y; }, 0) / dl.length : null};
     });
 }
 function gauss(A, b) {                                                                               // lineares Gleichungssystem, Pivotsuche; null bei singulaerer Matrix
@@ -1504,13 +1504,13 @@ function gauss(A, b) {                                                          
 function prepRows(days, o) {                                                                         // Datenzeilen {y, x1, x2, x3} fuer die Regression; Tage ohne noetige Werte entfallen
     var rows = [], vb = null, sw = 0, sk = 0;
     days.forEach(function (d) {
-        var x1 = o.tref === 'khW' ? d.khW : d.kh, w = o.tref === 'khW' ? d.wkW : d.wk;
+        var x1 = o.tref === 'khW' ? d.khW : d.kh, w = o.tref === 'khW' ? d.wkWT : d.wkT;          // Wind ueber der Totzone (MODELL_VER 2)
         if (isN(w) && isN(x1) && x1 > 0) { sw += w; sk += x1; }
     });
     if (sk > 0) { vb = sw / sk; }
     var nW = 0;
     days.forEach(function (d) {
-        var x1 = o.tref === 'khW' ? d.khW : d.kh, w = o.tref === 'khW' ? d.wkW : d.wk;
+        var x1 = o.tref === 'khW' ? d.khW : d.kh, w = o.tref === 'khW' ? d.wkWT : d.wkT;
         if (!isN(x1) || !isN(d.q) || (o.useS && !isN(d.s)) || ((o.C || 0) > 0 && !isN(d.dtr))) { return; }
         var y = d.q - (o.C || 0) * (isN(d.dtr) ? d.dtr : 0);
         var x2 = 0; if (o.useW) { if (isN(w)) { x2 = w; nW++; } else if (vb !== null) { x2 = x1 * vb; } }          // Tage ohne Wind: mittlere Windstaerke der Windtage annehmen
@@ -1588,9 +1588,16 @@ function gateCheck(n, rows, maeBase, maeCand, fit, o) {                         
     return {ok: why.length === 0, why: why};
 }
 // Harte Grenzen fuer Sonne/Wind (Sicherheit A, 13.10.): Vorzeichen physikalisch fest (Sonne senkt, Wind erhoeht den Bedarf), Betrag begrenzt.
-// ANNAHME-Werte: bs <= 0,5 kWh Waerme je kWh PV, bw <= 0,05 kWh/(K*m/s*h); Herkunft: bisherige Gate-Grenzen, keine Messung.
 // Idee aus andox/heat-pump-pilot (bounded_fit) und smefa/ClimateOptimizer (fester Sonnenterm, weil ein frei gelernter negativ wurde); kein Code uebernommen.
-var COEF_LIM = {bs: 0.5, bw: 0.05};
+// Werte: Nutzerentscheidung 13.10.2026 (nicht gemessen):
+//  bs <= 0,5 kWh Waerme je kWh PV: oberes Ende des gelernten Bereichs von tvofi/heatpump_optimizer (Fensterflaeche 10 m² x Ausrichtung 0,7 x g-Wert 0,7
+//     = 4,9 m² wirksam, Lernfaktor 0,3-2,0 -> umgerechnet bs ~ 0,08-0,54 bei PV-Spitze ~ 18 kW); ClimateOptimizer fest +7 K bei voller Sonne ~ bs 0,1-0,2.
+//  bw <= 0,0125 kWh/(K*m/s*h) (~ +5 % Waermeverlust je m/s bei UA 0,25 kW/K): ueber dem tvofi-Standard 3 %/(m/s) = 0,0075, ClimateOptimizer ~ 0,002-0,005,
+//     strutsfarm 15 %/(m/s) als Ausreisser.
+//  Wind zaehlt erst oberhalb von 4 m/s: Merkmal max(0, v - 4) (Idee ClimateOptimizer WIND_DEADBAND_MS 4,0); gleich in Fit, Gate, Plan, OPT_plan.model und Vorausschau.
+// MODELL_VER 2 (13.10.2026): Wind-Merkmal mit Totzone; aeltere Koeffizienten (roher Wind) werden neu gerechnet und nie als aktiv uebernommen.
+var COEF_LIM = {bs: 0.5, bw: 0.0125}, WIND_TOT = 4.0, MODELL_VER = 2;
+function windEff(v) { return isN(v) ? Math.max(0, v - WIND_TOT) : null; }
 function coefSafe(c) {                                                                               // wird vor JEDER Nutzung angewandt (Plan und Vorausschau): nicht endlich -> 0, negativ -> 0, zu gross -> Grenze
     var cl = function (v, hi) { return (typeof v === 'number' && isFinite(v)) ? Math.min(hi, Math.max(0, v)) : 0; };
     var o = {bs: cl(c && c.bs, COEF_LIM.bs), bw: cl(c && c.bw, COEF_LIM.bw)};
@@ -1698,7 +1705,7 @@ var s0 = Math.floor(now / Q15) * Q15, dtH = pl.lastTs ? Math.min(now - pl.lastTs
 pl.lastTs = now;
 function newAcc(t) { return {windS: 0, windN: 0, clS: 0, clN: 0, owS: 0, owN: 0, toS: 0, toN: 0, tcS: 0, tcN: 0, s: t, n: 0, atS: 0, atN: 0, pvS: 0, pvN: 0, thH: 0, elH: 0, thA: 0, elA: 0, dhwMin: 0, runMin: 0, defrosts: 0, hzS: 0, hzN: 0, defMin: 0, defEl: 0, defTh: 0, spS: 0, spN: 0, vdS: 0, vdN: 0, puS: 0, puN: 0, hc: null}; }
 function fillAcc(a) { ['windS', 'windN', 'clS', 'clN', 'owS', 'owN', 'toS', 'toN', 'tcS', 'tcN'].forEach(function (k) { if (a[k] === undefined) { a[k] = 0; } }); return a; }       // Zustand aus einem aelteren Stand (Deploy ohne Neustart) um neue Zaehler ergaenzen
-function fillDay(d) { ['s', 'sN', 'wk', 'wN', 'khW', 'owN', 'wkW', 'wwN'].forEach(function (k) { if (d[k] === undefined) { d[k] = 0; } }); if (!d.r0) { d.r0 = {}; } if (!d.rl) { d.rl = {}; } return d; }
+function fillDay(d) { ['s', 'sN', 'wk', 'wN', 'khW', 'owN', 'wkW', 'wwN', 'wkT', 'wTN', 'wkWT', 'wwTN'].forEach(function (k) { if (d[k] === undefined) { d[k] = 0; } }); if (!d.r0) { d.r0 = {}; } if (!d.rl) { d.rl = {}; } return d; }
 function priceAt(slots, t) { if (!Array.isArray(slots)) { return null; } for (var i = 0; i < slots.length; i++) { if (slots[i][0] <= t && slots[i][1] > t) { return slots[i][2]; } } return null; }
 var roomIds = ROOMS.map(function (r) { return r.id; });
 var ACT_COLS = ['ist_aussen', 'ist_pv_w', 'ist_preis', 'ist_cop', 'ist_waerme_kwh', 'ist_strom_kwh', 'ist_abtauungen', 'ist_ww_min', 'ist_verdichter_min', 'ist_hz', 'ist_quiet_stufe', 'ist_soc', 'ist_waerme_gesamt_kwh', 'ist_strom_heizen_kwh', 'ist_abtau_min', 'ist_abtau_strom_kwh', 'ist_abtau_waerme_kwh', 'ist_spreizung', 'ist_vl_abweichung', 'ist_pumpe_u_min', 'ist_heizregelung']
@@ -1799,14 +1806,14 @@ acc.rooms = {}; ROOMS.forEach(function (rc) { var r = Rr[rc.id]; if (r && r.ts &
 // Tagessumme fuer das Lernen: Heizgradstunden gegen gelieferte Waerme (ohne Warmwasser und Abtauen)
 var d0 = dayStart(now);
 if (pl.day && pl.day.d0 !== d0) {
-    if (pl.day.n >= 1200) {                                                                    // Eintrag: [d0, hdd, q, n] wie bisher, dahinter (nur anhaengen) s, wk, khW, wkW, dtr, sN, wN, owN, wwN; Zaehler unter 90 % der Minuten -> null
+    if (pl.day.n >= 1200) {                                                                    // Eintrag: [d0, hdd, q, n] wie bisher, dahinter (nur anhaengen) s, wk, khW, wkW, dtr, sN, wN, owN, wwN, wkT, wkWT (Wind ueber 4 m/s); Zaehler unter 90 % der Minuten -> null
         var dd = fillDay(pl.day), part = function (v, cnt, dg) { return cnt >= 0.9 * dd.n ? Math.round(v * dg) / dg : null; }, dtrL = [];
         Object.keys(dd.r0).forEach(function (id) { if (ok(dd.rl[id])) { dtrL.push(dd.rl[id] - dd.r0[id]); } });
         var dtrM = dtrL.length ? Math.round(dtrL.reduce(function (x, y) { return x + y; }, 0) / dtrL.length * 1000) / 1000 : null;
-        var entry = [dd.d0, Math.round(dd.hdd * 100) / 100, Math.round(dd.q * 1000) / 1000, dd.n, part(dd.s, dd.sN, 1000), part(dd.wk, dd.wN, 100), part(dd.khW, dd.owN, 100), part(dd.wkW, dd.wwN, 100), dtrM, dd.sN, dd.wN, dd.owN, dd.wwN];
+        var entry = [dd.d0, Math.round(dd.hdd * 100) / 100, Math.round(dd.q * 1000) / 1000, dd.n, part(dd.s, dd.sN, 1000), part(dd.wk, dd.wN, 100), part(dd.khW, dd.owN, 100), part(dd.wkW, dd.wwN, 100), dtrM, dd.sN, dd.wN, dd.owN, dd.wwN, part(dd.wkT, dd.wTN, 100), part(dd.wkWT, dd.wwTN, 100)];
         pl.learn.days.push(entry);
-        var dayMsg = csvOut('/data/optimizer/plan-days-' + monthOf(dd.d0 + 6 * H) + '.csv', 'tag,kh_fuehler,kh_owm,waerme_kwh,minuten,pv_kwh,wk_fuehler,wk_owm,dtr_k,min_pv,min_wind,min_owm',
-                            [stamp(dd.d0).slice(0, 10) + ',' + [entry[1], entry[6], entry[2], entry[3], entry[4], entry[5], entry[7], entry[8], entry[9], entry[10], entry[11]].map(function (v) { return c(v, 3); }).join(',')]);
+        var dayMsg = csvOut('/data/optimizer/plan-days-' + monthOf(dd.d0 + 6 * H) + '.csv', 'tag,kh_fuehler,kh_owm,waerme_kwh,minuten,pv_kwh,wk_fuehler,wk_owm,dtr_k,min_pv,min_wind,min_owm,wk_tot_fuehler,wk_tot_owm',
+                            [stamp(dd.d0).slice(0, 10) + ',' + [entry[1], entry[6], entry[2], entry[3], entry[4], entry[5], entry[7], entry[8], entry[9], entry[10], entry[11], entry[13], entry[14]].map(function (v) { return c(v, 3); }).join(',')]);
         out[1] = out[1] ? [out[1], dayMsg] : dayMsg;                                               // Tagesblatt fuer die Auswertung (eine Zeile je abgeschlossenem Tag)
     }
     while (pl.learn.days.length > pn('learnDays', 21)) { pl.learn.days.shift(); }
@@ -1821,6 +1828,8 @@ if (piFresh && ok(PI.pvNow)) { pl.day.s += PI.pvNow * dtH / 1000; pl.day.sN++; }
 if (owNow !== null && atNow !== null) { pl.day.khW += Math.max(0, pn('tbalC', 15) - owNow) / 60; pl.day.owN++; }                      // Heizgradstunden aus der OWM-Temperatur (regional)
 if (windNow !== null && atNow !== null) { pl.day.wk += Math.max(0, pn('tbalC', 15) - atNow) * windNow / 60; pl.day.wN++; }          // Wind x Heizgradstunden (Fuehler)
 if (windNow !== null && owNow !== null) { pl.day.wkW += Math.max(0, pn('tbalC', 15) - owNow) * windNow / 60; pl.day.wwN++; }      // Wind x Heizgradstunden (OWM)
+if (windNow !== null && atNow !== null) { pl.day.wkT += Math.max(0, pn('tbalC', 15) - atNow) * windEff(windNow) / 60; pl.day.wTN++; }     // dasselbe mit Wind ueber der Totzone (MODELL_VER 2; eigene Zaehler: ein Tag, der vor dem Deploy begann, bleibt null)
+if (windNow !== null && owNow !== null) { pl.day.wkWT += Math.max(0, pn('tbalC', 15) - owNow) * windEff(windNow) / 60; pl.day.wwTN++; }
 ROOMS.forEach(function (rc) { var r = Rr[rc.id]; if (r && r.ts && now - r.ts < (rc.maxAgeMin || 90) * MS_MIN && ok(r.ema)) { if (pl.day.r0[rc.id] === undefined) { pl.day.r0[rc.id] = r.ema; } pl.day.rl[rc.id] = r.ema; } });
 
 // ---------- Gebaeudemodell (Fahrplan v2, S2): Rueckrechnung aus plan-actuals und Regression, nur BERECHNEN und ANZEIGEN (wirkt nicht auf den Plan)
@@ -1831,8 +1840,8 @@ function readActualRows() {                                                     
     }
     return rowsA;
 }
-if (!pl.bf) {
-    pl.bf = {days: []};                                                                            // einmal je Prozess: abgeschlossene Tage aus den Ist-Dateien der letzten Wochen
+if (!pl.bf || pl.bf.v !== MODELL_VER) {                                                          // einmal je Prozess (und nach einem Modellwechsel): abgeschlossene Tage aus den Ist-Dateien der letzten Wochen
+    pl.bf = {days: [], v: MODELL_VER};
     try { pl.bf.days = daysFromRows(readActualRows(), pn('tbalC', 15)).filter(function (d) { return d.d0 < dayStart(now) && d.n >= 1200; }); } catch (e) { pl.bf.days = []; }
 }
 if (!pl.bias) {                                                                                    // Lernzeilen der Fuehlerkorrektur (OWM-Temperatur und Wind gibt es erst ab Fahrplan v2 S1)
@@ -1844,17 +1853,17 @@ function modelDays() {                                                          
     (pl.bf.days || []).forEach(function (d) { map[d.d0] = d; order.push(d.d0); });
     (pl.learn.days || []).forEach(function (a) {
         var d = dayFromArr(a), b = map[d.d0];
-        if (b) { ['s', 'wk', 'khW', 'wkW', 'dtr'].forEach(function (k) { if (d[k] === null) { d[k] = b[k]; } }); } else { order.push(d.d0); }
+        if (b) { ['s', 'wk', 'khW', 'wkW', 'dtr', 'wkT', 'wkWT'].forEach(function (k) { if (d[k] === null && b[k] !== undefined) { d[k] = b[k]; } }); } else { order.push(d.d0); }
         map[d.d0] = d;
     });
     return order.map(function (k) { return map[k]; }).filter(function (d) { return d.n >= 1200 && d.kh >= pn('learnMinHdd', 30); }).sort(function (x, y) { return x.d0 - y.d0; });
 }
-var mDays = modelDays(), mSig = mDays.length + '|' + mDays.map(function (d) { return d.d0 + ':' + Math.round(d.q * 100) + ':' + (d.s === null ? '-' : Math.round(d.s * 10)) + ':' + (d.wk === null ? '-' : 'w'); }).join(',');
+var mDays = modelDays(), mSig = 'v' + MODELL_VER + '|' + mDays.length + '|' + mDays.map(function (d) { return d.d0 + ':' + Math.round(d.q * 100) + ':' + (d.s === null ? '-' : Math.round(d.s * 10)) + ':' + (d.wkT === null || d.wkT === undefined ? '-' : Math.round(d.wkT)); }).join(',');
 if (!pl.learn.coef || pl.learn.coef.sig !== mSig) {
     try {
         var fm = fitModel(mDays, {ua0: pn('uaKwPerK', 0.22), h0: pn('uaPriorKh', 300), sUA: 0.10, sW: 0.01, sS: 0.10, minDays: pn('coefMinDays', 10), minWindDays: 7, storeC: [0, 3, 6, 10]});
-        var prevAkt = !!(pl.learn.coef && pl.learn.coef.aktiv), cand = fm.maeWind !== null ? fm.maeWind : fm.maeSun;
-        fm.sig = mSig; fm.ts = now;
+        var prevAkt = !!(pl.learn.coef && pl.learn.coef.aktiv && pl.learn.coef.ver === MODELL_VER), cand = fm.maeWind !== null ? fm.maeWind : fm.maeSun;   // aktiv nur aus demselben Modell (Version) uebernehmen
+        fm.sig = mSig; fm.ts = now; fm.ver = MODELL_VER;
         // Aktivierung nur mit ausdruecklichem Schalter (plan.coefActivate = 1): Gate ok, oder schon aktiv und der Fehler bleibt besser als beim bisherigen Modell (Hysterese)
         // Sicherheit: die Hysterese gilt nie bei hartem Koeffizienten-Fehler (nicht endlich/negativ/zu gross); bei gleichfoermigen PV-Tagen (Sonne nicht identifizierbar) wird der Sonnenterm des bisher aktiven Modells eingefroren
         if (prevAkt && fm.gate && fm.gate.why.indexOf('PV-Tage zu gleichfoermig') >= 0 && !coefHardFail(fm.gate)) { var pc = pl.learn.coef; fm.bs = coefSafe({bs: pc.bs, bw: 0}).bs; if (fm.bsW !== undefined) { fm.bsW = coefSafe({bs: pc.bsW !== undefined ? pc.bsW : pc.bs, bw: 0}).bs; } fm.frozen = ['Sonne']; }
@@ -2005,7 +2014,7 @@ function buildPlan() {
         var bedarf = uaKw * Math.max(0, tbal - atE) * (Q15 / H);                                   // kWh Waerme je Slot
         var dK = Math.max(0, tbal - atE), bas = bedarf;                                            // bas: bisheriges Modell
         var sRaw = ok(x.pv) ? cP * x.pv * (Q15 / H) / 1000 : 0; sPrev = sPrev + (sRaw - sPrev) * alphaS; var sunE = sPrev;      // PV-Energie des Slots (mit Vertrauen gewichtet), mit Waermeverzoegerung geglaettet
-        var windE = ok(x.windF) ? cA * x.windF + (1 - cA) * windRef : 0;
+        var windE = ok(x.windF) ? windEff(cA * x.windF + (1 - cA) * windRef) : 0;                    // Wind ueber der Totzone (4 m/s), wie im Fit
         var solU = Math.min(useC.bs * sunE, solMax * bas), winU = useC.bw * dK * windE * (Q15 / H);
         var solK = Math.min(candC.bs * sunE, solMax * bas), winK = candC.bw * dK * windE * (Q15 / H), kand = Math.max(0, bas + winK - solK);
         bedarf = Math.max(0, bas + winU - solU);                                                    // Koeffizienten 0 -> bedarf === bas
@@ -2150,7 +2159,7 @@ if (P.status === 'ok') {
         else if (cf.n < 3) { txt = 'UA ' + f(ml.ua * 1000, 0, 'W/K') + ' (Plan) · ' + cf.n + ' Tag' + (cf.n === 1 ? '' : 'e') + ' · Kandidat ab 3 Tagen'; }
         else {
             var bestE = [cf.maeUA, cf.maeSun, cf.maeWind].filter(function (v) { return v !== null && v !== undefined; }).reduce(function (m, v) { return m === null || v < m ? v : m; }, null);
-            txt = 'UA ' + f((cf.uaRidge || ml.ua) * 1000, 0, 'W/K') + ' · Sonne ' + f(cf.bs, 3) + ' · Wind ' + (cf.maeWind !== null && cf.maeWind !== undefined ? f(cf.bw, 3) : 'n ' + cf.nW + ' Tage') + ' · ' + (cf.aktiv ? 'aktiv' : 'Kandidat') + ' · ' + cf.n + ' Tage · Fehler Plan ' + f(cf.maeBase, 1) + ' / Kandidat ' + f(bestE, 1, 'kWh');
+            txt = 'UA ' + f((cf.uaRidge || ml.ua) * 1000, 0, 'W/K') + ' · Sonne ' + f(cf.bs, 3) + ' · Wind ' + (cf.maeWind !== null && cf.maeWind !== undefined ? f(cf.bw, 4) : 'n ' + cf.nW + ' Tage') + ' · ' + (cf.aktiv ? 'aktiv' : 'Kandidat') + ' · ' + cf.n + ' Tage · Fehler Plan ' + f(cf.maeBase, 1) + ' / Kandidat ' + f(bestE, 1, 'kWh');
             if (cf.aktiv) { cls = 'ok'; }
         }
         rows.splice(rows.findIndex(function (r) { return r[0] === 'COP-Modell'; }) + 1, 0, ['Gebäudemodell', txt, cls]);
@@ -2201,7 +2210,7 @@ out[0] = {payload: {rows: rows, plan: tab, chart: chartD, kpi: kpi}};
 var cfX = pl.learn.coef || {}, cfK = coefSafe((cfX.aktiv && cfX.n >= 3) ? (cfX.maeWind !== null && cfX.maeWind !== undefined ? {bs: cfX.bsW || 0, bw: cfX.bw || 0} : {bs: cfX.bs || 0, bw: 0}) : {bs: 0, bw: 0});
 global.set('OPT_plan', {ts: now, s0: P.s0, status: P.status, reserve: P.res || null, slots: P.slots ? P.slots.map(function (x) { return [x.t, x.rec, x.b, x.p, x.cost, x.cA]; }) : null,
                         model: {n: cfX.n || 0, minDays: pn('coefMinDays', 10), gate: !!(cfX.gate && cfX.gate.ok), why: (cfX.gate && cfX.gate.why) || [], aktiv: !!cfX.aktiv, bs: cfK.bs, bw: cfK.bw,
-                                ua: P.model ? P.model.ua : null, tbal: pn('tbalC', 15)}});
+                                ua: P.model ? P.model.ua : null, tbal: pn('tbalC', 15), windTot: WIND_TOT, ver: MODELL_VER}});
 flow.set('plan', pl);
 return out;
 """

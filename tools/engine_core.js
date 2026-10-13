@@ -72,11 +72,14 @@ var ENGINE = (function () {
 
     // ------------------------------------------------------------------ Vorausschau: Eingabe aus Wetter und Gebaeudemodell (rein; die Huelle und das Replay rufen sie auf)
     // W  = OPT_weather {f_ts, fpts: [[t, Temperatur, Feuchte, Bewoelkung, Wind m/s], ...]}
-    // PL = OPT_plan {model: {n, minDays, gate, why, aktiv, bs, bw, ua, tbal}}  (Gate und coefActivate des Waermefahrplans)
+    // PL = OPT_plan {model: {n, minDays, gate, why, aktiv, bs, bw, ua, tbal, windTot}}  (Gate und coefActivate des Waermefahrplans)
     // PI = OPT_plan_in {pv: [[Beginn, W, Dauer ms], ...]}                       (PV-Prognose; nur mit aktivem Modell verwendet)
     // -> {age, at: [jetzt, +1 h ... +6 h] (an den Fuehler angeglichen, wie der Fahrplan: Versatz klingt mit 4 h ab), n, minDays, gate, ua, tbal, aktiv
-    //     [, bs, bw, wind[], pv[]]}  Sonne und Wind stehen NUR mit aktivem Modell im Datensatz; ohne coefActivate kann die Regel sie nicht verwenden.
+    //     [, bs, bw, windTot, wind[], pv[]]}  Sonne und Wind stehen NUR mit aktivem Modell im Datensatz; ohne coefActivate kann die Regel sie nicht verwenden.
     var VS_H = 6;
+    // Grenzen wie im Waermefahrplan (coefSafe, Nutzerentscheidung 13.10.2026, nicht gemessen): bs <= 0,5 (oberes Ende tvofi-Bereich), bw <= 0,0125 kWh/(K*m/s*h)
+    // (~ +5 % Waermeverlust je m/s bei UA 0,25 kW/K); Wind zaehlt erst ueber 4 m/s (Idee ClimateOptimizer WIND_DEADBAND_MS). OPT_plan.model.windTot hat Vorrang.
+    var VS_LIM = {bs: 0.5, bw: 0.0125, windTot: 4};
     function vorschau(W, PL, PI, at, now) {
         W = W || {};
         var pts = (Array.isArray(W.fpts) ? W.fpts : []).filter(function (p) { return p && have(num(p[0])) && have(num(p[1])); }).sort(function (a, b) { return a[0] - b[0]; });
@@ -93,7 +96,8 @@ var ENGINE = (function () {
                  ua: have(num(M.ua)) ? r2(num(M.ua)) : null, tbal: have(num(M.tbal)) ? num(M.tbal) : null, aktiv: aktiv ? 1 : 0};
         for (var h = 0; h <= VS_H; h++) { var x = h === 0 && have(atN) ? atN : ip(now + h * 3600000, 1); o.at.push(have(x) ? Math.round((h === 0 ? x : x + anchor * Math.exp(-h / 4)) * 10) / 10 : null); }
         if (aktiv) {                                                                // Sonne/Wind nur mit coefActivate (und offenem Gate, das prueft der Fahrplan)
-            o.bs = have(num(M.bs)) ? Math.min(0.5, Math.max(0, num(M.bs))) : 0; o.bw = have(num(M.bw)) ? Math.min(0.05, Math.max(0, num(M.bw))) : 0; o.wind = []; o.pv = [];   // bs/bw: harte Grenzen wie im Fahrplan (coefSafe, ANNAHME 0,5 / 0,05)
+            o.bs = have(num(M.bs)) ? Math.min(VS_LIM.bs, Math.max(0, num(M.bs))) : 0; o.bw = have(num(M.bw)) ? Math.min(VS_LIM.bw, Math.max(0, num(M.bw))) : 0; o.wind = []; o.pv = [];   // harte Grenzen wie im Fahrplan
+            o.windTot = have(num(M.windTot)) ? Math.max(0, num(M.windTot)) : VS_LIM.windTot;
             var pv = PI && Array.isArray(PI.pv) ? PI.pv : [];
             for (var j = 0; j <= VS_H; j++) {
                 var w = ip(now + j * 3600000, 4); o.wind.push(have(w) ? Math.round(w * 10) / 10 : null);
@@ -115,7 +119,7 @@ var ENGINE = (function () {
             if (!have(v.at[i]) || !have(base.at[i])) { return null; }
             var T = v.at[i] - base.at[i], dK = Math.max(0, tb - T), x = ua * dK;
             if (v.aktiv) {
-                var w = v.wind && have(v.wind[i]) ? v.wind[i] : 0, sp = v.pv && have(v.pv[i]) ? (v.pv[i] - (base.pv && have(base.pv[i]) ? base.pv[i] : 0)) / 1000 : 0;
+                var w = v.wind && have(v.wind[i]) ? Math.max(0, v.wind[i] - (have(v.windTot) ? v.windTot : VS_LIM.windTot)) : 0, sp = v.pv && have(v.pv[i]) ? (v.pv[i] - (base.pv && have(base.pv[i]) ? base.pv[i] : 0)) / 1000 : 0;
                 x = Math.max(0, x + (v.bw || 0) * dK * w - Math.max(-0.6 * x, Math.min((v.bs || 0) * sp, 0.6 * x)));
             }
             return x;
@@ -1452,7 +1456,7 @@ var ENGINE = (function () {
     }
 
     return {VER: VER, SCORE_VER: SCORE_VER, RULES: RULES, RULE: RULE, LOCKS: LOCKS, LOCK_CFG: LOCK_CFG, SCORE: SCORE, WHITELIST: WHITELIST, APPLY: APPLY,
-            brier: brier, hPunkte: hPunkte, vorschau: vorschau, bedarfK: bedarfK, tagesgang: tagesgang, defaults: defaults, mergeCfg: mergeCfg, newState: newState, fixState: fixState, step: step, report: report, messStatus: messStatus, MESS: MESS, TAKT: TAKT, taktNew: taktNew, taktStep: taktStep, taktKennzahlen: taktKennzahlen, mindestLeistung: mindestLeistung, copTabelle: copTabelle, bandOf: bandOf, snapshot: snapshot, unsnap: unsnap,
+            brier: brier, hPunkte: hPunkte, vorschau: vorschau, bedarfK: bedarfK, VS_LIM: VS_LIM, tagesgang: tagesgang, defaults: defaults, mergeCfg: mergeCfg, newState: newState, fixState: fixState, step: step, report: report, messStatus: messStatus, MESS: MESS, TAKT: TAKT, taktNew: taktNew, taktStep: taktStep, taktKennzahlen: taktKennzahlen, mindestLeistung: mindestLeistung, copTabelle: copTabelle, bandOf: bandOf, snapshot: snapshot, unsnap: unsnap,
             checksum: checksum, newApply: newApply, applyRequest: applyRequest, applyTick: applyTick, iso: iso, hhmm: hhmm, isoWeek: isoWeek, de: de, sg: sg};
 })();
 if (typeof module !== 'undefined' && module.exports) { module.exports = ENGINE; }
