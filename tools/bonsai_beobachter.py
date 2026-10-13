@@ -4,7 +4,7 @@
 1. Holt die Protokolle des Optimierers NUR LESEND: aus einem lokalen Ordner (Kopien) oder per Befehl, z. B.
    ssh fl0wb0b@10.10.10.128 docker exec node_red-node-red-1 cat /data/optimizer/<datei>
 2. Rechnet die Tageszusammenfassung SELBST und deterministisch: Starts, Laeufe, Pausen, Heizgrenze, Soll-/Quiet-/Radiator-Ereignisse,
-   Energie und COP, Raumverlaeufe gegen die Baender, Entscheidungen und Punkte der Entscheidungsmaschine, Messaufgabe Comfort/Efficiency,
+   Energie und COP, Raumverlaeufe gegen die Baender, Entscheidungen und Punkte der Entscheidungsmaschine,
    Datenqualitaet. Daraus feste Regel-Befunde (geprueft).
 3. Fragt Bonsai (OpenAI-kompatibler llama-server, z. B. localhost:8080) nur kurze, belegte Plausibilitaetsfragen. Jede Aussage muss Fakten-
    Schluessel als Beleg nennen und darf nur Zahlen enthalten, die in diesen Fakten stehen; sonst wird sie verworfen. Die uebrigen sind
@@ -289,28 +289,7 @@ def zusammenfassung(d, tag):
     A = [x for x in d["applied"] if str(x.get("t", "")).startswith(tag.isoformat())]
     F["uebernahme.aktionen"] = len(A)
     F["uebernahme.gesendet"] = sum(1 for x in A if x.get("ergebnis") == "gesendet")
-    # Messaufgabe Comfort gegen Efficiency (Quiet 0, Vorlauf >= 2 K unter Soll, ab Minute 15) ueber alle geladenen Daten
-    # gleiche Abgrenzung wie im Kern (engine_core.js, MESS): Quiet 0, Lauf ab Minute 15, 3 min nach einer Quiet-Aenderung, Vorlauf >= 2 K unter Soll
-    mess = {0: [], 1: []}
-    q_prev, q_chg = None, None
-    for r in d["quiet"]:
-        q = zahl(r.get("quiet_aktuell"))
-        if q is not None and q_prev is not None and q != q_prev:
-            q_chg = r["_t"]
-        if q is not None:
-            q_prev = q
-        if zustand(r) != "lauf" or q != 0 or (q_chg is not None and (r["_t"] - q_chg).total_seconds() < 180):
-            continue
-        h, s0, v0, rt = zahl(r.get("heizregelung")), zahl(r.get("soll_vl")), zahl(r.get("ist_vl")), zahl(r.get("verdichter_laufzeit_min"))
-        if h in (0, 1) and s0 is not None and v0 is not None and s0 - v0 >= 2 and (rt is None or rt >= 15):
-            mess[int(h)].append((zahl(r.get("verdichter_hz")), zahl(r.get("leistung_el_w")), zahl(r.get("aussen"))))
-    for h, name in ((0, "comfort"), (1, "efficiency")):
-        F["messaufgabe.%s_min" % name] = len(mess[h])
-        if mess[h]:
-            F["messaufgabe.%s_max_hz" % name] = max(x[0] for x in mess[h] if x[0] is not None)
-            pe = [x[1] for x in mess[h] if x[1] is not None]
-            F["messaufgabe.%s_mittel_w" % name] = round(sum(pe) / len(pe)) if pe else None
-    F["messaufgabe.offen"] = 1 if (len(mess[0]) < 10 or len(mess[1]) < 10) else 0
+    # Messaufgabe Comfort/Efficiency: im Review-Paket 13.10.2026 gestrichen (Befund steht in docs/OPTIMIERER.md, Kennzahl "Hochlauf nach Start")
     return F, {"luecken": luecken, "laeufe": [(s[1].strftime("%H:%M"), round((s[2] - s[1]).total_seconds() / 60) + 1) for s in laeufe], "props": sorted(props), "scores": S}
 
 
@@ -344,11 +323,6 @@ def regel_befunde(F, extra):
             b("warnung", "Schaden-Bewertung %s" % x.get("regel"), ["punkte.%s.schaden" % x.get("regel")], str(x.get("text")))
         if x.get("typ") == "verpasst":
             b("hinweis", "Verpasst %s" % x.get("regel"), ["punkte.%s.verpasst" % x.get("regel")], str(x.get("text")))
-        if x.get("typ") == "messaufgabe":
-            b("hinweis", "Messaufgabe Comfort/Efficiency erledigt", ["punkte.%s.messaufgabe" % x.get("regel")], str(x.get("text")))
-    if F.get("messaufgabe.offen") == 1:
-        b("info", "Messaufgabe Comfort/Efficiency offen", ["messaufgabe.comfort_min", "messaufgabe.efficiency_min"],
-          "Bisher %d min Comfort und %d min Efficiency mit Quiet 0 und Vorlauf ≥ 2 K unter Soll (je 10 nötig)." % (F.get("messaufgabe.comfort_min", 0), F.get("messaufgabe.efficiency_min", 0)))
     if F.get("uebernahme.gesendet", 0) > 0:
         b("info", "Übernahmen per Klick", ["uebernahme.gesendet"], "%d Befehle per Klick gesendet (applied-*.jsonl)." % F["uebernahme.gesendet"])
     return B

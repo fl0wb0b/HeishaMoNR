@@ -3305,7 +3305,8 @@ if (msg.topic !== 'anzeige') {
         try { fs.readFileSync(ef, 'utf8'); } catch (e) { eh = 'zeit,ereignis,wechsel\n'; }
         files.push({filename: ef, payload: eh + evl.map(function (x) { return ENGINE.iso(now) + ',' + x[0] + ',' + String(x[1]).replace(/,/g, ';').replace(/\n/g, ' ') + '\n'; }).join('')});
     }
-    global.set('OPT_engine', {ts: now, ver: ENGINE.VER, prop: o.prop, locks: o.locks, ende: o.ende, halten: o.halten, rules: o.res.map(function (r) { return {id: r.id, st: r.st}; })});
+    // hc: Heizregelung-Hinweis, deckel: wirksamer Deckel der jetzigen Quiet-Stufe (Review-Paket 13.10.2026: der Waechter opt_quiet zeigt diese Werte an, statt sie selbst zu rechnen)
+    global.set('OPT_engine', {ts: now, ver: ENGINE.VER, prop: o.prop, locks: o.locks, ende: o.ende, halten: o.halten, rules: o.res.map(function (r) { return {id: r.id, st: r.st}; }), hc: o.hc, deckel: o.deckel});
     if (!ST.saved || now - ST.saved >= 10 * MIN || o.scores.length || o.ev.length) {
         try { fs.mkdirSync('/data/optimizer', {recursive: true}); fs.writeFileSync('/data/optimizer/engine-state.json', JSON.stringify({S: ST.S, V: ST.V})); ST.saved = now; } catch (e) { node.warn('engine-state.json: ' + e.message); }
     }

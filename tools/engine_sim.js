@@ -38,8 +38,8 @@ const r0 = (o, id) => o.res.find(r => r.id === id);
 
 // ================================================================== (a) Regeln, Sperren, Datensaetze
 console.log('--- (a) Regelwerk als Daten');
-check('Regelwerk: 5 Regeln mit ID, Version, Zweck, Eingaengen, Schwellen (Standard, Einheit, Herkunft), Sperren, Befehl, Erwartung, Rueckweg, Prognose',
-      E.RULES.length === 5 && E.RULES.every(R => R.id && R.ver >= 1 && R.zweck && R.eingaenge.length && R.schwellen.length && R.schwellen.every(s => s.key && typeof s.std === 'number' && s.einheit && s.herkunft) && R.sperren.length && R.befehl.topic && R.erwartung && R.rueckweg && R.prognose.p > 0 && R.prognose.h.length),
+check('Regelwerk (Review-Paket 13.10.2026): 4 Regeln mit ID, Version, Zweck, Eingaengen, Schwellen (Standard, Einheit, Herkunft), Sperren, Befehl, Erwartung, Rueckweg, Prognose; der Heizgrenze-Hinweis ist stillgelegt (nicht im Regelwerk, mit Grund in STILLGELEGT)',
+      E.RULES.length === 4 && !E.RULE.heizgrenze_hinweis && E.STILLGELEGT.length === 1 && E.STILLGELEGT[0].id === 'heizgrenze_hinweis' && /COP/.test(E.STILLGELEGT[0].grund) && E.RULES.every(R => R.id && R.ver >= 1 && R.zweck && R.eingaenge.length && R.schwellen.length && R.schwellen.every(s => s.key && typeof s.std === 'number' && s.einheit && s.herkunft) && R.sperren.length && R.befehl.topic && R.erwartung && R.rueckweg && R.prognose.p > 0 && R.prognose.h.length),
       E.RULES.map(R => R.id + ' v' + R.ver).join(', '));
 check('Regelwerk: keine Regel stellt die Heizregelung (Comfort/Efficiency); kein Befehl SetHeatingControl im Kern', !E.RULES.some(R => /HeatingControl/.test(R.befehl.name)) && !/SetHeatingControl/.test(fs.readFileSync(path.join(__dirname, 'engine_core.js'), 'utf8')), '');
 check('Regelwerk: jede Sperre der Regeln ist definiert und hat eine Herkunft', E.RULES.every(R => R.sperren.every(id => E.LOCKS.some(l => l.id === id && l.herkunft))), '');
@@ -63,7 +63,7 @@ console.log('--- (a) Quiet-Freigabe: Ablauf bereit -> wartet -> Vorschlag, mit G
     check('Ereignis "optimierer_vorschlag" genau einmal', R.outs.reduce((a, o) => a + o.ev.filter(e => e[0] === 'optimierer_vorschlag').length, 0) === 1, '');
     // Datensatz
     const rec = R.outs[40].rec;
-    check('Datensatz je Minute: Zeit, Versionen, Eingabe-Schnappschuss, Ableitungen, je Regel Status+Grund, Vorschlag-ID', rec.t === E.iso(T0 + 40 * MIN) && rec.mv === E.VER && rec.sv === E.SCORE_VER && rec.in.soll === 38 && rec.in.rooms.length === 3 && rec.abl.z === 'lauf' && rec.r.length === 5 && rec.r.every(x => x.id && x.v && x.st && x.grund) && rec.vorschlag === p.id, JSON.stringify(rec.r.map(x => x.st)));
+    check('Datensatz je Minute: Zeit, Versionen, Eingabe-Schnappschuss, Ableitungen, je Regel Status+Grund, Vorschlag-ID', rec.t === E.iso(T0 + 40 * MIN) && rec.mv === E.VER && rec.sv === E.SCORE_VER && rec.in.soll === 38 && rec.in.rooms.length === 3 && rec.abl.z === 'lauf' && rec.r.length === 4 && rec.r.every(x => x.id && x.v && x.st && x.grund) && rec.vorschlag === p.id, JSON.stringify(rec.r.map(x => x.st)));
     check('Datensatz: "bereit" traegt die naechste Schwelle als Felder (b, ist, s, abstand), ohne Fliesstext', (() => { const x = R.outs[20].rec.r[0]; return x.naechste && x.naechste.b === 'vlRueck' && x.naechste.ist === 0.5 && x.naechste.s === 1.5 && x.naechste.abstand === 1 && x.naechste.text === undefined; })(), JSON.stringify(R.outs[20].rec.r[0].naechste));
     check('Nachspielen aus dem Datensatz: unsnap(snapshot) liefert dieselbe Entscheidung', (() => { const R2 = runSeq(70, i => E.unsnap(T0 + i * MIN, JSON.parse(JSON.stringify(R.outs[i].rec.in)))); return R2.outs.every((o, i) => JSON.stringify(o.rec.r) === JSON.stringify(R.outs[i].rec.r)); })(), '');
 }
@@ -378,38 +378,45 @@ console.log('--- (b) Punktesystem');
     R = runSeq(200, i => inp(T0 + i * MIN, {korr: {v: 0, code: 'Daten unvollständig', distrib: false, lead: ''}, rooms: rooms({ki_oben: 21.2, valid: false, age: 120})}));
     sc = [].concat.apply([], R.outs.map(o => o.scores));
     check('Raumoffset verpasst: Raum 0,8 K unter Minimum 180 min lang (Wert 2 h alt, Shelly meldet nur bei Aenderung), aber kein Raumvorschlag -> -20', sc.some(s => s.typ === 'verpasst' && s.regel === 'raum_offset'), sc.map(s => s.typ).join(','));
-    // S9: Hinweis Heizgrenze: Raeume behalten die Reserve -> Treffer; Raum faellt unter Minimum -> Fehlalarm und Schaden "zu kalt"
-    const mild = (i, t) => inp(T0 + i * MIN, {at: 13, rt: 20 + i, soll: 29, sollKurve: 29, vl: 30, rl: 28, rooms: [{id: 'ki_oben', name: 'Kinderzimmer oben', t: t, age: 10, min: 22, max: 23.5, valid: true, active: true}]});
+    // S9 (Review-Paket 13.10.2026): Heizgrenze-Hinweis stillgelegt. Mildes Wetter (13 °C) mit Reserve in allen Raeumen: kein Hinweis, keine Faelle;
+    // stattdessen die Kennzahl "Ueberheizt ab 11 °C" (Laufenergie, waehrend ALLE Raeume ueber ihrer Bandmitte liegen)
+    const mild = (i, t) => inp(T0 + i * MIN, {at: 13, rt: 20 + i, soll: 29, sollKurve: 29, vl: 30, rl: 28, pel: 300, pth: 2100, rooms: [{id: 'ki_oben', name: 'Kinderzimmer oben', t: t, age: 10, min: 22, max: 23.5, valid: true, active: true}]});
     R = runSeq(220, i => mild(i, 22.8)); sc = [].concat.apply([], R.outs.map(o => o.scores));
-    check('Heizgrenze-Hinweis: Raum behaelt die Reserve 180 min -> Treffer (nur Hinweis, kein Befehl)', sc.some(s => s.typ === 'ausloeser' && s.regel === 'heizgrenze_hinweis' && s.ergebnis === 'treffer') && R.outs.some(o => o.prop && o.prop.art === 'hinweis'), sc.map(s => s.typ + ':' + s.ergebnis).join(','));
-    R = runSeq(220, i => mild(i, Math.round((i < 40 ? 22.8 : 22.8 - (i - 40) * 0.01) * 10) / 10)); sc = [].concat.apply([], R.outs.map(o => o.scores));
-    check('Heizgrenze-Hinweis: Raum faellt langsam (0,6 K/h) unter Minimum - 0,3 K -> Fehlalarm und Schaden "zu kalt"', sc.some(s => s.typ === 'ausloeser' && s.ergebnis === 'fehlalarm') && sc.some(s => s.typ === 'schaden' && s.arten.indexOf('zu_kalt') >= 0), sc.map(s => s.typ + ':' + (s.ergebnis || s.arten)).join(','));
-    R = runSeq(220, i => mild(i, i < 60 ? 22.8 : 21.6)); sc = [].concat.apply([], R.outs.map(o => o.scores));
-    check('Lueftungsverdacht: Raum faellt 1,2 K in einer Minute (Fenster) -> Eingriff von aussen, Bewertung neutral, kein Schaden', sc.some(s => s.typ === 'ausloeser' && s.ergebnis === 'neutral' && /Lüftungsverdacht \(Kinderzimmer oben −1,2 K/.test(s.text)) && !sc.some(s => s.typ === 'schaden'), sc.map(s => s.typ + ':' + s.ergebnis + ' ' + (s.text || '').slice(-80)).join(','));
+    { const ub = E.uebSumme(R.S, T0 + 219 * MIN), R2 = runSeq(60, i => mild(i, 22.6)), ub2 = E.uebSumme(R2.S, T0 + 59 * MIN), R3 = runSeq(60, i => Object.assign(mild(i, 23.0), {at: 10})), ub3 = E.uebSumme(R3.S, T0 + 59 * MIN);
+      check('Heizgrenze-Hinweis stillgelegt: 220 min Lauf bei 13 °C mit Reserve -> kein Hinweis, kein Fall, kein Punktebuch-Eintrag; Kennzahl "Ueberheizt ab 11 °C": Raum 22,8 °C ueber der Bandmitte 22,75 -> 220 min, 300 W -> 1,10 kWh Strom und 7,7 kWh Waerme; Raum 22,6 °C (unter der Mitte) -> 0 kWh bei 60 Laufminuten ab 11 °C; Aussen 10 °C -> zaehlt gar nicht',
+            !R.outs.some(o => o.prop) && sc.length === 0 && ub.min === 220 && Math.abs(ub.el - 1.1) < 1e-9 && Math.abs(ub.th - 7.7) < 1e-9 && ub.minAlle === 220 && ub2.el === 0 && ub2.min === 0 && ub2.minAlle === 60 && ub3.minAlle === 0,
+            JSON.stringify([ub, ub2, ub3])); }
+    { const old = R.S, Rf = runSeq(30, i => Object.assign(mild(i, 22.8), {rooms: [{id: 'ki_oben', name: 'Kinderzimmer oben', t: 22.8, age: i < 15 ? 300 : 400, min: 22, max: 23.5, valid: false, active: true}]}), null), uf = E.uebSumme(Rf.S, T0 + 29 * MIN);
+      check('Kennzahl "Ueberheizt": Raumwert bis 6 h alt zaehlt (wie die Bewertung), aelter = "ohne Raumdaten" (15 von 30 min)', uf.min === 15 && uf.minOhne === 15 && uf.minAlle === 30 && !!old.ueb, JSON.stringify(uf)); }
+    // Lueftungsverdacht (vorher am Heizgrenze-Hinweis geprueft, jetzt am Raumeinfluss): Raum faellt 1,2 K in einer Minute (Fenster) -> Eingriff von aussen, Bewertung neutral, kein Schaden
+    R = runSeq(400, i => inp(T0 + i * MIN, {korr: {v: 1, code: 'Raum unter Minimum', distrib: false, lead: 'Kinderzimmer oben'}, rooms: rooms({ki_oben: i < 100 ? 21.4 : 20.2})})); sc = [].concat.apply([], R.outs.map(o => o.scores));
+    check('Lueftungsverdacht: Raum faellt 1,2 K in einer Minute (Fenster) -> Eingriff von aussen, Bewertung neutral, kein Schaden', sc.some(s => s.typ === 'ausloeser' && s.regel === 'raum_offset' && s.ergebnis === 'neutral' && /Lüftungsverdacht \(Kinderzimmer oben −1,2 K/.test(s.text)) && !sc.some(s => s.typ === 'schaden'), sc.map(s => s.typ + ':' + s.ergebnis + ' ' + (s.text || '').slice(-80)).join(','));
     // S10: Bericht, Wochenuebersicht, Freigabereife
     const rep = E.report(A1.S), rq = rep.find(r => r.regel === 'quiet_freigabe');
     check('Bericht je Regel: Punkte, Faelle, Treffer-/Fehlalarmquote, Brier-Skill (v4: bei 1 Fall "–", v3 rechnete ihn schon), Schaden, Verpasst, Wirkung, Freigabereife mit Kriterien', rq && rq.punkte === 21 && rq.trefferquote === 1 && rq.fehlalarmquote === 0 && rq.skill === null && E.report(runSeq(160, i => boost(i), null, E.mergeCfg({sv: 3})).S, 3).find(r => r.regel === 'quiet_freigabe').skill !== null && rq.reif === false && rq.kriterien.length === 6 && rq.kriterien.find(k => k.k === 'faelle').ok === false, JSON.stringify(rq.kriterien.map(k => k.k + (k.ok ? '+' : '-'))));
     check('Wochenuebersicht (ISO-Woche) mit Punkten, Faellen, Treffern', A1.S.sc.week['2026-W42'] && A1.S.sc.week['2026-W42'].quiet_freigabe.punkte === 21 && A1.S.sc.week['2026-W42'].quiet_freigabe.treffer === 1, JSON.stringify(A1.S.sc.week));
     check('Punkteverlauf fuer das Diagramm (Zeit, Regel, Summe)', A1.S.sc.hist.length >= 1 && A1.S.sc.hist[A1.S.sc.hist.length - 1][2] === 21, JSON.stringify(A1.S.sc.hist.slice(-1)));
-    // S11: Messaufgabe Comfort gegen Efficiency: beide Seiten mit Quiet 0 und Rueckstand -> ein Befund mit Zahlen
+    // S11 (Review-Paket 13.10.2026): Messaufgabe Comfort/Efficiency gestrichen - dieselbe Lage (Quiet 0, Rueckstand, beide Heizregelungen) ergibt keinen Befund mehr;
+    // ein alter Zustand mit gesammelten Minuten (sc.mess) wird beim Laden bereinigt. Der Befund steht in der Doku und als Kennzahl "Hochlauf nach Start".
     let Sm = null, ms = [];
     for (let i = 0; i < 80; i++) { const hc = i < 40 ? 1 : 0, o = E.step(Sm, inp(T0 + i * MIN, {q: 0, hc: hc, rt: 30 + i, soll: 38, vl: 33, rl: 30, hz: hc ? 34 : 45, pel: hc ? 840 : 1150, pth: hc ? 5000 : 6500, at: 11}), cfg); Sm = o.S; ms = ms.concat(o.scores); }
-    const mb = ms.find(s => s.typ === 'messaufgabe');
-    check('Messaufgabe: Befund "Comfort bis 45 Hz, Efficiency bis 34 Hz" genau einmal, ohne Punkte', mb && mb.punkte === 0 && mb.comfort.hzMax === 45 && mb.efficiency.hzMax === 34 && ms.filter(s => s.typ === 'messaufgabe').length === 1 && /Comfort bis 45 Hz/.test(mb.text) && !E.messStatus(Sm).offen, mb && mb.text);
-    // S12 (Bewertungsregeln v4): Hinweise ohne Punkte, Skill erst ab 3 abgeschlossenen Faellen, offene Faelle veraendern den Skill nicht
-    R = runSeq(220, i => mild(i, 22.8)); sc = allSc(R);
-    const hz4 = sc.find(s => s.typ === 'ausloeser' && s.regel === 'heizgrenze_hinweis'), rh4 = E.report(R.S).find(r => r.regel === 'heizgrenze_hinweis');
-    check('v4: Hinweis-Regel Heizgrenze, Treffer (Raeume behalten die Reserve) = 0 Punkte; Ergebnis und Basisrate stehen weiter im Punktebuch, Fall/Treffer gezaehlt, Punkte/Skill/Freigabereife entfallen, nicht im Diagramm',
-          hz4 && hz4.ergebnis === 'treffer' && hz4.punkte === 0 && hz4.sv === E.SCORE_VER && hz4.horizonte[0].o === 1 && hz4.horizonte[0].punkte === 0 && /nur Hinweis, keine Punkte/.test(hz4.text) &&
-          rh4.punkte === null && rh4.ohnePunkte === true && rh4.faelle === 1 && rh4.treffer === 1 && rh4.skill === null && rh4.kriterien.length === 0 && rh4.reif === false && !R.S.sc.hist.some(h => h[1] === 'heizgrenze_hinweis') && R.S.sc.tot['heizgrenze_hinweis|v1|s' + E.SCORE_VER].bs === 0,
-          hz4 && (hz4.ergebnis + ' ' + hz4.punkte + ' · ' + JSON.stringify({p: rh4.punkte, f: rh4.faelle, t: rh4.treffer, s: rh4.skill})));
-    R = runSeq(220, i => mild(i, Math.round((i < 40 ? 22.8 : 22.8 - (i - 40) * 0.01) * 10) / 10)); sc = allSc(R);
-    const hzd = sc.find(s => s.typ === 'schaden' && s.regel === 'heizgrenze_hinweis'), rhd = E.report(R.S).find(r => r.regel === 'heizgrenze_hinweis');
-    check('v4: Hinweis-Regel, Fehlalarm mit Schaden "zu kalt": gezaehlt (1 Fehlalarm, 1 Schaden), aber 0 Punkte', hzd && hzd.punkte === 0 && rhd.fehlalarm === 1 && rhd.schaden === 1 && rhd.punkte === null && sc.filter(s => s.regel === 'heizgrenze_hinweis').every(s => s.punkte === 0), sc.filter(s => s.regel === 'heizgrenze_hinweis').map(s => s.typ + ':' + s.punkte).join(','));
-    R = runSeq(220, i => mild(i, 22.8), null, E.mergeCfg({sv: 3})); sc = allSc(R);
-    const hz3 = sc.find(s => s.typ === 'ausloeser' && s.regel === 'heizgrenze_hinweis'), rh3 = E.report(R.S, 3).find(r => r.regel === 'heizgrenze_hinweis');
-    check('v3 bleibt nachrechenbar (cfg.sv = 3): derselbe Hinweis-Treffer zaehlt dort +9 (p 0,6 gegen b 0,5), Skill schon aus 1 Fall, im Diagramm; Datensaetze sv 3',
-          hz3 && hz3.punkte === 9 && hz3.sv === 3 && rh3.punkte === 9 && rh3.skill !== null && R.S.sc.hist.some(h => h[1] === 'heizgrenze_hinweis' && h[3] === 3) && R.outs[5].rec.sv === 3, hz3 && (hz3.punkte + ' · Skill ' + rh3.skill));
+    { const So = E.newState(T0); So.sc.mess = {c: [[T0, 11, 45, 1150, 6500, 2, 1]], e: [], done: false}; const Ro = runSeq(2, i => inp(T0 + i * MIN), So);
+      check('Messaufgabe Comfort/Efficiency gestrichen: 80 min Quiet 0 mit Rueckstand in Comfort und Efficiency -> kein Befund (kein Eintrag "messaufgabe"), kein Sammelzustand; alter Zustand mit sc.mess wird bereinigt; keine Funktion messStatus mehr',
+            !ms.some(s => s.typ === 'messaufgabe') && !Sm.sc.mess && !Ro.S.sc.mess && E.messStatus === undefined && E.MESS === undefined, ms.map(s => s.typ).join(',')); }
+    // S12 (Review-Paket 13.10.2026): Stilllegung im laufenden Zustand. Ein Zustand aus der Datei mit offenem Hinweis-Fall, Vergleichslagen, Basisrate und Summen
+    // des Heizgrenze-Hinweises (v3/v5): Fall und Vergleichslagen enden ohne Buchung, die Summen bleiben unter ihrem Schluessel stehen, der Bericht kennt die Regel nicht mehr
+    { const So = E.newState(T0 - MIN), H0 = {rule: 'heizgrenze_hinweis', ver: 1, since: T0 - 4 * 86400000, punkte: 0, faelle: 4, bewertet: 2, treffer: 2, fehlalarm: 0, neutral: 2, bs: 0, bsRef: 0, schaden: 0, verpasst: 0, verpasstSperre: 0, wirkN: 0, wirkP: 0, kalib: 0, trefferNeutral: 2, skillN: 0};
+      So.sc.tot['heizgrenze_hinweis|v1|s5'] = Object.assign({sv: 5}, H0); So.sc.tot['heizgrenze_hinweis|v1|s3'] = Object.assign({}, H0, {sv: 3, punkte: 9});
+      So.sc.base.heizgrenze_hinweis = {180: [7, 6]}; So.sc.hist.push([T0 - 86400000, 'heizgrenze_hinweis', 9, 3]);
+      So.sc.cases.push({id: 'heizgrenze_hinweis@x', rule: 'heizgrenze_hinweis', v: 1, sv: 5, t0: T0 - 30 * MIN, p: 0.6, h: [180], done: [], hr: [], pts: 0, tr: {rule: 'heizgrenze_hinweis', t0: T0 - 30 * MIN, ctx: {bands: {}}, cut: 0, ser: [], H: 180 * MIN}, dmg: []});
+      So.sc.cands.push({rule: 'heizgrenze_hinweis', bk: 'heizgrenze_hinweis', t0: T0 - 20 * MIN, h: [180], done: [], tr: {rule: 'heizgrenze_hinweis', t0: T0 - 20 * MIN, ctx: {bands: {}}, cut: 0, ser: [], H: 180 * MIN}});
+      So.rules.heizgrenze_hinweis = {since: 0, failSince: 0, prop: {id: 'heizgrenze_hinweis@x', rule: 'heizgrenze_hinweis', art: 'hinweis'}, cool: 0, n: 1, day: E.ymd(T0)}; So.sc.gt.heizgrenze_hinweis = {since: T0 - 10 * MIN};
+      let err = null, Ro = null; try { Ro = runSeq(240, i => mild(i, 22.8), JSON.parse(JSON.stringify(So))); } catch (e) { err = e; }
+      const scs = Ro ? allSc(Ro) : [], rp = Ro ? E.report(Ro.S) : [];
+      check('Stilllegung im laufenden Zustand: alter offener Hinweis-Fall und Vergleichslage enden beim Laden ohne Buchung (kein Fehler, kein Punktebuch-Eintrag, kein Vorschlag), Summen "heizgrenze_hinweis|v1|s5"/"|s3", Basisrate und Punkteverlauf bleiben unveraendert stehen, Bericht ohne die Regel',
+            err === null && !scs.some(s => s.regel === 'heizgrenze_hinweis') && !Ro.S.sc.cases.some(C => C.rule === 'heizgrenze_hinweis') && !Ro.S.sc.cands.some(C => C.rule === 'heizgrenze_hinweis') && !Ro.S.rules.heizgrenze_hinweis && !Ro.S.sc.gt.heizgrenze_hinweis &&
+            JSON.stringify(Ro.S.sc.tot['heizgrenze_hinweis|v1|s5']) === JSON.stringify(So.sc.tot['heizgrenze_hinweis|v1|s5']) && Ro.S.sc.tot['heizgrenze_hinweis|v1|s3'].punkte === 9 && Ro.S.sc.base.heizgrenze_hinweis[180][0] === 7 && Ro.S.sc.hist.some(h => h[1] === 'heizgrenze_hinweis') &&
+            rp.length === 4 && !rp.some(r => r.regel === 'heizgrenze_hinweis') && !Ro.outs.some(o => o.prop), err ? err.stack : JSON.stringify(rp.map(r => r.regel))); }
     check('Befund 12.10. nachgerechnet (v3): Hinweis-Treffer mit p 0,6 gegen Basisrate 0,857 = -14,0, Skill 1 - 0,16/0,0204 = -6,84 (v4: 0 Punkte, Skill "–")', Math.abs(E.brier(0.6, 6 / 7, 1) + 14.0) < 0.1 && Math.abs((1 - 0.16 / Math.pow(1 - 6 / 7, 2)) + 6.84) < 0.01, E.brier(0.6, 6 / 7, 1).toFixed(2));
     // offener Fall: erster Horizont (30 min) abgeschlossen, Fall noch offen (120 min) -> v4 keine Brier-Summen, kein Skill; v3 schon (Befund "Skill -25 bei 0 Faellen")
     const open4 = runSeq(45, i => boost(i)), open3 = runSeq(45, i => boost(i), null, E.mergeCfg({sv: 3}));
@@ -424,12 +431,6 @@ console.log('--- (b) Punktesystem');
                                     if (o.scores.some(s => s.typ === 'ausloeser' && s.regel === 'quiet_freigabe')) { const r = E.report(S3, 4).find(x => x.regel === 'quiet_freigabe'); sk.push([r.bewertet, r.skill]); } }
       }
       check('v4 (cfg.sv = 4): Skill erst ab 3 abgeschlossenen, bewerteten Faellen (nach Fall 1 und 2 "–", nach Fall 3 eine Zahl; v5 siehe S13: hier lernt die Basisrate b >= p, die Treffer sind neutral)', sk.length === 3 && sk[0][1] === null && sk[1][1] === null && sk[2][0] === 3 && sk[2][1] !== null, JSON.stringify(sk)); }
-    // Versionswechsel v3 -> v4 mitten in einem offenen Hinweis-Fall: der Fall wird mit v3 zu Ende bewertet (Punkte unter "|s3"), v4 beginnt bei 0
-    R = runSeq(60, i => mild(i, 22.8), null, E.mergeCfg({sv: 3})); const Sw = R.S, nOpen = Sw.sc.cases.filter(C => C.rule === 'heizgrenze_hinweis').length;
-    R = runSeq(160, i => mild(60 + i, 22.8), Sw); sc = allSc(R);
-    const hw = sc.find(s => s.typ === 'ausloeser' && s.regel === 'heizgrenze_hinweis');
-    check('Versionswechsel v3 -> v4: offener Hinweis-Fall endet mit seiner Version (sv 3, +9 unter "heizgrenze_hinweis|v1|s3"), v4-Summen dieser Regel bleiben leer',
-          nOpen === 1 && hw && hw.sv === 3 && hw.punkte === 9 && R.S.sc.tot['heizgrenze_hinweis|v1|s3'].punkte === 9 && R.S.sc.tot['heizgrenze_hinweis|v1|s' + E.SCORE_VER].faelle === 0 && E.report(R.S).find(r => r.regel === 'heizgrenze_hinweis').sv === E.SCORE_VER, hw && (hw.sv + ' ' + hw.punkte));
     // S13 (Bewertungsregeln v5, Weg b, Entscheidung des Nutzers 12.10.): Treffer bei b >= p neutral, Fehlalarm voll im Abzug, b < p unveraendert
     { const H = E.hPunkte;
       check('v5 je Horizont: Treffer bei b >= p = 0 Punkte ohne Skill-Beitrag (b 0,92/p 0,7 und b = p); Fehlalarm bei b >= p = Abzug gegen b 0,5 (p 0,7 -> -24, p 0,8 -> -39) statt Brier-Plus (v4: b 0,92/p 0,7 Fehlalarm +35,6); b < p unveraendert',
@@ -527,7 +528,7 @@ console.log('--- (c2) Klickweg: jede Stufe der Pruefkette einzeln, Ruecklesen, W
         ['nicht im Heizkurvenmodus (TOP76 = 1)', b => { b.ctx.plant.heatMode = 1; }, /Heizkurvenmodus/],
         ['nicht mit Wasserfuehler (TOP111 = 1)', b => { b.ctx.plant.z1Sensor = 1; }, /Heizkurvenmodus/],
         ['Befehl wartet noch auf Bestaetigung', b => { b.A.pending = {name: 'SetQuietMode', value: 0, ts: NC - 30000, versuche: 1, art: 'uebernahme', id: 'q'}; }, /wartet noch/],
-        ['Uebernahme derselben Groesse aktiv (andere Regel)', b => { b.A.aktiv = {id: 'v', rule: 'vorausschau', groesse: 'shift', name: 'SetZ1HeatRequestTemperature', value: 1, von: 0, ts: NC - 60 * MIN, bis: NC + 60 * MIN, bestaetigt: true}; }, /Für die Verschiebung läuft schon eine Übernahme \(Vorausschau ±1 K, 0 → 1\)/],
+        ['Uebernahme derselben Groesse aktiv (andere Regel)', b => { b.A.aktiv = {id: 'v', rule: 'vorausschau', groesse: 'shift', name: 'SetZ1HeatRequestTemperature', value: -1, von: 0, ts: NC - 60 * MIN, bis: NC + 60 * MIN, bestaetigt: true}; }, /Für die Verschiebung läuft schon eine Übernahme \(Vorausschau −1 K, 0 → -1\)/],
         ['Uebernahme derselben Regel in Gegenrichtung (keine Fortsetzung)', b => { b.A.aktiv = {id: 'r0', rule: 'raum_offset', groesse: 'shift', name: 'SetZ1HeatRequestTemperature', value: -1, von: 0, ts: NC - 60 * MIN, bis: NC + 60 * MIN, bestaetigt: true}; }, /Für die Verschiebung läuft schon eine Übernahme \(Raumeinfluss ±1 K, 0 → -1\)/],
         ['Rate: letzter Befehl vor 9 min', b => { b.A.lastSend = NC - 9 * MIN; }, /Zu schnell/],
         ['Tageslimit: 6 Befehle heute', b => { b.A.day = E.ymd(NC); b.A.n = 6; }, /Tageslimit/]
@@ -597,47 +598,47 @@ const twoShift = R => R.outs.some(o => o.snap.raum_offset && o.snap.vorausschau)
 const stAt = (R, i, id) => r0(R.outs[i], id);
 const allScores = R => [].concat.apply([], R.outs.map(o => o.scores));
 {
-    // Regelwerk
+    // Regelwerk (Review-Paket 13.10.2026: Vorausschau v2 nur noch -1 K; Begruendung im Zweck-Text)
     const RV = E.RULE.vorausschau;
-    check('Regelwerk: Vorausschau v1 ist Befehlsregel der Groesse "shift" mit Sperren Modell-Gate, Vorrang, Gegenrichtung; Raumeinfluss v2 nimmt an der Arbitrierung teil', RV && RV.groesse === 'shift' && RV.art === 'befehl' && ['modell', 'vorrang', 'gegenrichtung'].every(x => RV.sperren.includes(x)) && E.RULE.raum_offset.ver === 2 && ['vorrang', 'gegenrichtung'].every(x => E.RULE.raum_offset.sperren.includes(x)) && RV.befehl.name === 'SetZ1HeatRequestTemperature', RV.sperren.join(','));
+    check('Regelwerk: Vorausschau v2 ist Befehlsregel der Groesse "shift" (nur -1 K, Richtung soll_runter, eigene Basisrate "vorausschau|v2") mit Sperren Modell-Gate, Vorrang, Gegenrichtung; der Zweck nennt, warum +1 K gestrichen ist (Kurve wird alle 5 min nachgefuehrt, Raeume bei Kaelte ueber der Bandmitte, Hochlauf +48 %); Raumeinfluss v2 nimmt an der Arbitrierung teil',
+          RV && RV.ver === 2 && RV.groesse === 'shift' && RV.art === 'befehl' && RV.richtung === 'soll_runter' && RV.basis === 'vorausschau|v2' && RV.kurz === 'Vorausschau −1 K' && /ohne den Zweig \+1 K/.test(RV.zweck) && /alle 5 min/.test(RV.zweck) && /Bandmitte/.test(RV.zweck) && /\+48 %/.test(RV.zweck) &&
+          ['modell', 'vorrang', 'gegenrichtung'].every(x => RV.sperren.includes(x)) && E.RULE.raum_offset.ver === 2 && ['vorrang', 'gegenrichtung'].every(x => E.RULE.raum_offset.sperren.includes(x)) && RV.befehl.name === 'SetZ1HeatRequestTemperature', RV.sperren.join(','));
+    const iVs = E.RULES.findIndex(x => x.id === 'vorausschau');
     // Gate geschlossen: nie ein Vorschlag, nur Anzeige; Vergleichslagen fuer die Basisrate laufen trotzdem mit
-    let R = runD(300, i => inp(T0 + i * MIN, {vs: vsx(VSK.up, {gate: 0, n: 1})}));
+    let R = runD(300, i => inp(T0 + i * MIN, {vs: vsx(VSK.down, {gate: 0, n: 1})}));
     const rg = stAt(R, 100, 'vorausschau');
-    check('Gate geschlossen (1 von 10 Tagen): 300 min mit Vorhersage +2,3 K und Raeumen im Band -> kein Vorschlag, Status "gesperrt" (modell), Grund nennt die Tage, keine Faelle/Punkte',
+    check('Gate geschlossen (1 von 10 Tagen): 300 min mit Vorhersage Milderung −2,4 K und Raeumen im Band -> kein Vorschlag, Status "gesperrt" (modell), Grund nennt die Tage, keine Faelle/Punkte',
           !R.outs.some(o => o.res.some(r => r.id === 'vorausschau' && r.neu)) && rg.st === 'gesperrt' && JSON.stringify(rg.locks) === '["modell"]' && /^würde schalten, aber gesperrt: Gebäudemodell noch nicht freigegeben \(1 von 10 Tagen\)$/.test(rg.grund) && !allScores(R).some(s => s.regel === 'vorausschau') && !R.S.sc.cases.some(c => c.rule === 'vorausschau'), rg.grund);
-    check('Gate geschlossen: Vergleichslagen (Basisrate) werden trotzdem gesammelt (ohne Wertung), Datensatz traegt die Vorhersage', R.S.sc.cands.some(c => c.rule === 'vorausschau') && R.outs[100].rec.in.vs && R.outs[100].rec.in.vs.gate === 0 && R.outs[100].rec.r[4].sperren[0] === 'modell', JSON.stringify(R.outs[100].rec.in.vs));
-    R = runD(60, i => inp(T0 + i * MIN, {vs: vsx(VSK.up, {gate: 0, n: 1}), rooms: rooms({ki_oben: 23.4})}));
-    check('Gate geschlossen und Bedingung fehlt: Grund nennt beides ("außerdem …")', /^gesperrt: Gebäudemodell .*; außerdem Kinderzimmer oben nur 0,1 K unter Maximum$/.test(stAt(R, 59, 'vorausschau').grund), stAt(R, 59, 'vorausschau').grund);
+    check('Gate geschlossen: Vergleichslagen (Basisrate, Schluessel "vorausschau|v2") werden trotzdem gesammelt (ohne Wertung), Datensatz traegt die Vorhersage', R.S.sc.cands.some(c => c.rule === 'vorausschau' && c.bk === 'vorausschau|v2') && R.outs[100].rec.in.vs && R.outs[100].rec.in.vs.gate === 0 && R.outs[100].rec.r[iVs].id === 'vorausschau' && R.outs[100].rec.r[iVs].sperren[0] === 'modell', JSON.stringify(R.outs[100].rec.in.vs));
+    R = runD(60, i => inp(T0 + i * MIN, {vs: vsx(VSK.down, {gate: 0, n: 1}), rooms: rooms({ki_oben: 22.2})}));
+    check('Gate geschlossen und Bedingung fehlt: Grund nennt beides ("außerdem …")', /^gesperrt: Gebäudemodell .*; außerdem Kinderzimmer oben nur 0,2 K über Minimum$/.test(stAt(R, 59, 'vorausschau').grund), stAt(R, 59, 'vorausschau').grund);
     // Gate offen
-    R = runD(60, i => inp(T0 + i * MIN, {vs: vsx(VSK.up)}));
-    const pu = R.outs[30].snap.vorausschau;
-    check('Gate offen, Vorhersage +2,3 K, alle Raeume im Band mit Luft: 30 min Haltezeit, dann Vorschlag +1 K (SetZ1HeatRequestTemperature = 1, von 0)', stAt(R, 20, 'vorausschau').st === 'wartet' && shiftProps(R).length === 1 && shiftProps(R)[0].i === 30 && pu.cmd.value === 1 && pu.von === 0 && pu.dir === 'soll_hoch' && /Bedarf \+2,3 K/.test(pu.warum) && /Soll-Vorlauf 30 → 31/.test(pu.was), pu && (pu.was + ' | ' + pu.warum));
     R = runD(60, i => inp(T0 + i * MIN, {vs: vsx(VSK.down)}));
-    const pd = shiftProps(R)[0];
-    check('Vorhersage Milderung -2,4 K: Vorschlag -1 K (Soll 30 -> 29 °C, Untergrenze 29 eingehalten)', pd && pd.p.cmd.value === -1 && pd.p.dir === 'soll_runter', pd && pd.p.was);
+    const pd = R.outs[30].snap.vorausschau;
+    check('Gate offen, Vorhersage Milderung −2,4 K, alle Raeume im Band mit Luft: 30 min Haltezeit, dann Vorschlag −1 K (SetZ1HeatRequestTemperature = -1, von 0, Soll 30 -> 29 °C, Untergrenze 29 eingehalten)', stAt(R, 20, 'vorausschau').st === 'wartet' && shiftProps(R).length === 1 && shiftProps(R)[0].i === 30 && pd.cmd.value === -1 && pd.von === 0 && pd.dir === 'soll_runter' && /Bedarf -2,4 K/.test(pd.warum) && /Soll-Vorlauf 30 → 29/.test(pd.was), pd && (pd.was + ' | ' + pd.warum));
+    R = runD(60, i => inp(T0 + i * MIN, {vs: vsx(VSK.up)}));
+    check('v2: +1 K gestrichen - Vorhersage Mehrbedarf +2,3 K bei Raeumen im Band mit Luft -> kein Vorschlag, Grund "vor Mehrbedarf seit v2 keine Verschiebung"', shiftProps(R).length === 0 && stAt(R, 59, 'vorausschau').st === 'bereit' && /Bedarf \+2,3 K \(Schwelle −2,0 K; vor Mehrbedarf seit v2 keine Verschiebung\)/.test(stAt(R, 59, 'vorausschau').grund), stAt(R, 59, 'vorausschau').grund);
     R = runD(60, i => inp(T0 + i * MIN, {vs: vsx(VSK.down), soll: 29.5, sollKurve: 29.5}));
     check('-1 K nie unter 29 °C Soll-Vorlauf', shiftProps(R).length === 0 && /Soll-Vorlauf würde 28,5|Soll-Vorlauf würde 29 °C|würde 28/.test(stAt(R, 59, 'vorausschau').grund), stAt(R, 59, 'vorausschau').grund);
-    R = runD(60, i => inp(T0 + i * MIN, {vs: vsx(VSK.up), rooms: rooms({ki_oben: 23.3})}));
-    check('+1 K nur mit Luft nach oben: waermster Raum 0,2 K unter Maximum -> kein Vorschlag', shiftProps(R).length === 0 && /Kinderzimmer oben nur 0,2 K unter Maximum/.test(stAt(R, 59, 'vorausschau').grund), stAt(R, 59, 'vorausschau').grund);
     R = runD(60, i => inp(T0 + i * MIN, {vs: vsx(VSK.down), rooms: rooms({ki_oben: 22.2})}));
     check('-1 K nur mit Luft nach unten: kaeltester Raum 0,2 K ueber Minimum -> kein Vorschlag', shiftProps(R).length === 0 && /Kinderzimmer oben nur 0,2 K über Minimum/.test(stAt(R, 59, 'vorausschau').grund), stAt(R, 59, 'vorausschau').grund);
-    R = runD(120, i => inp(T0 + i * MIN, {vs: vsx(VSK.up), rooms: rooms({ki_oben: i >= 50 ? 23.6 : 22.6})}));
-    check('Nie gegen den Raumzustand: laufender +1-K-Vorschlag endet in DERSELBEN Minute, in der ein Raum ueber das Maximum steigt (harte Bedingung, keine 3 min Nachlauf)', R.outs[49].snap.vorausschau && R.outs[50].prop === null && R.outs[50].ev.some(e => e[0] === 'optimierer_ende' && /vorausschau: Bedingung entfallen: Kinderzimmer oben außerhalb des Bandes/.test(e[1])) && shiftProps(R).length === 1, R.outs[50].ev.map(e => e[1]).join(' | '));
+    R = runD(120, i => inp(T0 + i * MIN, {vs: vsx(VSK.down), rooms: rooms({ki_oben: i >= 50 ? 21.9 : 22.6})}));
+    check('Nie gegen den Raumzustand: laufender −1-K-Vorschlag endet in DERSELBEN Minute, in der ein Raum unter das Minimum faellt (harte Bedingung, keine 3 min Nachlauf)', R.outs[49].snap.vorausschau && R.outs[50].prop === null && R.outs[50].ev.some(e => e[0] === 'optimierer_ende' && /vorausschau: Bedingung entfallen: Kinderzimmer oben außerhalb des Bandes/.test(e[1])) && shiftProps(R).length === 1, R.outs[50].ev.map(e => e[1]).join(' | '));
     // Prioritaet: Komfort-Notfall des Raums schlaegt die Vorausschau
     R = runD(150, i => inp(T0 + i * MIN, {vs: vsx(VSK.down), korr: kx(1), rooms: rooms({ki_oben: 21.5})}));
     check('Prioritaet: Raum unter Minimum (Komfort-Notfall) -> Vorausschau schlaegt nie -1 K vor, der Raumeinfluss +1 K schon (nach 60 min)', shiftProps(R).length === 1 && shiftProps(R)[0].rule === 'raum_offset' && shiftProps(R)[0].i === 60 && shiftProps(R)[0].p.cmd.value === 1 && stAt(R, 100, 'vorausschau').st === 'bereit', JSON.stringify(shiftProps(R).map(x => [x.i, x.rule, x.p.cmd.value])) + ' / ' + stAt(R, 100, 'vorausschau').grund);
-    // Konflikt 1: Vorausschau +1, danach will der Raumeinfluss -1 (ohne Notfall) -> erst nach 240 min Wartezeit
-    const k1 = (i, room) => inp(T0 + i * MIN, {vs: vsx(i < 120 ? VSK.up : VSK.flat), korr: kx(-1, 'Schlafzimmer'), rooms: room ? room(i) : rooms()});
+    // Konflikt 1: Vorausschau -1, danach will der Raumeinfluss +1 (ohne Notfall) -> erst nach 240 min Wartezeit
+    const k1 = (i, room) => inp(T0 + i * MIN, {vs: vsx(i < 120 ? VSK.down : VSK.flat), korr: kx(1, 'Kinderzimmer oben'), rooms: room ? room(i) : rooms()});
     R = runD(420, i => k1(i));
     let sp = shiftProps(R);
-    check('Konflikt +1 (Vorausschau) gegen -1 (Raumeinfluss): waehrend die Vorausschau die Verschiebung hat, ist der Raumeinfluss "gesperrt: andere Regel" - nie zwei Verschiebungs-Vorschlaege gleichzeitig',
-          sp[0].rule === 'vorausschau' && sp[0].i === 30 && stAt(R, 90, 'raum_offset').st === 'gesperrt' && stAt(R, 90, 'raum_offset').locks[0] === 'vorrang' && /vorgeschlagen von „Vorausschau ±1 K“/.test(stAt(R, 90, 'raum_offset').grund) && !twoShift(R), stAt(R, 90, 'raum_offset').grund);
-    check('... Vorausschau endet (Vorhersage flach, 3 min) in Minute 123; Raumeinfluss -1 K: bis 183 Mindesthaltezeit, danach ohne Komfort-Notfall "Gegenrichtung" bis 363, Vorschlag erst in Minute 363',
-          sp.length === 2 && sp[1].rule === 'raum_offset' && sp[1].i === 363 && sp[1].p.cmd.value === -1 && /Mindesthaltezeit 60 min/.test(stAt(R, 150, 'raum_offset').grund) && /ohne Komfort-Notfall erst nach 240 min/.test(stAt(R, 200, 'raum_offset').grund) && stAt(R, 200, 'raum_offset').naechste.bis === T0 + 363 * MIN, JSON.stringify(sp.map(x => [x.i, x.rule, x.p.cmd.value])) + ' | ' + stAt(R, 200, 'raum_offset').grund);
-    // ... mit Komfort-Notfall (Schlafzimmer 0,4 K ueber Maximum): die Vorausschau zieht sofort zurueck, der Raumeinfluss darf nach der Mindesthaltezeit
-    R = runD(300, i => k1(i, j => j >= 100 ? [rooms()[0], rooms()[1], {id: 'schlaf', name: 'Schlafzimmer', t: 22.4, age: 10, min: 20, max: 22, valid: true, active: true}] : rooms()));
+    check('Konflikt −1 (Vorausschau) gegen +1 (Raumeinfluss): waehrend die Vorausschau die Verschiebung hat, ist der Raumeinfluss "gesperrt: andere Regel" - nie zwei Verschiebungs-Vorschlaege gleichzeitig',
+          sp[0].rule === 'vorausschau' && sp[0].i === 30 && stAt(R, 90, 'raum_offset').st === 'gesperrt' && stAt(R, 90, 'raum_offset').locks[0] === 'vorrang' && /vorgeschlagen von „Vorausschau −1 K“/.test(stAt(R, 90, 'raum_offset').grund) && !twoShift(R), stAt(R, 90, 'raum_offset').grund);
+    check('... Vorausschau endet (Vorhersage flach, 3 min) in Minute 123; Raumeinfluss +1 K: bis 183 Mindesthaltezeit, danach ohne Komfort-Notfall "Gegenrichtung" bis 363, Vorschlag erst in Minute 363',
+          sp.length === 2 && sp[1].rule === 'raum_offset' && sp[1].i === 363 && sp[1].p.cmd.value === 1 && /Mindesthaltezeit 60 min/.test(stAt(R, 150, 'raum_offset').grund) && /ohne Komfort-Notfall erst nach 240 min/.test(stAt(R, 200, 'raum_offset').grund) && stAt(R, 200, 'raum_offset').naechste.bis === T0 + 363 * MIN, JSON.stringify(sp.map(x => [x.i, x.rule, x.p.cmd.value])) + ' | ' + stAt(R, 200, 'raum_offset').grund);
+    // ... mit Komfort-Notfall (Schlafzimmer 0,4 K unter Minimum): die Vorausschau zieht sofort zurueck, der Raumeinfluss darf nach der Mindesthaltezeit
+    R = runD(300, i => k1(i, j => j >= 100 ? [rooms()[0], rooms()[1], {id: 'schlaf', name: 'Schlafzimmer', t: 19.6, age: 10, min: 20, max: 22, valid: true, active: true}] : rooms()));
     sp = shiftProps(R);
-    check('Konflikt mit Komfort-Notfall (Raum 0,4 K ueber Maximum): Vorausschau endet sofort (Minute 100), Raumeinfluss -1 K nach der gemeinsamen Mindesthaltezeit (Minute 160), nicht frueher',
+    check('Konflikt mit Komfort-Notfall (Raum 0,4 K unter Minimum): Vorausschau endet sofort (Minute 100), Raumeinfluss +1 K nach der gemeinsamen Mindesthaltezeit (Minute 160), nicht frueher',
           sp.length === 2 && sp[0].rule === 'vorausschau' && R.outs[100].snap.vorausschau === null && sp[1].rule === 'raum_offset' && sp[1].i === 160 && stAt(R, 159, 'raum_offset').locks.includes('gegenrichtung') && !twoShift(R), JSON.stringify(sp.map(x => [x.i, x.rule, x.p.cmd.value])));
     // Konflikt 2 (umgekehrt): Raumeinfluss +1, danach will die Vorausschau -1 -> nie mit Notfall, also immer 240 min
     R = runD(450, i => inp(T0 + i * MIN, {vs: vsx(i >= 70 ? VSK.down : VSK.flat), korr: kx(i < 150 ? 1 : 0)}));
@@ -645,29 +646,29 @@ const allScores = R => [].concat.apply([], R.outs.map(o => o.scores));
     check('Konflikt +1 (Raumeinfluss) gegen -1 (Vorausschau): erst "andere Regel" (Minute 100), nach dem Ende des Raumeinflusses (Minute 150) "Gegenrichtung", Vorschlag -1 K erst in Minute 390 (240 min, die Vorausschau hat nie einen Notfall)',
           sp.length === 2 && sp[0].rule === 'raum_offset' && sp[0].i === 60 && stAt(R, 100, 'vorausschau').locks[0] === 'vorrang' && stAt(R, 200, 'vorausschau').locks[0] === 'gegenrichtung' && sp[1].rule === 'vorausschau' && sp[1].i === 390 && sp[1].p.cmd.value === -1 && !twoShift(R), JSON.stringify(sp.map(x => [x.i, x.rule, x.p.cmd.value])) + ' | ' + stAt(R, 200, 'vorausschau').grund);
     // gleiche Richtung: Uebergabe statt Hin und Her
-    R = runD(200, i => inp(T0 + i * MIN, {vs: vsx(i < 120 ? VSK.up : VSK.flat), korr: kx(1)}));
+    R = runD(200, i => inp(T0 + i * MIN, {vs: vsx(i < 120 ? VSK.down : VSK.flat), korr: kx(-1, 'Schlafzimmer')}));
     sp = shiftProps(R);
-    check('Gleiche Richtung: Raumeinfluss will +1, die Vorausschau hat +1 schon vorgeschlagen -> "dieselbe Verschiebung"; endet die Vorausschau (Minute 123), uebernimmt der Raumeinfluss +1 sofort (keine Gegenrichtung, keine Luecke)',
-          sp.length === 2 && sp[0].rule === 'vorausschau' && /dieselbe Verschiebung \+1 K schlägt schon „Vorausschau ±1 K“ vor/.test(stAt(R, 90, 'raum_offset').grund) && sp[1].rule === 'raum_offset' && sp[1].i === 123 && sp[1].p.cmd.value === 1 && !twoShift(R), JSON.stringify(sp.map(x => [x.i, x.rule])) + ' | ' + stAt(R, 90, 'raum_offset').grund);
+    check('Gleiche Richtung: Raumeinfluss will −1, die Vorausschau hat −1 schon vorgeschlagen -> "dieselbe Verschiebung"; endet die Vorausschau (Minute 123), uebernimmt der Raumeinfluss −1 sofort (keine Gegenrichtung, keine Luecke)',
+          sp.length === 2 && sp[0].rule === 'vorausschau' && /dieselbe Verschiebung -1 K schlägt schon „Vorausschau −1 K“ vor/.test(stAt(R, 90, 'raum_offset').grund) && sp[1].rule === 'raum_offset' && sp[1].i === 123 && sp[1].p.cmd.value === -1 && !twoShift(R), JSON.stringify(sp.map(x => [x.i, x.rule])) + ' | ' + stAt(R, 90, 'raum_offset').grund);
     // Uebernommene Verschiebung: gehoert der Vorausschau, Raumeinfluss bewertet sie nicht als eigenen Eingriff, Wirkung zaehlt fuer die Vorausschau
-    const ap = (i, o) => inp(T0 + i * MIN, Object.assign({vs: vsx(VSK.up), korr: kx(0), shift: i >= 35 ? 1 : 0, soll: i >= 35 ? 31 : 30}, o || {}));
-    R = runD(200, i => ap(i, {korr: kx(i >= 40 ? -1 : 0, 'Schlafzimmer')}));
+    const ap = (i, o) => inp(T0 + i * MIN, Object.assign({vs: vsx(VSK.down), korr: kx(0), shift: i >= 35 ? -1 : 0, soll: i >= 35 ? 29 : 30}, o || {}));
+    R = runD(200, i => ap(i, {korr: kx(i >= 40 ? 1 : 0, 'Kinderzimmer oben')}));
     let sc = allScores(R);
-    check('Vorschlag +1 K uebernommen (Minute 35): Verschiebung gehoert der Vorausschau (applied), Wirkungsfall "Soll folgt" fuer die Vorausschau, keiner fuer den Raumeinfluss',
+    check('Vorschlag −1 K uebernommen (Minute 35): Verschiebung gehoert der Vorausschau (applied), Wirkungsfall "Soll folgt" fuer die Vorausschau, keiner fuer den Raumeinfluss',
           R.S.arb.applied && R.S.arb.applied.rule === 'vorausschau' && sc.some(s => s.typ === 'wirkung' && s.regel === 'vorausschau' && s.punkte === 10) && !sc.some(s => s.typ === 'wirkung' && s.regel === 'raum_offset') && /\(Vorausschau\) steht/.test(stAt(R, 50, 'vorausschau').grund), sc.map(s => s.regel + ':' + s.typ + ':' + s.punkte).join(', '));
-    check('... Raumvorschlag -1 K gegen die uebernommene +1 K: "gesperrt: andere Regel", nie ein Vorschlag 1 -> -1/0 (kein Zurueckstellen der fremden Verschiebung)', !shiftProps(R).some(x => x.rule === 'raum_offset') && stAt(R, 150, 'raum_offset').locks[0] === 'vorrang' && /gehört „Vorausschau ±1 K“/.test(stAt(R, 150, 'raum_offset').grund), stAt(R, 150, 'raum_offset').grund);
+    check('... Raumvorschlag +1 K gegen die uebernommene −1 K: "gesperrt: andere Regel", nie ein Vorschlag -1 -> +1/0 (kein Zurueckstellen der fremden Verschiebung)', !shiftProps(R).some(x => x.rule === 'raum_offset') && stAt(R, 150, 'raum_offset').locks[0] === 'vorrang' && /gehört „Vorausschau −1 K“/.test(stAt(R, 150, 'raum_offset').grund), stAt(R, 150, 'raum_offset').grund);
     R = runD(120, i => ap(i));
-    check('... Raumvorschlag 0 bei uebernommener +1 K: Raumeinfluss "ruht" (gehoert der Vorausschau), kein Rueckstellen auf 0', stAt(R, 100, 'raum_offset').st === 'inaktiv' && /gehört der Regel „Vorausschau ±1 K“/.test(stAt(R, 100, 'raum_offset').grund) && !shiftProps(R).some(x => x.rule === 'raum_offset'), stAt(R, 100, 'raum_offset').grund);
+    check('... Raumvorschlag 0 bei uebernommener −1 K: Raumeinfluss "ruht" (gehoert der Vorausschau), kein Rueckstellen auf 0', stAt(R, 100, 'raum_offset').st === 'inaktiv' && /gehört der Regel „Vorausschau −1 K“/.test(stAt(R, 100, 'raum_offset').grund) && !shiftProps(R).some(x => x.rule === 'raum_offset'), stAt(R, 100, 'raum_offset').grund);
     const cut = allScores(runD(400, i => ap(i))).find(s => s.typ === 'ausloeser');
-    check('... der Ausloeser-Fall der Vorausschau selbst wird ab der Uebernahme neutral (Eingriff mit Urheber im Text), die Wirkung wird bewertet', cut && cut.regel === 'vorausschau' && cut.ergebnis === 'neutral' && /Vorschlag „Vorausschau ±1 K“ übernommen/.test(cut.text), cut && cut.text);
+    check('... der Ausloeser-Fall der Vorausschau selbst wird ab der Uebernahme neutral (Eingriff mit Urheber im Text), die Wirkung wird bewertet', cut && cut.regel === 'vorausschau' && cut.ergebnis === 'neutral' && /Vorschlag „Vorausschau −1 K“ übernommen/.test(cut.text), cut && cut.text);
     // Rueckweg und Uebergabe in der Uebernahme
-    R = runD(80, i => ap(i, {vs: vsx(i < 50 ? VSK.up : VSK.flat)}));
-    check('Rueckweg-Grund der Vorausschau: Vorhersage zeigt die Aenderung 15 min nicht mehr (ab Minute 65), Raum ueber Maximum sofort', !R.outs[60].ende.vorausschau && /seit 15 min nicht mehr/.test(R.outs[65].ende.vorausschau || '') && /über Maximum/.test(E.step(JSON.parse(JSON.stringify(R.S)), ap(80, {rooms: rooms({ki_oben: 23.6})}), cfg).ende.vorausschau || ''), R.outs[65].ende.vorausschau);
-    R = runD(80, i => ap(i, {vs: vsx(i < 50 ? VSK.up : VSK.flat), korr: kx(1)}));
-    check('Uebergabe: Raumvorschlag verlangt dieselbe +1 K -> kein Rueckweg-Grund, "halten" fuer die Vorausschau', !R.outs[79].ende.vorausschau && /Raumeinfluss verlangt dieselbe Verschiebung/.test(R.outs[79].halten.vorausschau || ''), JSON.stringify(R.outs[79].halten));
-    const Av = E.newApply(); Av.aktiv = {id: 'v', rule: 'vorausschau', groesse: 'shift', name: 'SetZ1HeatRequestTemperature', value: 1, von: 0, ts: T0, bis: T0 + 360 * MIN, bestaetigt: true};
-    const tk = h => E.applyTick(JSON.parse(JSON.stringify(Av)), {now: T0 + 361 * MIN, eng: {ts: T0 + 361 * MIN}, plant: {shift: 1, hpAge: 0.3, block: 0}, halten: h});
-    check('Uebernahme: Ablauf nach 6 h schickt den Rueckweg 0 - ausser die andere Regel verlangt denselben Wert ("halten")', tk({}).send.length === 1 && tk({}).send[0].payload === '0' && tk({vorausschau: 'Raumeinfluss verlangt dieselbe Verschiebung (+1 K)'}).send.length === 0, '');
+    R = runD(80, i => ap(i, {vs: vsx(i < 50 ? VSK.down : VSK.flat)}));
+    check('Rueckweg-Grund der Vorausschau: Vorhersage zeigt die Milderung 15 min nicht mehr (ab Minute 65), Raum unter Minimum sofort', !R.outs[60].ende.vorausschau && /seit 15 min nicht mehr/.test(R.outs[65].ende.vorausschau || '') && /unter Minimum/.test(E.step(JSON.parse(JSON.stringify(R.S)), ap(80, {rooms: rooms({ki_oben: 21.9})}), cfg).ende.vorausschau || ''), R.outs[65].ende.vorausschau);
+    R = runD(80, i => ap(i, {vs: vsx(i < 50 ? VSK.down : VSK.flat), korr: kx(-1, 'Schlafzimmer')}));
+    check('Uebergabe: Raumvorschlag verlangt dieselbe −1 K -> kein Rueckweg-Grund, "halten" fuer die Vorausschau', !R.outs[79].ende.vorausschau && /Raumeinfluss verlangt dieselbe Verschiebung \(-1 K\)/.test(R.outs[79].halten.vorausschau || ''), JSON.stringify(R.outs[79].halten));
+    const Av = E.newApply(); Av.aktiv = {id: 'v', rule: 'vorausschau', groesse: 'shift', name: 'SetZ1HeatRequestTemperature', value: -1, von: 0, ts: T0, bis: T0 + 360 * MIN, bestaetigt: true};
+    const tk = h => E.applyTick(JSON.parse(JSON.stringify(Av)), {now: T0 + 361 * MIN, eng: {ts: T0 + 361 * MIN}, plant: {shift: -1, hpAge: 0.3, block: 0}, halten: h});
+    check('Uebernahme: Ablauf nach 6 h schickt den Rueckweg 0 - ausser die andere Regel verlangt denselben Wert ("halten")', tk({}).send.length === 1 && tk({}).send[0].payload === '0' && tk({vorausschau: 'Raumeinfluss verlangt dieselbe Verschiebung (-1 K)'}).send.length === 0, '');
 }
 console.log('--- (d) Sonne/Wind nur mit coefActivate, Bewertung und Neutralitaet');
 {
@@ -693,18 +694,18 @@ console.log('--- (d) Sonne/Wind nur mit coefActivate, Bewertung und Neutralitaet
     check('Tagesgang herausgerechnet: Vorhersage 15:30 wie gestern (abends ~4 K kaelter, Tagesgang ±4 K) -> Bedarfsaenderung ~0, kein Vorschlag; derselbe Abend 3 K kaelter als gestern -> ~+3 K',
           Math.abs(E.bedarfK(fc(0), c, base)) < 0.3 && Math.abs(E.bedarfK(fc(-3), c, base) - 3) < 0.3 && E.bedarfK(fc(0), c, {at: [null, null, null, null, null, null, null]}) === null && (fc(0).at[0] - fc(0).at[5]) >= 3.5,
           'gleich wie gestern ' + E.bedarfK(fc(0), c, base) + ' K, 3 K kaelter ' + E.bedarfK(fc(-3), c, base) + ' K; ohne Tagesgang-Abzug waeren es ' + E.bedarfK(fc(0), c, B10) + ' K');
-    { let Rn = runD(90, i => inp(t15 + i * MIN, {vs: fc(0)}), seedS(day, t15)); const Rk = runD(90, i => inp(t15 + i * MIN, {vs: fc(-3)}), seedS(day, t15));
-      check('... in der Maschine: gewoehnlicher Nachmittag -> kein Vorschlag, kaelterer Abend als gestern -> +1 K', shiftProps(Rn).length === 0 && shiftProps(Rk).length === 1 && shiftProps(Rk)[0].p.cmd.value === 1 && /aus dem Wetter/.test(shiftProps(Rk)[0].p.warum), shiftProps(Rk).map(x => x.p.warum).join(' | ') + ' / ohne: ' + r0(Rn.outs[89], 'vorausschau').grund);
+    { let Rn = runD(90, i => inp(t15 + i * MIN, {vs: fc(0)}), seedS(day, t15)); const Rk = runD(90, i => inp(t15 + i * MIN, {vs: fc(3)}), seedS(day, t15)), Rc = runD(90, i => inp(t15 + i * MIN, {vs: fc(-3)}), seedS(day, t15));
+      check('... in der Maschine: gewoehnlicher Nachmittag -> kein Vorschlag, waermerer Abend als gestern -> −1 K; kaelterer Abend als gestern -> seit v2 kein +1 K mehr', shiftProps(Rn).length === 0 && shiftProps(Rk).length === 1 && shiftProps(Rk)[0].p.cmd.value === -1 && /aus dem Wetter/.test(shiftProps(Rk)[0].p.warum) && shiftProps(Rc).length === 0, shiftProps(Rk).map(x => x.p.warum).join(' | ') + ' / ohne: ' + r0(Rn.outs[89], 'vorausschau').grund);
       Rn = runD(30, i => inp(T0 + i * MIN, {vs: vsx(VSK.up)}), null);
       check('Ohne 24 h gemessenen Tagesgang (frischer Zustand): Vorausschau ruht ("Tagesgang noch nicht bekannt"), bei geschlossenem Gate "gesperrt" mit diesem Zusatz', /^Tagesgang noch nicht bekannt \(\d+ h gemessen, mindestens 36 h\)$/.test(r0(Rn.outs[29], 'vorausschau').grund) && /Gebäudemodell.*; außerdem Tagesgang noch nicht bekannt/.test(r0(E.step(null, inp(T0, {vs: vsx(VSK.up, {gate: 0})}), cfg), 'vorausschau').grund), r0(Rn.outs[29], 'vorausschau').grund); }
     check('Vorhersage alt (> 120 min) oder zu kurz: Vorausschau ruht', /min alt/.test(r0(E.step(null, inp(T0, {vs: vsx(VSK.up, {age: 150})}), cfg), 'vorausschau').grund) && /reicht nicht/.test(r0(E.step(seedS(10), inp(T0, {vs: vsx([10, 10, 9, null, null, null, null])}), cfg), 'vorausschau').grund) && E.vorschau({f_ts: now, fpts: []}, PLoff, null, 10, now) === null, '');
     // Bewertung: Fall der Vorausschau (Treffer / Fehlalarm), nur unter ihrer Regel
-    const drift = (i, end) => Math.round((i < 40 ? 22.6 : Math.max(end, 22.6 - (i - 40) * 0.004)) * 10) / 10;
-    let R = runD(400, i => inp(T0 + i * MIN, {vs: vsx(i < 120 ? VSK.up : VSK.flat), rooms: rooms({ki_oben: drift(i, 22.2)})}));
+    const drift = (i, end) => Math.round((i < 40 ? 22.6 : Math.min(end, 22.6 + (i - 40) * 0.004)) * 10) / 10;
+    let R = runD(400, i => inp(T0 + i * MIN, {vs: vsx(i < 120 ? VSK.down : VSK.flat), rooms: rooms({ki_oben: drift(i, 23.3)})}));
     let sc = allScores(R), a = sc.find(s => s.typ === 'ausloeser');
-    check('Bewertung: Vorausschau +1 K, kaeltester Raum (Kinderzimmer oben) sinkt ohne Verschiebung an den Bandrand (22,2 <= Minimum + 0,3) -> Treffer, gebucht unter "vorausschau", nichts fuer den Raumeinfluss',
-          a && a.regel === 'vorausschau' && a.ergebnis === 'treffer' && a.horizonte.length === 3 && !sc.some(s => s.regel === 'raum_offset'), a && a.text);
-    R = runD(400, i => inp(T0 + i * MIN, {vs: vsx(i < 120 ? VSK.up : VSK.flat)}));
+    check('Bewertung: Vorausschau −1 K, waermster Raum (Kinderzimmer oben) steigt ohne Verschiebung an den oberen Bandrand (23,3 >= Maximum − 0,3) -> Treffer, gebucht unter "vorausschau" (v2), nichts fuer den Raumeinfluss',
+          a && a.regel === 'vorausschau' && a.v === 2 && a.ergebnis === 'treffer' && a.horizonte.length === 3 && !sc.some(s => s.regel === 'raum_offset'), a && a.text);
+    R = runD(400, i => inp(T0 + i * MIN, {vs: vsx(i < 120 ? VSK.down : VSK.flat)}));
     sc = allScores(R); a = sc.find(s => s.typ === 'ausloeser');
     check('Bewertung: Raum bleibt mit Luft im Band -> Fehlalarm der Vorausschau (Minuspunkte nur fuer sie)', a && a.regel === 'vorausschau' && a.ergebnis === 'fehlalarm' && a.punkte < 0 && E.report(R.S).find(r => r.regel === 'vorausschau').fehlalarm === 1 && E.report(R.S).find(r => r.regel === 'raum_offset').faelle === 0, a && (a.punkte + ' ' + a.text));
     // Neutralitaet: Raumeinfluss durch die Gegenregel gesperrt (uebernommene -1 K der Vorausschau), Raum kalt -> v3 "waehrend Sperre" (0), v2 "verpasst" (-20)
@@ -716,31 +717,31 @@ console.log('--- (d) Sonne/Wind nur mit coefActivate, Bewertung und Neutralitaet
     check('... mit den Bewertungsregeln v2 (cfg.sv = 2) waere dieselbe Lage "verpasst" -20 (Gegenregel-Sperren entschuldigten dort nicht): v3 aendert genau das', sc.some(s0 => s0.typ === 'verpasst' && s0.punkte === -20 && s0.sv === 2), sc.map(s => s.t + ' ' + s.typ + ' ' + s.punkte).join(' | '));
     R = runD(300, i => { const x = neu(i); if (i >= 200) { x.rooms = rooms({ki_oben: 20.8}); } return x; }); sc = allScores(R).filter(s => s.regel === 'raum_offset' && /^verpasst/.test(s.typ));
     check('... Schaden hebt auch die Gegenregel-Entschuldigung auf: Raum 1,2 K unter Minimum -> "verpasst" -20 mit Schaden "komfort"', sc.some(s => s.typ === 'verpasst' && s.punkte === -20 && JSON.stringify(s.schaden) === '["komfort"]'), sc.map(s => s.t + ' ' + s.typ + ' ' + s.punkte).join(' | '));
-    // Verpasst der Vorausschau (v3): Lage 60 min ohne Vorschlag, bewertet erst, wenn sie wirklich eintritt
-    const vsMiss = (o) => i => inp(T0 + i * MIN, Object.assign({vs: vsx(i >= (o.ab || 0) ? VSK.up : VSK.flat), at: 10, korr: kx(o.korr ? (i < (o.korrBis || 999) ? o.korr : 0) : 0, 'Schlafzimmer')}, o.f ? o.f(i) : {}));
+    // Verpasst der Vorausschau (Bewertung v3, Regel v2 nur -1 K): Lage 60 min ohne Vorschlag, bewertet erst, wenn sie wirklich eintritt
+    const vsMiss = (o) => i => inp(T0 + i * MIN, Object.assign({vs: vsx(i >= (o.ab || 0) ? VSK.down : VSK.flat), at: 10, korr: kx(o.korr ? (i < (o.korrBis || 999) ? o.korr : 0) : 0, 'Kinderzimmer oben')}, o.f ? o.f(i) : {}));
     const vmiss = R => allScores(R).filter(s0 => s0.regel === 'vorausschau' && /^verpasst/.test(s0.typ));
-    let Rm = runD(400, vsMiss({f: i => (i >= 150 ? {rooms: rooms({ki_oben: 21.8})} : {})}), undefined, E.mergeCfg({rules: {vorausschau: {proTag: 0}}}));
+    let Rm = runD(400, vsMiss({f: i => (i >= 150 ? {rooms: rooms({ki_oben: 23.7})} : {})}), undefined, E.mergeCfg({rules: {vorausschau: {proTag: 0}}}));
     let vm = vmiss(Rm);
-    check('Verpasst Vorausschau: Lage ab Minute 0, Tageslimit ueber den Standard hinaus auf 0 gesetzt (zaehlt frei), Raum faellt in Minute 150 unter Minimum (vorhergesagter Bedarf trat ein) -> "verpasst" -20',
-          vm.length === 1 && vm[0].typ === 'verpasst' && vm[0].punkte === -20 && vm[0].t === E.iso(T0 + 150 * MIN) && /eingetreten: Kinderzimmer oben unter Minimum/.test(vm[0].text) && /verlängert: Tageslimit/.test(vm[0].text), vm.map(x => x.t + ' ' + x.typ + ' ' + x.text).join(' | '));
+    check('Verpasst Vorausschau: Lage (Milderung) ab Minute 0, Tageslimit ueber den Standard hinaus auf 0 gesetzt (zaehlt frei), Raum steigt in Minute 150 ueber sein Maximum (vorhergesagter Waermegewinn trat ein) -> "verpasst" -20',
+          vm.length === 1 && vm[0].typ === 'verpasst' && vm[0].punkte === -20 && vm[0].t === E.iso(T0 + 150 * MIN) && /eingetreten: Kinderzimmer oben über Maximum/.test(vm[0].text) && /verlängert: Tageslimit/.test(vm[0].text), vm.map(x => x.t + ' ' + x.typ + ' ' + x.text).join(' | '));
     Rm = runD(400, vsMiss({}), undefined, E.mergeCfg({rules: {vorausschau: {proTag: 0}}}));
     check('... trat nichts ein (Raum bleibt im Band, gemessene Aussentemperatur bleibt beim Tagesgang): kein Eintrag', vmiss(Rm).length === 0, vmiss(Rm).map(x => x.typ).join(','));
-    Rm = runD(400, vsMiss({f: i => (i >= 120 ? {at: 6.5} : {})}), undefined, E.mergeCfg({rules: {vorausschau: {proTag: 0}}}));
+    Rm = runD(400, vsMiss({f: i => (i >= 120 ? {at: 13.5} : {})}), undefined, E.mergeCfg({rules: {vorausschau: {proTag: 0}}}));
     vm = vmiss(Rm);
-    check('... eingetreten ueber die Messung: Aussentemperatur im Fenster 3,5 K unter dem Tagesgang (>= halbe Schwelle) -> "verpasst" -20 am Fensterende (Minute 60 + 5 h)', vm.length === 1 && vm[0].typ === 'verpasst' && vm[0].t === E.iso(T0 + 360 * MIN) && /gemessen \+3,5 K/.test(vm[0].text), vm.map(x => x.t + ' ' + x.text).join(' | '));
-    Rm = runD(500, vsMiss({ab: 70, korr: -1, korrBis: 400, f: i => (i >= 200 ? {rooms: rooms({ki_oben: 21.8})} : {})}));
+    check('... eingetreten ueber die Messung: Aussentemperatur im Fenster 3,5 K ueber dem Tagesgang (>= halbe Schwelle) -> "verpasst" -20 am Fensterende (Minute 60 + 5 h)', vm.length === 1 && vm[0].typ === 'verpasst' && vm[0].t === E.iso(T0 + 360 * MIN) && /gemessen -3,5 K/.test(vm[0].text), vm.map(x => x.t + ' ' + x.text).join(' | '));
+    Rm = runD(500, vsMiss({ab: 70, korr: 1, korrBis: 400, f: i => (i >= 200 ? {rooms: rooms({ki_oben: 23.7})} : {})}));
     vm = vmiss(Rm);
-    check('... Neutralitaet: Vorausschau nur durch Haltezeit und die Gegenregel (Raumeinfluss hat -1 K) zurueckgehalten, Bedarf trat ein -> "verpasst_sperre" 0 Punkte',
+    check('... Neutralitaet: Vorausschau nur durch Haltezeit und die Gegenregel (Raumeinfluss hat +1 K) zurueckgehalten, Waermegewinn trat ein -> "verpasst_sperre" 0 Punkte',
           vm.length === 1 && vm[0].typ === 'verpasst_sperre' && vm[0].punkte === 0 && vm[0].sperre.includes('vorrang') && vm[0].sperre.includes('haltezeit'), vm.map(x => x.t + ' ' + x.typ + ' ' + JSON.stringify(x.sperre)).join(' | '));
-    Rm = runD(500, vsMiss({ab: 70, korr: -1, korrBis: 400, f: i => (i >= 200 ? {rooms: rooms({ki_oben: 20.8})} : {})}));
-    vm = vmiss(Rm);
-    check('... Schaden hebt die Neutralitaet auf: Raum 1,2 K unter Minimum -> "verpasst" -20 mit Schaden "komfort"', vm.length === 1 && vm[0].typ === 'verpasst' && JSON.stringify(vm[0].schaden) === '["komfort"]', vm.map(x => x.t + ' ' + x.typ).join(' | '));
-    Rm = runD(400, vsMiss({f: i => (i >= 150 ? {rooms: rooms({ki_oben: 21.8})} : {})}));
+    check('... v2: der Schaden "Raum > 1 K unter Minimum" galt nur dem gestrichenen Zweig +1 K und steht nicht mehr in den Schadensarten der Vorausschau', !('vorausschau' in E.SCORE.verpasstSperre.schaden), JSON.stringify(E.SCORE.verpasstSperre.schaden));
+    Rm = runD(400, vsMiss({f: i => (i >= 150 ? {rooms: rooms({ki_oben: 23.7})} : {})}));
     check('... mit Vorschlag (Standardwerte): kein "verpasst"; mit Gate zu: nie ein Eintrag; Bewertungsregeln v2: kein "verpasst" der Vorausschau', vmiss(Rm).length === 0 && shiftProps(Rm).length === 1 &&
-          vmiss(runD(400, i => { const x = vsMiss({f: j => (j >= 150 ? {rooms: rooms({ki_oben: 21.8})} : {})})(i); x.vs.gate = 0; return x; }, undefined, E.mergeCfg({rules: {vorausschau: {proTag: 0}}}))).length === 0 &&
-          vmiss(runD(400, vsMiss({f: i => (i >= 150 ? {rooms: rooms({ki_oben: 21.8})} : {})}), undefined, E.mergeCfg({sv: 2, rules: {vorausschau: {proTag: 0}}}))).length === 0, '');
+          vmiss(runD(400, i => { const x = vsMiss({f: j => (j >= 150 ? {rooms: rooms({ki_oben: 23.7})} : {})})(i); x.vs.gate = 0; return x; }, undefined, E.mergeCfg({rules: {vorausschau: {proTag: 0}}}))).length === 0 &&
+          vmiss(runD(400, vsMiss({f: i => (i >= 150 ? {rooms: rooms({ki_oben: 23.7})} : {})}), undefined, E.mergeCfg({sv: 2, rules: {vorausschau: {proTag: 0}}}))).length === 0, '');
+    { const Ru = runD(400, i => inp(T0 + i * MIN, {vs: vsx(VSK.up), at: 10, korr: kx(0)}), undefined, E.mergeCfg({rules: {vorausschau: {proTag: 0}}}));
+      check('... v2: eine vorhergesagte Abkuehlung (frueher Lage fuer +1 K) ist keine Lage mehr: kein Vorschlag, kein "verpasst"', shiftProps(Ru).length === 0 && vmiss(Ru).length === 0, ''); }
     // Nachspielen mit Vorhersage aus dem Datensatz
-    R = runD(80, i => inp(T0 + i * MIN, {vs: vsx(i < 50 ? VSK.up : VSK.down)}));
+    R = runD(80, i => inp(T0 + i * MIN, {vs: vsx(i < 50 ? VSK.down : VSK.up)}));
     const R2 = runD(80, i => E.unsnap(T0 + i * MIN, JSON.parse(JSON.stringify(R.outs[i].rec.in))));
     check('Nachspielen aus dem Datensatz (Vorhersage im Schnappschuss): dieselben Entscheidungen der Vorausschau', R2.outs.every((o, i) => JSON.stringify(o.rec.r) === JSON.stringify(R.outs[i].rec.r)) && shiftProps(R).length === 1, '');
 }
@@ -751,7 +752,7 @@ function shiftSim(days, opts) {
     const P = {on: false, tw: 31, room: 22.6, room2: 21, over: 0, under: 0, shift: 0, rt: 0}, H = 3600000;
     let S = null, A = null; const log = {props: [], plantChg: [], errors: 0, conc: 0, ev: [], scores: [], claims: []};
     const start = new Date(2026, 10, 2, 0, 0, 0).getTime();
-    const atOf = t => { const i = (t - start) / MIN, h = (i % 1440) / 60, day = i / 1440; return 6 + 4 * Math.sin(2 * Math.PI * (h - 9) / 24) - (day > 4 && day < 5.5 ? 5 : 0) + (day > 6.5 ? 4 : 0); };   // 4 gewoehnliche Tage (Tagesgang lernen), Kaelteeinbruch Tag 5, Milderung ab Tag 6,5
+    const atOf = t => { const i = (t - start) / MIN, h = (i % 1440) / 60, day = i / 1440; return 6 + 4 * Math.sin(2 * Math.PI * (h - 9) / 24) - (day > 4 && day < 5.5 ? 5 : 0) + (day > 6.5 ? 4 : 0) + (day > 7.375 ? 3 : 0); };   // 4 gewoehnliche Tage (Tagesgang lernen), Kaelteeinbruch Tag 5, Milderung ab Tag 6,5 und 7,375 (Vorausschau v2 nur −1 K: nach dem Kaelteeinbruch fehlt die Reserve, im Lauf sperrt Takt-Gefahr; die zweite Milderung trifft eine Pause)
     for (let i = 0; i < days * 1440; i++) {
         const t = start + i * MIN, at = atOf(t), atI = Math.round(at), kurve = Math.max(29, 29 + 0.375 * (11 - atI)), soll = Math.ceil(kurve) + P.shift;
         const spread = P.on ? 2.5 : 0, vl = Math.round((P.tw + spread / 2) * 4) / 4, rl = Math.round((P.tw - spread / 2) * 4) / 4;
@@ -787,7 +788,7 @@ function shiftSim(days, opts) {
     const L1 = shiftSim(8, {});
     basisBericht('8 Tage Verschiebung', L1);
     const byRule = r => L1.props.filter(p => p.rule === r).length;
-    check('8 Tage (4 gewoehnliche Tage mit Tagesgang ±4 K, dann Kaelteeinbruch und Milderung), Gate offen, Shadow: kein Fehler, beide Verschiebungs-Regeln kommen vor, nie zwei Verschiebungs-Vorschlaege gleichzeitig', L1.errors === 0 && byRule('vorausschau') >= 1 && L1.conc === 0 && L1.props.filter(p => p.rule === 'vorausschau').every(p => (p.t - new Date(2026, 10, 2).getTime()) / 86400000 > 3.5), 'Vorausschau ' + byRule('vorausschau') + ', Raumeinfluss ' + byRule('raum_offset') + ': ' + L1.props.map(p => E.iso(p.t).slice(5, 16) + ' ' + p.rule + ' ' + p.v).join(', '));
+    check('8 Tage (4 gewoehnliche Tage mit Tagesgang ±4 K, dann Kaelteeinbruch und zwei Milderungen), Gate offen, Shadow: kein Fehler, beide Verschiebungs-Regeln kommen vor, nie zwei Verschiebungs-Vorschlaege gleichzeitig', L1.errors === 0 && byRule('vorausschau') >= 1 && L1.conc === 0 && L1.props.filter(p => p.rule === 'vorausschau').every(p => (p.t - new Date(2026, 10, 2).getTime()) / 86400000 > 3.5), 'Vorausschau ' + byRule('vorausschau') + ', Raumeinfluss ' + byRule('raum_offset') + ': ' + L1.props.map(p => E.iso(p.t).slice(5, 16) + ' ' + p.rule + ' ' + p.v).join(', '));
     check('... kein Hin und Her: jede Gegenrichtung fruehestens 60 min nach dem Ende der vorigen Verschiebung, ohne Komfort-Notfall erst nach 240 min', flips(L1).length === 0, flips(L1).join(' | ') || (L1.props.length + ' Vorschlaege geprueft'));
     const L0 = shiftSim(8, {gate: false});
     check('... dieselben 8 Tage mit geschlossenem Gate: keine Vorausschau, der Raumeinfluss allein', L0.errors === 0 && !L0.props.some(p => p.rule === 'vorausschau'), L0.props.map(p => E.iso(p.t).slice(5, 16) + ' ' + p.rule + ' ' + p.v).join(', '));
@@ -960,26 +961,25 @@ console.log('--- Seite "Optimierer": Karten-Daten und Darstellung');
     check('Hauptschalter AN, Regel frei: Übernahme der anderen Größe (Verschiebung, Raumeinfluss) läuft -> Übernehmen frei (Regel-Review R6: Quiet und Verschiebung nebeneinander, die Arbitrierung entscheidet); Übernahme derselben Größe (Quiet, Deckel/Laufzeit) -> grau "gesperrt: Übernahme Deckel/Laufzeit läuft"; Zurücksetzen und Übernahme sperren sichtbar',
           /<button data-a="uebernehmen">Übernehmen<\/button>/.test(hC) && !/gesperrt: Übernahme/.test(hC) && /Übernommen \d\d:\d\d: Verschiebung \+1 K · zurück auf 0/.test(hC) && /<button data-a="uebernehmen" disabled>Übernehmen<\/button>/.test(hQ) && /gesperrt: Übernahme Deckel\/Laufzeit läuft/.test(hQ) && /data-a="zuruecksetzen"/.test(hC) && /data-a="sperren"/.test(hC), '');
     check('Textmenge: Statuskarte ohne Vorschlag < 300 Zeichen (Letzter Vorschlag, letzte 24 h, Übernahme), Regelkarte < 400, Entscheidungen je Zeile < 160', txt(UI.html('card', snap.card)).length < 300 && txt(UI.html('rules', B.rules)).length < 400 && B.log.rows.every(r => txt(UI.html('log', {rows: [r]})).length < 160 + 30), txt(UI.html('card', snap.card)).length + ' / ' + txt(UI.html('rules', B.rules)).length);
-    check('Kacheln: 5 Spalten gleicher Breite (eine je Regel; bei 17 Einheiten = 912 px je Kachel ~170 px), Kachelnamen mit "…" statt Ueberlauf', /\.oe-grid\{display:grid;grid-template-columns:repeat\(5,minmax\(0,1fr\)\)/.test(UI.css) && /\.oe-nm\{[^}]*text-overflow:ellipsis/.test(UI.css) && Math.floor((17 * 48 + 16 * 6 - 24 - 4 * 8) / 5) >= 170, '');
+    check('Kacheln: 4 Spalten gleicher Breite (eine je Regel seit der Stilllegung des Heizgrenze-Hinweises; bei 17 Einheiten = 912 px je Kachel ~214 px), Kachelnamen mit "…" statt Ueberlauf', /\.oe-grid\{display:grid;grid-template-columns:repeat\(4,minmax\(0,1fr\)\)/.test(UI.css) && /\.oe-nm\{[^}]*text-overflow:ellipsis/.test(UI.css) && Math.floor((17 * 48 + 16 * 6 - 24 - 3 * 8) / 4) >= 170 && E.RULES.length === 4, '');
     check('Kacheln ohne Abschneiden (Nutzer 11.10.): kurze Kachelnamen (hoechstens 17 Zeichen, ~140 px), Status-Chip unter dem Namen, Zeilentexte umbrechen statt "…" (geprueft in der statischen Vorschau bei 1024/1920/2560 px: 0 abgeschnitten)',
-          E.RULES.every(R0 => R0.kachel && R0.kachel.length <= 17) && B.rules.rules.map(r => r.name).join(',') === 'Quiet-Freigabe,Deckel/Laufzeit,Raumeinfluss,Heizgrenze,Vorausschau' && /<div class="oe-st"><span class="oe-chip/.test(UI.html('rules', B.rules)) && /\.oe-ln span\{white-space:normal/.test(UI.css) && !/\.oe-sub\{[^}]*ellipsis/.test(UI.css), B.rules.rules.map(r => r.name).join(','));
-    const sc = B.score, msA = B.mess.takt.find(t => /^Messaufgabe/.test(t.k));
-    check('Punkte-Karte: 4 Kacheln mit Punkten, Freigabereife n/m (Kriterien nur eingeklappt), keine Mess-/Lernzeilen mehr (eigene Karte "Messwerte & Lernen", dort die Messaufgabe als Kachel); ohne Punkteverlauf kein leeres Diagramm',
-          sc.tiles.length === 5 && sc.tiles[0].reife.m === 6 && sc.tiles[3].reife === null && !UI.html('score', sc).includes('oe_chart') && /<details data-k="reife_quiet_freigabe"><summary>Kriterien<\/summary>/.test(UI.html('score', sc)) &&
-          !('mess' in sc) && !('takt' in sc) && !/Takt|Mindestleistung|COP|Wirkzeit|Heizkurven-Bias|Heizgrenze beobachtet|Messaufgabe/.test(txt(UI.html('score', sc))) && msA.v === 'offen' && msA.s === 'C 0/10 · E 0/10 min', JSON.stringify(msA));
+          E.RULES.every(R0 => R0.kachel && R0.kachel.length <= 17) && B.rules.rules.map(r => r.name).join(',') === 'Quiet-Freigabe,Deckel/Laufzeit,Raumeinfluss,Vorausschau' && /<div class="oe-st"><span class="oe-chip/.test(UI.html('rules', B.rules)) && /\.oe-ln span\{white-space:normal/.test(UI.css) && !/\.oe-sub\{[^}]*ellipsis/.test(UI.css), B.rules.rules.map(r => r.name).join(','));
+    const sc = B.score, msA = B.mess.takt.find(t => /^Überheizt/.test(t.k));
+    check('Punkte-Karte: 4 Kacheln mit Punkten (alle Befehlsregeln, Freigabereife n/m, Kriterien nur eingeklappt), keine Mess-/Lernzeilen mehr (eigene Karte "Messwerte & Lernen", dort statt der Messaufgabe die Kennzahl "Überheizt ab 11 °C"); ohne Punkteverlauf kein leeres Diagramm',
+          sc.tiles.length === 4 && sc.tiles.every(t => t.reife && t.reife.m === 6) && sc.tiles[3].id === 'vorausschau' && !B.mess.takt.some(t => /^Messaufgabe/.test(t.k)) && !UI.html('score', sc).includes('oe_chart') && /<details data-k="reife_quiet_freigabe"><summary>Kriterien<\/summary>/.test(UI.html('score', sc)) &&
+          !('mess' in sc) && !('takt' in sc) && !/Takt|Mindestleistung|COP|Wirkzeit|Heizkurven-Bias|Heizgrenze beobachtet|Messaufgabe|Überheizt/.test(txt(UI.html('score', sc))) && msA.v === '0,00 kWh' && msA.s === 'kein Lauf ab 11 °C' && /ALLE Räume über ihrer Bandmitte/.test(msA.title), JSON.stringify(msA));
     const A1 = runSeq(160, i => inp(T0 + i * MIN, {rt: 30 + i, soll: 38, sollKurve: 29.75, vl: 30, rl: 28.25, q: 3, hz: 16, rooms: rooms({ki_oben: 21.2})}));
     const s1 = VW.build({now: T0 + 159 * MIN, last: {t: T0 + 159 * MIN, res: A1.outs[159].res, anl: {}}, S: A1.S, V: {}, AP: {}}).score;
     check('Punkte-Diagramm: Summe je Regel als Stufenlinie ab 0 bis jetzt (SVG-Baukasten), Kachel +21', s1.series.length === 1 && s1.series[0].d[0][1] === 0 && s1.series[0].d[s1.series[0].d.length - 1][0] === T0 + 159 * MIN && s1.tiles[0].punkte === '+21,0' && /<svg/.test(require('./ui_chart.js').svg(UI.chartSpec(s1), 940).svg) && UI.html('score', s1).includes('id="oe_chart"'), JSON.stringify(s1.series[0].d));
     const A2 = runSeq(80, i => inp(T0 + i * MIN, {rt: 30 + i, soll: 38, sollKurve: 29.75, vl: 30, rl: 28.25, q: i === 0 ? 2 : 3, hz: 16, rooms: rooms({ki_oben: 21.8})}));
     const s2 = VW.build({now: T0 + 79 * MIN, last: {t: T0 + 79 * MIN, res: A2.outs[79].res, anl: {}}, S: A2.S, V: {}, AP: {}}).score, h2 = UI.html('score', s2);
-    check('Punkte-Karte (v2): "verpasst waehrend Sperre" als Kennzahl je Befehlsregel (Quiet-Freigabe 1, sonst 0, Hinweis ohne), kein Warntext, Punkte 0', s2.sv === E.SCORE_VER && s2.tiles[0].sperre === 1 && s2.tiles[1].sperre === 0 && s2.tiles[3].sperre === null && s2.tiles[0].warn === '' && s2.tiles[0].punkte === '0' && h2.includes('<div class="oe-ln" data-k="sperre"><span>🔒 verpasst während Sperre</span><b>1</b></div>') && (h2.match(/data-k="sperre"/g) || []).length === 4, s2.tiles.map(t => t.sperre).join(','));
+    check('Punkte-Karte (v2): "verpasst waehrend Sperre" als Kennzahl je Befehlsregel (Quiet-Freigabe 1, sonst 0), kein Warntext, Punkte 0', s2.sv === E.SCORE_VER && s2.tiles[0].sperre === 1 && s2.tiles.slice(1).every(t => t.sperre === 0) && s2.tiles[0].warn === '' && s2.tiles[0].punkte === '0' && h2.includes('<div class="oe-ln" data-k="sperre"><span>🔒 verpasst während Sperre</span><b>1</b></div>') && (h2.match(/data-k="sperre"/g) || []).length === 4, s2.tiles.map(t => t.sperre).join(','));
     { const mildH = (i, t) => inp(T0 + i * MIN, {at: 13, rt: 20 + i, soll: 29, sollKurve: 29, vl: 30, rl: 28, rooms: [{id: 'ki_oben', name: 'Kinderzimmer oben', t: t, age: 10, min: 22, max: 23.5, valid: true, active: true}]});
-      const AH = runSeq(220, i => mildH(i, 22.8)), AH3 = runSeq(220, i => mildH(i, 22.8), null, E.mergeCfg({sv: 3}));
-      const bh = S0 => VW.build({now: T0 + 219 * MIN, last: {t: T0 + 219 * MIN, res: AH.outs[219].res, anl: {}}, S: S0, V: {}, AP: {}}).score;
-      const sh = bh(AH.S), th = sh.tiles.find(t => t.id === 'heizgrenze_hinweis'), hh = UI.html('score', sh), sh3 = bh(AH3.S);
-      check('Punkte-Karte (v4): Heizgrenze-Kachel "–" statt Punktezahl, "1 Fall · 1 Treffer · 0 Fehlalarm", kein Skill, "nur Hinweis", nicht im Diagramm (kein leeres Diagramm); v3 zeigte +9,0 mit Linie',
-            th.punkte === '–' && !th.neg && th.sub === '1 Fall · 1 Treffer · 0 Fehlalarm' && th.more === '' && th.reife === null && sh.series.length === 0 && !hh.includes('oe_chart') && hh.includes('<span>nur Hinweis</span>') && sh.tiles.length === 5 &&
-            sh3.tiles.find(t => t.id === 'heizgrenze_hinweis').punkte === '+9,0' && sh3.series.some(x => x.id === 'heizgrenze_hinweis'), JSON.stringify({p: th.punkte, sub: th.sub, more: th.more})); }
+      const AH = runSeq(220, i => mildH(i, 22.8)), SH = JSON.parse(JSON.stringify(AH.S));
+      SH.sc.tot['heizgrenze_hinweis|v1|s5'] = {rule: 'heizgrenze_hinweis', ver: 1, sv: 5, since: T0, punkte: 0, faelle: 1, bewertet: 1, treffer: 1, fehlalarm: 0, neutral: 0};
+      const sh = VW.build({now: T0 + 219 * MIN, last: {t: T0 + 219 * MIN, res: AH.outs[219].res, anl: {}}, S: SH, V: {}, AP: {}}).score, hh = UI.html('score', sh);
+      check('Punkte-Karte nach der Stilllegung (Review-Paket): 220 min mild (13 °C, Raum ueber der Bandmitte) -> keine Heizgrenze-Kachel, auch mit alter Summe im Zustand; 4 Kacheln, kein "nur Hinweis", keine Linie fuer die stillgelegte Regel',
+            sh.tiles.length === 4 && !sh.tiles.some(t => t.id === 'heizgrenze_hinweis') && !sh.series.some(x => x.id === 'heizgrenze_hinweis') && !hh.includes('nur Hinweis'), JSON.stringify(sh.tiles.map(t => t.id))); }
     { const S0 = E.newState(T0 - MIN); S0.sc.base['quiet_freigabe|v2'] = {30: [20, 19], 60: [20, 19], 120: [20, 19]};
       const AQ = runSeq(160, i => inp(T0 + i * MIN, {rt: 30 + i, soll: 38, sollKurve: 29.75, vl: 30, rl: 28.25, q: 3, hz: 16, rooms: rooms({ki_oben: 21.2})}), S0);
       const sq = VW.build({now: T0 + 159 * MIN, last: {t: T0 + 159 * MIN, res: AQ.outs[159].res, anl: {}}, S: AQ.S, V: {}, AP: {}}).score, tq = sq.tiles[0];
@@ -1223,7 +1223,7 @@ if (fs.existsSync(path.join(dataDir, 'quiet-2026-10.csv'))) {
     const RV = replay(dataDir, {cfg: {rules: {quiet_freigabe: {rlRueckK: -99}}}}), extra = RV.props.filter(p => p.rule === 'quiet_freigabe').length - 1;
     check('Ruecklauf-Bedingung der Freigabe: v2 schlaegt auch ohne sie nicht oefter vor (der Bedarf trennt schon; v1: 4 zusaetzliche Freigaben 07.–10.10., alle Fehlalarm, rund -213 Punkte)', extra === 0, extra + ' zusaetzlich');
     // Vorausschau mit den echten Daten (OWM-Vorhersage aus optimizer-v2): Gate zu wie live -> nie ein Vorschlag
-    const nVs = RP.inputs.filter(x => x.vs).length, vsSt = {}; RP.perMin.forEach(m => { vsSt[m.st[4]] = (vsSt[m.st[4]] || 0) + 1; });
+    const nVs = RP.inputs.filter(x => x.vs).length, vsSt = {}, iVsR = E.RULES.findIndex(R0 => R0.id === 'vorausschau'); RP.perMin.forEach(m => { vsSt[m.st[iVsR]] = (vsSt[m.st[iVsR]] || 0) + 1; });
     check('Replay Vorausschau, Gate zu (1 Tag, wie live): Vorhersage in fast jeder Minute vorhanden, nie ein Vorschlag, Status "gesperrt" (Modell-Gate)', nVs >= RP.inputs.length - 30 && !RP.props.some(p => p.rule === 'vorausschau') && vsSt.gesperrt >= nVs - 30, nVs + ' Minuten mit Vorhersage, Status ' + JSON.stringify(vsSt));
     check('Datensatzgroesse: unter 2,7 MB je Tag (ca. 80 MB/Monat; seit der Vorausschau mit Vorhersage im Schnappschuss und fuenfter Regel)', RP.bytes / (RP.inputs.length / 1440) < 2.7e6, Math.round(RP.bytes / (RP.inputs.length / 1440)) + ' Bytes/Tag');
     if (alt) {                                                                       // nur der Datensatz 07.–10.10. (Kopie vom 10.10. 13:24, liegt nicht mehr vor)
@@ -1233,9 +1233,12 @@ if (fs.existsSync(path.join(dataDir, 'quiet-2026-10.csv'))) {
         check('Replay v2: dieselbe Lage (Kinderzimmer oben ab 18:47) ist "waehrend Sperre" -> 0 Punkte, Raumeinfluss -3,73', rv2.punkte === -3.73 && rv2.verpasst === 0 && rv2.verpasstSperre === 1 && m2.length === 1 && m2[0].typ === 'verpasst_sperre', rv2.punkte + ' / ' + m2.map(x => x.t + ' ' + x.typ).join(','));
         const RPo = replay(dataDir, {model: Object.assign({}, require('./engine_replay.js').ASSUME.model, {gate: true, n: 12})});
         check('Replay Vorausschau, Gate testweise offen: die Daten reichen fuer keinen sicheren Tagesgang (3 Vortage) -> keine Bedarfsaenderung, kein Vorschlag', !RPo.props.some(p => p.rule === 'vorausschau'), '');
-        check('Messaufgabe Comfort/Efficiency: offen, Efficiency 41 min bei Quiet 0 (Boost, max 34 Hz), Comfort 0 min', (() => { const m = E.messStatus(RP.S); return m.offen && m.comfortMin === 0 && m.efficiencyMin >= 35 && m.efficiency.hzMax === 34; })(), E.messStatus(RP.S).text);
+        check('Messaufgabe Comfort/Efficiency gestrichen (Review-Paket): kein Befund im Punktebuch, kein Sammelzustand', !RP.scores.some(x => x.typ === 'messaufgabe') && !RP.S.sc.mess, '');
     }
     if (neu1310) {                                                                   // Datensatz 07.–13.10. (replay_data_1310): neue Lagen 12.10. (Kaelte 1–4 °C, Quiet 2/3 von Hand) und 13.10. (Comfort, Quiet 2 -> 1)
+        { const ub = E.uebSumme(RP.S, tEnde);
+          check('Review-Paket im Replay 07.–13.10.: kein Heizgrenze-Hinweis mehr (vorher 4: 07.10. 21:03, 08.10. 11:06, 10.10. 16:43, 12.10. 12:48); Kennzahl "Überheizt ab 11 °C": 0,21 kWh Strom / 1,6 kWh Wärme in 45 von 1601 Laufminuten ab 11 °C (9,0 kWh Strom insgesamt ab 11 °C)',
+                !RP.props.some(p => p.rule === 'heizgrenze_hinweis') && !RP.scores.some(x => x.regel === 'heizgrenze_hinweis') && Math.abs(ub.el - 0.21) < 0.01 && Math.abs(ub.th - 1.59) < 0.02 && ub.min === 45 && ub.minAlle === 1601 && Math.abs(ub.elAlle - 9.0) < 0.01, JSON.stringify(ub)); }
         const at = t => RP.recs.find(l => l.indexOf('"t":"' + t) >= 0), rf = t => JSON.parse(at(t)).r[0];
         check('12.10. 08:30 (Schlafzimmer am Minimum, Quiet 2 bei 20–21 Hz, Vorlauf am Soll): keine Freigabe – ohne Rueckstand braechte sie keine Leistung (Hebel waere die Heizkurve)', /^kein Vorschlag: Vorlauf genau am Soll/.test(rf('2026-10-12 08:30').grund), rf('2026-10-12 08:30').grund);
         check('13.10. 16:29 Start mit Quiet 2 (Comfort, Ruecklauf 1,75 K, Raeume im Band): keine Freigabe (Startphase, danach kein Bedarf); der Nutzer stellte um 16:36 Quiet 1 (Wirkung als Kalibrierfall: 17 -> 21 Hz, +98 W)', /Startphase/.test(rf('2026-10-13 16:33').grund) && /kein Bedarf/.test(rf('2026-10-13 16:50').grund) && RP.scores.some(x => x.typ === 'wirkung' && x.regel === 'quiet_freigabe' && x.kalibrierfall === 1 && /Quiet 2 → 1/.test(x.text) && x.teile.every(t => t.ergebnis === 'getroffen')), rf('2026-10-13 16:50').grund);
@@ -1353,13 +1356,13 @@ if (flowsFile) {
     check('Huelle: Karte zeigt den Vorschlag mit Pruefsumme, Knopf "Übernehmen" gesperrt mit Grund "gesperrt: Hauptschalter aus", Statuszeile "Übernahme gesperrt" (Hauptschalter aus)', (() => { const c = R.eng[24][0].payload; return c.prop && c.prop.id === eng.prop.id && c.prop.sum === eng.prop.sum && c.knopf.ok === false && c.knopf.text === 'Übernehmen' && c.knopf.grund === 'gesperrt: Hauptschalter aus' && c.status.some(s => s.t === 'Übernahme gesperrt' && s.c === 'lock') && c.status[0].c === 'ok' && /^Maschine läuft/.test(c.status[0].t); })(), JSON.stringify(R.eng[24][0].payload.status));
     check('Huelle: Karte "Messwerte & Lernen" kommt ueber Ausgang 6 (Takt-Kacheln mit "Hochlauf nach Start", Mindestleistung, COP-Matrix oder "sammelt", Lernen mit Gebaeudemodell aus OPT_plan 1/10 Tage, Gate zu)',
           (() => { const m = R.eng[24][5] && R.eng[24][5].payload; return m && m.takt.length === 6 && m.takt[5].k === 'Hochlauf nach Start' && Array.isArray(m.ml) && m.lern.length === 6 && m.lern[0].k === 'Gebäudemodell' && m.lern[0].v === '1/10 Tage' && m.lern[0].chip === 'Gate zu' && m.lern[1].chip === 'keine Daten'; })(), JSON.stringify(R.eng[24][5] && R.eng[24][5].payload.lern.slice(0, 2)));
-    check('Huelle: Regelkacheln (5 Regeln mit Status-Chip, Bedingungen, einer Zeile), Punkte-Kacheln (5), Entscheidungen als Episoden (Quiet-Freigabe: wartet > Vorschlag, laeuft)', R.eng[24][1].payload.rules.length === 5 && R.eng[24][1].payload.rules.every(r => r.chip && r.line && typeof r.line.l === 'string') && R.eng[24][2].payload.tiles.length === 5 && (() => { const rw = R.eng[24][3].payload.rows; return rw.length === 1 && rw[0].offen && rw[0].steps.map(s => s[0].split(' ')[0]).join('>') === 'wartet>Vorschlag'; })(), JSON.stringify(R.eng[24][3].payload.rows));
+    check('Huelle: Regelkacheln (4 Regeln mit Status-Chip, Bedingungen, einer Zeile), Punkte-Kacheln (4), Entscheidungen als Episoden (Quiet-Freigabe: wartet > Vorschlag, laeuft)', R.eng[24][1].payload.rules.length === 4 && R.eng[24][1].payload.rules.every(r => r.chip && r.line && typeof r.line.l === 'string') && R.eng[24][2].payload.tiles.length === 4 && (() => { const rw = R.eng[24][3].payload.rows; return rw.length === 1 && rw[0].offen && rw[0].steps.map(s => s[0].split(' ')[0]).join('>') === 'wartet>Vorschlag'; })(), JSON.stringify(R.eng[24][3].payload.rows));
     { const hs = gstore.OPT_hp.Heating_Off_Outdoor_Temp; gstore.OPT_hp.Heater_On_Outdoor_Temp = {v: 0, ts: NOW - 3 * 3600000}; const keep = Object.assign({}, hs); hs.ts = NOW - 3 * 3600000;
       NOW += 60000; runN('opt_engine', {topic: '', payload: NOW}); const last = JSON.parse(files[decFile].trim().split('\n').pop()); Object.assign(hs, keep); delete gstore.OPT_hp.Heater_On_Outdoor_Temp;
       check('Huelle: Einstellungen (Heizgrenze, Heizstab-Einschaltgrenze) gelten bis 24 h nach der letzten Meldung (HeishaMon meldet sie selten), Heizstab-Sperre faellt nicht still aus', last.in.heatOffAT === 12 && last.in.htrOnAT === 0, JSON.stringify({heatOffAT: last.in.heatOffAT, htrOnAT: last.in.htrOnAT})); }
     { const lr = JSON.parse(files[decFile].trim().split('\n').pop()), tv = R.eng[24][1].payload.rules.find(r => r.id === 'vorausschau');
       check('Huelle Vorausschau: Eingabe aus OPT_weather/OPT_plan (an den Fuehler angeglichen, Gate zu, ohne Sonne/Wind), Regel "gesperrt" (Modell-Gate 1 / 10 Tage), OPT_engine traegt "halten"',
-            lr.in.vs && lr.in.vs.gate === 0 && lr.in.vs.at[0] === 11 && lr.in.vs.at.length === 7 && !('pv' in lr.in.vs) && !('wind' in lr.in.vs) && lr.r[4].id === 'vorausschau' && lr.r[4].sperren[0] === 'modell' && tv.chip === 'gesperrt' && tv.line.l === 'Modell-Gate' && tv.line.v === '1 / 10 Tage' && gstore.OPT_engine.halten !== undefined, JSON.stringify(lr.in.vs) + ' | ' + JSON.stringify(tv.line)); }
+            lr.in.vs && lr.in.vs.gate === 0 && lr.in.vs.at[0] === 11 && lr.in.vs.at.length === 7 && !('pv' in lr.in.vs) && !('wind' in lr.in.vs) && lr.r[3].id === 'vorausschau' && lr.r[3].sperren[0] === 'modell' && tv.chip === 'gesperrt' && tv.line.l === 'Modell-Gate' && tv.line.v === '1 / 10 Tage' && gstore.OPT_engine.halten !== undefined, JSON.stringify(lr.in.vs) + ' | ' + JSON.stringify(tv.line)); }
     { const keepP = gstore.OPT_plan; gstore.OPT_plan = {ts: NOW, model: {n: 12, minDays: 10, gate: true, why: [], aktiv: true, bs: 0.3, bw: 0.02, ua: 0.21, tbal: 15}}; NOW += 60000; runN('opt_engine', {topic: '', payload: NOW});
       const lv = JSON.parse(files[decFile].trim().split('\n').pop()).in.vs; gstore.OPT_plan = keepP;
       check('Huelle Vorausschau: erst mit aktivem Modell (coefActivate) stehen PV-Prognose und Wind in der Eingabe', lv.gate === 1 && lv.aktiv === 1 && lv.pv.length === 7 && lv.pv[2] === 3000 && lv.wind.length === 7 && lv.bs === 0.3, JSON.stringify(lv)); }

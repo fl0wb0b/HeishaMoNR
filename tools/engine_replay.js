@@ -144,7 +144,11 @@ function markdown(R) {                                                          
     R.report.forEach(r => L.push('| ' + r.name + ' | ' + de(r.punkte, 2) + ' | ' + r.faelle + ' (' + r.bewertet + ') | ' + r.treffer + ' (' + r.trefferNeutral + ') | ' + r.fehlalarm + ' | ' + r.neutral + ' | ' + (r.skill === null ? '–' : de(r.skill, 2)) + ' | ' + r.schaden + ' | ' + r.verpasst + ' | ' + (r.art === 'befehl' ? r.verpasstSperre : '–') + ' | ' + r.wirkung.n + ' (' + r.wirkung.kalib + '), ' + de(r.wirkung.punkte, 0) + ' | ' + (r.art === 'befehl' ? (r.reif ? 'reif' : 'nein: ' + r.kriterien.filter(k => !k.ok).map(k => k.k).join(', ')) : 'Hinweis') + ' |'));
     L.push('', '#### Basisraten „bleibt, wie es ist“ am Ende (n Vergleichslagen, k Problem bestand)', '', '| Regel | Horizont | n | k | b |', '|---|---|---|---|---|');
     Object.keys(R.S.sc.base).forEach(id => Object.keys(R.S.sc.base[id]).forEach(h => { const b = R.S.sc.base[id][h]; L.push('| ' + names[id] + ' | ' + h + ' min | ' + b[0] + ' | ' + b[1] + ' | ' + (b[0] >= E.SCORE.baseMinN ? de((b[1] + 1) / (b[0] + 2), 2) : '0,50 (zu wenig)') + ' |'); }));
-    L.push('', '#### Messaufgabe Comfort/Efficiency', '', E.messStatus(R.S).text);
+    const ub = E.uebSumme(R.S, R.inputs[R.inputs.length - 1].t), hl = E.hochlaufSumme(R.S);
+    L.push('', '#### Kennzahlen (nur Anzeige)', '', '| Kennzahl | Wert |', '|---|---|');
+    L.push('| Überheizt ab ' + E.UEB.atC + ' °C (letzte ' + E.UEB.tage + ' Tage): Laufenergie, während alle Räume über der Bandmitte lagen | ' + de(ub.el, 2) + ' kWh Strom, ' + de(ub.th, 1) + ' kWh Wärme, ' + ub.min + ' min von ' + ub.minAlle + ' Laufminuten ab ' + E.UEB.atC + ' °C (' + de(ub.elAlle, 2) + ' kWh Strom; ohne Raumwerte ' + ub.minOhne + ' min) |');
+    L.push('| Hochlauf nach Start (letzte ' + E.HL.tage + ' Tage, Minuten ≥ 22 Hz in den ersten ' + E.HL.min + ' Laufminuten) | Comfort ' + hl.Comfort[0] + ' min bei ' + hl.Comfort[1] + ' Starts, Efficiency ' + hl.Efficiency[0] + ' min bei ' + hl.Efficiency[1] + ' Starts |');
+    L.push('', 'Stillgelegt (Review-Paket 13.10.2026): ' + E.STILLGELEGT.map(x => x.name + ' (`' + x.id + '` v' + x.ver + ')').join(', ') + '; die Messaufgabe Comfort/Efficiency ist gestrichen.');
     L.push('', '#### Annahmen für Werte, die das Protokoll nicht enthält', '', Object.keys(ASSUME).map(k => '- `' + k + '`: ' + JSON.stringify(ASSUME[k])).join('\n'));
     return L.join('\n');
 }

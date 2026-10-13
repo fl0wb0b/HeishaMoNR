@@ -511,53 +511,17 @@ var ENGINE = (function () {
             }
         },
         {
-            id: 'heizgrenze_hinweis', ver: 1, kachel: 'Heizgrenze', kurz: 'Heizgrenze 10 °C', name: 'Heizgrenze 12 → 10 °C (nur Hinweis)', art: 'hinweis', groesse: 'heizgrenze', richtung: 'weniger_waerme', prio: 4,
-            zweck: 'An milden Tagen läuft die Anlage bei 11–14 °C, obwohl alle Räume Reserve haben. Eine niedrigere Heizgrenze würde solche Läufe vermeiden. Nur Hinweis: Parameteränderung, nie per Klick.',
-            eingaenge: ['Außentemperatur (Fühler)', 'Heizgrenze (Heating_Off_Outdoor_Temp)', 'Räume (alle aktiv und gültig)', 'Laufzeit'],
-            sperren: ['anlauf', 'daten'],
-            befehl: {name: 'SetHeatingOffOutdoorTemp', topic: 'panasonic_heat_pump/commands/SetHeatingOffOutdoorTemp'},
-            schwellen: [
-                {key: 'zielC', std: 10, einheit: '°C', herkunft: 'Opus-Bericht: 12 → 10 hätte 07./08.10. ~1,5–1,8 kWh el gespart; 07.–10.10.: 7 von 12 Läufen starteten bei ≥ 11 °C (~3,7 von 12,6 kWh el)'},
-                {key: 'reserveK', std: 0.5, einheit: 'K', herkunft: 'Wärme eines Laufs (~4 kWh) hebt die Räume um ~0,4–0,6 K (Speichermasse 7–10 kWh/K, Opus); ANNAHME'},
-                {key: 'laufMin', std: 15, einheit: 'min', herkunft: 'Startroutine'},
-                {key: 'haltMin', std: 15, einheit: 'min', herkunft: 'ANNAHME'},
-                {key: 'proTag', std: 2, einheit: 'Hinweise', herkunft: 'ANNAHME'},
-                {key: 'gueltigMin', std: 120, einheit: 'min', herkunft: 'ANNAHME'},
-                {key: 'pauseMin', std: 180, einheit: 'min', herkunft: 'ANNAHME'}
-            ],
-            erwartung: 'Mit Heizgrenze 10 °C startet die Anlage erst bei ≤ 10 °C (Hysterese wie bei 12: aus ab +3 K, ANNAHME); Läufe bei 11–14 °C entfallen.',
-            rueckweg: 'Saisonale Einstellung: der Betreiber setzt sie von Hand (SetHeatingOffOutdoorTemp) und zurück.',
-            prognose: {p: 0.6, h: [180], text: 'Alle Räume bleiben mindestens Minimum + Reserve (der Lauf war nicht nötig)'},
-            kalibriert: [],
-            eval: function (d, c) {
-                if (!have(d.heatOffAT)) { return {inaktiv: 'Heizgrenze-Einstellung unbekannt'}; }
-                if (d.heatOffAT <= c.zielC) { return {inaktiv: 'Heizgrenze steht schon auf ' + de(d.heatOffAT, 0) + ' °C'}; }
-                var allValid = d.roomsActive > 0 && d.roomsValid === d.roomsActive;
-                var tight = null; d.rooms.forEach(function (r) { if (r.active && r.valid && (tight === null || r.t - r.min < tight.t - tight.min)) { tight = r; } });
-                var cond = [
-                    {k: 'lauf', kz: 'Verdichter läuft', t: 'Verdichter läuft', tn: 'Verdichter steht (' + zTxt(d.zustand) + ')', ok: d.running},
-                    {k: 'laufMin', kz: 'Laufzeit', t: 'Lauf seit mindestens ' + c.laufMin + ' min', tn: 'Startphase: Lauf erst ' + de(d.runMin, 0) + ' von ' + c.laufMin + ' min', ok: d.runMin >= c.laufMin, ist: r2(d.runMin), soll: c.laufMin, op: '>=', u: 'min', dyn: true},
-                    {k: 'aussen', kz: 'Außentemperatur', t: 'Außentemperatur über ' + de(c.zielC, 0) + ' °C', tn: 'Außentemperatur ' + de(d.at, 0) + ' °C (nicht über ' + de(c.zielC, 0) + ' °C)', ok: have(d.at) && d.at > c.zielC, ist: d.at, soll: c.zielC + 1, op: '>=', u: '°C', dyn: true},
-                    {k: 'raeume', kz: 'Räume gültig', t: 'alle aktiven Räume gültig', tn: 'nur ' + d.roomsValid + ' von ' + d.roomsActive + ' Räumen gültig', ok: allValid},
-                    {k: 'reserve', kz: 'Raumreserve', t: 'jeder Raum mindestens ' + de(c.reserveK, 1) + ' K über Minimum', tn: 'knappster Raum ' + (tight ? tight.name + ' ' + sg(tight.t - tight.min, 1) + ' K' : '–') + ' über Minimum (Reserve ' + de(c.reserveK, 1) + ' K)', ok: allValid && tight !== null && tight.t - tight.min >= c.reserveK, ist: tight ? r2(tight.t - tight.min) : null, soll: c.reserveK, op: '>=', u: 'K', dyn: true}
-                ];
-                return {cond: cond, halt: c.haltMin, wert: c.zielC, von: d.heatOffAT, dir: 'weniger_waerme',
-                        was: 'Heizgrenze ' + de(d.heatOffAT, 0) + ' → ' + de(c.zielC, 0) + ' °C (nur Hinweis)',
-                        warum: 'Lauf bei ' + de(d.at, 0) + ' °C Außentemperatur, knappster Raum ' + (tight ? tight.name + ' ' + sg(tight.t - tight.min, 1) + ' K über Minimum' : '–')};
-            }
-        },
-        {
-            id: 'vorausschau', ver: 1, kachel: 'Vorausschau', kurz: 'Vorausschau ±1 K', name: 'Vorausschau (Heizkurve ±1 K)', art: 'befehl', groesse: 'shift', richtung: 'verschiebung', prio: 5,
-            zweck: 'Verschiebt die Heizkurve um ±1 K, bevor sich der Wärmebedarf WETTERBEDINGT ändert (der gewöhnliche Tagesgang ist herausgerechnet, die Uhrzeit allein löst nichts aus): +1 K, wenn Wettervorhersage und Gebäudemodell in den nächsten Stunden deutlich mehr Bedarf erwarten und alle Räume noch im Band liegen (mit Luft nach oben); −1 K bei erwartetem Wärmegewinn (Milderung; Sonne und Wind nur mit freigegebenem Modell, coefActivate). Läuft erst mit offenem Gate des Gebäudemodells, nie gegen den aktuellen Raumzustand und nie gegen eine Verschiebung einer anderen Regel (Arbitrierung).',
+            id: 'vorausschau', ver: 2, kachel: 'Vorausschau', kurz: 'Vorausschau −1 K', name: 'Vorausschau (Heizkurve −1 K)', art: 'befehl', groesse: 'shift', richtung: 'soll_runter', prio: 5, basis: 'vorausschau|v2',
+            zweck: 'Senkt die Heizkurve um 1 K, bevor der Wärmebedarf WETTERBEDINGT sinkt (Milderung; Sonne und Wind nur mit freigegebenem Modell, coefActivate; der gewöhnliche Tagesgang ist herausgerechnet, die Uhrzeit allein löst nichts aus), solange alle Räume im Band liegen und der kälteste Raum Luft über seinem Minimum hat. Läuft erst mit offenem Gate des Gebäudemodells, nie gegen den aktuellen Raumzustand und nie gegen eine Verschiebung einer anderen Regel (Arbitrierung). Seit v2 (Review-Paket 13.10.2026) ohne den Zweig +1 K vor erwartetem Mehrbedarf: Die Anlage führt die Heizkurve selbst alle 5 min mit der Fühler-Außentemperatur nach (0,375 K Vorlauf je K, Verzug ≤ 5 min), die Heizkörper haben wenig Speichermasse, und bei Kälte lagen die Räume ohnehin 0,4–1,6 K über ihrer Bandmitte (unter 4 °C Kinderzimmer unten 90 % der Zeit über Maximum); +1 K hätte überheizte Räume weiter geheizt. Unter Quiet 0 löst +1 K bei Vorlauf unter Soll außerdem einen Hochlauf aus (11.10. 03:10: +48 % Strom), die Kosten waren unterschätzt. Nur −1 K zeigt in die Energie-Richtung.',
             eingaenge: ['Wettervorhersage OWM (+1 … +6 h, an den Außenfühler angeglichen)', 'gewöhnlicher Tagesgang (gemessene Außentemperatur bis 7 Vortage)', 'Gebäudemodell des Wärmefahrplans (UA, Heizgrenze tbal, Gate, coefActivate)', 'Sonne (PV-Prognose) und Wind nur mit coefActivate', 'Räume (alle gültig, eigenes Band)', 'Verschiebung der Anlage (TOP27) und Eigentümer der Verschiebung', 'Soll-Vorlauf'],
             sperren: ['anlauf', 'daten', 'modell', 'mqtt_sperre', 'abtauen', 'warmwasser', 'sanftanlauf', 'laufbeginn', 'heizgrenze_aus', 'regler', 'vorrang', 'gegenrichtung', 'abstand', 'tageslimit', 'abkuehlzeit', 'takt', 'heizstab'],
             befehl: {name: 'SetZ1HeatRequestTemperature', topic: 'panasonic_heat_pump/commands/SetZ1HeatRequestTemperature'},
             schwellen: [
                 {key: 'deltaK', std: 2, einheit: 'K', herkunft: 'Bedarfsänderung aus dem Wetter als Außentemperatur-Äquivalent (Mittel des Fensters gegen jetzt, beide um den gewöhnlichen Tagesgang bereinigt); OWM weicht vom Fühler 1,5–1,9 K ab (08.–10.10.), darunter ist die Vorhersage kein Signal; ANNAHME'},
                 {key: 'tagesgangTage', std: 3, einheit: 'Vortage', herkunft: 'Der gewöhnliche Tagesgang wird aus den Vortagen gelernt (Abweichung jeder Uhrzeit vom 24-h-Mittel); mit nur einem Vortag steckt dessen Wetter darin (Replay: Kaltfront 08.10. abends erschien am 09.10. als −5 K); ANNAHME'},
-                {key: 'vonH', std: 2, einheit: 'h', herkunft: 'Fensterbeginn: +1 K wirkt über die Laufzeit erst nach 1–3 h im Raum (Speichermasse 7–10 kWh/K, Opus); ANNAHME'},
+                {key: 'vonH', std: 2, einheit: 'h', herkunft: 'Fensterbeginn: −1 K wirkt über Lauf und Pause erst nach 1–3 h im Raum (Speichermasse 7–10 kWh/K, Opus); ANNAHME'},
                 {key: 'bisH', std: 5, einheit: 'h', herkunft: 'Fensterende: OWM liefert 3-h-Punkte, das Vertrauen fällt mit dem Vorlauf (Fahrplan: 1 − h/48); ANNAHME'},
-                {key: 'reserveK', std: 0.3, einheit: 'K', herkunft: 'Luft im Band: bei +1 K wärmster Raum mindestens 0,3 K unter Maximum, bei −1 K kältester mindestens 0,3 K über Minimum (wie guardK des Fahrplans); ANNAHME'},
+                {key: 'reserveK', std: 0.3, einheit: 'K', herkunft: 'Luft im Band: der kälteste Raum liegt mindestens 0,3 K über seinem Minimum (wie guardK des früheren Fahrplans); ANNAHME'},
                 {key: 'prognoseMaxMin', std: 120, einheit: 'min', herkunft: 'Fahrplan: Vorhersage gilt bis 2 h nach dem Abruf'},
                 {key: 'haltMin', std: 30, einheit: 'min', herkunft: 'Vorhersage muss mindestens einen weiteren Abruf überstehen; ANNAHME'},
                 {key: 'minVlC', std: 29, einheit: '°C', herkunft: 'Nutzervorgabe 08.10.: Soll-Vorlauf nie unter 29 °C (Heizkörper)'},
@@ -566,9 +530,9 @@ var ENGINE = (function () {
                 {key: 'pauseMin', std: 180, einheit: 'min', herkunft: 'ANNAHME'},
                 {key: 'maxDauerMin', std: 360, einheit: 'min', herkunft: 'Rückweg spätestens nach 6 h (wie Raumeinfluss, ANNAHME)'}
             ],
-            erwartung: '+1 K: Soll-Vorlauf +1 K binnen 6 min (5-min-Raster), mehr Wärme vor dem erwarteten Bedarf (Strom +2,5–3 %, 8,5 W/K); die Räume bleiben im Band, obwohl der Bedarf steigt. −1 K: umgekehrt bei erwartetem Wärmegewinn. Raumwirkung NICHT gemessen.',
-            rueckweg: 'Automatisch zurück auf 0 K, sobald die Vorhersage die Änderung 15 min am Stück nicht mehr zeigt (halbe Schwelle), sofort, wenn ein Raum das Band in Gegenrichtung verlässt, spätestens nach 6 h; nicht, solange der Raumeinfluss dieselbe Verschiebung verlangt.',
-            prognose: {p: 0.6, h: [120, 240, 360], text: 'Ohne Verschiebung gerät der knappste Raum an den Bandrand (+1 K: höchstens Reserve über Minimum, −1 K: höchstens Reserve unter Maximum)'},
+            erwartung: 'Soll-Vorlauf −1 K binnen 6 min (5-min-Raster), weniger Wärme vor dem erwarteten Wärmegewinn (Strom −2,5–3 %, 8,5 W/K); die Räume bleiben im Band, obwohl der Bedarf sinkt. Raumwirkung NICHT gemessen.',
+            rueckweg: 'Automatisch zurück auf 0 K, sobald die Vorhersage die Milderung 15 min am Stück nicht mehr zeigt (halbe Schwelle), sofort, wenn ein Raum unter sein Minimum fällt, spätestens nach 6 h; nicht, solange der Raumeinfluss dieselbe Verschiebung verlangt.',
+            prognose: {p: 0.6, h: [120, 240, 360], text: 'Ohne −1 K gerät der wärmste Raum an den oberen Bandrand (höchstens Reserve unter Maximum)'},
             kalibriert: [],
             eval: function (d, c, rs) {
                 var v = d.vs;
@@ -584,30 +548,37 @@ var ENGINE = (function () {
                     if (gv) { return {cond: [{k: 'bedarf', kz: 'Bedarfsänderung', t: 'Vorhersage und Tagesgang vorhanden', tn: tgw, ok: false}], halt: 0, vorab: gv}; }
                     return {inaktiv: tgw};
                 }
-                var up = rs.prop ? rs.prop.cmd.value > 0 : dk >= 0, sgn = up ? 1 : -1;
+                // v2 (Review-Paket 13.10.2026): nur noch -1 K vor einer Milderung; ein erwarteter Mehrbedarf ist kein Ausloeser mehr (die Anlage fuehrt die Kurve selbst nach)
                 var thr = rs.prop ? c.deltaK / 2 : c.deltaK;                                   // laufender Vorschlag: Hysterese (halbe Schwelle), kein Flattern
                 var act = d.rooms.filter(function (r) { return r.active; }), allValid = act.length > 0 && act.every(function (r) { return r.valid && have(r.min) && have(r.max); });
                 var out = act.filter(function (r) { return r.valid && ((have(r.min) && r.t < r.min) || (have(r.max) && r.t > r.max)); });
                 var cold = null, warm = null;
                 act.forEach(function (r) { if (!r.valid) { return; } if (cold === null || r.t - r.min < cold.t - cold.min) { cold = r; } if (warm === null || r.max - r.t < warm.max - warm.t) { warm = r; } });
-                var resv = up ? (warm ? warm.max - warm.t : null) : (cold ? cold.t - cold.min : null), sollNeu = have(d.soll) ? d.soll + sgn : null;
+                var resv = cold ? cold.t - cold.min : null, sollNeu = have(d.soll) ? d.soll - 1 : null;
                 var cond = [
-                    {k: 'bedarf', kz: 'Bedarfsänderung', t: 'Vorhersage: Bedarf ' + (up ? 'steigt' : 'sinkt') + ' um mindestens ' + de(thr, 1) + ' K', tn: 'Vorhersage: Bedarf ' + sg(dk, 1) + ' K (Schwelle ' + (up ? '+' : '−') + de(thr, 1) + ' K)', ok: sgn * dk >= thr, ist: r2(sgn * dk), soll: thr, op: '>=', u: 'K', dyn: true},
+                    {k: 'bedarf', kz: 'Bedarfsänderung', t: 'Vorhersage: Bedarf sinkt um mindestens ' + de(thr, 1) + ' K', tn: 'Vorhersage: Bedarf ' + sg(dk, 1) + ' K (Schwelle −' + de(thr, 1) + ' K' + (dk > 0 ? '; vor Mehrbedarf seit v2 keine Verschiebung' : '') + ')', ok: -dk >= thr, ist: r2(-dk), soll: thr, op: '>=', u: 'K', dyn: true},
                     {k: 'raeume', kz: 'Räume gültig', t: 'alle aktiven Räume gültig', tn: 'nicht alle Räume gültig', ok: allValid},
                     {k: 'band', kz: 'Räume im Band', hart: true, t: 'alle Räume im Komfortband', tn: out.length ? out[0].name + ' außerhalb des Bandes (' + de(out[0].t, 1) + ' °C)' : 'Raumlage unbekannt', ok: allValid && out.length === 0},
-                    {k: 'reserve', kz: 'Luft im Band', t: (up ? 'wärmster Raum mindestens ' + de(c.reserveK, 1) + ' K unter Maximum' : 'kältester Raum mindestens ' + de(c.reserveK, 1) + ' K über Minimum'), tn: (up ? (warm ? warm.name + ' nur ' + de(resv, 1) + ' K unter Maximum' : 'kein Raum') : (cold ? cold.name + ' nur ' + de(resv, 1) + ' K über Minimum' : 'kein Raum')), ok: have(resv) && resv >= c.reserveK - 1e-9, ist: r2(resv), soll: c.reserveK, op: '>=', u: 'K', dyn: true}
+                    {k: 'reserve', kz: 'Luft im Band', t: 'kältester Raum mindestens ' + de(c.reserveK, 1) + ' K über Minimum', tn: cold ? cold.name + ' nur ' + de(resv, 1) + ' K über Minimum' : 'kein Raum', ok: have(resv) && resv >= c.reserveK - 1e-9, ist: r2(resv), soll: c.reserveK, op: '>=', u: 'K', dyn: true},
+                    {k: 'untergrenze', kz: 'Soll-Vorlauf neu', t: 'Soll-Vorlauf bleibt mindestens ' + de(c.minVlC, 0) + ' °C', tn: 'Soll-Vorlauf würde ' + de(sollNeu, 0) + ' °C (Untergrenze ' + de(c.minVlC, 0) + ' °C)', ok: have(sollNeu) && sollNeu >= c.minVlC - 1e-9, ist: r2(sollNeu), soll: c.minVlC, op: '>=', u: '°C', dyn: true}
                 ];
-                if (!up) { cond.push({k: 'untergrenze', kz: 'Soll-Vorlauf neu', t: 'Soll-Vorlauf bleibt mindestens ' + de(c.minVlC, 0) + ' °C', tn: 'Soll-Vorlauf würde ' + de(sollNeu, 0) + ' °C (Untergrenze ' + de(c.minVlC, 0) + ' °C)', ok: have(sollNeu) && sollNeu >= c.minVlC - 1e-9, ist: r2(sollNeu), soll: c.minVlC, op: '>=', u: '°C', dyn: true}); }
-                var lead = up ? cold : warm, f = vsFenster(v, c), tg = 0; for (var hh = c.vonH; hh <= c.bisH; hh++) { tg += d.vsBase.at[hh]; } tg = tg / (c.bisH - c.vonH + 1);
-                var e = {cond: cond, halt: c.haltMin, wert: sgn, von: d.shift, dir: up ? 'soll_hoch' : 'soll_runter', lead: lead ? lead.name : '',
-                         was: 'Heizkurve 0 → ' + sg(sgn, 0) + ' K (Soll-Vorlauf ' + de(d.soll, 0) + ' → ' + de(sollNeu, 0) + ' °C)',
-                         warum: 'Vorhersage +' + c.vonH + '…+' + c.bisH + ' h Ø ' + de(f.at, 1) + ' °C statt ' + de(v.at[0], 1) + ' °C jetzt, gewöhnlicher Tagesgang ' + sg(tg - d.vsBase.at[0], 1) + ' K: Bedarf ' + sg(dk, 1) + ' K aus dem Wetter' + (v.aktiv ? ' (mit Sonne/Wind)' : '') + '; ' + (lead ? lead.name + ' ' + (up ? de(lead.t - lead.min, 1) + ' K über Minimum' : de(lead.max - lead.t, 1) + ' K unter Maximum') : '')};
+                var lead = warm, f = vsFenster(v, c), tg = 0; for (var hh = c.vonH; hh <= c.bisH; hh++) { tg += d.vsBase.at[hh]; } tg = tg / (c.bisH - c.vonH + 1);
+                var e = {cond: cond, halt: c.haltMin, wert: -1, von: d.shift, dir: 'soll_runter', lead: lead ? lead.name : '',
+                         was: 'Heizkurve 0 → −1 K (Soll-Vorlauf ' + de(d.soll, 0) + ' → ' + de(sollNeu, 0) + ' °C)',
+                         warum: 'Vorhersage +' + c.vonH + '…+' + c.bisH + ' h Ø ' + de(f.at, 1) + ' °C statt ' + de(v.at[0], 1) + ' °C jetzt, gewöhnlicher Tagesgang ' + sg(tg - d.vsBase.at[0], 1) + ' K: Bedarf ' + sg(dk, 1) + ' K aus dem Wetter' + (v.aktiv ? ' (mit Sonne/Wind)' : '') + '; ' + (lead ? lead.name + ' ' + de(lead.max - lead.t, 1) + ' K unter Maximum' : '')};
                 if (gv) { e.vorab = gv; }
                 return e;
             }
         }
     ];
     var RULE = {}; RULES.forEach(function (r) { RULE[r.id] = r; });
+    // Stillgelegte Regeln (Review-Paket 13.10.2026): nicht mehr im Regelwerk. Ihre Summen bleiben im Zustand unter dem alten Schluessel stehen (sc.tot
+    // "regel|vN|sM", Basisraten, Punkteverlauf, Wochenuebersicht); offene Faelle, Vergleichslagen und Wirkungsmessungen dieser Regeln enden beim Laden ohne
+    // Buchung (fixState). Die Kennzahl "beobachtete Heizgrenze" (Takt-Messung) bleibt; neu ist die Kennzahl "Ueberheizt bei AT >= 11 °C" (UEB).
+    var STILLGELEGT = [
+        {id: 'heizgrenze_hinweis', ver: 1, name: 'Heizgrenze 12 → 10 °C (nur Hinweis)', seit: '2026-10-13',
+         grund: 'Regel-Review 4.1: Der Hinweis verlagerte gebrauchte Wärme aus den Stunden mit dem besten COP (6,5–6,8 bei 11–14 °C) in kältere Stunden (5,0–5,6 bei 1–6 °C); bei allen Läufen mit Außentemperatur ≥ 11 °C lag mindestens ein Raum unter seiner Bandmitte; am 12.10. fiel Kinderzimmer unten nach dem Hinweis trotz der Läufe unter sein Minimum, die Bewertung zählte trotzdem einen Treffer (der Lauf, den er vermeiden wollte, fand statt).'}
+    ];
 
     // Bewertungsregeln (Version SCORE_VER, vorab festgelegt): Gewichte, Horizonte, Reife
     var SCORE = {
@@ -621,7 +592,7 @@ var ENGINE = (function () {
         // ab v2: eigene Sperren/Wartezeiten der Regel entschuldigen "verpasst" (0 Punkte, als "waehrend Sperre" gezaehlt), aber nur mit den
         // dokumentierten Standardwerten (eine verlaengerte Sperre zaehlt nur bis zum Standard) und nur ohne harten Schaden im Fenster.
         verpasstSperre: {eigene: ['abstand', 'tageslimit', 'abkuehlzeit', 'haltezeit', 'stabil'], gegenregel: ['vorrang', 'gegenrichtung'], komfortK: 1.0,
-                         schaden: {quiet_freigabe: ['komfort'], quiet_strecken: ['takt', 'ueberschwingen'], raum_offset: ['komfort'], vorausschau: ['komfort']}},
+                         schaden: {quiet_freigabe: ['komfort'], quiet_strecken: ['takt', 'ueberschwingen'], raum_offset: ['komfort']}},   // Vorausschau: "komfort" galt nur dem Zweig +1 K (bis v1)
         raumAlterMax: 360,         // Bewertung (nicht Entscheidung): ein Raumwert bis 6 h alt zaehlt, weil die Shelly H&T Gen3 nur bei Aenderung >= 0,5 K melden
         lueftungK: 1.0,            // Raum faellt >= 1 K in <= 60 min: Lueftung (Eingriff), danach keine Gegenfaktik fuer Raum-Prognosen (nach dem Replay ergaenzt: 09.10. Wohnzimmer -3,3 K)
         reife: {faelle: 10, tage: 14, skill: 0.2, wirkFaelle: 2, verpasst: 1},
@@ -755,6 +726,10 @@ var ENGINE = (function () {
         Object.keys(F).forEach(function (k) { if (S[k] === undefined) { S[k] = F[k]; } });
         RULES.forEach(function (r) { if (!S.rules[r.id]) { S.rules[r.id] = F.rules[r.id]; } Object.keys(F.rules[r.id]).forEach(function (k) { if (S.rules[r.id][k] === undefined) { S.rules[r.id][k] = F.rules[r.id][k]; } }); });
         Object.keys(F.sc).forEach(function (k) { if (S.sc[k] === undefined) { S.sc[k] = F.sc[k]; } });
+        // Review-Paket 13.10.2026: stillgelegte Regeln aus dem laufenden Zustand nehmen (Summen bleiben), Messaufgabe Comfort/Efficiency gestrichen
+        STILLGELEGT.forEach(function (x) { delete S.rules[x.id]; if (S.sc.gt) { delete S.sc.gt[x.id]; } });
+        ['cases', 'cands', 'eff'].forEach(function (k) { if (Array.isArray(S.sc[k])) { S.sc[k] = S.sc[k].filter(function (C) { return !!RULE[C.rule]; }); } });
+        if (S.sc.mess) { delete S.sc.mess; }
         return S;
     }
 
@@ -870,6 +845,7 @@ var ENGINE = (function () {
         var htrOn = num(inp.htrOnAT), htrSd = num(inp.htrStartDelta);
         d.heaterOn = (num(inp.heaterI) || 0) > 0 || (num(inp.heaterE) || 0) > 0;
         d.htrNear = have(d.at) && have(htrOn) && d.at < htrOn + cfg.locks.heaterMarginK;
+        d.htrOn = have(htrOn) ? htrOn : null;                                           // Heater_On_Outdoor_Temp (Heizregelung-Hinweis mit Hysterese)
         d.htrSd = have(htrSd) ? Math.abs(htrSd) : 3;
         var hdl = num(inp.htrDelay); d.htrDelay = have(hdl) && hdl > 0 && hdl <= 120 ? hdl : 15;   // Heater_Delay_Time (J: 15 min); ohne Meldung 15 min
     }
@@ -1248,6 +1224,52 @@ var ENGINE = (function () {
     }
     function hochlaufSumme(S) { var o = {Comfort: [0, 0], Efficiency: [0, 0]}; Object.keys(S.hl || {}).forEach(function (k) { ['Comfort', 'Efficiency'].forEach(function (m) { var x = S.hl[k][m]; if (x) { o[m][0] += x[0]; o[m][1] += x[1]; } }); }); return o; }
 
+    // Kennzahl "Ueberheizt bei AT >= 11 °C" (Review-Paket 13.10.2026, ersetzt den stillgelegten Heizgrenze-Hinweis; Regel-Review 4.1): Laufenergie bei
+    // Aussentemperatur >= UEB.atC, waehrend ALLE aktiven Raeume ueber ihrer Bandmitte liegen. Nur das waere Waerme, die das Haus bei milder Witterung nicht
+    // braucht (echtes Ueberheizpotenzial einer niedrigeren Heizgrenze); daneben die gesamte Laufenergie bei >= UEB.atC. Raumwerte bis 6 h alt wie in der
+    // Bewertung (die Shelly melden nur bei Aenderung); fehlt ein Raumwert, zaehlt die Minute als "ohne Raumdaten". Ohne Abtauen/Warmwasser. Je Kalendertag, 7 Tage.
+    // Je Tag: [Wh el alle ueber Mitte, Wh th alle ueber Mitte, Minuten alle ueber Mitte, Wh el gesamt >= atC, Minuten gesamt >= atC, Minuten ohne Raumdaten]
+    var UEB = {atC: 11, tage: 7};
+    function uebStep(S, d) {
+        var U = S.ueb = (S.ueb && typeof S.ueb === 'object') ? S.ueb : {};
+        if (!d.fresh || !d.running || d.defrost || d.dhw || !have(d.at) || d.at < UEB.atC || !have(d.pel)) { return; }
+        var dk = ymd(d.now), x = U[dk] = U[dk] || [0, 0, 0, 0, 0, 0];
+        var act = d.rooms.filter(function (r) { return r.active && have(r.min) && have(r.max); });
+        var ok = act.length > 0 && act.every(function (r) { return roomScore(r); });
+        x[3] += d.pel / 60; x[4]++;
+        if (!ok) { x[5]++; }
+        else if (act.every(function (r) { return r.t > (r.min + r.max) / 2; })) { x[0] += d.pel / 60; x[1] += (have(d.pth) && d.pth > 0 ? d.pth : 0) / 60; x[2]++; }
+        Object.keys(U).sort().slice(0, -UEB.tage).forEach(function (k) { delete U[k]; });
+    }
+    function uebSumme(S, now) {                                                      // Summe der letzten UEB.tage Kalendertage (kWh, Minuten)
+        var o = {el: 0, th: 0, min: 0, elAlle: 0, minAlle: 0, minOhne: 0, tage: 0}, U = (S && S.ueb) || {}, von = have(now) ? ymd(now - (UEB.tage - 1) * 24 * 60 * MIN) : '';
+        Object.keys(U).forEach(function (k) { if (k < von) { return; } var x = U[k]; o.el += x[0] / 1000; o.th += x[1] / 1000; o.min += x[2]; o.elAlle += x[3] / 1000; o.minAlle += x[4]; o.minOhne += x[5]; o.tage++; });
+        ['el', 'th', 'elAlle'].forEach(function (k) { o[k] = Math.round(o[k] * 1000) / 1000; });
+        return o;
+    }
+
+    // Heizregelung-Hinweis (nur Anzeige, keine Regel und keine Punkte; Review-Paket 13.10.2026, ersetzt die Warnung "Comfort empfohlen" des Waechters, die
+    // an der 5-°C-Grenze flackerte und bei normalen Kaltstarts anschlug, Regel-Review 4.4 d). Befund 07.-13.10.: Efficiency faehrt nach dem Start mit 16-17 Hz
+    // und erst ab Laufminute 39-46 zeitweise auf 21-26 Hz, Comfort sofort auf 30-35 Hz. Bei Kaelte kann der traege Hochlauf den Heizstab freigeben
+    // (Servicehandbuch J Z. 9316-9322: nach Heater_Delay_Time unter Soll + Heater_Start_Delta bei Aussentemperatur unter Heater_On_Outdoor_Temp; bei der Leisha
+    // nicht beobachtet, keine Daten unter 1 °C). Einzige verbleibende Bedingung ist deshalb die Heizstab-Naehe, gerechnet wie in der Quiet-Freigabe (bedarfQ):
+    // Efficiency, Verdichter laeuft ab Laufminute HCW.laufMin, Aussen unter Heater_On_Outdoor_Temp + heaterMarginK (Ende erst HCW.atHystK hoeher: kein Flackern),
+    // Vorlauf mindestens |Start-Delta| - heizstabAbstandK unter Soll (im Dauerlauf - heizstabDauerK); an nach HCW.anMin am Stueck, aus erst HCW.ausMin nach dem Wegfall.
+    var HCW = {laufMin: 10, anMin: 3, ausMin: 10, atHystK: 1};
+    function hcHinweis(S, d, cfg) {
+        var H = S.hcw = (S.hcw && typeof S.hcw === 'object') ? S.hcw : {an: false, seit: 0, kand: 0, weg: 0, atNah: false}, now = d.now;
+        var c = cfg.rules.quiet_freigabe, grenze = have(d.htrOn) ? d.htrOn + cfg.locks.heaterMarginK : null;
+        H.atNah = have(grenze) && have(d.at) && (H.atNah ? d.at < grenze + HCW.atHystK : d.at < grenze);
+        var dauer = d.running && d.runMin >= d.htrDelay, abst = d.htrSd - (dauer ? c.heizstabDauerK : c.heizstabAbstandK);
+        var bed = !!(d.fresh && d.hc === 1 && d.running && d.runMin >= HCW.laufMin && H.atNah && have(d.vlRueck) && d.vlRueck >= abst);
+        if (bed) { H.kand = H.kand || now; H.weg = 0; if (!H.an && now - H.kand >= HCW.anMin * MIN) { H.an = true; H.seit = now; } }
+        else { H.kand = 0; if (H.an) { H.weg = H.weg || now; if (d.hc === 0 || now - H.weg >= HCW.ausMin * MIN) { H.an = false; H.weg = 0; } } }
+        if (H.an && bed) { H.txt = 'Heizstab-Nähe (Außen ' + de(d.at, 0) + ' °C, Vorlauf ' + de(d.vlRueck, 1) + ' K unter Soll, Lauf ' + de(d.runMin, 0) + ' min; Heizstab ab ' + de(d.htrSd, 0) + ' K unter Soll nach ' + de(d.htrDelay, 0) + ' min); Efficiency fährt nach dem Start langsam hoch, Comfort sofort'; }
+        var mode = d.hc === 0 ? 'Comfort' : (d.hc === 1 ? 'Efficiency' : null);
+        return {mode: have(d.hc) ? d.hc : null, warn: H.an, seit: H.an ? H.seit : 0,
+                text: mode === null ? '–' : (mode === 'Comfort' ? 'Comfort' : (H.an ? 'Efficiency · Comfort empfohlen: ' + (H.txt || 'Heizstab-Nähe') : 'Efficiency · keine Warnung'))};
+    }
+
     // ------------------------------------------------------------------ Schnappschuss fuer den Datensatz (gerundet; reicht zum Nachspielen)
     var SNAP_KEYS = ['hpAge', 'hz', 'vl', 'rl', 'soll', 'dT', 'pel', 'pth', 'flow', 'pump', 'q', 'qPrio', 'hc', 'at', 'defrost', 'dhw', 'ss', 'rt', 'shift', 'heatMode', 'z1Sensor',
                      'heaterI', 'heaterE', 'htrOnAT', 'htrStartDelta', 'htrDelay', 'heatOffAT', 'sollKurve', 'block', 'otherQ', 'otherShift', 'kzRad'];
@@ -1284,6 +1306,8 @@ var ENGINE = (function () {
         d.bedQ = bedarfQ(S, d, cfg); if (d.bedQ.ja && d.fresh) { S.bedT = now; } d.bedT = S.bedT;   // Bedarf der Quiet-Stufe (Freigabe; Ausschluss fuer den Deckel)
         d.kaltQ = kaltQ(d, cfg.rules.quiet_freigabe);                                   // Kaelte-Vorsorge (Regel-Review B4)
         hochlaufStep(S, d, cfg);                                                        // Kennzahl: Hochlauf nach dem Start (Comfort/Efficiency, nur Anzeige)
+        uebStep(S, d);                                                                  // Kennzahl: Laufenergie bei AT >= 11 °C, alle Raeume ueber der Bandmitte (nur Anzeige)
+        var hcInfo = hcHinweis(S, d, cfg);                                              // Heizregelung-Hinweis (Anzeige im Waechter und auf der Uebersicht, keine Regel)
         var QE = quietEnde(S, d, cfg);                                                   // Rueckweg-Gruende der Quiet-Regeln (vor der Auswertung: sie beenden auch die Zuordnung)
         // Quiet: eine uebernommene Stufe gehoert ihrer Regel nur, solange deren Grund besteht. Gilt ihr Rueckweg-Grund oder ist die Frist abgelaufen (und kein Bedarf
         // haelt sie), endet die Zuordnung, auch wenn niemand zurueckstellt (z. B. von Hand uebernommen); danach gilt die Gegenrichtungs-Sperre ab jetzt.
@@ -1358,7 +1382,9 @@ var ENGINE = (function () {
         var tkA = [d.takt.starts24h, d.takt.kurzAnteil, d.takt.minutenPausen, d.takt.bedarfPausen], tkS = JSON.stringify(tkA);
         if (tkS !== S.tkLast || new Date(now).getMinutes() === 0) { rec.abl.tk = tkA; S.tkLast = tkS; }
         if (d.unpl.length) { rec.abl.unpl = d.unpl; }                                          // unplausible Eingaenge dieser Minute (gelten als fehlend)
-        return {S: S, d: d, res: res, prop: prop, rec: rec, ev: ev, scores: sc, ende: ende, halten: halten, locks: locks};
+        var dq = have(d.q) ? deckelOf(d, d.q) : null;                                   // wirksamer Deckel der jetzigen Quiet-Stufe (Anzeige im Waechter statt eigener Annahme)
+        return {S: S, d: d, res: res, prop: prop, rec: rec, ev: ev, scores: sc, ende: ende, halten: halten, locks: locks, hc: hcInfo,
+                deckel: dq ? {q: d.q, hz: dq.hz, quelle: dq.quelle} : null};
     }
     function recNext(nx) { var o = {}; ['b', 'ist', 's', 'abstand', 'u', 'weitere', 'halt', 'bis'].forEach(function (k) { if (nx[k] !== undefined && nx[k] !== null && nx[k] !== '') { o[k] = nx[k]; } }); return o; }
 
@@ -1386,20 +1412,14 @@ var ENGINE = (function () {
             if (!r || !roomScore(r)) { return null; }
             return ctx.dir === 'soll_runter' ? (r.t > r.max ? 1 : 0) : (r.t < r.min ? 1 : 0);
         }
-        if (rule === 'vorausschau') {                                               // Problem: der knappste Raum (bei t0) steht hoechstens reserveK am Bandrand
+        if (rule === 'vorausschau') {                                               // Problem: der knappste Raum (bei t0) steht hoechstens reserveK am Bandrand (v1 auch +1 K: am unteren Rand)
             var rv = d.rooms.filter(function (x) { return x.name === ctx.lead || x.id === ctx.lead; })[0];
             if (!rv || !roomScore(rv)) { return null; }
             return ctx.dir === 'soll_runter' ? (rv.t >= rv.max - c.reserveK ? 1 : 0) : (rv.t <= rv.min + c.reserveK ? 1 : 0);
         }
-        if (rule === 'heizgrenze_hinweis') {
-            var act = d.rooms.filter(function (x) { return x.active; });
-            if (!act.length || act.some(function (x) { return !roomScore(x); })) { return null; }
-            if (act.some(function (x) { return x.t < x.min; })) { return 0; }
-            return act.every(function (x) { return x.t >= x.min + c.reserveK; }) ? 1 : null;
-        }
         return null;
     }
-    function roomRule(rule) { return rule === 'raum_offset' || rule === 'heizgrenze_hinweis' || rule === 'vorausschau'; }
+    function roomRule(rule) { return rule === 'raum_offset' || rule === 'vorausschau'; }
     function bandsOf(d) { var o = {}; d.rooms.forEach(function (r) { o[r.id] = [r.min, r.max, r.active ? 1 : 0]; }); return o; }
     function newTracker(rule, now, ctx, d) { ctx.bands = bandsOf(d); var T = {rule: rule, t0: now, ctx: ctx, cut: 0, stop: 0, stopVlStop: false, wasRun: false, ser: []}; if (ctx.kind) { T.kind = ctx.kind; } if (ctx.H) { T.H = ctx.H; } return T; }
     function trackerUpdate(T, d, cfg) {
@@ -1445,7 +1465,6 @@ var ENGINE = (function () {
             return {o: lastP[lastP.length - 1][1], why: lastP[lastP.length - 1][1] ? 'Raum weiter außerhalb des Bandes' : 'Raum wieder im Band'};
         }
         if (ser.length < SCORE.teilMin * h * ((kind === 'deckel_frei' || kind === 'hz_hoch') ? 0.5 : 0.3)) { return {o: null, why: 'zu wenige gültige Minuten (' + ser.length + ')'}; }
-        if (T.rule === 'heizgrenze_hinweis') { return ser.some(function (p) { return p[1] === 0; }) ? {o: 0, why: 'ein Raum fiel unter Minimum'} : {o: 1, why: 'alle Räume blieben über Minimum + Reserve'}; }
         var f = ser.reduce(function (a, p) { return a + p[1]; }, 0) / ser.length;
         if (f >= SCORE.trefferAnteil) { return {o: 1, why: 'Problem in ' + Math.round(f * 100) + ' % der Minuten'}; }
         if (f <= 1 - SCORE.trefferAnteil) { return {o: 0, why: 'Problem nur in ' + Math.round(f * 100) + ' % der Minuten'}; }
@@ -1472,13 +1491,12 @@ var ENGINE = (function () {
         if (rule === 'quiet_strecken' && hebel === 'shift') { return (d.running && d.runMin >= c.laufMin && taktBeleg(d, c) && have(d.hz) && d.hz < c.hzHoch) ? {} : null; }
         if (rule === 'quiet_strecken') { return (have(d.q) && d.q < 3 && d.running && d.runMin >= c.laufMin && have(d.hz) && d.hz >= c.hzHoch && have(d.at) && d.at > c.atMinC) ? {} : null; }
         if (rule === 'raum_offset') { if (d.roomBelow.length) { return {lead: d.roomBelow[0].id, dir: 'soll_hoch'}; } if (d.roomAbove.length) { return {lead: d.roomAbove[0].id, dir: 'soll_runter'}; } return null; }
-        if (rule === 'vorausschau') {                                                // Vergleichslage: Vorhersage zeigt mindestens die halbe Schwelle, alle Raeume gueltig im Band (unabhaengig vom Gate)
+        if (rule === 'vorausschau') {                                                // Vergleichslage (v2): Vorhersage zeigt mindestens die halbe Schwelle Milderung, alle Raeume gueltig im Band (unabhaengig vom Gate)
             var dk = d.vsDk, act = d.rooms.filter(function (x) { return x.active; });
-            if (dk === null || Math.abs(dk) < c.deltaK / 2 || !act.length || act.some(function (x) { return !x.valid || !have(x.min) || !have(x.max) || x.t < x.min || x.t > x.max; })) { return null; }
-            var ld = null; act.forEach(function (x) { var m = dk > 0 ? x.t - x.min : x.max - x.t; if (ld === null || m < ld.m) { ld = {id: x.id, m: m}; } });
-            return {lead: ld.id, dir: dk > 0 ? 'soll_hoch' : 'soll_runter'};
+            if (dk === null || dk > -c.deltaK / 2 || !act.length || act.some(function (x) { return !x.valid || !have(x.min) || !have(x.max) || x.t < x.min || x.t > x.max; })) { return null; }
+            var ld = null; act.forEach(function (x) { var m = x.max - x.t; if (ld === null || m < ld.m) { ld = {id: x.id, m: m}; } });
+            return {lead: ld.id, dir: 'soll_runter'};
         }
-        if (rule === 'heizgrenze_hinweis') { return (have(d.heatOffAT) && d.heatOffAT > c.zielC && d.running && d.runMin >= c.laufMin && have(d.at) && d.at > c.zielC) ? {} : null; }
         return null;
     }
     function svOf(cfg) { return cfg && [1, 2, 3, 4].indexOf(cfg.sv) >= 0 ? cfg.sv : SCORE_VER; }
@@ -1584,9 +1602,8 @@ var ENGINE = (function () {
         sc.eff = sc.eff.filter(function (E) { return !E.closed; });
         // 4) Verpasst
         missedStep(S, sc, d, cfg, res, recs, sv);
-        // 5) Messaufgabe (keine Punkte): Verdichterfrequenz/Leistung bei Quiet 0 und Rueckstand >= 2 K, Comfort gegen Efficiency
-        messStep(sc, d, S, recs, sv);
-        // 6) Messaufgabe Heizkurve +1 K (keine Punkte): Lauf- und Pausendauer vor und nach einer Verschiebung 0 -> +1 K (Kalibrierung von laufPlusMin/pauseMinusMin)
+        // 5) Messaufgabe Heizkurve +1 K (keine Punkte): Lauf- und Pausendauer vor und nach einer Verschiebung 0 -> +1 K (Kalibrierung von laufPlusMin/pauseMinusMin).
+        //    Die Messaufgabe "Comfort gegen Efficiency" ist gestrichen (Review-Paket 13.10.2026; Befund in docs/OPTIMIERER.md 7, Kennzahl "Hochlauf nach Start")
         lzStep(sc, d, S, cfg, recs, sv);
         return recs;
     }
@@ -1789,16 +1806,17 @@ var ENGINE = (function () {
             }
         });
     }
- // Verpasst der Vorausschau (seit v3): Lage = Gate offen und alle Bedingungen der Regel erfuellt (Bedarfsaenderung >= Schwelle aus dem Wetter, Raeume
+    // Verpasst der Vorausschau (seit Bewertung v3): Lage = Gate offen und alle Bedingungen der Regel erfuellt (Milderung >= Schwelle aus dem Wetter, Raeume
     // im Band mit Luft), 60 min am Stueck ohne Vorschlag (auch keiner einer anderen Verschiebungs-Regel in dieselbe Richtung) und ohne Sicherheits-/Datensperre.
-    // Bewertet wird erst, ob die Lage WIRKLICH eintrat (bis zum Fensterende +bisH): ein Raum verlaesst das Band in der vorhergesagten Richtung, oder die gemessene
-    // Aussentemperatur (um den Tagesgang bereinigt) zeigt mindestens die halbe Schwelle. Trat nichts ein, gibt es keinen Eintrag. Neutralitaet wie bei den
-    // anderen Regeln: nur eigene/Gegenregel-Sperren mit Standardwerten -> "verpasst_sperre" (0); Raum > 1 K unter Minimum hebt das auf (+1 K).
+    // Bewertet wird erst, ob die Lage WIRKLICH eintrat (bis zum Fensterende +bisH): ein Raum steigt ueber sein Maximum, oder die gemessene Aussentemperatur
+    // (um den Tagesgang bereinigt) zeigt mindestens die halbe Schwelle. Trat nichts ein, gibt es keinen Eintrag. Neutralitaet wie bei den anderen Regeln: nur
+    // eigene/Gegenregel-Sperren mit Standardwerten -> "verpasst_sperre" (0). Regel v2 (Review-Paket 13.10.2026): nur noch die Milderung (-1 K); der Schaden
+    // "Raum > 1 K unter Minimum" galt nur dem gestrichenen Zweig +1 K und kommt nicht mehr vor.
     var VS_NEED = 60;
     function missedVs(R, S, sc, d, cfg, res, recs, sv) {
         var now = d.now, c = cfg.rules[R.id], G = sc.gt[R.id] = sc.gt[R.id] || {since: 0, pend: []}, r = res.filter(function (x) { return x.id === R.id; })[0];
         G.pend = G.pend || [];
-        var cond = !!(d.fresh && d.vs && d.vs.gate && have(d.vsDk) && Math.abs(d.vsDk) >= c.deltaK && r && !r.dauer && (r.st === 'wartet' || r.st === 'vorschlag' || r.st === 'abgelaufen' || (r.st === 'gesperrt' && r.locks.indexOf('modell') < 0)));
+        var cond = !!(d.fresh && d.vs && d.vs.gate && have(d.vsDk) && d.vsDk <= -c.deltaK && r && !r.dauer && (r.st === 'wartet' || r.st === 'vorschlag' || r.st === 'abgelaufen' || (r.st === 'gesperrt' && r.locks.indexOf('modell') < 0)));   // v2: nur die Milderung (-1 K)
         if (cond) {
             var dir = d.vsDk > 0 ? 1 : -1;
             if (!G.since || G.dir !== dir) { G.since = now; G.dir = dir; G.prop = false; G.excused = false; G.booked = false; G.last = now; G.frei = 0; G.gesperrt = 0; G.ids = []; G.ext = []; }
@@ -1844,22 +1862,6 @@ var ENGINE = (function () {
         });
         if (G.pend.length > 20) { G.pend = G.pend.slice(-20); }
     }
-    // Messaufgabe "Comfort gegen Efficiency" (Korrektur 10.10.: ob Efficiency den Verdichter begrenzt, ist ungeklaert, Quiet 3 hat es bisher verdeckt).
-    // Sammelt Minuten mit Quiet 0, laufendem Verdichter (ab Minute 15 und 3 min nach einer Quiet-Aenderung) und Vorlauf >= 2 K unter Soll, getrennt nach
-    // Heizregelung. Sobald beide Seiten >= 10 min bei aehnlicher Aussentemperatur (Mittel hoechstens 3 K auseinander) haben, wird EIN Befund festgehalten.
-    var MESS = {rueckK: 2, minMin: 10, atTolK: 3, nachQuietMin: 3, laufMin: 15};
-    function messStep(sc, d, S, recs, sv) {
-        var M = sc.mess = sc.mess || {c: [], e: [], done: false};
-        if (!d.fresh || !d.running || d.q !== 0 || !have(d.hc) || !have(d.vlRueck) || d.vlRueck < MESS.rueckK || d.runMin < MESS.laufMin || (S.qChg && d.now - S.qChg < MESS.nachQuietMin * MIN)) { return; }
-        var L = d.hc === 0 ? M.c : (d.hc === 1 ? M.e : null); if (!L) { return; }
-        L.push([d.now, d.at, d.hz, d.pel, d.pth, r2(d.vlRueck), r2(d.rlRueck)]); if (L.length > 600) { L.splice(0, L.length - 600); }
-        if (M.done || M.c.length < MESS.minMin || M.e.length < MESS.minMin) { return; }
-        var sC = messSum(M.c), sE = messSum(M.e);
-        if (!have(sC.at) || !have(sE.at) || Math.abs(sC.at - sE.at) > MESS.atTolK) { return; }
-        M.done = true; M.befund = {comfort: sC, efficiency: sE, t: d.now};
-        book(sc, recs, {t: iso(d.now), typ: 'messaufgabe', regel: 'quiet_freigabe', v: RULE.quiet_freigabe.ver, sv: sv, punkte: 0, comfort: sC, efficiency: sE,
-                        text: 'Befund (Regel-Annahme prüfen): bei Quiet 0 und Vorlauf ≥ 2 K unter Soll lief der Verdichter in Comfort bis ' + de(sC.hzMax, 0) + ' Hz (Ø ' + de(sC.hzMittel, 0) + ' Hz, ' + de(sC.pel, 0) + ' W el, ' + de(sC.pth, 0) + ' W th, ' + sC.n + ' min, Ø ' + de(sC.at, 1) + ' °C), in Efficiency bis ' + de(sE.hzMax, 0) + ' Hz (Ø ' + de(sE.hzMittel, 0) + ' Hz, ' + de(sE.pel, 0) + ' W el, ' + de(sE.pth, 0) + ' W th, ' + sE.n + ' min, Ø ' + de(sE.at, 1) + ' °C)'}, d.now);
-    }
     // Messaufgabe "Heizkurve +1 K" (Deckel/Laufzeit v4): die Wirkung von +1 K auf Lauf und Pause ist nicht gemessen (Verzoegerungstest steht aus). Bei jeder Verschiebung
     // 0 -> +1 K (von wem auch immer) wird der Zyklus davor (letzter Lauf, Pause davor) mit dem ersten Lauf verglichen, der danach endet, und der Pause danach. Ein Befund je Fall.
     function lzStep(sc, d, S, cfg, recs, sv) {
@@ -1874,16 +1876,6 @@ var ENGINE = (function () {
             book(sc, recs, {t: iso(now), typ: 'messaufgabe', art: 'laufzeit_1k', regel: 'quiet_strecken', v: RULE.quiet_strecken.ver, sv: sv, punkte: 0, lauf: Z.letzter.lauf, pause: Z.letzter.pause,
                             text: 'Befund Heizkurve +1 K' + (O.durch ? ' (Vorschlag „' + RULE[O.durch].kurz + '“)' : '') + ': Lauf ' + de(O.laufVor, 0) + ' → ' + de(O.lauf, 0) + ' min, Pause ' + de(O.pauseVor, 0) + ' → ' + pz + ' min (Annahme: Lauf +' + c.laufPlusMin + ' min, Pause −' + c.pauseMinusMin + ' min)'}, now);
         }
-    }
-    function messSum(L) {
-        function mean(i) { var v = L.map(function (x) { return x[i]; }).filter(have); return v.length ? r2(v.reduce(function (a, b) { return a + b; }, 0) / v.length) : null; }
-        return {n: L.length, at: mean(1), hzMax: Math.max.apply(null, L.map(function (x) { return have(x[2]) ? x[2] : 0; })), hzMittel: mean(2), pel: mean(3), pth: mean(4), vlRueck: mean(5), rlRueck: mean(6), von: iso(L[0][0]), bis: iso(L[L.length - 1][0])};
-    }
-    function messStatus(S) {
-        var M = (S.sc && S.sc.mess) || {c: [], e: []};
-        if (M.done) { return {offen: false, text: 'erledigt: siehe Befund', befund: M.befund}; }
-        return {offen: true, comfortMin: M.c.length, efficiencyMin: M.e.length, efficiency: M.e.length ? messSum(M.e) : null, comfort: M.c.length ? messSum(M.c) : null,
-                text: 'offen: Comfort ' + M.c.length + ' min, Efficiency ' + M.e.length + ' min mit Quiet 0 und Vorlauf ≥ 2 K unter Soll (je ' + MESS.minMin + ' min bei ähnlicher Außentemperatur nötig; ein kurzer Boost in Comfort würde reichen)'};
     }
     function report(S, sv) {                                                         // Punktebuch je Regel/Version mit Freigabereife (nur Anzeige; die Freigabe entscheidet der Nutzer)
         var sc = S.sc, out = [];
@@ -2088,7 +2080,7 @@ var ENGINE = (function () {
     }
 
     return {VER: VER, SCORE_VER: SCORE_VER, RULES: RULES, RULE: RULE, LOCKS: LOCKS, LOCK_CFG: LOCK_CFG, SCORE: SCORE, WHITELIST: WHITELIST, APPLY: APPLY,
-            brier: brier, hPunkte: hPunkte, vorschau: vorschau, bedarfK: bedarfK, VS_LIM: VS_LIM, PLAUS: PLAUS, tagesgang: tagesgang, defaults: defaults, mergeCfg: mergeCfg, newState: newState, fixState: fixState, step: step, report: report, messStatus: messStatus, MESS: MESS, TAKT: TAKT, TAKT_SCHWELLEN: TAKT_SCHWELLEN, taktCfg: taktCfg, taktNew: taktNew, taktStep: taktStep, taktKennzahlen: taktKennzahlen, mindestLeistung: mindestLeistung, copSumme: copSumme, copTabelle: copTabelle, bandOf: bandOf, modusOf: modusOf, nlNeu: nlNeu, nlZeilen: nlZeilen, nlEnde: nlEnde, HG: HG, heizgrenzeBeob: heizgrenzeBeob, LAG: LAG, lagMessen: lagMessen, lagStep: lagStep, KB: KB, kbTag: kbTag, kbStep: kbStep, snapshot: snapshot, unsnap: unsnap,
+            brier: brier, hPunkte: hPunkte, vorschau: vorschau, bedarfK: bedarfK, VS_LIM: VS_LIM, PLAUS: PLAUS, tagesgang: tagesgang, defaults: defaults, mergeCfg: mergeCfg, newState: newState, fixState: fixState, step: step, report: report, STILLGELEGT: STILLGELEGT, UEB: UEB, uebStep: uebStep, uebSumme: uebSumme, HCW: HCW, hcHinweis: hcHinweis, TAKT: TAKT, TAKT_SCHWELLEN: TAKT_SCHWELLEN, taktCfg: taktCfg, taktNew: taktNew, taktStep: taktStep, taktKennzahlen: taktKennzahlen, mindestLeistung: mindestLeistung, copSumme: copSumme, copTabelle: copTabelle, bandOf: bandOf, modusOf: modusOf, nlNeu: nlNeu, nlZeilen: nlZeilen, nlEnde: nlEnde, HG: HG, heizgrenzeBeob: heizgrenzeBeob, LAG: LAG, lagMessen: lagMessen, lagStep: lagStep, KB: KB, kbTag: kbTag, kbStep: kbStep, snapshot: snapshot, unsnap: unsnap,
             checksum: checksum, newApply: newApply, applyRequest: applyRequest, applyTick: applyTick, fortsetzung: fortsetzung, gOfCmd: gOfCmd, iso: iso, ymd: ymd, zielDeckel: zielDeckel, zielFrei: zielFrei, deckelOf: deckelOf, deckelTab: deckelTab, DECKEL: DECKEL,
             bedarfQ: bedarfQ, raumTrend: raumTrend, komfortSicher: komfortSicher, nutzenKurve: nutzenKurve, kindOf: kindOf, kaltQ: kaltQ, zielKalt: zielKalt, nachtMin: nachtMin, HL: HL, hochlaufSumme: hochlaufSumme,
             hhmm: hhmm, isoWeek: isoWeek, de: de, sg: sg};

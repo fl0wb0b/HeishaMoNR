@@ -10,6 +10,10 @@ function tabellen() {
     const prog = P => esc(P.text) + ' – p = ' + String(P.p).replace('.', ',') + ', ' + P.h.join('/') + ' min';
     E.RULES.forEach(R => L.push('| ' + [R.name + ' (`' + R.id + '`)', R.ver, R.art, R.hebel ? Object.keys(R.hebel).map(k => '`' + R.hebel[k].name + '`').join(' oder ') : '`' + R.befehl.name + '`',
                                         R.richtung + (R.hebel ? ' / soll_hoch' : ''), prog(R.prognose) + (R.prognoseKurve ? '; Hebel +1 K: ' + prog(R.prognoseKurve) : ''), R.sperren.join(', ')].join(' | ') + ' |'));
+    if (E.STILLGELEGT && E.STILLGELEGT.length) {
+        L.push('', '*Stillgelegt (nicht mehr im Regelwerk; Summen, Basisraten und Punkteverlauf bleiben unter ihrem Schlüssel stehen, offene Fälle enden beim Laden ohne Buchung):*', '', '| Regel | Version | seit | Grund |', '|---|---|---|---|');
+        E.STILLGELEGT.forEach(x => L.push('| ' + esc(x.name) + ' (`' + x.id + '`) | ' + x.ver + ' | ' + x.seit + ' | ' + esc(x.grund) + ' |'));
+    }
     E.RULES.forEach(R => {
         L.push('', '#### ' + R.name + ' (`' + R.id + '` v' + R.ver + ')', '', '*Zweck:* ' + esc(R.zweck), '', '*Eingänge:* ' + R.eingaenge.join(', '), '');
         L.push('| Schwelle | Standard | Einheit | Herkunft |', '|---|---|---|---|');
@@ -42,7 +46,7 @@ function tabellen() {
     L.push('| Gegenregel-Sperren (seit v3) | 0 Punkte wie eigene Sperren: ' + VS.gegenregel.map(k => '`' + k + '`').join(', ') + ' (Arbitrierung der Verschiebung, seit 13.10. auch der Quiet-Stufe; nur mit den Standardwerten `shiftHaltMin`/`gegenMin` bzw. `quietHaltMin`/`quietGegenMin`); schlägt eine andere Verschiebungs-Regel für die Lage dieselbe Richtung vor, gilt sie als versorgt |');
     L.push('| Basisrate je Auslösung (seit 13.10.) | Regeln mit neuer Auslösung lernen ihre Basisrate unter eigenem Schlüssel neu: ' + E.RULES.filter(R => R.basis).map(R => '`' + R.basis + '`' + (R.basisKurve ? ' und `' + R.basisKurve + '` (Hebel +1 K)' : '')).join(', ') + '; die Vergleichslagen folgen der neuen Auslösung (Freigabe: am Deckel der Stufe mit Rückstand und Bedarf; Deckel: ≥ 22 Hz ab Laufminute 15 über 3 °C; +1 K: Takt belegt unter 22 Hz). Die alten Basisraten bleiben unter dem Regelnamen stehen |');
     L.push('| Zuordnung (seit v3) | Fälle gehören der Regel, die vorgeschlagen hat; die Wirkung einer übernommenen Verschiebung zählt für die Regel, deren Vorschlag übernommen wurde; für alle anderen offenen Fälle ist die Übernahme ein Eingriff (neutral, seit 13.10. auch bei Quiet mit Urheber im Text) |');
-    L.push('| Hinweis-Regeln (seit v4) | keine Punkte: Treffer, Fehlalarm, neutral und Schaden werden gezählt und angezeigt, Punkte, Brier-Skill und Freigabereife entfallen („–“), nicht im Diagramm |');
+    L.push('| Hinweis-Regeln (seit v4) | keine Punkte: Treffer, Fehlalarm, neutral und Schaden werden gezählt und angezeigt, Punkte, Brier-Skill und Freigabereife entfallen („–“), nicht im Diagramm' + (E.RULES.some(R => R.art === 'hinweis') ? '' : ' (seit dem Review-Paket 13.10. keine aktive Hinweis-Regel)') + ' |');
     L.push('| Brier-Skill (seit v4) | 1 − ΣBS/ΣBS_ref nur aus vollständig abgeschlossenen Fällen (ein offener Fall verändert ihn nicht), erst ab ' + S.skillMinFaelle + ' bewerteten Fällen, vorher „–“; seit v5 nur Fälle mit Brier-Beitrag (mindestens ein Horizont nicht neutral) |');
     L.push('| Basisrate ≥ Prognose (seit v5) | je Horizont mit b ≥ p: Treffer neutral (0 Punkte, kein Beitrag zum Skill, Kennzahl „davon … Treffer neutral“); Fehlalarm Abzug gegen b = ' + String(S.fehlRefB).replace('.', ',') + ': 100 × [' + String(S.fehlRefB).replace('.', ',') + '² − p²] (p 0,7 → −24, p 0,8 → −39, geteilt durch die Anzahl Horizonte); b < p: Brier wie oben |');
     L.push('| Raumwerte in der Bewertung | bis ' + S.raumAlterMax + ' min alt (Shelly melden nur bei Änderung) |');

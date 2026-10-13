@@ -197,8 +197,13 @@ Tabellen aus dem Regelwerk, erzeugt mit `node tools/engine_doc.js`. Die Sim prü
 | Quiet-Freigabe (Leistung freigeben) (`quiet_freigabe`) | 2 | befehl | `SetQuietMode` | mehr_leistung | Ohne Freigabe bleibt der Verdichter am Deckel und der Rücklauf-Rückstand ≥ 1 K – p = 0,8, 30/60/120 min | anlauf, daten, mqtt_sperre, abtauen, warmwasser, sanftanlauf, laufbeginn, heizgrenze_aus, regler, vorrang, gegenrichtung, abstand, tageslimit, abkuehlzeit, takt |
 | Effizienz-Deckel und Laufzeit (Quiet höher oder Heizkurve +1 K) (`quiet_strecken`) | 4 | befehl | `SetQuietMode` oder `SetZ1HeatRequestTemperature` | weniger_leistung / soll_hoch | Ohne Deckel läuft der Verdichter weiter mit 22 Hz oder mehr – p = 0,7, 30 min; Hebel +1 K: Ohne +1 K endet der Lauf binnen 60 min (kurzer Lauf) – p = 0,7, 60 min | anlauf, daten, mqtt_sperre, abtauen, warmwasser, sanftanlauf, laufbeginn, heizgrenze_aus, regler, vorrang, gegenrichtung, abstand, tageslimit, abkuehlzeit, takt, heizstab |
 | Raumeinfluss (Heizkurve ±1 K) (`raum_offset`) | 2 | befehl | `SetZ1HeatRequestTemperature` | verschiebung | Ohne Verschiebung bleibt der Führungsraum außerhalb seines Bandes – p = 0,7, 60/120/240 min | anlauf, daten, mqtt_sperre, abtauen, warmwasser, sanftanlauf, laufbeginn, heizgrenze_aus, regler, vorrang, gegenrichtung, abstand, tageslimit, abkuehlzeit, takt, heizstab |
-| Heizgrenze 12 → 10 °C (nur Hinweis) (`heizgrenze_hinweis`) | 1 | hinweis | `SetHeatingOffOutdoorTemp` | weniger_waerme | Alle Räume bleiben mindestens Minimum + Reserve (der Lauf war nicht nötig) – p = 0,6, 180 min | anlauf, daten |
-| Vorausschau (Heizkurve ±1 K) (`vorausschau`) | 1 | befehl | `SetZ1HeatRequestTemperature` | verschiebung | Ohne Verschiebung gerät der knappste Raum an den Bandrand (+1 K: höchstens Reserve über Minimum, −1 K: höchstens Reserve unter Maximum) – p = 0,6, 120/240/360 min | anlauf, daten, modell, mqtt_sperre, abtauen, warmwasser, sanftanlauf, laufbeginn, heizgrenze_aus, regler, vorrang, gegenrichtung, abstand, tageslimit, abkuehlzeit, takt, heizstab |
+| Vorausschau (Heizkurve −1 K) (`vorausschau`) | 2 | befehl | `SetZ1HeatRequestTemperature` | soll_runter | Ohne −1 K gerät der wärmste Raum an den oberen Bandrand (höchstens Reserve unter Maximum) – p = 0,6, 120/240/360 min | anlauf, daten, modell, mqtt_sperre, abtauen, warmwasser, sanftanlauf, laufbeginn, heizgrenze_aus, regler, vorrang, gegenrichtung, abstand, tageslimit, abkuehlzeit, takt, heizstab |
+
+*Stillgelegt (nicht mehr im Regelwerk; Summen, Basisraten und Punkteverlauf bleiben unter ihrem Schlüssel stehen, offene Fälle enden beim Laden ohne Buchung):*
+
+| Regel | Version | seit | Grund |
+|---|---|---|---|
+| Heizgrenze 12 → 10 °C (nur Hinweis) (`heizgrenze_hinweis`) | 1 | 2026-10-13 | Regel-Review 4.1: Der Hinweis verlagerte gebrauchte Wärme aus den Stunden mit dem besten COP (6,5–6,8 bei 11–14 °C) in kältere Stunden (5,0–5,6 bei 1–6 °C); bei allen Läufen mit Außentemperatur ≥ 11 °C lag mindestens ein Raum unter seiner Bandmitte; am 12.10. fiel Kinderzimmer unten nach dem Hinweis trotz der Läufe unter sein Minimum, die Bewertung zählte trotzdem einen Treffer (der Lauf, den er vermeiden wollte, fand statt). |
 
 #### Quiet-Freigabe (Leistung freigeben) (`quiet_freigabe` v2)
 
@@ -300,29 +305,9 @@ Tabellen aus dem Regelwerk, erzeugt mit `node tools/engine_doc.js`. Die Sim prü
 
 *Rückweg:* Automatisch zurück auf 0 K, sobald der Raumvorschlag 15 min am Stück 0 ist oder spätestens nach 6 h; „Zurücksetzen“ jederzeit.
 
-#### Heizgrenze 12 → 10 °C (nur Hinweis) (`heizgrenze_hinweis` v1)
+#### Vorausschau (Heizkurve −1 K) (`vorausschau` v2)
 
-*Zweck:* An milden Tagen läuft die Anlage bei 11–14 °C, obwohl alle Räume Reserve haben. Eine niedrigere Heizgrenze würde solche Läufe vermeiden. Nur Hinweis: Parameteränderung, nie per Klick.
-
-*Eingänge:* Außentemperatur (Fühler), Heizgrenze (Heating_Off_Outdoor_Temp), Räume (alle aktiv und gültig), Laufzeit
-
-| Schwelle | Standard | Einheit | Herkunft |
-|---|---|---|---|
-| `zielC` | 10 | °C | Opus-Bericht: 12 → 10 hätte 07./08.10. ~1,5–1,8 kWh el gespart; 07.–10.10.: 7 von 12 Läufen starteten bei ≥ 11 °C (~3,7 von 12,6 kWh el) |
-| `reserveK` | 0,5 | K | Wärme eines Laufs (~4 kWh) hebt die Räume um ~0,4–0,6 K (Speichermasse 7–10 kWh/K, Opus); ANNAHME |
-| `laufMin` | 15 | min | Startroutine |
-| `haltMin` | 15 | min | ANNAHME |
-| `proTag` | 2 | Hinweise | ANNAHME |
-| `gueltigMin` | 120 | min | ANNAHME |
-| `pauseMin` | 180 | min | ANNAHME |
-
-*Erwartung:* Mit Heizgrenze 10 °C startet die Anlage erst bei ≤ 10 °C (Hysterese wie bei 12: aus ab +3 K, ANNAHME); Läufe bei 11–14 °C entfallen.
-
-*Rückweg:* Saisonale Einstellung: der Betreiber setzt sie von Hand (SetHeatingOffOutdoorTemp) und zurück.
-
-#### Vorausschau (Heizkurve ±1 K) (`vorausschau` v1)
-
-*Zweck:* Verschiebt die Heizkurve um ±1 K, bevor sich der Wärmebedarf WETTERBEDINGT ändert (der gewöhnliche Tagesgang ist herausgerechnet, die Uhrzeit allein löst nichts aus): +1 K, wenn Wettervorhersage und Gebäudemodell in den nächsten Stunden deutlich mehr Bedarf erwarten und alle Räume noch im Band liegen (mit Luft nach oben); −1 K bei erwartetem Wärmegewinn (Milderung; Sonne und Wind nur mit freigegebenem Modell, coefActivate). Läuft erst mit offenem Gate des Gebäudemodells, nie gegen den aktuellen Raumzustand und nie gegen eine Verschiebung einer anderen Regel (Arbitrierung).
+*Zweck:* Senkt die Heizkurve um 1 K, bevor der Wärmebedarf WETTERBEDINGT sinkt (Milderung; Sonne und Wind nur mit freigegebenem Modell, coefActivate; der gewöhnliche Tagesgang ist herausgerechnet, die Uhrzeit allein löst nichts aus), solange alle Räume im Band liegen und der kälteste Raum Luft über seinem Minimum hat. Läuft erst mit offenem Gate des Gebäudemodells, nie gegen den aktuellen Raumzustand und nie gegen eine Verschiebung einer anderen Regel (Arbitrierung). Seit v2 (Review-Paket 13.10.2026) ohne den Zweig +1 K vor erwartetem Mehrbedarf: Die Anlage führt die Heizkurve selbst alle 5 min mit der Fühler-Außentemperatur nach (0,375 K Vorlauf je K, Verzug ≤ 5 min), die Heizkörper haben wenig Speichermasse, und bei Kälte lagen die Räume ohnehin 0,4–1,6 K über ihrer Bandmitte (unter 4 °C Kinderzimmer unten 90 % der Zeit über Maximum); +1 K hätte überheizte Räume weiter geheizt. Unter Quiet 0 löst +1 K bei Vorlauf unter Soll außerdem einen Hochlauf aus (11.10. 03:10: +48 % Strom), die Kosten waren unterschätzt. Nur −1 K zeigt in die Energie-Richtung.
 
 *Eingänge:* Wettervorhersage OWM (+1 … +6 h, an den Außenfühler angeglichen), gewöhnlicher Tagesgang (gemessene Außentemperatur bis 7 Vortage), Gebäudemodell des Wärmefahrplans (UA, Heizgrenze tbal, Gate, coefActivate), Sonne (PV-Prognose) und Wind nur mit coefActivate, Räume (alle gültig, eigenes Band), Verschiebung der Anlage (TOP27) und Eigentümer der Verschiebung, Soll-Vorlauf
 
@@ -330,9 +315,9 @@ Tabellen aus dem Regelwerk, erzeugt mit `node tools/engine_doc.js`. Die Sim prü
 |---|---|---|---|
 | `deltaK` | 2 | K | Bedarfsänderung aus dem Wetter als Außentemperatur-Äquivalent (Mittel des Fensters gegen jetzt, beide um den gewöhnlichen Tagesgang bereinigt); OWM weicht vom Fühler 1,5–1,9 K ab (08.–10.10.), darunter ist die Vorhersage kein Signal; ANNAHME |
 | `tagesgangTage` | 3 | Vortage | Der gewöhnliche Tagesgang wird aus den Vortagen gelernt (Abweichung jeder Uhrzeit vom 24-h-Mittel); mit nur einem Vortag steckt dessen Wetter darin (Replay: Kaltfront 08.10. abends erschien am 09.10. als −5 K); ANNAHME |
-| `vonH` | 2 | h | Fensterbeginn: +1 K wirkt über die Laufzeit erst nach 1–3 h im Raum (Speichermasse 7–10 kWh/K, Opus); ANNAHME |
+| `vonH` | 2 | h | Fensterbeginn: −1 K wirkt über Lauf und Pause erst nach 1–3 h im Raum (Speichermasse 7–10 kWh/K, Opus); ANNAHME |
 | `bisH` | 5 | h | Fensterende: OWM liefert 3-h-Punkte, das Vertrauen fällt mit dem Vorlauf (Fahrplan: 1 − h/48); ANNAHME |
-| `reserveK` | 0,3 | K | Luft im Band: bei +1 K wärmster Raum mindestens 0,3 K unter Maximum, bei −1 K kältester mindestens 0,3 K über Minimum (wie guardK des Fahrplans); ANNAHME |
+| `reserveK` | 0,3 | K | Luft im Band: der kälteste Raum liegt mindestens 0,3 K über seinem Minimum (wie guardK des früheren Fahrplans); ANNAHME |
 | `prognoseMaxMin` | 120 | min | Fahrplan: Vorhersage gilt bis 2 h nach dem Abruf |
 | `haltMin` | 30 | min | Vorhersage muss mindestens einen weiteren Abruf überstehen; ANNAHME |
 | `minVlC` | 29 | °C | Nutzervorgabe 08.10.: Soll-Vorlauf nie unter 29 °C (Heizkörper) |
@@ -341,9 +326,9 @@ Tabellen aus dem Regelwerk, erzeugt mit `node tools/engine_doc.js`. Die Sim prü
 | `pauseMin` | 180 | min | ANNAHME |
 | `maxDauerMin` | 360 | min | Rückweg spätestens nach 6 h (wie Raumeinfluss, ANNAHME) |
 
-*Erwartung:* +1 K: Soll-Vorlauf +1 K binnen 6 min (5-min-Raster), mehr Wärme vor dem erwarteten Bedarf (Strom +2,5–3 %, 8,5 W/K); die Räume bleiben im Band, obwohl der Bedarf steigt. −1 K: umgekehrt bei erwartetem Wärmegewinn. Raumwirkung NICHT gemessen.
+*Erwartung:* Soll-Vorlauf −1 K binnen 6 min (5-min-Raster), weniger Wärme vor dem erwarteten Wärmegewinn (Strom −2,5–3 %, 8,5 W/K); die Räume bleiben im Band, obwohl der Bedarf sinkt. Raumwirkung NICHT gemessen.
 
-*Rückweg:* Automatisch zurück auf 0 K, sobald die Vorhersage die Änderung 15 min am Stück nicht mehr zeigt (halbe Schwelle), sofort, wenn ein Raum das Band in Gegenrichtung verlässt, spätestens nach 6 h; nicht, solange der Raumeinfluss dieselbe Verschiebung verlangt.
+*Rückweg:* Automatisch zurück auf 0 K, sobald die Vorhersage die Milderung 15 min am Stück nicht mehr zeigt (halbe Schwelle), sofort, wenn ein Raum unter sein Minimum fällt, spätestens nach 6 h; nicht, solange der Raumeinfluss dieselbe Verschiebung verlangt.
 
 ### Takt-Messung (Schwellen, `cfg.takt`)
 
@@ -408,11 +393,11 @@ Tabellen aus dem Regelwerk, erzeugt mit `node tools/engine_doc.js`. Die Sim prü
 | Schaden | sperre_verletzt -50, heizstab -50, stopp10 -30, ueberschwingen -30, zu_warm -20, zu_kalt -20 |
 | Verpasst | -20 (gezählt werden nur Minuten, in denen die Regel nicht durch eine eigene Sperre zurückgehalten wurde) |
 | Verpasst während eigener Sperre (seit v2) | 0 Punkte, getrennt gezählt (`verpasst_sperre`); eigene Sperren: Mindestabstand (`gapMin`), Tageslimit (`proTag`), Wartezeit (`pauseMin`), Haltezeit (`haltMin`), Stabilitätszeit (`stabilMin`); nur soweit sie auch mit dem Standardwert bestanden hätten |
-| Schaden hebt die Entschuldigung auf (seit v2) | quiet_freigabe: Raum > 1 K unter Minimum; quiet_strecken: Verdichter stoppt, Vorlauf ≥ Soll +3,25 K; raum_offset: Raum > 1 K unter Minimum; vorausschau: Raum > 1 K unter Minimum → verpasst -20 |
+| Schaden hebt die Entschuldigung auf (seit v2) | quiet_freigabe: Raum > 1 K unter Minimum; quiet_strecken: Verdichter stoppt, Vorlauf ≥ Soll +3,25 K; raum_offset: Raum > 1 K unter Minimum → verpasst -20 |
 | Gegenregel-Sperren (seit v3) | 0 Punkte wie eigene Sperren: `vorrang`, `gegenrichtung` (Arbitrierung der Verschiebung, seit 13.10. auch der Quiet-Stufe; nur mit den Standardwerten `shiftHaltMin`/`gegenMin` bzw. `quietHaltMin`/`quietGegenMin`); schlägt eine andere Verschiebungs-Regel für die Lage dieselbe Richtung vor, gilt sie als versorgt |
-| Basisrate je Auslösung (seit 13.10.) | Regeln mit neuer Auslösung lernen ihre Basisrate unter eigenem Schlüssel neu: `quiet_freigabe|v2`, `quiet_strecken|v4` und `quiet_strecken|v4|kurve` (Hebel +1 K); die Vergleichslagen folgen der neuen Auslösung (Freigabe: am Deckel der Stufe mit Rückstand und Bedarf; Deckel: ≥ 22 Hz ab Laufminute 15 über 3 °C; +1 K: Takt belegt unter 22 Hz). Die alten Basisraten bleiben unter dem Regelnamen stehen |
+| Basisrate je Auslösung (seit 13.10.) | Regeln mit neuer Auslösung lernen ihre Basisrate unter eigenem Schlüssel neu: `quiet_freigabe|v2`, `quiet_strecken|v4` und `quiet_strecken|v4|kurve` (Hebel +1 K), `vorausschau|v2`; die Vergleichslagen folgen der neuen Auslösung (Freigabe: am Deckel der Stufe mit Rückstand und Bedarf; Deckel: ≥ 22 Hz ab Laufminute 15 über 3 °C; +1 K: Takt belegt unter 22 Hz). Die alten Basisraten bleiben unter dem Regelnamen stehen |
 | Zuordnung (seit v3) | Fälle gehören der Regel, die vorgeschlagen hat; die Wirkung einer übernommenen Verschiebung zählt für die Regel, deren Vorschlag übernommen wurde; für alle anderen offenen Fälle ist die Übernahme ein Eingriff (neutral, seit 13.10. auch bei Quiet mit Urheber im Text) |
-| Hinweis-Regeln (seit v4) | keine Punkte: Treffer, Fehlalarm, neutral und Schaden werden gezählt und angezeigt, Punkte, Brier-Skill und Freigabereife entfallen („–“), nicht im Diagramm |
+| Hinweis-Regeln (seit v4) | keine Punkte: Treffer, Fehlalarm, neutral und Schaden werden gezählt und angezeigt, Punkte, Brier-Skill und Freigabereife entfallen („–“), nicht im Diagramm (seit dem Review-Paket 13.10. keine aktive Hinweis-Regel) |
 | Brier-Skill (seit v4) | 1 − ΣBS/ΣBS_ref nur aus vollständig abgeschlossenen Fällen (ein offener Fall verändert ihn nicht), erst ab 3 bewerteten Fällen, vorher „–“; seit v5 nur Fälle mit Brier-Beitrag (mindestens ein Horizont nicht neutral) |
 | Basisrate ≥ Prognose (seit v5) | je Horizont mit b ≥ p: Treffer neutral (0 Punkte, kein Beitrag zum Skill, Kennzahl „davon … Treffer neutral“); Fehlalarm Abzug gegen b = 0,5: 100 × [0,5² − p²] (p 0,7 → −24, p 0,8 → −39, geteilt durch die Anzahl Horizonte); b < p: Brier wie oben |
 | Raumwerte in der Bewertung | bis 360 min alt (Shelly melden nur bei Änderung) |

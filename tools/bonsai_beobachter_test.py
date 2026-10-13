@@ -94,7 +94,8 @@ class Grundlagen(unittest.TestCase):
         self.assertIn("Kinderzimmer oben oft ungültig", titel)
         self.assertIn("Kinderzimmer oben lange unter Minimum", titel)
         self.assertIn("Schaden-Bewertung raum_offset", titel)
-        self.assertIn("Messaufgabe Comfort/Efficiency offen", titel)
+        self.assertFalse(any(t.startswith("Messaufgabe") for t in titel))          # Review-Paket 13.10.2026: Messaufgabe gestrichen
+        self.assertFalse(any(k.startswith("messaufgabe.") for k in F))
 
     def test_pruefe_aussage(self):
         f = {"energie.strom_kwh": 6.63, "raum.ki_oben.band": "22.0-23.5", "laeufe.anzahl": 5}

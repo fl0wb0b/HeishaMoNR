@@ -7,7 +7,7 @@
 var ENGVIEW = (function (E) {
     var MIN = 60000;
     var STAGE = {wartet: 1, gesperrt: 2, abgelaufen: 3, vorschlag: 3, hinweis: 3};
-    var COL = {quiet_freigabe: '#1976d2', quiet_strecken: '#00897b', raum_offset: '#ef6c00', heizgrenze_hinweis: '#8e24aa', vorausschau: '#6d4c41'};
+    var COL = {quiet_freigabe: '#1976d2', quiet_strecken: '#00897b', raum_offset: '#ef6c00', heizgrenze_hinweis: '#8e24aa', vorausschau: '#6d4c41'};   // heizgrenze_hinweis: stillgelegt (alte Episoden behalten ihre Farbe)
     var CHIP = {vorschlag: 'Vorschlag', hinweis: 'Hinweis', wartet: 'wartet', gesperrt: 'gesperrt', bereit: 'prüft', inaktiv: 'ruht', abgelaufen: 'abgelaufen'};
     var CLS = {vorschlag: 'act', hinweis: 'act', wartet: 'warn', gesperrt: 'warn', bereit: 'mute', inaktiv: 'mute', abgelaufen: 'mute'};
     var LK = {}; E.LOCKS.forEach(function (l) { LK[l.id] = l.kurz; });
@@ -42,6 +42,9 @@ var ENGVIEW = (function (E) {
                 op.t1 = now; op.end = endeText(r);
                 V.ep.push(op); delete V.open[r.id];
             }
+        });
+        Object.keys(V.open).forEach(function (id) {                                   // Regel nicht mehr im Regelwerk (stillgelegt, Review-Paket 13.10.2026): offene Episode beenden
+            if (!res.some(function (r) { return r.id === id; })) { var op = V.open[id]; op.t1 = now; op.end = 'Regel stillgelegt'; V.ep.push(op); delete V.open[id]; }
         });
         if (V.ep.length > 100) { V.ep = V.ep.slice(-100); }
         return V;
@@ -150,7 +153,7 @@ var ENGVIEW = (function (E) {
     }
     function messBuild(S, now, cfg, plan) {
         var tc = cfg.takt || E.taktCfg(null), TK = S.takt || {}, nl = TK.nl || null, laedt = !!(nl && nl.laeuft);
-        var tk = E.taktKennzahlen(TK, now, tc), hgB = E.heizgrenzeBeob(TK, now), ms = E.messStatus(S), takt;
+        var tk = E.taktKennzahlen(TK, now, tc), hgB = E.heizgrenzeBeob(TK, now), ub = E.uebSumme(S || {}, now), takt;
         if (laedt) {
             var nlT = 'liest quiet-*.csv: ' + (nl.zeilen || 0) + ' Zeilen' + (nl.von ? ' ab ' + dm(nl.von) : '');
             takt = [{k: 'Takt', v: '–', chip: 'lädt', c: 'mute', title: nlT}, {k: 'Läufe 24 h', v: '–', title: nlT}, {k: 'Pausen 24 h', v: '–', title: nlT}];
@@ -162,11 +165,14 @@ var ENGVIEW = (function (E) {
         }
         takt.push({k: 'Heizgrenze beobachtet', v: hgB ? E.de(hgB.at, 1) + ' °C' : '–', s: hgB ? 'max ' + E.de(hgB.max, 1) + ' °C · ' + hgB.n + ' Läufe' : 'noch kein Lauf ≥ ' + E.HG.laufMin + ' min',
                    title: 'Außentemperatur am Ende von Läufen ≥ ' + E.HG.laufMin + ' min, Mittel der letzten ' + E.HG.tage + ' Tage'});
-        takt.push(ms.offen ? {k: 'Messaufgabe Comfort/Efficiency', v: 'offen', vc: 'warn', s: 'C ' + Math.min(ms.comfortMin, E.MESS.minMin) + '/' + E.MESS.minMin + ' · E ' + Math.min(ms.efficiencyMin, E.MESS.minMin) + '/' + E.MESS.minMin + ' min', title: ms.text}
-                           : {k: 'Messaufgabe Comfort/Efficiency', v: 'erledigt', vc: 'ok', s: 'C bis ' + E.de(ms.befund && ms.befund.comfort && ms.befund.comfort.hzMax, 0) + ' Hz · E bis ' + E.de(ms.befund && ms.befund.efficiency && ms.befund.efficiency.hzMax, 0) + ' Hz', title: (ms.befund && ms.befund.text) || ms.text});
+        // Ueberheizpotenzial bei milder Witterung (ersetzt den stillgelegten Heizgrenze-Hinweis, Review-Paket 13.10.2026)
+        takt.push({k: 'Überheizt ab ' + E.UEB.atC + ' °C', v: E.de(ub.el, 2) + ' kWh', vc: ub.el > 0.05 ? 'warn' : '', s: ub.minAlle ? E.de(ub.min, 0) + ' von ' + E.de(ub.minAlle, 0) + ' min' : 'kein Lauf ab ' + E.UEB.atC + ' °C',
+                   title: 'Laufenergie (Strom) bei Außentemperatur ≥ ' + E.UEB.atC + ' °C, während ALLE Räume über ihrer Bandmitte lagen, letzte ' + E.UEB.tage + ' Tage: ' + E.de(ub.el, 2) + ' kWh Strom, ' + E.de(ub.th, 1) + ' kWh Wärme, ' + ub.min + ' min; ' +
+                          'Laufenergie ab ' + E.UEB.atC + ' °C insgesamt ' + E.de(ub.elAlle, 2) + ' kWh in ' + ub.minAlle + ' min' + (ub.minOhne ? ' (davon ' + ub.minOhne + ' min ohne Raumwerte)' : '') + '. Nur diese Energie wäre mit einer niedrigeren Heizgrenze eingespart, ohne dass ein Raum unter seine Bandmitte fällt (echtes Überheizpotenzial; der Heizgrenze-Hinweis ist stillgelegt)'});
         var hl = E.hochlaufSumme(S || {}), hz0 = ((cfg.rules || E.defaults().rules).quiet_strecken || {}).hzHoch;        // Hochlauf nach dem Start: nur Kennzahl (Nutzer vorlaeufig 13.10.)
         takt.push({k: 'Hochlauf nach Start', v: (hl.Comfort[0] + hl.Efficiency[0]) + ' min', s: 'C ' + hl.Comfort[0] + ' min · E ' + hl.Efficiency[0] + ' min · ' + (hl.Comfort[1] + hl.Efficiency[1]) + ' Starts',
-                   title: 'Minuten mit mindestens ' + hz0 + ' Hz in den ersten ' + E.HL.min + ' Laufminuten, ' + E.HL.tage + ' Tage: Comfort ' + hl.Comfort[0] + ' min bei ' + hl.Comfort[1] + ' Starts, Efficiency ' + hl.Efficiency[0] + ' min bei ' + hl.Efficiency[1] + ' Starts. Der Hochlauf nach dem Start wird nicht gedeckelt, nur gemessen (Nutzer vorläufig, 13.10.)'});
+                   title: 'Minuten mit mindestens ' + hz0 + ' Hz in den ersten ' + E.HL.min + ' Laufminuten, ' + E.HL.tage + ' Tage: Comfort ' + hl.Comfort[0] + ' min bei ' + hl.Comfort[1] + ' Starts, Efficiency ' + hl.Efficiency[0] + ' min bei ' + hl.Efficiency[1] + ' Starts. Der Hochlauf nach dem Start wird nicht gedeckelt, nur gemessen (Nutzer vorläufig, 13.10.). ' +
+                          'Befund 07.–13.10. (ersetzt die gestrichene Messaufgabe Comfort/Efficiency): Comfort fährt nach dem Start sofort auf 30–35 Hz, Efficiency bleibt bei 16–17 Hz und geht erst ab Laufminute 39–46 zeitweise auf 21–26 Hz; ein Wechsel im Lauf hebt die Pumpe in ≤ 1 min von 1750 auf 2850–2900 U/min'});
         var ml = laedt ? [] : E.mindestLeistung(TK, tc).map(function (b) {
             return {band: E.de(b[0], 0) + '…' + E.de(b[0] + E.TAKT.binK, 0) + ' °C', v: E.de(b[3] / 1000, 1) + ' kW',
                     title: E.de(b[0], 0) + '…' + E.de(b[0] + E.TAKT.binK, 0) + ' °C: 10-%-Quantil ' + E.de(b[1] / 1000, 2) + ' kW, laufendes Minimum von warm nach kalt ' + E.de(b[3] / 1000, 2) + ' kW, ' + b[2] + ' stabile Minuten'};
