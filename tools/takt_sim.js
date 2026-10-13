@@ -74,6 +74,11 @@ const nul = n => Array.from({length: n}, () => ({hz: null}));
   let K2 = {bias: 0, tage: 0, resets: 0, lastStep: 0}, K3 = {bias: 0, tage: 0, resets: 0, lastStep: 0};
   for (let i = 0; i < 30; i++) { K2 = E.kbTag(K2, 1.0, T0 + i * D); } for (let i = 0; i < 100; i++) { K3 = E.kbTag(K3, 1.0, T0 + i * D); }
   check('Heizkurven-Bias: hoechstens 0,5 K je Woche (30 Tage Luft -> 10 Schritte = −2,0 K, Grenze 2,14 K) und nie unter −4 K (100 Tage -> −4 K)', K2.bias === -2 && K3.bias === -4, K2.bias + ' / ' + K3.bias); }
+// H) Beobachtete Heizgrenze (Idee heat-pump-hero): Aussentemperatur am Ende langer Laeufe, 7 Tage
+{ const offA = (n, at) => Array.from({length: n}, () => ({hz: 0, at}));
+  const T = feed([].concat(offA(3, 11), on(40, {at: 11}), offA(5, 11), on(20, {at: 14}), offA(5, 14), on(60, {at: 13}), offA(5, 13)));
+  const hgB = E.heizgrenzeBeob(T, T0 + 150 * MIN);
+  check('Heizgrenze beobachtet: nur Laeufe >= 30 min zaehlen (40 min bei 11 °C, 60 min bei 13 °C; der 20-min-Lauf bei 14 °C nicht) -> Ø 12 °C, hoechstens 13 °C, 2 Laeufe', hgB && hgB.at === 12 && hgB.max === 13 && hgB.n === 2, JSON.stringify(hgB)); }
 // Replay mit echten Daten
 const dir = process.argv[2];
 if (dir) {
@@ -89,6 +94,7 @@ if (dir) {
     check('Replay laeuft ohne Fehler und findet Laeufe', all.length > 0, '');
     { let S = null; const cfgE = E.defaults(); inputs.forEach(x => { S = E.step(S, x, cfgE).S; });
       console.log('Wirkzeit (Replay): ' + JSON.stringify(S.lag && S.lag.res) + ' Puffer ' + (S.lag ? S.lag.o.length : 0) + ' · Heizkurven-Bias: ' + JSON.stringify(S.kb));
+      console.log('Heizgrenze beobachtet (Replay, letzte 7 Tage): ' + JSON.stringify(E.heizgrenzeBeob(S.takt, S.last)));
       check('Replay: Wirkzeit und Heizkurven-Bias laufen ohne Fehler ueber die echten Daten', !!S.kb && Array.isArray(S.lag.o), ''); }
     // Nachladen wie in der Huelle (stueckweise, nur ganze Zeilen; Vormonat fehlt) muss dasselbe ergeben wie das Replay ueber buildInputs
     const nachladenSim = (files, chunk) => {

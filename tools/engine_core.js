@@ -737,7 +737,11 @@ var ENGINE = (function () {
         {key: 'startsTagWarn', std: 12, einheit: 'Starts', herkunft: 'Anzeige „Takt“ ab mehr als 12 Starts in 24 h (Richtwert HeatPump Hero, docs/optimization.md)'},
         {key: 'kurzAnteilWarn', std: 0.25, einheit: 'Anteil', herkunft: 'Anzeige „Takt“ ab mehr als 25 % kurzen Läufen bei mindestens 4 Läufen (Richtwert HeatPump Hero; dort „kurz“ = unter 10 min, bei uns unter 60 min)'}
     ];
-    var TAKT = {binK: 2, quantil: 0.1, binMax: 300, maxAgeMin: 5, fensterH: 24};       // feste Groessen der Auswertung (Band 2 K wie stooklijn, 10-%-Quantil, Datenalter wie die Sperre "daten")
+    var TAKT = {binK: 2, quantil: 0.1, binMax: 300, maxAgeMin: 5, fensterH: 24};
+    // Beobachtete Heizgrenze (Idee st03psn/heat-pump-hero advisor.py _record_heating_limit, MIT): Aussentemperatur beim Ende jedes Laufs >= 30 min, Mittel der letzten 7 Tage.
+    // Nur Kennzahl (Gegenprobe zur Regel "Heizgrenze"); Auswahlverzerrung: nur lange Laeufe zaehlen.
+    var HG = {laufMin: 30, tage: 7};
+    function heizgrenzeBeob(T, now) { var L = ((T && T.hg) || []).filter(function (h) { return now - h[0] <= HG.tage * 24 * 60 * MIN; }); return L.length ? {at: r2(L.reduce(function (a, h) { return a + h[1]; }, 0) / L.length), n: L.length, max: Math.max.apply(null, L.map(function (h) { return h[1]; }))} : null; }       // feste Groessen der Auswertung (Band 2 K wie stooklijn, 10-%-Quantil, Datenalter wie die Sperre "daten")
     var BAENDER = [[-99, -1, '< -1'], [-1, 3, '-1…3'], [3, 7, '3…7'], [7, 11, '7…11'], [11, 15, '11…15'], [15, 99, '≥ 15']];
     function taktCfg(c) { var o = {}; TAKT_SCHWELLEN.forEach(function (s) { o[s.key] = (c && have(num(c[s.key]))) ? num(c[s.key]) : s.std; }); return o; }
     function taktNew() { return {on: null, nOn: 0, nOff: 0, tOn1: 0, tOff1: 0, t0: 0, tStop: 0, starts: [], runs: [], pausen: [], bins: {}, copT: {}}; }
@@ -762,7 +766,11 @@ var ENGINE = (function () {
             }
             T.on = true;
         } else if (T.on !== false && T.nOff >= c.probenAus) {
-            if (T.on === true) { T.runs.push([T.t0, Math.round((T.tOff1 - T.t0) / MIN), have(num(x.at)) ? r2(num(x.at)) : null]); }
+            if (T.on === true) {
+                var dur = Math.round((T.tOff1 - T.t0) / MIN), atS = plausV('at', x.at);
+                T.runs.push([T.t0, dur, have(atS) ? r2(atS) : null]);
+                if (dur >= HG.laufMin && have(atS) && !num(x.dhw)) { T.hg = (T.hg || []).concat([[T.tOff1, r2(atS)]]).filter(function (h) { return T.tOff1 - h[0] <= HG.tage * 24 * 60 * MIN; }).slice(-200); }
+            }
             T.tStop = T.on === true ? T.tOff1 : -1; T.on = false;
         }
         var lim = now - 48 * 60 * MIN;
@@ -1622,7 +1630,7 @@ var ENGINE = (function () {
     }
 
     return {VER: VER, SCORE_VER: SCORE_VER, RULES: RULES, RULE: RULE, LOCKS: LOCKS, LOCK_CFG: LOCK_CFG, SCORE: SCORE, WHITELIST: WHITELIST, APPLY: APPLY,
-            brier: brier, hPunkte: hPunkte, vorschau: vorschau, bedarfK: bedarfK, VS_LIM: VS_LIM, PLAUS: PLAUS, tagesgang: tagesgang, defaults: defaults, mergeCfg: mergeCfg, newState: newState, fixState: fixState, step: step, report: report, messStatus: messStatus, MESS: MESS, TAKT: TAKT, TAKT_SCHWELLEN: TAKT_SCHWELLEN, taktCfg: taktCfg, taktNew: taktNew, taktStep: taktStep, taktKennzahlen: taktKennzahlen, mindestLeistung: mindestLeistung, copSumme: copSumme, copTabelle: copTabelle, bandOf: bandOf, modusOf: modusOf, nlNeu: nlNeu, nlZeilen: nlZeilen, nlEnde: nlEnde, LAG: LAG, lagMessen: lagMessen, lagStep: lagStep, KB: KB, kbTag: kbTag, kbStep: kbStep, snapshot: snapshot, unsnap: unsnap,
+            brier: brier, hPunkte: hPunkte, vorschau: vorschau, bedarfK: bedarfK, VS_LIM: VS_LIM, PLAUS: PLAUS, tagesgang: tagesgang, defaults: defaults, mergeCfg: mergeCfg, newState: newState, fixState: fixState, step: step, report: report, messStatus: messStatus, MESS: MESS, TAKT: TAKT, TAKT_SCHWELLEN: TAKT_SCHWELLEN, taktCfg: taktCfg, taktNew: taktNew, taktStep: taktStep, taktKennzahlen: taktKennzahlen, mindestLeistung: mindestLeistung, copSumme: copSumme, copTabelle: copTabelle, bandOf: bandOf, modusOf: modusOf, nlNeu: nlNeu, nlZeilen: nlZeilen, nlEnde: nlEnde, HG: HG, heizgrenzeBeob: heizgrenzeBeob, LAG: LAG, lagMessen: lagMessen, lagStep: lagStep, KB: KB, kbTag: kbTag, kbStep: kbStep, snapshot: snapshot, unsnap: unsnap,
             checksum: checksum, newApply: newApply, applyRequest: applyRequest, applyTick: applyTick, iso: iso, ymd: ymd, strZiel: strZiel, hhmm: hhmm, isoWeek: isoWeek, de: de, sg: sg};
 })();
 if (typeof module !== 'undefined' && module.exports) { module.exports = ENGINE; }

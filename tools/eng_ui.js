@@ -93,6 +93,7 @@
                            '<div class="oe-line"><span>COP je Modus/Quiet</span><span>' + esc(P.takt.cop) + '</span></div>'; }
         if (P.wirk) { h += '<div class="oe-line"><span>Wirkzeit Raum</span><span>' + esc(P.wirk) + '</span></div>'; }
         if (P.kb) { h += '<div class="oe-line"><span>Heizkurven-Bias</span><span>' + esc(P.kb) + '</span></div>'; }
+        if (P.hg) { h += '<div class="oe-line"><span>Heizgrenze beobachtet</span><span>' + esc(P.hg) + '</span></div>'; }
         return h;
     }
     // ---------------------------------------------------------------- Karte 4: Entscheidungen (Episoden)
