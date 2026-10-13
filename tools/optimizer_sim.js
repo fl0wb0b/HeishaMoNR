@@ -1865,6 +1865,12 @@ check('Dateien: Ist, Vergleich, Schnappschuesse und Zustand unter /data/optimize
   prep({cfg: {coefActivate: 1}}); { const cfOld = Object.assign({}, fstore.plan.learn.coef, {aktiv: true, sig: '12|alt', ver: undefined}); fstore.plan.learn.days = fstore.plan.learn.days.map(d => { const e = d.slice(); e[4] = 50; return e; }); fstore.plan.learn.coef = cfOld; fstore.plan.bf = {days: []}; step(1);
     const cfN = fstore.plan.learn.coef;
     check('Modellversion: gespeicherte Koeffizienten ohne Version (roher Wind) werden neu gerechnet (Signatur "v2|...", ver 2); ihr "aktiv" wird nicht uebernommen (gleichfoermige PV-Tage: Gate zu, keine Hysterese) ', cfN.ver === 2 && /^v2\|/.test(cfN.sig) && cfN.aktiv === false && cfN.gate.ok === false && fstore.plan.bf.v === 2, JSON.stringify({ver: cfN.ver, sig: cfN.sig.slice(0, 12), aktiv: cfN.aktiv, why: cfN.gate.why, bf: fstore.plan.bf.v})); }
+  // Validierung (D): Ueberanpassungs-Quote Test/Training (Idee pump-ahead cross_validation.py, 1,5)
+  { const rows10 = Array.from({length: 10}, (_, i) => ({y: 30, x1: 120, x2: 0, x3: i % 2 ? 20 : 80})), fx = {ua: 0.25, bw: 0, bs: 0.05};
+    const gU = PUA.gateCheck(12, rows10, 10, 8, fx, {minDays: 10, maeIn: 5}), gO = PUA.gateCheck(12, rows10, 10, 8, fx, {minDays: 10, maeIn: 6});
+    prep({cfg: {coefActivate: 1}}); const cfV = fstore.plan.learn.coef;
+    check('Ueberanpassung: Test 8 / Training 5 kWh (Quote 1,6) -> Gate-Grund "Überanpassung (Test/Training 1,6)"; Quote 1,33 -> kein Grund; die 12 synthetischen Sonnentage bestehen (Quote ' + (cfV.maeSun / cfV.maeIn).toFixed(2) + ')',
+          gU.why.includes('Überanpassung (Test/Training 1,6)') && !gO.why.some(w => /Überanpassung/.test(w)) && cfV.gate.ok === true && cfV.maeSun / cfV.maeIn <= 1.5, JSON.stringify([gU.why, gO.why, cfV.maeIn, cfV.maeSun])); }
   // Lern-Hygiene (B, 13.10.2026): Plausibilitaet, Tages-Gate, Drift; Absicherung (D): Rueckfall mit Sperre, Schnappschuesse
   { const F0 = {dhwM: 0, defM: 0, gapM: 0, engM: 0, unpM: 0};
     check('Lern-Gate (rein): Grenzen 120/90/60/60/60 min (ANNAHME) -> Bitmaske 1 Warmwasser, 2 Abtauen, 4 Luecke, 8 Eingriff, 16 unplausibel; genau an der Grenze lernt der Tag mit',
@@ -1893,6 +1899,10 @@ check('Dateien: Ist, Vergleich, Schnappschuesse und Zustand unter /data/optimize
     check('Anzeige "Lern-Gate": nach 62 min MQTT-Sperre heute "gesperrt (Eingriff)"', /^heute gesperrt \(Eingriff\)/.test(rG2), rG2); }
   { pworld({wide: true, atBase: 5, running: true, hp: 2500, atNow: 5}); delete gstore.OPT_hp; O.hp = 0; step(70);
     check('Lern-Gate live: Anlagendaten fehlen (kein OPT_hp) -> Datenluecke wird gezaehlt (70 min) und heute gesperrt', fstore.plan.day.gapM >= 69 && /heute gesperrt \(Datenlücke\)/.test((planRows().find(r => r[0] === 'Lern-Gate') || [])[1]), String(fstore.plan.day.gapM)); }
+  { pworld({wide: true}); step(2); fstore.plan.learn.ab = [{d0: 1, L6: {n: 96, q: 29.97, b: 19.72, k: 19.72}}, {d0: 2, L6: {n: 96, q: 35.98, b: 31.05, k: 31.05}, L24: {n: 30, q: 10.8, b: 6.2, k: 6.2}}]; delete fstore.plan.learn.lg; step(1);
+    const rD = (planRows().find(r => r[0] === 'Bedarfsmodell Drift') || [])[1], lg = fstore.plan.learn.lg;
+    const lg3 = JSON.parse(JSON.stringify(lg)); PUA.abSchritt(lg3, {L6: {n: 96, q: 33, b: 30, k: 30}}, false);
+    check('Drift-Zaehler werden einmalig aus den gesicherten A/B-Tagen nachgerechnet (Echtdaten 11./12.10., 6-h-Vorlauf: Ist 30,0/36,0 kWh gegen Plan-Modell 19,7/31,1 kWh -> CUSUM 3,8 von 4, noch "ruhig"); ein dritter Tag mit +10 % meldet "Mehrbedarf"', lg.n === 2 && lg.up.an === false && Math.abs(lg.up.s - 3.79) < 0.01 && /^ruhig \(CUSUM \+ 3,8 \/ − 0,0, 2 Tage\)$/.test(rD) && lg3.up.an === true, rD); }
   // Absicherung (D): Rueckfall im laufenden Fluss (Tageswechsel mit A/B-Tag) und Sperre bei der naechsten Neuberechnung
   { pworld({wide: true, pvPeak: 6000, windF: 4, start: 18 * HH, cfg: {coefActivate: 1}}); step(2); fstore.plan.bf = {days: [], v: 2}; fstore.plan.learn.days = sunDays(12); delete fstore.plan.learn.coef; fstore.plan.planSlot = 0; step(1);
     const akt0 = fstore.plan.learn.coef.aktiv, hist0 = (fstore.plan.learn.coefHist || []).length;

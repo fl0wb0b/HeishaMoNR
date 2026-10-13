@@ -1586,8 +1586,13 @@ function gateCheck(n, rows, maeBase, maeCand, fit, o) {                         
     if (!isFinite(fit.bs) || !isFinite(fit.bw) || !isFinite(fit.ua)) { why.push('Koeffizient nicht endlich'); }
     else if (fit.bs < 0 || fit.bw < 0) { why.push('Koeffizient negativ'); }
     else if (fit.bs > COEF_LIM.bs || fit.bw > COEF_LIM.bw) { why.push('Koeffizient unplausibel'); }
+    if (isN(o.maeIn) && o.maeIn > 0.1 && isN(maeCand) && maeCand / o.maeIn > UEBERANPASSUNG) { why.push('Überanpassung (Test/Training ' + (Math.round(maeCand / o.maeIn * 10) / 10).toFixed(1).replace('.', ',') + ')'); }
     return {ok: why.length === 0, why: why};
 }
+// Validierung (D): Fehler ausserhalb der Stichprobe (Leave-one-day-out) gegen den Fehler auf den Lerntagen; Quote > 1,5 = Ueberanpassung
+// (Idee hubertciebiada/pump-ahead cross_validation.py, AGPL: nur die Idee, kein Code). 1,5 ist dort der Standard (ANNAHME fuer uns).
+var UEBERANPASSUNG = 1.5;
+function inMae(rows, f) { if (!rows.length) { return null; } var s = 0; rows.forEach(function (r) { s += Math.abs(r.y - predict(f, r)); }); return s / rows.length; }
 // Harte Grenzen fuer Sonne/Wind (Sicherheit A, 13.10.): Vorzeichen physikalisch fest (Sonne senkt, Wind erhoeht den Bedarf), Betrag begrenzt.
 // Idee aus andox/heat-pump-pilot (bounded_fit) und smefa/ClimateOptimizer (fester Sonnenterm, weil ein frei gelernter negativ wurde); kein Code uebernommen.
 // Werte: Nutzerentscheidung 13.10.2026 (nicht gemessen):
@@ -1650,7 +1655,8 @@ function fitModel(daysIn, P) {                                                  
     out.bestC = bestC;
     var cand = out.maeWind !== null ? out.maeWind : out.maeSun;
     var gp = out.maeWind !== null ? {ua: out.uaWind, bw: out.bw, bs: out.bsW || 0} : {ua: out.uaSun, bw: 0, bs: out.bs};
-    out.gate = gateCheck(out.n, pS.rows, out.maeBase, cand, gp, {minDays: P.minDays});
+    out.maeIn = out.maeWind !== null ? inMae(pW.rows, fW) : inMae(pS.rows, fS);                  // Fehler auf den Lerntagen (fuer die Ueberanpassungs-Quote)
+    out.gate = gateCheck(out.n, pS.rows, out.maeBase, cand, gp, {minDays: P.minDays, maeIn: out.maeIn});
     return out;
 }
 function biasFeat(hour, wind, pvW, cl) {                                                             // Merkmale der Fuehlerkorrektur OWM -> Fuehler: [1, Wind, Sonne, Nacht, Nacht*klar]
@@ -1710,6 +1716,7 @@ if (!pl) {
     if (pl.snaps.length) { pl.snapHour = pl.snaps[pl.snaps.length - 1].t0; }                // diese Stunde hat schon einen Schnappschuss
 }
 var out = [null, null, null, null, null];                                                       // Anzeige, Ist-Protokoll, Vergleich, Schnappschuss, (frei)
+if (!pl.learn.lg) { pl.learn.lg = {}; (pl.learn.ab || []).forEach(function (e) { abSchritt(pl.learn.lg, e, false); }); }   // Drift-Zaehler einmalig aus den gesicherten A/B-Tagen nachrechnen (ohne Rueckfall)
 
 // ---------- Eingaenge: Waermepumpe (nur lesen)
 var HP = G('OPT_hp') || {};
