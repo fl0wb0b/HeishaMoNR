@@ -118,11 +118,10 @@ CONTROL = {"enabled": False, "probe": True, "minVlC": 29, "startK": 0.3, "releas
            "startLockMin": 15, "afterDefrostMin": 10, "afterDhwMin": 10}
 
 
-# Phase 4 (shadow only): Quiet recommendation as a coarse power cap. All thresholds are PROVISIONAL and meant to be derived from the
-# logged data (quiet-YYYY-MM.csv); nothing is written to the heat pump.
-QUIET = {"testAtRange": 2.0, "thrHigh": 3.0, "thrMid": 1.5, "thrLow": 0.5, "hyst": 0.3, "errTauMin": 5, "holdMin": 15, "startLockMin": 15,
-         "afterDefrostMin": 10, "afterDhwMin": 10, "deficitMaxLevel": 1, "minRunMin": 20, "maxStartsDay": 24,
-         "offAtLow": 1, "offAtHigh": 3, "offAtHyst": 0.5}
+# Quiet-Waechter (shadow only, measurement and display): since the review package (13.10.2026) without its own Quiet recommendation, control test
+# and escalation actions (the decision engine is the single source); only the smoothing of the return error, the run/start limits of the
+# cycle display and the lock times after start/defrost/DHW remain. Nothing is written to the heat pump.
+QUIET = {"errTauMin": 5, "startLockMin": 15, "afterDefrostMin": 10, "afterDhwMin": 10, "minRunMin": 20, "maxStartsDay": 24}
 
 
 # Heat plan (shadow only): every number here is a conservative DEFAULT, not a measured value; measured data moves them only slowly.
@@ -865,9 +864,9 @@ return res;
 """
 
 QUIET_JS = r"""
-// Phase 4 (Shadow): Quiet-Empfehlung als grober Leistungsdeckel. Schreibt NICHTS an die Waermepumpe (kein MQTT-Ausgang in diesem Tab).
-// Heizkurve (Temperaturniveau) und Quiet (Leistungsdeckel) bleiben getrennte Groessen; Pumpendrehzahl wird nur beobachtet.
-// Ziel: moeglichst lange mit niedriger stabiler Leistung durchlaufen (Ruecklauf langsam am Soll halten), ohne zu takten.
+// Quiet-Waechter (Shadow): Messung und Anzeige. Schreibt NICHTS an die Waermepumpe (kein MQTT-Ausgang in diesem Tab).
+// Seit dem Review-Paket (13.10.2026) ohne eigene Quiet-Empfehlung, Kontrolltest und Eskalationsaktionen: Quiet-Regeln, gemessene Deckel und der
+// Heizregelungs-Hinweis kommen aus der Entscheidungsmaschine (OPT_engine). Hier: Kennfeld je Stufe/Band, Abtauzyklen, Laeufe, Schaltpunkte, Minutenprotokoll.
 var cfg = global.get('OPT_cfg');
 if (!cfg) { return null; }
 var Q = cfg.quiet || {};
@@ -910,24 +909,22 @@ var kzFanOnline = typeof KZF.online === 'boolean' ? (KZF.online ? 1 : 0) : '';
 // ---------- Zustand (ueberlebt Neustarts per Datei)
 var qs = flow.get('qs');
 if (!qs) {
-    qs = {errS: null, errTs: 0, target: null, level: null, levelSince: now, lastStart: 0, lastDefrostEnd: 0, lastDhwEnd: 0, freqOn: false, defrost: false, dhw: false,
-          lastMin: 0, lastSave: 0, lastLog: 0, runStart: 0, runs: [], kf: {}, inWin: false, testOpen: null};
+    qs = {errS: null, errTs: 0, level: null, levelSince: now, lastStart: 0, lastDefrostEnd: 0, lastDhwEnd: 0, freqOn: false, defrost: false, dhw: false,
+          lastMin: 0, lastSave: 0, lastLog: 0, runStart: 0, runs: [], kf: {}};
     try {
         var sj = JSON.parse(fs.readFileSync('/data/optimizer/quiet-stats.json', 'utf8'));
         if (sj && sj.kfE) { qs.kfE = sj.kfE; }
         if (sj && sj.kf) { qs.kf = sj.kf; qs.level = sj.level; qs.levelSince = sj.since || now; qs.runs = sj.runs || []; }
     } catch (e) { /* noch keine Datei */ }
-    try {                                                                                            // Sperren des Waechters ueberstehen einen Neustart
+    try {                                                                                            // Wechselzeit und Abtau-/Warmwasser-Ende ueberstehen einen Neustart
         var wj = JSON.parse(fs.readFileSync('/data/optimizer/watcher-state.json', 'utf8'));
-        if (wj) { qs.esc = {blockUntil: wj.blockUntil || 0, lastChg: wj.lastChg || 0, lastChgWhat: wj.lastChgWhat || ''}; qs.lastDefrostEnd = wj.lastDefrostEnd || 0; qs.lastDhwEnd = wj.lastDhwEnd || 0; }
+        if (wj) { qs.esc = {lastChg: wj.lastChg || 0, lastChgWhat: wj.lastChgWhat || ''}; qs.lastDefrostEnd = wj.lastDefrostEnd || 0; qs.lastDhwEnd = wj.lastDhwEnd || 0; }      // eine alte Sperre (blockUntil) gilt nicht mehr
     } catch (e) { /* noch keine Datei */ }
     qs.born = now;
 }
 var tickDt = qs.tickT ? Math.max(0, Math.min(now - qs.tickT, 3 * MS_MIN)) : 0; qs.tickT = now;               // verstrichene Zeit seit dem letzten Aufruf (mehrere Aufrufe je Minute zaehlen nur die echte Zeit)
 if (!qs.kf) { qs.kf = {}; }
 if (!qs.kfE) { qs.kfE = {}; }                                                                // Kennfeld bei Efficiency (getrennt, Comfort bleibt unvermischt)                                                                  // Zustand einer frueheren Version (ohne Kennfeld) uebernehmen
-if (qs.inWin === undefined) { qs.inWin = false; }
-if (qs.testOpen === undefined) { qs.testOpen = null; }
 if (qNow !== null && qs.level !== qNow) { qs.level = qNow; qs.levelSince = now; }        // Stufe geaendert (von wem auch immer) oder erste Beobachtung
 // Kennfeld: je Quiet-Stufe UND Aussentemperaturbereich (damit z. B. Stufe 3 bei 8 C von Stufe 3 bei -5 C getrennt bleibt)
 var BANDS = ['< 0 °C', '0–3 °C', '3–7 °C', '7–12 °C', '> 12 °C'];
@@ -1012,60 +1009,6 @@ var runs24 = qs.runs.filter(function (r) { return r[0] > now - 24 * 60 * MS_MIN;
 var meanRun = runs24.length ? runs24.reduce(function (a, r) { return a + r[1]; }, 0) / runs24.length : null;
 var cycleBad = (rtLast !== null && rtLast < qn(Q.minRunMin, 20)) || (startsToday !== null && startsToday > qn(Q.maxStartsDay, 24));      // kurze Laeufe oder viele Starts
 
-// ---------- Empfehlung (Ziel-Stufe) aus dem Ruecklauffehler; Schwellen sind vorlaeufig und werden aus den Daten abgeleitet
-var T = [qn(Q.thrHigh, 3), qn(Q.thrMid, 1.5), qn(Q.thrLow, 0.5)], H = qn(Q.hyst, 0.3);
-function lvl(e) { return e >= T[0] ? 0 : (e >= T[1] ? 1 : (e >= T[2] ? 2 : 3)); }
-var target = null, why = [];
-var targetNormal = null;
-if (!running) { why.push('Verdichter steht'); }
-else if (qs.errS === null) { why.push('Rücklauf oder Soll fehlt'); }
-else {
-    var raw = lvl(qs.errS);
-    target = raw;
-    if (qs.target !== null && raw > qs.target) { target = Math.max(qs.target, lvl(qs.errS + H)); }          // weniger Leistung nur mit Abstand (Hysterese)
-    why.push('RL ' + (qs.errS >= 0 ? f(qs.errS, 1, 'K') + ' unter' : f(-qs.errS, 1, 'K') + ' über') + ' Soll-RL');
-    var cap = qn(Q.deficitMaxLevel, 1);
-    if (sFresh && S.deficit && (S.coldTrend === null || S.coldTrend <= 0.05)) {                           // Raumkomfort hat Vorrang vor Leistungsbegrenzung
-        why.push((S.deficitRoom || 'Raum') + ' unter Komfortminimum' + (S.distrib ? ' (Wärmeverteilungsproblem, Quiet kann es nicht lösen)' : ''));
-        if (target > cap) { target = cap; why.push('Deckel höchstens Stufe ' + cap); }
-    } else if (sFresh) { why.push('Räume im Komfortband'); }
-    if (cycleBad && qNow !== null && target < qNow && !(sFresh && S.deficit)) { target = qNow; why.push('Taktungsschutz: kurze Läufe/viele Starts, nicht mehr Leistung freigeben'); }
-    why.push('Verdichter seit ' + Math.round(rt || 0) + ' min aktiv');
-    qs.target = target;
-}
-targetNormal = target;                                                           // Empfehlung ohne Prioritaetsregel (zum Vergleichen mitgeloggt)
-// Erfahrungswert des Betreibers: bei 1-3 Grad Aussentemperatur muss Quiet aus sein; geht dem Taktungsschutz und dem Leistungsdeckel vor
-var wLo = qn(Q.offAtLow, 1), wHi = qn(Q.offAtHigh, 3), wH = qn(Q.offAtHyst, 0.5);
-var atWin = at !== null && (qs.inWin ? (at >= wLo - wH && at <= wHi + wH) : (at >= wLo && at <= wHi));
-qs.inWin = atWin;
-if (atWin) { target = 0; why.unshift('Außentemperatur ' + f(at, 1, '°C') + ' im Bereich ' + f(wLo, 0) + '–' + f(wHi, 0) + ' °C: Quiet muss aus sein (Erfahrung des Betreibers)'); }
-if (!running) { qs.target = null; }
-// naechster Schritt: hoechstens eine Stufe, nach Mindesthaltezeit, nicht bei Sperren
-var locks = [];
-if (defrost) { locks.push('Abtauen'); } else if (now - qs.lastDefrostEnd < qn(Q.afterDefrostMin, 10) * MS_MIN) { locks.push('nach dem Abtauen'); }
-if (dhw) { locks.push('Warmwasser'); } else if (now - qs.lastDhwEnd < qn(Q.afterDhwMin, 10) * MS_MIN) { locks.push('nach Warmwasser'); }
-if (running && now - qs.lastStart < qn(Q.startLockMin, 15) * MS_MIN) { locks.push('Verdichterstart'); }
-if (ssRamp) { locks.push('Sanftanlauf'); }
-var holdLeft = Math.max(0, qs.levelSince + qn(Q.holdMin, 15) * MS_MIN - now);
-var next = (targetNormal !== null && qNow !== null && targetNormal !== qNow) ? qNow + (targetNormal > qNow ? 1 : -1) : null;                     // normal: eine Stufe
-var nextP = (target !== null && qNow !== null && target !== qNow) ? (atWin ? target : qNow + (target > qNow ? 1 : -1)) : null;              // Prioritaetsregel im Fenster: direkt auf Ziel
-if (!locks.length && !defrost && !dhw) { why.push(defrost ? '' : 'kein Abtauen / kein Warmwasser'); }
-function stepTxt(tg, nx, direct) { return tg === null ? '–' : (nx === null ? 'keiner (Stufe passt)' : qNow + ' → ' + nx + (direct ? ' direkt' : '') + (locks.length ? ' (wartet: ' + locks[0] + ')' : ((holdLeft > 0 && !direct) ? ' (frühestens in ' + Math.ceil(holdLeft / MS_MIN) + ' min)' : ' (möglich)'))); }
-var nextTxt = stepTxt(targetNormal, next, false), nextTxtP = stepTxt(target, nextP, atWin);
-var lockTxt = locks.length ? locks.join(' + ') : (holdLeft > 0 ? 'Haltezeit noch ' + Math.ceil(holdLeft / MS_MIN) + ' min' : 'keine');
-// Kontrolltest Quiet 3 -> 2: NUR ein Hinweis, wann die Bedingungen erfuellt sind. Es wird nie automatisch geschaltet; den Test macht der Betreiber von Hand.
-var tr = [];
-if (qNow !== 3) { tr.push('Stufe ist nicht 3'); }
-if (!running) { tr.push('Verdichter steht'); } else if (now - qs.lastStart < qn(Q.startLockMin, 15) * MS_MIN) { tr.push('Startphase'); }
-if (dhw || now - qs.lastDhwEnd < qn(Q.afterDhwMin, 10) * MS_MIN) { tr.push('Warmwasser'); }
-if (defrost || now - qs.lastDefrostEnd < qn(Q.afterDefrostMin, 10) * MS_MIN) { tr.push('Abtauen'); }
-if (!sFresh) { tr.push('Komfortdaten fehlen'); } else if (S.deficit) { tr.push('Komfortdefizit'); }
-var bins3 = (flow.get('atBins') || []).filter(function (b) { return b[0] > now - 3 * 60 * MS_MIN; }).map(function (b) { return b[1] / b[2]; });
-if (atWin || bins3.some(function (v) { return v >= wLo - wH && v <= wHi + wH; })) { tr.push('Außentemperatur im ' + f(wLo, 0) + '–' + f(wHi, 0) + '-°C-Fenster'); }
-if (bins3.length < 24) { tr.push('zu wenig Außentemperatur-Historie (3 h)'); }
-else if (Math.max.apply(null, bins3) - Math.min.apply(null, bins3) > qn(Q.testAtRange, 2)) { tr.push('Außentemperatur nicht stabil'); }
-var testOk = tr.length === 0;
-
 // ---------- Quellen der Quiet-Stufe (damit nichts unbemerkt gegen einen Regler arbeitet)
 var mq = G('MQTT') || {}, sol = G('F_SOLAR') || {};
 var srcs = ['HeishaMoNR-Quiet-Logik ' + ((ss.state === 1 && ss.QM_state === 1) ? 'AN (Stufe ' + ss.QM_active_level + ')' : 'aus'),
@@ -1074,65 +1017,50 @@ var srcs = ['HeishaMoNR-Quiet-Logik ' + ((ss.state === 1 && ss.QM_state === 1) ?
 var prio = HP.Quiet_Mode_Priority ? HP.Quiet_Mode_Priority.v : null;
 var lastCmd = HP._lastCmd;
 
-// ---------- Heizregelung (Comfort / Efficiency): reine Warn-Empfehlung, schaltet NICHTS. Bei Efficiency wird fortlaufend geprueft, ob die Bedingungen noch passen
-// (Erfahrung von Betreibern: Efficiency regelt bei Frost, haeufigem Abtauen und hoher Last zu zurueckhaltend und bleibt knapp unter dem Sollvorlauf haengen).
-var hcReco = {text: hcMode === 0 ? 'Comfort' : '–', cls: '', mode: hcMode, warn: false, why: []};
-if (hcMode === 1) {
-    var hcWhy = [], Wh = G('OPT_weather') || {}, hcF6 = (Wh.ts && now - Wh.ts < 2 * 3600000) ? num(Wh.f6) : null;
-    if (at !== null && at < 5) { hcWhy.push('Außentemperatur ' + f(at, 1, '°C')); }
-    else if (hcF6 !== null && hcF6 < 3) { hcWhy.push('Prognose in 6 h ' + f(hcF6, 1, '°C')); }
-    if (qs.lastDefrostStart && now - qs.lastDefrostStart < 6 * 3600000) { hcWhy.push('Abtauen vor ' + dur(now - qs.lastDefrostStart)); }
-    var hcDev = (running && !defrost && solVL !== null && istVL !== null) ? solVL - istVL : null;
-    if (hcDev !== null && hcDev > 2) { if (!qs.vlBadSince) { qs.vlBadSince = now; } } else if (hcDev === null || hcDev <= 1) { qs.vlBadSince = 0; }
-    if (qs.vlBadSince && now - qs.vlBadSince >= 20 * MS_MIN) { hcWhy.push('Vorlauf seit ' + dur(now - qs.vlBadSince) + ' mehr als 2 K unter Soll'); }
-    if (sFresh && S.deficit) { hcWhy.push('Raum unter Minimum: ' + (S.deficitRoom || '?')); }
-    hcReco = {text: hcWhy.length ? 'Efficiency · Comfort empfohlen: ' + hcWhy.join(' · ') : 'Efficiency · keine Warnung', cls: hcWhy.length ? 'warn' : 'ok', mode: 1, warn: hcWhy.length > 0, why: hcWhy};
-} else { qs.vlBadSince = 0; }
-global.set('OPT_hc_reco', {ts: now, mode: hcMode, warn: hcReco.warn, text: hcReco.text});
-var hcEvent = null;                                                                                   // Wechsel der Empfehlung als Ereignis festhalten
-var hcKey = hcMode === 1 ? (hcReco.warn ? 'warn' : 'ok') : 'aus';
-if (qs.hcKey !== undefined && qs.hcKey !== hcKey && hcMode === 1) { hcEvent = hcKey === 'warn' ? 'ok->Comfort empfohlen (' + hcReco.why.join(' + ').replace(/(\d),(\d)/g, '$1.$2').replace(/,/g, ';') + ')' : 'Comfort empfohlen->keine Warnung'; }
+// ---------- Review-Paket 13.10.2026: keine eigene Quiet-Empfehlung (sie lautete fast immer Stufe 3), kein Kontrolltest Quiet 3 -> 2, keine Eskalationsaktionen und
+// keine angenommenen Deckel (35/45 Hz) mehr. Quiet-Regeln, gemessene Deckel und der Heizregelungs-Hinweis kommen aus der Entscheidungsmaschine (OPT_engine):
+// eine Wahrheit, keine doppelte Logik. Dieser Knoten misst (Kennfeld, Abtauzyklen, Laeufe, Schaltpunkte) und zeigt an.
+var EN = global.get('OPT_engine') || null, enFresh = !!(EN && EN.ts && now - EN.ts < 5 * MS_MIN);
+var QR = {quiet_freigabe: 'Quiet-Freigabe', quiet_strecken: 'Deckel/Laufzeit'}, QST = {vorschlag: 'Vorschlag', hinweis: 'Hinweis', wartet: 'wartet', gesperrt: 'gesperrt', bereit: 'prüft', inaktiv: 'ruht', abgelaufen: 'abgelaufen'};
+var qRules = '–', qRulesCls = '';
+if (enFresh && Array.isArray(EN.rules)) {
+    qRules = EN.rules.filter(function (r) { return QR[r.id]; }).map(function (r) {
+        var p = EN.prop && EN.prop.rule === r.id ? EN.prop : null;
+        return QR[r.id] + ': ' + (QST[r.st] || r.st) + (p && p.was ? ' (' + p.was + ')' : '');
+    }).join(' · ') || '–';
+    if (EN.prop && QR[EN.prop.rule]) { qRulesCls = 'warn'; }
+} else { qRules = 'Entscheidungsmaschine ohne aktuelle Daten'; qRulesCls = 'warn'; }
+var dk = enFresh && EN.deckel && EN.deckel.q === qNow ? EN.deckel : null;
+var deckelTxt = dk && ok(dk.hz) ? (qNow === 0 ? 'kein Deckel (16–59 Hz)' : 'Deckel ' + f(dk.hz, 0, 'Hz') + ' (' + (dk.quelle || '?') + ')') : '';
+// ---------- Heizregelung (Comfort / Efficiency): Hinweis der Maschine (nur Anzeige, schaltet NICHTS). Neue Bedingung: Efficiency, Lauf >= 10 min, Aussen unter
+// Heizstab-Einschaltgrenze + Abstand (1 K Hysterese) und Vorlauf an der Heizstab-Schwelle; an nach 3 min, aus 10 min danach. Kein Flackern an der 5-°C-Grenze, kein Hinweis bei normalen Kaltstarts.
+var hcE = enFresh && EN.hc ? EN.hc : null;
+var hcReco = hcE ? {text: hcE.text, cls: hcE.warn ? 'warn' : (hcE.mode === 1 ? 'ok' : ''), mode: hcE.mode, warn: hcE.warn === true}
+                 : {text: hcMode === 0 ? 'Comfort' : (hcMode === 1 ? 'Efficiency · keine Warnung (Maschine ohne aktuelle Daten)' : '–'), cls: '', mode: hcMode, warn: false};
+global.set('OPT_hc_reco', {ts: now, mode: hcReco.mode, warn: hcReco.warn, text: hcReco.text});
+var hcEvent = null;                                                                                   // Wechsel des Hinweises als Ereignis festhalten
+var hcKey = hcReco.mode === 1 ? (hcReco.warn ? 'warn' : 'ok') : 'aus';
+if (qs.hcKey !== undefined && qs.hcKey !== hcKey && hcReco.mode === 1) { hcEvent = hcKey === 'warn' ? 'ok->Comfort empfohlen (' + hcReco.text.replace(/^Efficiency · Comfort empfohlen: /, '').replace(/(\d),(\d)/g, '$1.$2').replace(/,/g, ';') + ')' : 'Comfort empfohlen->keine Warnung'; }
 qs.hcKey = hcKey;
+delete qs.testOpen; delete qs.inWin; delete qs.target; delete qs.vlBadSince;                           // Reste der gestrichenen Empfehlung / des Kontrolltests
 
-// ---------- Eskalationswaechter (SCHATTEN, schaltet nichts): wann muesste Efficiency verlassen bzw. Quiet freigegeben werden?
-// Ausloeser: Sollvorlauf nach X min nicht erreicht · Vorlauf nach Erreichen laenger ueber 2 K unter Soll · Raum laenger unter Minimum · Heizstab-Schwelle naht.
-// Nutzerregel (10.10.2026): Quiet bleibt auf 0, ausser man will die Laufzeit strecken; keine harte Regelung ueber Efficiency/Comfort, nur weil ein Raum waermer oder kaelter ist (der Wechsel
-// laesst die Pumpe im Lauf um ca. 65 % springen und aendert die Heizleistung nicht). Der Waechter schlaegt deshalb KEINEN Heizregelung-Wechsel mehr vor, sondern nur die Quiet-Freigabe (Quiet q -> q-1),
-// wenn der Verdichter trotz Rueckstand am Deckel haengt (Quiet 3 deckelt auf Minimum), und weist sonst nur darauf hin.
-// Sperren gegen Takt (aus den Logs): im Betrieb nicht kurz nach Start/Abtauen/Warmwasser/Sanftanlauf, nur wenn der Vorlauf hoechstens 1 K ueber Soll liegt (der Weg zu Comfort hebt ihn um ca. 0,5-1 K,
-// die Anlage schaltet bei mehr als +3 K ueber Soll ab), Mindestabstand zum letzten Wechsel. Geht der Verdichter nach einem Wechsel mit Ueberschwingen aus, wird das festgehalten und das automatische Schalten gesperrt.
-// Zeitmessung ueber Startzeitpunkte (nicht ueber Aufrufe), Sperren und Wechselzeit werden in watcher-state.json gesichert (Neustart-fest), Eingaenge muessen frisch sein.
-var escEvents = [], escTxt = '–', escCls = '', escKey = '', escWhyTxt = '', escGateTxt = '', escRunMin = null, escDev = null;
+// ---------- Laufmessung (frueher Teil des Eskalationswaechters; nur Messung, keine Aktion, keine Sperre): Sollvorlauf erreicht, Lauf zu Ende,
+// Stopp kurz nach einem Wechsel von Heizregelung oder Quiet (mit gemessenem Ueberschwingen). Zeitmessung ueber Startzeitpunkte, Wechselzeit neustartfest (watcher-state.json).
+var escEvents = [], escTxt = '–', escCls = '', escRunMin = null, escDev = null;
 var ES = qs.esc = qs.esc || {};
-var ESD = {capSince: 0, cappedAt: 0, pDefiSince: 0, pTrigSince: 0, runKey: 0, prevRt: null, obsStart: 0, late: false, reached: null, reachSince: 0, reachSinceMin: 0, dropSince: 0, defiSince: 0, htrSince: 0, trigSince: 0, nearStop: false,
-           lastChg: 0, lastChgWhat: '', hcPrev: null, qPrev: null, blockUntil: 0, devHist: [], keyCand: 'ruhig', keySince: 0, keyShown: 'ruhig', runHc: null, runQ: null, saved: ''};
+var ESD = {runKey: 0, prevRt: null, obsStart: 0, late: false, reached: null, reachSince: 0, reachSinceMin: 0, lastChg: 0, lastChgWhat: '', hcPrev: null, qPrev: null, devHist: [], runHc: null, runQ: null, saved: ''};
 Object.keys(ESD).forEach(function (k) { if (ES[k] === undefined) { ES[k] = ESD[k]; } });
-var escX = qn(Q.escReachMin, 120), escBand = qn(Q.escReachBandK, 1), escDropK = qn(Q.escDropK, 2), escDropMin = qn(Q.escDropMin, 30), escRoomMin = qn(Q.escRoomMin, 60),
-    escGap = qn(Q.escMinGapMin, 60), escLock = qn(Q.escStartLockMin, 15), escMaxDev = qn(Q.escMaxDevK, 1), escWait = qn(Q.escWaitMin, 10), escTakt = qn(Q.escTaktMin, 30), escBlockH = qn(Q.escBlockH, 24),
-    escOver = qn(Q.escOvershootK, 2.5), escDebounce = 3, escCycleH = qn(Q.escCycleH, 12), escCapHz = qn(Q.escCapHz, 20), escCapDevK = qn(Q.escCapDevK, 1.5), escCapMin = qn(Q.escCapMin, 10);
-var escHour = new Date(now).getHours(), escNight = escHour >= 22 || escHour < 7;
-var escLastRunEnd = 0; (qs.runs || []).forEach(function (r) { var e = r[0] + r[1] * MS_MIN; if (e > escLastRunEnd) { escLastRunEnd = e; } });
-var escLastStop = Math.max(qs.swStop || 0, escLastRunEnd), escCycling = escLastStop > 0 && now - escLastStop < escCycleH * 3600000;          // Takt-Phase: der Verdichter stand zuletzt vor weniger als 12 h (sonst Dauerlauf)
-// Quiet-Deckel in Hz. GEMESSEN ist nur Stufe 3: 10.10.2026 Boost (Soll 29 -> 38) blieb der Verdichter 15 min bei 16-17 Hz (300 W) mit 8 K Rueckstand; nach Quiet 3 -> 0 sofort 29 und 34 Hz (800 W, 4,7 kW thermisch).
-// Quiet 3 haelt den Verdichter also auf Minimum (kein "Bedarf unter Mindestleistung"). Stufen 2 und 1: weiter Annahme (nicht gemessen).
-var capHz = {2: 35, 1: 45};
+['capSince', 'cappedAt', 'pDefiSince', 'pTrigSince', 'dropSince', 'defiSince', 'htrSince', 'trigSince', 'nearStop', 'blockUntil', 'keyCand', 'keySince', 'keyShown'].forEach(function (k) { delete ES[k]; });
+var escBand = qn(Q.escReachBandK, 1), escLock = qn(Q.escStartLockMin, 15), escTakt = qn(Q.escTaktMin, 30);
 var escDataOk = freqRaw !== null && hpFresh;                                                         // Verdichterwert vorhanden und HeishaMon meldet noch
-var pd2 = function (x) { return (x < 10 ? '0' : '') + x; };
-var hd = function (ts) { var d0 = new Date(ts), n0 = new Date(now); return (d0.getDate() === n0.getDate() && d0.getMonth() === n0.getMonth() ? '' : pd2(d0.getDate()) + '.' + pd2(d0.getMonth() + 1) + '. ') + hhmm(ts); };
 var chgTxt = function (a0, b0) { if (a0 === null || a0 === undefined) { return b0 === null ? '?' : String(b0); } return (b0 === null || a0 === b0) ? String(a0) : a0 + '→' + b0; };
-var mins = function (since) { return since ? Math.floor((now - since) / MS_MIN) : 0; };
-function escReset() { ES.dropSince = 0; ES.defiSince = 0; ES.htrSince = 0; ES.trigSince = 0; ES.reachSince = 0; ES.capSince = 0; }
-function escRunEnd() {                                                                              // Lauf ist zu Ende (Stillstand beobachtet oder Laufzeit-Sprung): Zusammenfassung und Takt-Pruefung
+function escRunEnd() {                                                                              // Lauf ist zu Ende (Stillstand beobachtet oder Laufzeit-Sprung): Zusammenfassung
     var obs = Math.round((now - ES.obsStart) / MS_MIN);
     escEvents.push(['lauf_ende', (ES.late ? 'beobachtet ' + obs + ' min (Beginn unbekannt)' : 'Lauf ' + Math.round(ES.prevRt || obs) + ' min') + ' · Sollvorlauf ' + (ES.reached !== null ? (ES.late ? 'erreicht (Zeit unbekannt)' : 'erreicht nach ' + ES.reached + ' min') : 'nicht erreicht')
                     + ' · Heizregelung ' + chgTxt(ES.runHc, hcMode) + ' · Quiet ' + chgTxt(ES.runQ, qNow)]);
     var ovs = -99; ES.devHist.forEach(function (e) { if (now - e[0] <= 6 * MS_MIN && e[1] > ovs) { ovs = e[1]; } });
-    if (ES.lastChg && ES.lastChg >= ES.runKey && now - ES.lastChg <= escTakt * MS_MIN) {            // Wechsel von Heizregelung oder Quiet im Lauf und der Verdichter geht bald danach aus
-        var ago = Math.round((now - ES.lastChg) / MS_MIN);
-        if (ovs >= escOver) {
-            ES.blockUntil = now + escBlockH * 3600000;
-            escEvents.push(['takt_nach_wechsel', 'Verdichter ' + ago + ' min nach ' + (ES.lastChgWhat || 'einem Wechsel') + ' mit Überschwingen +' + ovs.toFixed(1) + ' K aus · automatisches Schalten gesperrt bis ' + hd(ES.blockUntil)]);
-        } else { escEvents.push(['stopp_nach_wechsel', 'Verdichter ' + ago + ' min nach ' + (ES.lastChgWhat || 'einem Wechsel') + ' aus · kein Überschwingen (höchstens ' + (ovs > -99 ? (ovs >= 0 ? '+' : '') + ovs.toFixed(1) + ' K' : '–') + ' über Soll) · keine Sperre']); }
+    if (ES.lastChg && ES.lastChg >= ES.runKey && now - ES.lastChg <= escTakt * MS_MIN) {            // Wechsel im Lauf und der Verdichter geht bald danach aus: nur festhalten
+        escEvents.push(['stopp_nach_wechsel', 'Verdichter ' + Math.round((now - ES.lastChg) / MS_MIN) + ' min nach ' + (ES.lastChgWhat || 'einem Wechsel') + ' aus · Überschwingen höchstens ' + (ovs > -99 ? (ovs >= 0 ? '+' : '') + ovs.toFixed(1) + ' K' : '–') + ' über Soll']);
     }
 }
 if (escDataOk) {                                                                                     // Wechsel von Heizregelung oder Quiet (von wem auch immer) merken
@@ -1141,48 +1069,18 @@ if (escDataOk) {                                                                
     if (hcMode !== null) { ES.hcPrev = hcMode; } if (qNow !== null) { ES.qPrev = qNow; }
 }
 if (!escDataOk) {
-    escReset(); escKey = 'daten_fehlen'; escCls = 'warn';
-    escTxt = 'Daten fehlen oder sind veraltet (' + (freqRaw === null ? 'Verdichterwert fehlt' : 'HeishaMon meldet nicht') + ') · Wächter pausiert';
+    escCls = 'warn'; escTxt = 'Daten fehlen oder sind veraltet (' + (freqRaw === null ? 'Verdichterwert fehlt' : 'HeishaMon meldet nicht') + ')';
 } else if (!running) {
     if (ES.runKey !== 0) { escRunEnd(); }
-    var carriedDefi = ES.defiSince || ES.pDefiSince || 0;                                         // seit wann der Raum unter Minimum liegt (Lauf und Pause zusammen)
     qs.sawStop = true;
-    ES.runKey = 0; ES.prevRt = null; ES.reached = null; ES.late = false; ES.nearStop = false; ES.devHist = []; escReset();
-    // Pausenfenster: Wechsel Efficiency -> Comfort wirkt erst beim naechsten Start, ohne zusaetzlichen Pumpensprung im Lauf
-    var pRpm = hpv('Pump_Speed'), pDef = defrost || now - qs.lastDefrostEnd < qn(Q.afterDefrostMin, 10) * MS_MIN, pDhw = dhw || now - qs.lastDhwEnd < qn(Q.afterDhwMin, 10) * MS_MIN;
-    if (sFresh && S.deficit) { ES.pDefiSince = carriedDefi || now; } else { ES.pDefiSince = 0; }
-    var pWhy = [], pGate = [], pAct = null, pKeyNow = 'ruhig';
-    if ((qNow !== null && qNow >= 1 && ES.cappedAt && now - ES.cappedAt < 6 * 3600000) && ES.pDefiSince && mins(ES.pDefiSince) >= escRoomMin) { pWhy.push('Raum seit ' + mins(ES.pDefiSince) + ' min unter Minimum (' + (S.deficitRoom || '?') + ')'); }
-    if (pWhy.length) {
-        if (!ES.pTrigSince) { ES.pTrigSince = now; }
-        pAct = 'Quiet ' + qNow + ' → ' + (qNow - 1) + ' (in der Pause, wirkt ab dem nächsten Start; Verdichter hing zuletzt am Deckel)';
-        if (pRpm === null) { pGate.push('Pumpendrehzahl unbekannt: kein Pausenfenster'); } else if (pRpm < 1000) { pGate.push('Pumpe steht (Heizgrenze): kein Pausenfenster'); }
-        if (pDef) { pGate.push('Abtauen'); }
-        if (pDhw) { pGate.push('Warmwasser'); }
-        if (qs.swStop && now - qs.swStop < 3 * MS_MIN) { pGate.push('Pause erst seit ' + Math.floor((now - qs.swStop) / MS_MIN) + ' min'); }
-        if (ES.lastChg && now - ES.lastChg < escGap * MS_MIN) { pGate.push('Mindestabstand ' + escGap + ' min zum letzten Wechsel (noch ' + Math.ceil((escGap * MS_MIN - (now - ES.lastChg)) / MS_MIN) + ' min)'); }
-        if (ES.blockUntil > now) { pGate.push('nach Takt durch Wechsel gesperrt bis ' + hd(ES.blockUntil)); }
-        escCls = 'warn';
-        if (pGate.length) { pKeyNow = 'gesperrt'; escTxt = 'Pause · Auslöser: ' + pWhy.join(' · ') + ' → würde in der Pause schalten: ' + pAct + ' · gesperrt: ' + pGate.join(' · '); }
-        else if (mins(ES.pTrigSince) < escWait) { pKeyNow = 'wartet'; escTxt = 'Pause · Auslöser: ' + pWhy.join(' · ') + ' → ' + pAct + ' nach ' + escWait + ' min Wartezeit (seit ' + mins(ES.pTrigSince) + ' min)'; }
-        else { pKeyNow = 'schalten'; escTxt = 'Pause · Auslöser: ' + pWhy.join(' · ') + ' → würde jetzt in der Pause schalten: ' + pAct + (escNight ? ' (Nacht: automatisch)' : ' (Tag: Vorschlag zur Bestätigung)'); }
-        escKey = pKeyNow; escWhyTxt = pWhy.join(' + '); escGateTxt = pGate.join(' + ');
-        if (ES.keyCand !== pKeyNow) { ES.keyCand = pKeyNow; ES.keySince = now; }
-        if (ES.keyShown !== ES.keyCand && now - ES.keySince >= escDebounce * MS_MIN) {
-            escEvents.push(['eskalation_schatten', pKeyNow + ' (Pause): ' + pWhy.join(' + ') + ' → ' + pAct + (pKeyNow === 'gesperrt' ? ' [' + pGate.join(' + ') + ']' : '')]);
-            ES.keyShown = ES.keyCand;
-        }
-    } else {
-        ES.pTrigSince = 0; ES.keyCand = 'ruhig'; ES.keyShown = 'ruhig';
-        escKey = 'ruhig'; escTxt = 'Verdichter steht · Wächter prüft im Betrieb' + (hcMode === 1 && ES.pDefiSince ? ' · Raum seit ' + mins(ES.pDefiSince) + ' min unter Minimum (Pausenfenster ab ' + escRoomMin + ' min)' : '');
-    }
+    ES.runKey = 0; ES.prevRt = null; ES.reached = null; ES.late = false; ES.devHist = []; ES.reachSince = 0;
+    escTxt = 'Verdichter steht' + (qs.swStop ? ' seit ' + dur(now - qs.swStop) : '');
 } else {
     var rtNow = rt;
     if (!ES.late && ES.runKey !== 0 && rtNow !== null && ES.prevRt !== null && rtNow < ES.prevRt - 1.5) { escRunEnd(); ES.runKey = 0; }                      // Stopp und Neustart zwischen zwei Aufrufen
     if (ES.runKey === 0) {
         ES.runKey = now; ES.obsStart = now; ES.late = !qs.sawStop;                                   // spaet: Lauf war beim ersten Hinsehen schon im Gang (Neustart/Deploy), Beginn unbekannt
-        ES.reached = null; ES.nearStop = false; ES.devHist = []; ES.runHc = hcMode; ES.runQ = qNow; escReset();
-        if (ES.pDefiSince) { ES.defiSince = ES.pDefiSince; } ES.pDefiSince = 0; ES.pTrigSince = 0;                 // Raum war schon in der Pause unter Minimum: Dauer weiterzaehlen
+        ES.reached = null; ES.devHist = []; ES.runHc = hcMode; ES.runQ = qNow; ES.reachSince = 0;
     }
     ES.prevRt = rtNow;
     escRunMin = ES.late ? (now - ES.obsStart) / MS_MIN : (rtNow !== null ? rtNow : (now - ES.runKey) / MS_MIN);
@@ -1197,57 +1095,9 @@ if (!escDataOk) {
             escEvents.push(['sollvorlauf_erreicht', (ES.late ? 'Zeit unbekannt (Lauf war beim Beobachtungsbeginn schon im Gang)' : 'nach ' + ES.reached + ' min') + ' · Heizregelung ' + (hcMode === null ? '?' : hcMode) + ' · Quiet ' + (qNow === null ? '?' : qNow) + ' · Außen ' + (at === null ? '?' : at) + ' °C · Soll ' + f(solVL, 0)]);
         }
     } else if (escDef || escDhw || escDev === null || escDev < -escBand - 0.5) { ES.reachSince = 0; }
-    if (ES.reached !== null && escDev !== null && escDev <= -escDropK) { ES.dropSince = ES.dropSince || now; } else if (escDev === null || escDev > -1) { ES.dropSince = 0; }
-    if (sFresh && S.deficit) { ES.defiSince = ES.defiSince || now; } else { ES.defiSince = 0; }
-    var htrOn = hpv('Heater_On_Outdoor_Temp'), htrSt = hpv('Heater_Start_Delta'), htrDl = hpv('Heater_Delay_Time');
-    var htrThr = htrSt === null ? null : Math.max(1, Math.abs(htrSt) - 1);                          // Defizit 1 K vor der Heizstab-Schwelle (Vorzeichen des Parameters egal)
-    var htrNear = (at !== null && htrOn !== null && htrThr !== null && at < htrOn + 2 && escDev !== null && escDev <= -htrThr && !defrost);
-    if (htrNear) { ES.htrSince = ES.htrSince || now; } else if (!(escDev !== null && htrThr !== null && escDev <= -(htrThr - 0.5))) { ES.htrSince = 0; }
-    if (escDev !== null) { if (escDev > escMaxDev) { ES.nearStop = true; } else if (escDev < escMaxDev - 0.5) { ES.nearStop = false; } }
-    var escWhy = [];
-    if (ES.reached === null && escDev !== null && escRunMin >= escX && !defrost) { escWhy.push('Sollvorlauf nach ' + Math.round(escRunMin) + ' min nicht erreicht (Grenze ' + escX + ' min)'); }
-    if (ES.dropSince && mins(ES.dropSince) >= escDropMin) { escWhy.push('Vorlauf seit ' + mins(ES.dropSince) + ' min mehr als ' + f(escDropK, 0) + ' K unter Soll'); }
-    if (ES.defiSince && mins(ES.defiSince) >= escRoomMin) { escWhy.push('Raum seit ' + mins(ES.defiSince) + ' min unter Minimum (' + (S.deficitRoom || '?') + ')'); }
-    if (htrOn !== null && ES.htrSince && mins(ES.htrSince) >= Math.max(5, (htrDl === null ? 15 : htrDl) - 5)) { escWhy.push('Heizstab-Schwelle naht (Vorlauf ' + f(-escDev, 1) + ' K unter Soll seit ' + mins(ES.htrSince) + ' min, Heizstab ab ' + f(-Math.abs(htrSt), 0) + ' K nach ' + (htrDl === null ? 15 : htrDl) + ' min)'); }
-    // Verdichter am Quiet-Deckel: bleibt trotz Rueckstand zum Soll auf Minimum (Quiet >= 1, <= 20 Hz, Vorlauf mindestens 1,5 K unter Soll); nur dann bringt eine Quiet-Freigabe Leistung
-    var escCapped = qNow !== null && qNow >= 1 && freq > 0 && freq <= escCapHz && escDev !== null && escDev <= -escCapDevK && !escDef && !escDhw && escRunMin >= escLock;
-    if (escCapped) { ES.capSince = ES.capSince || now; ES.cappedAt = now; } else if (!(qNow !== null && qNow >= 1 && freq > 0 && freq <= escCapHz)) { ES.capSince = 0; }
-    var escCappedLong = ES.capSince > 0 && mins(ES.capSince) >= escCapMin;
-    var escGate = [];
-    if (escRunMin < escLock) { escGate.push('Startphase (' + Math.round(escRunMin) + ' von ' + escLock + ' min' + (ES.late ? ', Beginn unbekannt' : '') + ')'); }
-    if (escDef) { escGate.push('Abtauen'); }
-    if (escDhw) { escGate.push('Warmwasser'); }
-    if (ssRamp) { escGate.push('Sanftanlauf'); }
-    if (escDev === null) { escGate.push('Vorlauf unbekannt'); } else if (ES.nearStop) { escGate.push('Vorlauf ' + sg(escDev, 1) + ' K über Soll: Takt-Gefahr'); }
-    if (ES.lastChg && now - ES.lastChg < escGap * MS_MIN) { escGate.push('Mindestabstand ' + escGap + ' min zum letzten Wechsel (noch ' + Math.ceil((escGap * MS_MIN - (now - ES.lastChg)) / MS_MIN) + ' min)'); }
-    if (ES.blockUntil > now) { escGate.push('nach Takt durch Wechsel gesperrt bis ' + hd(ES.blockUntil)); }
-    var escAct = null, escKeyNow = 'ruhig', whyTxt = escWhy.join(' · ');
-    if (escWhy.length) {
-        if (!ES.trigSince) { ES.trigSince = now; }
-        if (hcMode === null || (hcMode === 0 && qNow === null)) { escKeyNow = 'modus_unbekannt'; escCls = 'warn'; escTxt = 'Auslöser: ' + whyTxt + ' · ' + (hcMode === null ? 'Heizregelung' : 'Quiet-Stufe') + ' unbekannt, keine Aktion möglich'; }
-        else if (qNow !== null && qNow >= 1 && escCappedLong) { escAct = 'Quiet ' + qNow + ' → ' + (qNow - 1) + ' (Verdichter seit ' + mins(ES.capSince) + ' min bei ' + f(freq, 0, 'Hz') + ' am Deckel, Vorlauf ' + f(-escDev, 1) + ' K unter Soll)'; }
-        else if (hcMode === 1) { escKeyNow = 'hinweis'; escCls = ''; escTxt = 'Auslöser: ' + whyTxt + ' · Efficiency bleibt: die Heizregelung wird nicht wegen eines Raums gewechselt (Verdichter bei ' + f(freq, 0, 'Hz') + ', nicht am Quiet-Deckel)'; }
-        else if (qNow === 0) { escKeyNow = 'ausgeschoepft'; escCls = 'warn'; escTxt = 'Auslöser: ' + whyTxt + ' · Comfort und Quiet 0: keine weitere Stufe frei, die Leistung der Anlage reicht nicht'; }
-        else if (capHz[qNow] !== undefined && freq >= capHz[qNow] - 3) { escAct = 'Quiet ' + qNow + ' → ' + (qNow - 1); }
-        else { escKeyNow = 'ohne_wirkung'; escCls = ''; escTxt = 'Comfort aktiv, Auslöser: ' + whyTxt + ' · Quiet-Freigabe brächte nichts (Verdichter bei ' + f(freq, 0, 'Hz') + ', nicht am Deckel)'; }
-    } else { ES.trigSince = 0; }
-    if (escAct !== null) {
-        escCls = 'warn';
-        if (escGate.length) { escKeyNow = 'gesperrt'; escTxt = 'Auslöser: ' + whyTxt + ' → würde schalten: ' + escAct + ' · gesperrt: ' + escGate.join(' · '); }
-        else if (mins(ES.trigSince) < escWait) { escKeyNow = 'wartet'; escTxt = 'Auslöser: ' + whyTxt + ' → ' + escAct + ' nach ' + escWait + ' min Wartezeit (seit ' + mins(ES.trigSince) + ' min)'; }
-        else { escKeyNow = 'schalten'; escTxt = 'Auslöser: ' + whyTxt + ' → würde jetzt schalten: ' + escAct + '' + (escNight ? ' (Nacht: automatisch)' : ' (Tag: Vorschlag zur Bestätigung)'); }
-    } else if (!escWhy.length) {
-        escCls = 'ok';
-        escTxt = (hcMode === 1 ? 'Efficiency' : (hcMode === 0 ? 'Comfort' : 'Modus unbekannt')) + ' · kein Auslöser · ' + (ES.reached !== null ? (ES.late ? 'Sollvorlauf erreicht (Zeit unbekannt)' : 'Sollvorlauf erreicht nach ' + ES.reached + ' min') : 'läuft ' + Math.round(escRunMin) + ' min, Sollvorlauf noch nicht erreicht (Grenze ' + escX + ' min)');
-    }
-    escKey = escKeyNow; escWhyTxt = escWhy.join(' + '); escGateTxt = escGate.join(' + ');
-    if (ES.keyCand !== escKeyNow) { ES.keyCand = escKeyNow; ES.keySince = now; }                     // Zustandswechsel erst als Ereignis, wenn er mindestens 3 min stabil ist (kein Flattern)
-    if (ES.keyShown !== ES.keyCand && now - ES.keySince >= escDebounce * MS_MIN) {
-        escEvents.push(['eskalation_schatten', ES.keyCand + ': ' + (escWhy.length ? escWhyTxt : 'kein Auslöser') + (escAct ? ' → ' + escAct : '') + (ES.keyCand === 'gesperrt' ? ' [' + escGate.join(' + ') + ']' : '')]);
-        ES.keyShown = ES.keyCand;
-    }
+    escTxt = 'läuft ' + Math.round(escRunMin) + ' min' + (ES.late ? ' (Beginn unbekannt)' : '') + ' · Vorlauf ' + (escDev !== null ? sg(escDev, 1, 'K') + ' zum Soll' : '–') + ' · ' + (ES.reached !== null ? (ES.late ? 'Sollvorlauf erreicht' : 'Sollvorlauf erreicht nach ' + ES.reached + ' min') : 'Sollvorlauf noch nicht erreicht');
 }
-var escSave = JSON.stringify({blockUntil: ES.blockUntil, lastChg: ES.lastChg, lastChgWhat: ES.lastChgWhat, lastDefrostEnd: qs.lastDefrostEnd, lastDhwEnd: qs.lastDhwEnd});
+var escSave = JSON.stringify({lastChg: ES.lastChg, lastChgWhat: ES.lastChgWhat, lastDefrostEnd: qs.lastDefrostEnd, lastDhwEnd: qs.lastDhwEnd});
 if (escSave !== ES.saved) { try { fs.mkdirSync('/data/optimizer', {recursive: true}); fs.writeFileSync('/data/optimizer/watcher-state.json', escSave); ES.saved = escSave; } catch (e) { /* kein Zugriff */ } }
 
 var rows = [
@@ -1264,16 +1114,10 @@ var rows = [
     ['Flow · Pumpe (nur Beobachtung)', f(flw, 1, 'l/min') + ' · ' + (HP.Pump_Duty ? f(HP.Pump_Duty.v, 0) : '–') + ' / ' + (HP.Pump_Speed ? f(HP.Pump_Speed.v, 0, 'U/min') : '–'), ''],
     ['Kinderzimmer oben', 'Radiator ' + (kzRad === '' ? '–' : (kzRad ? 'an' : 'aus')) + ' · Heizlüfter ' + (kzFanOnline === 0 ? 'offline' : (kzFanOn === '' ? '–' : (kzFanOn ? 'an' + (kzFanW !== null ? ' (' + f(kzFanW, 0, 'W') + ')' : '') : 'aus'))), ''],
     ['Taktung', 'heute ' + f(startsToday, 0) + ' Starts · Ø Lauf 24 h ' + (meanRun !== null ? f(meanRun, 0, 'min') : '–') + ' (' + runs24.length + ')', cycleBad ? 'warn' : ''],
-    ['Quiet aktuell', qNow !== null ? 'Stufe ' + qNow + ' seit ' + dur(now - qs.levelSince) + (prio !== null ? ' · Priorität ' + (prio === 1 ? 'Leistung' : 'Lautstärke') : '') : '–', ''],
-    ['Quiet normal (Shadow)', targetNormal !== null ? 'Stufe ' + targetNormal : '–', ''],
-    ['Quiet nach Prioritätsregeln (Shadow)', target !== null ? 'Stufe ' + target : '–', target !== null && qNow !== null && target !== qNow ? 'warn' : ''],
-    ['Nächster Schritt normal', nextTxt, ''],
-    ['Nächster Schritt Priorität', nextTxtP, ''],
-    ['Grund', why.filter(Boolean).join(' · '), ''],
-    ['Sperrgrund', lockTxt, ''],
+    ['Quiet aktuell', qNow !== null ? 'Stufe ' + qNow + ' seit ' + dur(now - qs.levelSince) + (deckelTxt ? ' · ' + deckelTxt : '') + (prio !== null ? ' · Priorität ' + (prio === 1 ? 'Leistung' : 'Lautstärke') : '') : '–', ''],
+    ['Quiet-Regeln (Entscheidungsmaschine)', qRules, qRulesCls],
     ['Heizregelung', hcReco.text, hcReco.cls],
-    ['Eskalationswächter (Schatten, schaltet nichts)', escTxt, escCls],
-    ['Kontrolltest Quiet 3 → 2 (nur von Hand)', testOk ? 'Bedingungen erfüllt, jetzt möglich' : 'nicht möglich: ' + tr.join(' · '), testOk ? 'ok' : ''],
+    ['Lauf (Messung)', escTxt, escCls],
     ['Quellen der Stufe', srcs.join(' · ') + (lastCmd ? ' · letzter Befehl ' + hhmm(lastCmd.ts) : ' · kein Befehl beobachtet'), '']
 ];
 var tab = [];
@@ -1300,7 +1144,7 @@ var statRow = function (label, bn, s) {
 // ---------- Protokoll: jede Minute (auch im Stillstand, damit Pumpenspuelungen und Neustarts sichtbar sind); Statistik alle 10 min sichern
 var month = new Date(now).getFullYear() + '-' + ('0' + (new Date(now).getMonth() + 1)).slice(-2);
 // ---------- Ereignisliste fuer die Karte: die letzten relevanten Eintraege aus quiet-events (neueste zuerst), dazu die Ereignisse dieser Minute (stehen noch nicht in der Datei)
-var EVSHOW = {sollvorlauf_erreicht: ['Sollvorlauf erreicht', 'ok'], lauf_ende: ['Lauf zu Ende', ''], eskalation_schatten: ['Wächter (Schatten)', 'warn'], takt_nach_wechsel: ['Takt nach Wechsel', 'warn'], stopp_nach_wechsel: ['Stopp nach Wechsel', ''],
+var EVSHOW = {sollvorlauf_erreicht: ['Sollvorlauf erreicht', 'ok'], lauf_ende: ['Lauf zu Ende', ''], stopp_nach_wechsel: ['Stopp nach Wechsel', ''],     // Waechter-Ereignisse (eskalation_schatten, takt_nach_wechsel) seit dem Review-Paket gestrichen
               heizregelung_befehl: ['Heizregelung-Befehl', ''], quiet_befehl: ['Quiet-Befehl', ''], quiet_stufe: ['Quiet-Stufe', ''], pumpenmodus_befehl: ['Pumpenmodus-Befehl', ''], quiet_prioritaet_befehl: ['Quiet-Priorität-Befehl', '']};
 var evList = [];
 function evTime(z) { return z.slice(8, 10) + '.' + z.slice(5, 7) + '. ' + z.slice(11, 16); }
@@ -1319,14 +1163,6 @@ var isoNow = month + '-' + ('0' + new Date(now).getDate()).slice(-2) + ' ' + ('0
 escEvents.forEach(function (e) { if (EVSHOW[e[0]]) { evList.push([evTime(isoNow), EVSHOW[e[0]][0], String(e[1]).replace(/,/g, ';'), EVSHOW[e[0]][1]]); } });
 evList = evList.slice(-10).reverse();
 var out = [{payload: {rows: rows, events: evList}}, {payload: {stats: tab}}, null, null, dfOut];
-if (qs.testOpen !== null && qs.testOpen !== testOk) {                                  // Testfenster geoeffnet/geschlossen: Ereignis fuer den Betreiber
-    var evd = new Date(now), evp = function (x) { return (x < 10 ? '0' : '') + x; };
-    var evIso = evd.getFullYear() + '-' + evp(evd.getMonth() + 1) + '-' + evp(evd.getDate()) + ' ' + evp(evd.getHours()) + ':' + evp(evd.getMinutes()) + ':' + evp(evd.getSeconds());
-    var evFile = '/data/optimizer/quiet-events-' + evIso.slice(0, 7) + '.csv', evHead = '';
-    try { fs.readFileSync(evFile, 'utf8'); } catch (e) { evHead = 'zeit,ereignis,wechsel\n'; }
-    out[3] = {filename: evFile, payload: evHead + evIso + ',testfenster_quiet_3_2,' + (testOk ? 'geoeffnet' : 'geschlossen (' + tr.join(' + ').replace(/,/g, ';') + ')') + '\n'};
-}
-qs.testOpen = testOk;
 if (hcEvent) {
     var hd0 = new Date(now), hp0 = function (x) { return (x < 10 ? '0' : '') + x; };
     var hIso = hd0.getFullYear() + '-' + hp0(hd0.getMonth() + 1) + '-' + hp0(hd0.getDate()) + ' ' + hp0(hd0.getHours()) + ':' + hp0(hd0.getMinutes()) + ':' + hp0(hd0.getSeconds());
@@ -1372,12 +1208,13 @@ if (!qs.lastLog || now - qs.lastLog >= MS_MIN - 1000) {
                 'waechter_zustand', 'waechter_ausloeser', 'waechter_sperre', 'zeit_bis_soll_min', 'lauf_min', 'vl_minus_soll',
                 'zustand', 'shift_anlage', 'kz_radiator_an', 'kz_heizluefter_an', 'kz_heizluefter_w', 'kz_heizluefter_online'];
     var hv = function (n) { return HP[n] && typeof HP[n].v === 'number' ? HP[n].v : null; };
-    var vals2 = [iso, qNow, targetNormal, target, next, nextP, why.filter(Boolean).join(' | ').replace(/,/g, ';'), locks.join(' + ').replace(/,/g, ';'), Math.ceil(holdLeft / MS_MIN), c(solVL), c(istVL), c(solRL), c(istRL), c(rlErr), c(qs.errS),
+    // Review-Paket 13.10.2026: Spalten der gestrichenen Quiet-Empfehlung, des Kontrolltests und des Eskalationswaechters bleiben im Kopf (Leser nach Spaltenname), Werte leer
+    var vals2 = [iso, qNow, '', '', '', '', '', '', '', c(solVL), c(istVL), c(solRL), c(istRL), c(rlErr), c(qs.errS),
                  c(spread), c(zDelta), c(freq), c(pel), c(pthHs), c(pthCalc), c(copNow), c(flw), c(hv('Pump_Duty')), c(hv('Pump_Speed')), c(hv('Max_Pump_Duty')), c(fan1), c(hv('Fan2_Motor_Speed')),
                  c(hv('Compressor_Current')), c(at), c(rt), c(rtLast), c(startsToday), c(meanRun), defrost ? 1 : 0, dhw ? 1 : 0, ssRamp ? 1 : 0,
-                 sFresh ? (S.deficit ? 1 : 0) : '', sFresh ? String(S.deficitRoom || '').replace(/,/g, ';') : '', sFresh ? c(S.coldTrend) : '', sFresh ? (S.distrib ? 1 : 0) : '', prio === null ? '' : prio, cycleBad ? 1 : 0, atWin ? 1 : 0, testOk ? 1 : 0, c(hv('Heating_Control')), c(hv('Pump_Flowrate_Mode')),
+                 sFresh ? (S.deficit ? 1 : 0) : '', sFresh ? String(S.deficitRoom || '').replace(/,/g, ';') : '', sFresh ? c(S.coldTrend) : '', sFresh ? (S.distrib ? 1 : 0) : '', prio === null ? '' : prio, cycleBad ? 1 : 0, '', '', c(hv('Heating_Control')), c(hv('Pump_Flowrate_Mode')),
                  c(hv('Internal_Heater_State')), c(hv('External_Heater_State')), c(hv('Room_Heater_State')), c(hv('Room_Heater_Operations_Hours')), c(hv('Heater_Start_Delta')), c(hv('Heater_Delay_Time')),
-                 escKey, escWhyTxt.replace(/,/g, ';'), escGateTxt.replace(/,/g, ';'), (ES.reached !== null && !ES.late) ? c(ES.reached) : '', escRunMin !== null ? c(Math.round(escRunMin)) : '', c(escDev),
+                 '', '', '', (ES.reached !== null && !ES.late) ? c(ES.reached) : '', escRunMin !== null ? c(Math.round(escRunMin)) : '', c(escDev),
                  zustandNow, c(shiftHpNow), kzRad, kzFanOn, c(kzFanW), kzFanOnline];
     var file = '/data/optimizer/quiet-' + month + '.csv', head = cols.join(',');
     var needHead = true;
@@ -3061,7 +2898,7 @@ upsert(fn("opt_eval", "Auswerten · Anzeigen · Protokollieren", EVAL_JS, 9,
           [["opt_t_wx"], ["opt_t_rooms"], ["opt_t_wp"], ["opt_t_opt"], ["opt_f_log"], ["opt_f_ev"], ["opt_ui_wxstatus"], ["opt_t_calc"], ["opt_quiet"]], 420, 760, FS))
 
 # ---------------------------------------------------------------- phase 4 (shadow): quiet recommendation; READ ONLY, there is no mqtt out in this tab
-upsert(comment("opt_c5", "Quiet-Empfehlung (Shadow): Anlagenwerte nur lesen, Stufe NICHT schalten", 380, 1060))
+upsert(comment("opt_c5", "Quiet-Wächter (Shadow): Anlagenwerte nur lesen, messen und anzeigen, Stufe NICHT schalten", 380, 1060))
 upsert({"id": "opt_broker_nas", "type": "mqtt-broker", "name": "MQTT (NAS) Optimizer lesen", "broker": "10.10.10.128", "port": "1883",
         "clientid": "nodered-optimizer-nas", "autoConnect": True, "usetls": False, "protocolVersion": "4", "keepalive": "60",
         "cleansession": True, "autoUnsubscribe": True, "birthTopic": "", "birthQos": "0", "birthRetain": "false", "birthPayload": "",
@@ -3072,7 +2909,7 @@ for _i, _t in enumerate(("panasonic_heat_pump/main/+", "panasonic_heat_pump/extr
     upsert({"id": f"opt_mqtt_hp_{_i}", "type": "mqtt in", "z": TAB, "name": "", "topic": _t, "qos": "0", "datatype": "auto-detect",
             "broker": "opt_broker_nas", "nl": False, "rap": True, "rh": 0, "inputs": 0, "x": 160, "y": 1120 + 60 * _i, "wires": [["opt_hp_in"]]})
 upsert(fn("opt_hp_in", "Anlagenwerte lesen (nur lesen)", HP_IN_JS, 1, [["opt_f_qev"]], 440, 1180, FS))
-upsert(fn("opt_quiet", "Quiet-Empfehlung (Shadow)", QUIET_JS, 5, [["opt_t_quiet"], ["opt_t_qstats", "opt_t_qstats2"], ["opt_f_quiet"], ["opt_f_qev"], ["opt_f_def"]], 700, 1060, FS))
+upsert(fn("opt_quiet", "Quiet-Wächter: Messung und Anzeige (Shadow)", QUIET_JS, 5, [["opt_t_quiet"], ["opt_t_qstats", "opt_t_qstats2"], ["opt_f_quiet"], ["opt_f_qev"], ["opt_f_def"]], 700, 1060, FS))
 # Kinderzimmer oben: Radiator-Relais und Heizluefter nur mitlesen (Venus/Shelly-Broker); die Regelung dazu liegt im Tab Dashboard
 for _i, _t in enumerate(("shelly-radiator/events/rpc", "shelly-radiator/online", "shellies/shellyplug-s-heiz/relay/0", "shellies/shellyplug-s-heiz/relay/0/power", "shellies/shellyplug-s-heiz/online")):
     upsert({"id": f"opt_mqtt_kz_{_i}", "type": "mqtt in", "z": TAB, "name": "", "topic": _t, "qos": "0", "datatype": "auto-detect",

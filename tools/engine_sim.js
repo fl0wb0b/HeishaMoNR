@@ -403,6 +403,23 @@ console.log('--- (b) Punktesystem');
     { const So = E.newState(T0); So.sc.mess = {c: [[T0, 11, 45, 1150, 6500, 2, 1]], e: [], done: false}; const Ro = runSeq(2, i => inp(T0 + i * MIN), So);
       check('Messaufgabe Comfort/Efficiency gestrichen: 80 min Quiet 0 mit Rueckstand in Comfort und Efficiency -> kein Befund (kein Eintrag "messaufgabe"), kein Sammelzustand; alter Zustand mit sc.mess wird bereinigt; keine Funktion messStatus mehr',
             !ms.some(s => s.typ === 'messaufgabe') && !Sm.sc.mess && !Ro.S.sc.mess && E.messStatus === undefined && E.MESS === undefined, ms.map(s => s.typ).join(',')); }
+    // S13 (Review-Paket 13.10.2026): Heizregelungs-Hinweis der Maschine (ersetzt die Warnung des Quiet-Waechters: die flackerte am 07.–13.10. 74-mal an der 4,0-°C-Grenze)
+    { const hcw = (n, f) => runSeq(n, i => inp(T0 + i * MIN, Object.assign({hc: 1, htrOnAT: 0, htrStartDelta: -3, htrDelay: 15}, f(i)))), on = R => R.outs.filter(o => o.hc && o.hc.warn).length;
+      const Rf = hcw(120, i => ({at: i % 2 ? 4.9 : 5.1, rt: 20 + i, soll: 32, vl: 29}));
+      check('Heizregelungs-Hinweis: Efficiency an der 5-°C-Grenze (4,9 <-> 5,1 °C, Vorlauf 3 K unter Soll) -> nie ein Hinweis (Grenze ist Heizstab-Einschalttemperatur 0 °C + 2 K), Text "Efficiency · keine Warnung"',
+            on(Rf) === 0 && Rf.outs[119].hc.text === 'Efficiency · keine Warnung' && Rf.outs[119].hc.mode === 1, on(Rf) + ' Minuten');
+      const Rk = hcw(60, i => ({at: 1, rt: i, soll: 32, vl: Math.round(Math.min(32, 26 + 0.5 * i) * 4) / 4}));
+      check('... normaler Kaltstart bei 1 °C (Vorlauf 6 K unter Soll, holt 0,5 K/min auf): kein Hinweis (in den ersten 10 Laufminuten nie, danach < 2,5 K Rückstand)', on(Rk) === 0, on(Rk) + ' Minuten');
+      const Rh = hcw(70, i => ({at: 1, rt: i, soll: 32, vl: i < 40 ? 29 : 31.5}));
+      const first = Rh.outs.findIndex(o => o.hc.warn), last = Rh.outs.map(o => o.hc.warn).lastIndexOf(true);
+      check('... Vorlauf haengt 3 K unter Soll (Heizstab-Naehe, Start-Delta 3 K - 0,5 K): Hinweis nach 10 Laufminuten + 3 min am Stueck (Minute 13), bleibt bis 10 min nach dem Aufholen (Minute 40 -> bis 49); Text nennt Aussen, Rueckstand, Heizstab-Schwelle',
+            first === 13 && last === 49 && /^Efficiency · Comfort empfohlen: Heizstab-Nähe \(Außen 1 °C, Vorlauf 3,0 K unter Soll, Lauf 13 min; Heizstab ab 3 K unter Soll nach 15 min\)/.test(Rh.outs[13].hc.text), first + '/' + last + ' ' + (Rh.outs[13] && Rh.outs[13].hc.text));
+      const Rc = hcw(40, i => ({at: 1, rt: i, soll: 32, vl: 29, hc: i < 25 ? 1 : 0}));
+      check('... Wechsel auf Comfort: Hinweis sofort weg, Text "Comfort"', Rc.outs[24].hc.warn && !Rc.outs[25].hc.warn && Rc.outs[25].hc.text === 'Comfort', Rc.outs[25].hc.text);
+      const Ra = hcw(60, i => ({at: i < 30 ? 1 : (i % 2 ? 2.4 : 2.6), rt: i, soll: 32, vl: 29}));
+      check('... Aussentemperatur pendelt danach um 2,5 °C (ueber der Grenze 2 °C, innerhalb der Hysterese 1 K): Hinweis bleibt stabil an (kein Flackern)', Ra.outs.slice(13).every(o => o.hc.warn), Ra.outs.slice(13).filter(o => !o.hc.warn).length + ' Aus-Minuten');
+      const Rd = hcw(60, i => ({at: 1, rt: 20 + i, soll: 32, vl: 29.75}));
+      check('... Dauerlauf (Lauf > Heizstab-Verzoegerung): Schwelle 2,0 K (Start-Delta 3 K - 1,0 K), 2,25 K Rueckstand reicht', on(Rd) > 0 && on(hcw(60, i => ({at: 1, rt: 20 + i, soll: 32, vl: 30.25}))) === 0, on(Rd) + ' Minuten'); }
     // S12 (Review-Paket 13.10.2026): Stilllegung im laufenden Zustand. Ein Zustand aus der Datei mit offenem Hinweis-Fall, Vergleichslagen, Basisrate und Summen
     // des Heizgrenze-Hinweises (v3/v5): Fall und Vergleichslagen enden ohne Buchung, die Summen bleiben unter ihrem Schluessel stehen, der Bericht kennt die Regel nicht mehr
     { const So = E.newState(T0 - MIN), H0 = {rule: 'heizgrenze_hinweis', ver: 1, since: T0 - 4 * 86400000, punkte: 0, faelle: 4, bewertet: 2, treffer: 2, fehlalarm: 0, neutral: 2, bs: 0, bsRef: 0, schaden: 0, verpasst: 0, verpasstSperre: 0, wirkN: 0, wirkP: 0, kalib: 0, trefferNeutral: 2, skillN: 0};
