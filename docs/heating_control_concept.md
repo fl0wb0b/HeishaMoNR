@@ -5,6 +5,8 @@ Stand 2026-10-08. Reines Konzept, **keine Steuerungsänderung**. Oberstes Ziel: 
 
 Aussagen aus Foren und Zusammenfassungen sind hier **Hypothesen**, solange sie nicht an unserer Anlage gemessen sind.
 
+**Nachtrag 13.10.2026 (Review-Paket, `docs/OPTIMIERER.md` Abschnitte 7 und 18):** Befund aus 07.–13.10.: Comfort fährt nach dem Start sofort auf 30–35 Hz, Efficiency bleibt bei 16–17 Hz und geht erst ab Laufminute 39–46 vorübergehend auf 21–26 Hz; ein Wechsel im Lauf lässt die Pumpe von 1750 auf 2850–2900 U/min springen. Die Messaufgabe ist gestrichen, die Kennzahl „Hochlauf nach Start“ misst den Unterschied weiter. Die Offset-Hinweise des Wärmefahrplans gibt es nicht mehr (der Fahrplan ist eine reine Bedarfs-/COP-Vorschau).
+
 **Randbedingung: Vorlauf-Untergrenze 29 °C (Heizkörper, Vorgabe des Betreibers).** Der Soll-Vorlauf darf nie unter 29 °C sinken. Die Heizkurve liegt ab 11 °C
 Außentemperatur schon auf 29 °C; bei Mildwetter ist jede Absenkung des Vorlaufs damit ausgeschlossen. Das gilt für die Raumlogik (Vorschlag „−1 K“ wird dann
 nicht gemacht, ein angenommenes −1 K sofort zurückgenommen, im Protokoll `vorlauf_untergrenze`), für die Offset-Hinweise im Wärmefahrplan und für jede spätere
