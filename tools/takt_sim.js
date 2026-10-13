@@ -46,6 +46,13 @@ const nul = n => Array.from({length: n}, () => ({hz: null}));
   const S2 = E.fixState(JSON.parse(JSON.stringify(Object.assign({}, S, {takt: undefined}))), S.last);
   check('Aelterer Zustand ohne takt: wird ergaenzt, kein Absturz', S2.takt && Array.isArray(S2.takt.runs), ''); }
 
+// Eingangs-Hygiene (B): unplausible Werte gelten als fehlend
+{ const T = feed([].concat(off(3), on(30, {hz: 255}), off(3)));
+  check('Plausibilitaet: Frequenz 255 Hz (Sentinel) gilt als fehlend -> kein Start, kein Lauf', T.starts.length === 0 && T.runs.length === 0, JSON.stringify(T.runs)); }
+{ const T = feed([].concat(off(3), on(60, {at: -127}), off(3)));
+  check('Plausibilitaet: Aussentemperatur −127 °C -> Lauf zaehlt, aber keine Mindestleistungs-/COP-Minute', T.runs.length === 1 && Object.keys(T.bins).length === 0 && Object.keys(T.copT).length === 0, JSON.stringify(T.bins)); }
+{ const o = E.step(null, {t: T0, hpAge: 0, hz: 30, vl: 30, rl: 27, soll: 30, dT: 3, at: -127, pel: 9000, pth: 2000, pump: 1500, q: 0, hc: 1}, null);
+  check('Plausibilitaet in der Maschine: at −127 und pel 9000 gelten als fehlend (d.at/d.pel null), Datensatz nennt sie (abl.unpl), Rohwerte bleiben im Schnappschuss', o.d.at === null && o.d.pel === null && JSON.stringify(o.rec.abl.unpl) === '["at","pel"]' && o.rec.in.at === -127, JSON.stringify(o.rec.abl.unpl)); }
 // Replay mit echten Daten
 const dir = process.argv[2];
 if (dir) {

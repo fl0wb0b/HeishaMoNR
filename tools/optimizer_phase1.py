@@ -1466,18 +1466,19 @@ function parseCsv(text) {                                                       
 function d0Of(key) { var p = key.split('-'); return new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2])).getTime(); }
 function dayFromArr(a) {                                                                             // Eintrag aus learn.days (4er-Array oder 13er-Array) als Objekt
     var g = function (i) { return (a.length > i && isN(a[i])) ? a[i] : null; };
-    return {d0: a[0], kh: g(1), q: g(2), n: g(3), s: g(4), wk: g(5), khW: g(6), wkW: g(7), dtr: g(8), wkT: g(13), wkWT: g(14)};
+    return {d0: a[0], kh: g(1), q: g(2), n: g(3), s: g(4), wk: g(5), khW: g(6), wkW: g(7), dtr: g(8), wkT: g(13), wkWT: g(14), flags: g(15)};
 }
 function daysFromRows(rows, tbal) {                                                                  // Tagesaggregate aus plan-actuals-Zeilen (Ortszeit-Datum des Stempels, ein Slot = 15 min)
     var days = {}, order = [];
     rows.forEach(function (r) {
         var st = r.slot_start; if (!st || st.length < 16) { return; }
         var key = st.slice(0, 10), d = days[key];
-        if (!d) { d = days[key] = {d0: d0Of(key), n: 0, kh: 0, q: 0, s: 0, wk: 0, khW: 0, wkW: 0, wkT: 0, wkWT: 0, sN: 0, wN: 0, owN: 0, wwN: 0, r0: {}, rl: {}}; order.push(key); }
+        if (!d) { d = days[key] = {d0: d0Of(key), n: 0, kh: 0, q: 0, s: 0, wk: 0, khW: 0, wkW: 0, wkT: 0, wkWT: 0, sN: 0, wN: 0, owN: 0, wwN: 0, dhwM: 0, defM: 0, r0: {}, rl: {}}; order.push(key); }
         d.n += 15;
         var at = nz(r.ist_aussen), q = nz(r.ist_waerme_kwh), pv = nz(r.ist_pv_w), wd = nz(r.ist_wind_ms), ow = nz(r.ist_aussen_owm);
         if (at !== null) { d.kh += Math.max(0, tbal - at) * 0.25; }
         if (q !== null) { d.q += q; }
+        var wwM = nz(r.ist_ww_min), dfM = nz(r.ist_abtau_min); if (wwM !== null) { d.dhwM += wwM; } if (dfM !== null) { d.defM += dfM; }
         if (pv !== null) { d.s += pv * 0.25 / 1000; d.sN += 15; }
         if (ow !== null) { d.khW += Math.max(0, tbal - ow) * 0.25; d.owN += 15; }
         if (wd !== null && at !== null) { d.wk += Math.max(0, tbal - at) * wd * 0.25; d.wkT += Math.max(0, tbal - at) * windEff(wd) * 0.25; d.wN += 15; }
@@ -1487,7 +1488,7 @@ function daysFromRows(rows, tbal) {                                             
     return order.map(function (k) {
         var d = days[k], part = function (v, cnt) { return cnt >= 0.9 * d.n ? v : null; }, dl = [];
         Object.keys(d.r0).forEach(function (rk) { dl.push(d.rl[rk] - d.r0[rk]); });
-        return {d0: d.d0, kh: d.kh, q: d.q, n: d.n, s: part(d.s, d.sN), wk: part(d.wk, d.wN), khW: part(d.khW, d.owN), wkW: part(d.wkW, d.wwN), wkT: part(d.wkT, d.wN), wkWT: part(d.wkWT, d.wwN), dtr: dl.length ? dl.reduce(function (x, y) { return x + y; }, 0) / dl.length : null};
+        return {d0: d.d0, kh: d.kh, q: d.q, n: d.n, s: part(d.s, d.sN), wk: part(d.wk, d.wN), khW: part(d.khW, d.owN), wkW: part(d.wkW, d.wwN), wkT: part(d.wkT, d.wN), wkWT: part(d.wkWT, d.wwN), flags: lgFlags({dhwM: d.dhwM, defM: d.defM, gapM: 0, engM: 0, unpM: 0}), dtr: dl.length ? dl.reduce(function (x, y) { return x + y; }, 0) / dl.length : null};
     });
 }
 function gauss(A, b) {                                                                               // lineares Gleichungssystem, Pivotsuche; null bei singulaerer Matrix
@@ -1598,6 +1599,32 @@ function gateCheck(n, rows, maeBase, maeCand, fit, o) {                         
 // MODELL_VER 2 (13.10.2026): Wind-Merkmal mit Totzone; aeltere Koeffizienten (roher Wind) werden neu gerechnet und nie als aktiv uebernommen.
 var COEF_LIM = {bs: 0.5, bw: 0.0125}, WIND_TOT = 4.0, MODELL_VER = 2;
 function windEff(v) { return isN(v) ? Math.max(0, v - WIND_TOT) : null; }
+// Lern-Hygiene (B, 13.10.2026). Ideen: tvofi/heatpump_optimizer (MIT) _learning_frozen (Lerner ruhen bei Abtauen, Warmwasser, unbrauchbarem Eingang),
+// INPUT_PLAUSIBLE_RANGE_C, drift.py (CUSUM); andox/heat-pump-pilot (Apache-2.0) Lueckenverwurf. Kein Code uebernommen.
+// Plausibilitaetsbereiche je Eingang (ausserhalb = fehlend, je Tag gezaehlt), alle ANNAHME mit Begruendung:
+//  at/ow -40..45 °C (tvofi Aussenluft -70..70; Deutschland gemessen -37,8..41,2), wind 0..40 m/s (Orkan ab 32,7), pth -15..15 kW (Leisha 5 kW nominal, Abtauen negativ),
+//  pel 0..6 kW (Verdichter bis ~2 kW plus Heizstab 3 kW), pv 0..25 kW (PV-Spitze ~18 kW, Nutzerangabe 13.10.), hz 0..150 Hz.
+var PLAUS = {at: [-40, 45], ow: [-40, 45], wind: [0, 40], pth: [-15000, 15000], pel: [0, 6000], pv: [0, 25000], hz: [0, 150]};
+// Tages-Gate (ein Tag mit mehr Minuten in diesen Zustaenden lernt nicht mit), alle ANNAHME: Warmwasser > 120 min, Abtauen > 90 min, Anlagendaten aelter als 5 min > 60 min,
+// Eingriff (MQTT-Sperre oder Betriebsart ohne Heizen) > 60 min, unplausible Eingaenge > 60 min.
+var LERN_GATE = {dhwMaxMin: 120, defMaxMin: 90, gapMaxMin: 60, engMaxMin: 60, unplMaxMin: 60};
+var LG_TEXT = [[1, 'Warmwasser'], [2, 'Abtauen'], [4, 'Datenlücke'], [8, 'Eingriff'], [16, 'unplausibel']];
+function lgFlags(c) { return (c.dhwM > LERN_GATE.dhwMaxMin ? 1 : 0) | (c.defM > LERN_GATE.defMaxMin ? 2 : 0) | (c.gapM > LERN_GATE.gapMaxMin ? 4 : 0) | (c.engM > LERN_GATE.engMaxMin ? 8 : 0) | (c.unpM > LERN_GATE.unplMaxMin ? 16 : 0); }
+function lgTxt(f) { return LG_TEXT.filter(function (x) { return f & x[0]; }).map(function (x) { return x[1]; }).join(', '); }
+// CUSUM (Idee tvofi drift.py): s = min(1,5 h, max(0, s + x - k)); Alarm ab s >= h, Ende erst bei s <= h/4 (Hysterese). k 0,5 und h 4 (Drift) bzw. 3 (Rueckfall):
+// uebliche Werte der CUSUM-Literatur (k = halbe zu erkennende Verschiebung in Standardabweichungen, h 4-5), ANNAHME. Rueckfall sperrt 7 Tage (ANNAHME; tvofi Schnappschuss-Takt 7 Tage).
+var DRIFT = {k: 0.5, h: 4, rbH: 3, rbSperrTage: 7, minSlots: 80, ring: 8};
+function cusum(st, x, k, h) { st = (st && isN(st.s)) ? st : {s: 0, an: false}; st.s = Math.min(1.5 * h, Math.max(0, st.s + x - k)); if (!st.an && st.s >= h) { st.an = true; } else if (st.an && st.s <= h / 4) { st.an = false; } return st; }
+function abSigma(q) { return Math.max(1.0, 0.10 * Math.abs(q)); }                                  // Streuung der Tagesbilanz wie in ridgeCore
+function abSchritt(L, e, aktiv) {                                                                    // ein abgeschlossener A/B-Tag: Drift des Plan-Modells (beidseitig) und, bei aktivem Kandidaten, Rueckfall-Pruefung (Kandidat schlechter als Plan-Modell)
+    var x = (e && e.L24 && e.L24.n >= DRIFT.minSlots) ? e.L24 : ((e && e.L6 && e.L6.n >= DRIFT.minSlots) ? e.L6 : null);
+    if (!x || !isN(x.q) || !isN(x.b) || !isN(x.k)) { return {genutzt: false}; }
+    var sg = abSigma(x.q), r = (x.q - x.b) / sg, out = {genutzt: true, r: r};
+    L.up = cusum(L.up, r, DRIFT.k, DRIFT.h); L.dn = cusum(L.dn, -r, DRIFT.k, DRIFT.h); L.n = (L.n || 0) + 1;
+    if (aktiv) { var y = (Math.abs(x.q - x.k) - Math.abs(x.q - x.b)) / sg; L.rb = cusum(L.rb, y, DRIFT.k, DRIFT.rbH); out.y = y; out.rueckfall = L.rb.an; }
+    else { L.rb = {s: 0, an: false}; }
+    return out;
+}
 function coefSafe(c) {                                                                               // wird vor JEDER Nutzung angewandt (Plan und Vorausschau): nicht endlich -> 0, negativ -> 0, zu gross -> Grenze
     var cl = function (v, hi) { return (typeof v === 'number' && isFinite(v)) ? Math.min(hi, Math.max(0, v)) : 0; };
     var o = {bs: cl(c && c.bs, COEF_LIM.bs), bw: cl(c && c.bw, COEF_LIM.bw)};
@@ -1687,16 +1714,22 @@ var out = [null, null, null, null, null];                                       
 // ---------- Eingaenge: Waermepumpe (nur lesen)
 var HP = G('OPT_hp') || {};
 function hpv(name) { var e = HP[name]; return (e && typeof e.v === 'number' && now - e.ts < 10 * MS_MIN) ? e.v : null; }
-var freq = num(G('compressor_frequency')) || 0, running = freq > 0;
-var pel = num(G('TOP16_Heat_Energy_Consumption')), flw = num(G('TOP1_Pump_Flow'));
+var unpl = [];                                                                                   // Lern-Hygiene: Eingaenge ausserhalb PLAUS gelten in dieser Minute als fehlend (gezaehlt je Tag)
+function plaus(k, v) { if (v === null || v === undefined) { return null; } if (!isFinite(v) || v < PLAUS[k][0] || v > PLAUS[k][1]) { unpl.push(k); return null; } return v; }
+var freq = plaus('hz', num(G('compressor_frequency'))) || 0, running = freq > 0;
+var pel = plaus('pel', num(G('TOP16_Heat_Energy_Consumption'))), flw = num(G('TOP1_Pump_Flow'));
 var istVL = num(G('TOP6_Main_Outlet_Temp')), istRL = num(G('TOP5_Main_Inlet_Temp'));
 var spread = (istVL !== null && istRL !== null) ? istVL - istRL : null;
 var pthHs = hpv('Heat_Power_Production_Extra'); if (!running || pthHs === null || pthHs < -100) { pthHs = null; }
 var pthCalc = (running && flw !== null && spread !== null) ? flw * spread * 69.7 : null;
-var pth = pthHs !== null ? pthHs : pthCalc;
+var pth = plaus('pth', pthHs !== null ? pthHs : pthCalc);
 var defrost = num(G('TOP26_Defrosting_State')) === 1, dhw = num(G('TOP20_ThreeWay_Valve_State')) === 1;
-var atNow = num(G('TOP14_Outside_Temp')), qLevel = num(G('TOP18_Quiet_Mode_Level'));
-var PI = G('OPT_plan_in') || {}, piFresh = PI.ts && now - PI.ts < 5 * MS_MIN;
+var atNow = plaus('at', num(G('TOP14_Outside_Temp'))), qLevel = num(G('TOP18_Quiet_Mode_Level'));
+var hpTs0 = 0; Object.keys(HP).forEach(function (k) { if (k.charAt(0) !== '_' && HP[k] && typeof HP[k].ts === 'number' && HP[k].ts > hpTs0) { hpTs0 = HP[k].ts; } });
+var hpFrisch = hpTs0 > 0 && now - hpTs0 <= 5 * MS_MIN;                                          // Anlagendaten hoechstens 5 min alt (wie die Sperre "daten" der Entscheidungsmaschine)
+var opm = num(G('TOP4_Operating_Mode_State')), mqB = G('MQTT') || {};
+var eingriff = mqB.block_active === 1 || (opm !== null && [0, 2, 4, 6].indexOf(opm) < 0);          // Eingriff: MQTT-Sperre oder Betriebsart ohne Heizen
+var PI = G('OPT_plan_in') || {}, piFresh = PI.ts && now - PI.ts < 5 * MS_MIN, pvNowP = piFresh ? plaus('pv', num(PI.pvNow)) : null;
 var Rr = G('OPT_rooms') || {}, Sx = G('OPT_state') || {}, sxFresh = Sx.ts && now - Sx.ts < 5 * MS_MIN;
 var ROOMS = cfg.rooms || [];
 
@@ -1705,7 +1738,7 @@ var s0 = Math.floor(now / Q15) * Q15, dtH = pl.lastTs ? Math.min(now - pl.lastTs
 pl.lastTs = now;
 function newAcc(t) { return {windS: 0, windN: 0, clS: 0, clN: 0, owS: 0, owN: 0, toS: 0, toN: 0, tcS: 0, tcN: 0, s: t, n: 0, atS: 0, atN: 0, pvS: 0, pvN: 0, thH: 0, elH: 0, thA: 0, elA: 0, dhwMin: 0, runMin: 0, defrosts: 0, hzS: 0, hzN: 0, defMin: 0, defEl: 0, defTh: 0, spS: 0, spN: 0, vdS: 0, vdN: 0, puS: 0, puN: 0, hc: null}; }
 function fillAcc(a) { ['windS', 'windN', 'clS', 'clN', 'owS', 'owN', 'toS', 'toN', 'tcS', 'tcN'].forEach(function (k) { if (a[k] === undefined) { a[k] = 0; } }); return a; }       // Zustand aus einem aelteren Stand (Deploy ohne Neustart) um neue Zaehler ergaenzen
-function fillDay(d) { ['s', 'sN', 'wk', 'wN', 'khW', 'owN', 'wkW', 'wwN', 'wkT', 'wTN', 'wkWT', 'wwTN'].forEach(function (k) { if (d[k] === undefined) { d[k] = 0; } }); if (!d.r0) { d.r0 = {}; } if (!d.rl) { d.rl = {}; } return d; }
+function fillDay(d) { ['s', 'sN', 'wk', 'wN', 'khW', 'owN', 'wkW', 'wwN', 'wkT', 'wTN', 'wkWT', 'wwTN', 'lgN', 'dhwM', 'defM', 'gapM', 'engM', 'unpM'].forEach(function (k) { if (d[k] === undefined) { d[k] = 0; } }); if (!d.r0) { d.r0 = {}; } if (!d.rl) { d.rl = {}; } return d; }
 function priceAt(slots, t) { if (!Array.isArray(slots)) { return null; } for (var i = 0; i < slots.length; i++) { if (slots[i][0] <= t && slots[i][1] > t) { return slots[i][2]; } } return null; }
 var roomIds = ROOMS.map(function (r) { return r.id; });
 var ACT_COLS = ['ist_aussen', 'ist_pv_w', 'ist_preis', 'ist_cop', 'ist_waerme_kwh', 'ist_strom_kwh', 'ist_abtauungen', 'ist_ww_min', 'ist_verdichter_min', 'ist_hz', 'ist_quiet_stufe', 'ist_soc', 'ist_waerme_gesamt_kwh', 'ist_strom_heizen_kwh', 'ist_abtau_min', 'ist_abtau_strom_kwh', 'ist_abtau_waerme_kwh', 'ist_spreizung', 'ist_vl_abweichung', 'ist_pumpe_u_min', 'ist_heizregelung']
@@ -1727,6 +1760,14 @@ function stamp(ts) {
     return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()) + ' ' + p2(d.getHours()) + ':' + p2(d.getMinutes());
 }
 function monthOf(ts) { return stamp(ts).slice(0, 7); }
+function abTag(e) {                                                                                 // Absicherung (D): abgeschlossener A/B-Tag -> Drift (Anzeige) und Rueckfall des aktiven Kandidaten
+    pl.learn.lg = pl.learn.lg || {};
+    var cf = pl.learn.coef, akt = !!(cf && cf.aktiv), r = abSchritt(pl.learn.lg, e, akt);
+    if (r.genutzt && akt && r.rueckfall) {
+        pl.learn.rueckfall = {ts: now, bis: now + DRIFT.rbSperrTage * 86400000, grund: 'Kandidat im A/B schlechter als das Plan-Modell (CUSUM ' + Math.round(pl.learn.lg.rb.s * 10) / 10 + ')', stand: (pl.learn.coefHist || []).slice(-1)[0] || null};
+        cf.aktiv = false; pl.learn.lg.rb = {s: 0, an: false};
+    }
+}
 
 if (pl.acc && pl.acc.s !== s0) {                                                               // Slot abgeschlossen: Ist-Werte festhalten und mit den frueheren Plaenen vergleichen
     var a = pl.acc;
@@ -1757,7 +1798,7 @@ if (pl.acc && pl.acc.s !== s0) {                                                
             var g = function (name) { return sl[K.indexOf(name)]; };
             if ((L === 6 || L === 24) && isN(g('bedarf_basis')) && isN(g('bedarf_kand')) && isN(actual.th)) {   // Tagesbilanz des Waermebedarf-Modells: Plan-Modell gegen Kandidat (Sonne/Wind) bei 6 und 24 h Vorlauf
                 var abD = dayStart(a.s); pl.ab = pl.ab || {d0: abD};
-                if (pl.ab.d0 !== abD) { pl.learn.ab = (pl.learn.ab || []).concat([pl.ab]).slice(-21); pl.lastSave = 0; pl.ab = {d0: abD}; }
+                if (pl.ab.d0 !== abD) { pl.learn.ab = (pl.learn.ab || []).concat([pl.ab]).slice(-21); abTag(pl.ab); pl.lastSave = 0; pl.ab = {d0: abD}; }
                 var ab = pl.ab, kk = 'L' + L; ab[kk] = ab[kk] || {n: 0, q: 0, b: 0, k: 0};
                 ab[kk].n++; ab[kk].q += actual.th; ab[kk].b += g('bedarf_basis'); ab[kk].k += g('bedarf_kand');
             }
@@ -1773,9 +1814,9 @@ if (!pl.acc) { pl.acc = newAcc(s0); }
 var acc = fillAcc(pl.acc);
 acc.n++;
 if (atNow !== null) { acc.atS += atNow; acc.atN++; }
-if (piFresh && ok(PI.pvNow)) { acc.pvS += PI.pvNow; acc.pvN++; }
+if (pvNowP !== null) { acc.pvS += pvNowP; acc.pvN++; }
 var Wx = G('OPT_weather') || {}, wFresh = !!(Wx.ts && now - Wx.ts <= (num(cfg.weather && cfg.weather.maxAgeMin) || 60) * MS_MIN);       // Wetterwerte nur, solange sie frisch sind
-var windNow = (wFresh && ok(Wx.wind)) ? Wx.wind : null, clNow = (wFresh && ok(Wx.clouds)) ? Wx.clouds : null, owNow = (wFresh && ok(Wx.temp)) ? Wx.temp : null;
+var windNow = (wFresh && ok(Wx.wind)) ? plaus('wind', Wx.wind) : null, clNow = (wFresh && ok(Wx.clouds)) ? Wx.clouds : null, owNow = (wFresh && ok(Wx.temp)) ? plaus('ow', Wx.temp) : null;
 var toNow = num(G('T_outside')), tcNow = num(G('T_outside_custom'));                              // Regelwert der Waermepumpe und eigener Fuehler (falls gesetzt)
 if (windNow !== null) { acc.windS += windNow; acc.windN++; }
 if (clNow !== null) { acc.clS += clNow; acc.clN++; }
@@ -1810,7 +1851,8 @@ if (pl.day && pl.day.d0 !== d0) {
         var dd = fillDay(pl.day), part = function (v, cnt, dg) { return cnt >= 0.9 * dd.n ? Math.round(v * dg) / dg : null; }, dtrL = [];
         Object.keys(dd.r0).forEach(function (id) { if (ok(dd.rl[id])) { dtrL.push(dd.rl[id] - dd.r0[id]); } });
         var dtrM = dtrL.length ? Math.round(dtrL.reduce(function (x, y) { return x + y; }, 0) / dtrL.length * 1000) / 1000 : null;
-        var entry = [dd.d0, Math.round(dd.hdd * 100) / 100, Math.round(dd.q * 1000) / 1000, dd.n, part(dd.s, dd.sN, 1000), part(dd.wk, dd.wN, 100), part(dd.khW, dd.owN, 100), part(dd.wkW, dd.wwN, 100), dtrM, dd.sN, dd.wN, dd.owN, dd.wwN, part(dd.wkT, dd.wTN, 100), part(dd.wkWT, dd.wwTN, 100)];
+        var entry = [dd.d0, Math.round(dd.hdd * 100) / 100, Math.round(dd.q * 1000) / 1000, dd.n, part(dd.s, dd.sN, 1000), part(dd.wk, dd.wN, 100), part(dd.khW, dd.owN, 100), part(dd.wkW, dd.wwN, 100), dtrM, dd.sN, dd.wN, dd.owN, dd.wwN, part(dd.wkT, dd.wTN, 100), part(dd.wkWT, dd.wwTN, 100),
+                     dd.lgN >= 0.9 * dd.n ? lgFlags(dd) : null, dd.dhwM, dd.defM, dd.gapM, dd.engM, dd.unpM];      // 15: Lern-Gate (Bitmaske, 0 = lernt mit), 16-20: Minuten Warmwasser, Abtauen, Datenluecke, Eingriff, unplausibel
         pl.learn.days.push(entry);
         var dayMsg = csvOut('/data/optimizer/plan-days-' + monthOf(dd.d0 + 6 * H) + '.csv', 'tag,kh_fuehler,kh_owm,waerme_kwh,minuten,pv_kwh,wk_fuehler,wk_owm,dtr_k,min_pv,min_wind,min_owm,wk_tot_fuehler,wk_tot_owm',
                             [stamp(dd.d0).slice(0, 10) + ',' + [entry[1], entry[6], entry[2], entry[3], entry[4], entry[5], entry[7], entry[8], entry[9], entry[10], entry[11], entry[13], entry[14]].map(function (v) { return c(v, 3); }).join(',')]);
@@ -1824,7 +1866,8 @@ fillDay(pl.day);
 pl.day.n++;
 if (atNow !== null) { pl.day.hdd += Math.max(0, pn('tbalC', 15) - atNow) / 60; }
 if (running && !dhw && !defrost && pth !== null) { pl.day.q += pth * dtH / 1000; }
-if (piFresh && ok(PI.pvNow)) { pl.day.s += PI.pvNow * dtH / 1000; pl.day.sN++; }                  // PV-Energie des Tages [kWh] (Sonnenmass, solange die Daten frisch sind)
+if (pvNowP !== null) { pl.day.s += pvNowP * dtH / 1000; pl.day.sN++; }                          // PV-Energie des Tages [kWh] (Sonnenmass, solange die Daten frisch sind)
+pl.day.lgN++; if (dhw) { pl.day.dhwM++; } if (defrost) { pl.day.defM++; } if (!hpFrisch) { pl.day.gapM++; } if (eingriff) { pl.day.engM++; } if (unpl.length) { pl.day.unpM++; pl.day.unpK = pl.day.unpK || {}; unpl.forEach(function (k) { pl.day.unpK[k] = (pl.day.unpK[k] || 0) + 1; }); }
 if (owNow !== null && atNow !== null) { pl.day.khW += Math.max(0, pn('tbalC', 15) - owNow) / 60; pl.day.owN++; }                      // Heizgradstunden aus der OWM-Temperatur (regional)
 if (windNow !== null && atNow !== null) { pl.day.wk += Math.max(0, pn('tbalC', 15) - atNow) * windNow / 60; pl.day.wN++; }          // Wind x Heizgradstunden (Fuehler)
 if (windNow !== null && owNow !== null) { pl.day.wkW += Math.max(0, pn('tbalC', 15) - owNow) * windNow / 60; pl.day.wwN++; }      // Wind x Heizgradstunden (OWM)
@@ -1853,10 +1896,12 @@ function modelDays() {                                                          
     (pl.bf.days || []).forEach(function (d) { map[d.d0] = d; order.push(d.d0); });
     (pl.learn.days || []).forEach(function (a) {
         var d = dayFromArr(a), b = map[d.d0];
-        if (b) { ['s', 'wk', 'khW', 'wkW', 'dtr', 'wkT', 'wkWT'].forEach(function (k) { if (d[k] === null && b[k] !== undefined) { d[k] = b[k]; } }); } else { order.push(d.d0); }
+        if (b) { ['s', 'wk', 'khW', 'wkW', 'dtr', 'wkT', 'wkWT', 'flags'].forEach(function (k) { if (d[k] === null && b[k] !== undefined) { d[k] = b[k]; } }); } else { order.push(d.d0); }
         map[d.d0] = d;
     });
-    return order.map(function (k) { return map[k]; }).filter(function (d) { return d.n >= 1200 && d.kh >= pn('learnMinHdd', 30); }).sort(function (x, y) { return x.d0 - y.d0; });
+    var alle = order.map(function (k) { return map[k]; }).filter(function (d) { return d.n >= 1200 && d.kh >= pn('learnMinHdd', 30); });
+    pl.lgVerw = alle.filter(function (d) { return d.flags > 0; }).map(function (d) { return [d.d0, d.flags]; });           // Lern-Gate: Tage mit Warmwasser/Abtauen/Luecke/Eingriff/unplausibel lernen nicht mit
+    return alle.filter(function (d) { return !(d.flags > 0); }).sort(function (x, y) { return x.d0 - y.d0; });
 }
 var mDays = modelDays(), mSig = 'v' + MODELL_VER + '|' + mDays.length + '|' + mDays.map(function (d) { return d.d0 + ':' + Math.round(d.q * 100) + ':' + (d.s === null ? '-' : Math.round(d.s * 10)) + ':' + (d.wkT === null || d.wkT === undefined ? '-' : Math.round(d.wkT)); }).join(',');
 if (!pl.learn.coef || pl.learn.coef.sig !== mSig) {
@@ -1867,7 +1912,10 @@ if (!pl.learn.coef || pl.learn.coef.sig !== mSig) {
         // Aktivierung nur mit ausdruecklichem Schalter (plan.coefActivate = 1): Gate ok, oder schon aktiv und der Fehler bleibt besser als beim bisherigen Modell (Hysterese)
         // Sicherheit: die Hysterese gilt nie bei hartem Koeffizienten-Fehler (nicht endlich/negativ/zu gross); bei gleichfoermigen PV-Tagen (Sonne nicht identifizierbar) wird der Sonnenterm des bisher aktiven Modells eingefroren
         if (prevAkt && fm.gate && fm.gate.why.indexOf('PV-Tage zu gleichfoermig') >= 0 && !coefHardFail(fm.gate)) { var pc = pl.learn.coef; fm.bs = coefSafe({bs: pc.bs, bw: 0}).bs; if (fm.bsW !== undefined) { fm.bsW = coefSafe({bs: pc.bsW !== undefined ? pc.bsW : pc.bs, bw: 0}).bs; } fm.frozen = ['Sonne']; }
-        fm.aktiv = pn('coefActivate', 0) === 1 && !coefHardFail(fm.gate) && ((fm.gate && fm.gate.ok) || (prevAkt && fm.n >= pn('coefMinDays', 10) && cand !== null && fm.maeBase > 0 && cand <= fm.maeBase));
+        var rfS = pl.learn.rueckfall && now < pl.learn.rueckfall.bis;                                  // Absicherung (D): nach einem Rueckfall bleibt der Kandidat gesperrt
+        if (rfS && fm.gate) { fm.gate.why.push('Rückfall bis ' + stamp(pl.learn.rueckfall.bis).slice(8, 10) + '.' + stamp(pl.learn.rueckfall.bis).slice(5, 7) + '.'); fm.gate.ok = false; }
+        fm.aktiv = !rfS && pn('coefActivate', 0) === 1 && !coefHardFail(fm.gate) && ((fm.gate && fm.gate.ok) || (prevAkt && fm.n >= pn('coefMinDays', 10) && cand !== null && fm.maeBase > 0 && cand <= fm.maeBase));
+        if (fm.aktiv) { pl.learn.coefHist = (pl.learn.coefHist || []).concat([{ts: now, sig: fm.sig, ua: fm.uaWind || fm.uaSun, bs: fm.maeWind !== null ? fm.bsW : fm.bs, bw: fm.bw, maeBase: fm.maeBase, cand: cand}]).slice(-DRIFT.ring); }   // Schnappschuss der Lernwerte je aktiver Neuberechnung
         pl.learn.coef = fm; pl.lastSave = 0;                                                      // neue Koeffizienten sofort sichern (ueberstehen so einen Neustart ohne Neuberechnung)
     } catch (e) { pl.learn.coef = {n: 0, sig: mSig, ts: now, aktiv: false, error: String(e && e.message || e)}; }
 }
@@ -2180,6 +2228,18 @@ if (P.status === 'ok') {
         if (!p6 && !p24) { txt = 'keine abgeschlossenen Tage'; }
         else { txt = [p6 ? '6 h: Plan ' + f(p6.b, 1, 'kWh') + ' · Kandidat ' + f(p6.k, 1, 'kWh') + ' (' + p6.n + ' Tage)' : null, p24 ? '24 h: Plan ' + f(p24.b, 1, 'kWh') + ' · Kandidat ' + f(p24.k, 1, 'kWh') + ' (' + p24.n + ' Tage)' : null].filter(function (x) { return x; }).join(' · '); txt = 'Tagesfehler Wärme ' + txt; }
         rows.splice(rows.findIndex(function (r) { return r[0] === 'Fühlerkorrektur'; }) + 1, 0, ['Bedarfsmodell A/B', txt, '']);
+    })();
+    (function () {                                                                                 // Lern-Hygiene (B) und Absicherung (D): Gate heute, verworfene Tage, Drift, Rueckfall
+        var dy = pl.day || {}, fH = lgFlags({dhwM: dy.dhwM || 0, defM: dy.defM || 0, gapM: dy.gapM || 0, engM: dy.engM || 0, unpM: dy.unpM || 0}), vw = pl.lgVerw || [], cnt = {};
+        vw.forEach(function (x) { LG_TEXT.forEach(function (t) { if (x[1] & t[0]) { cnt[t[1]] = (cnt[t[1]] || 0) + 1; } }); });
+        var uk = dy.unpK ? Object.keys(dy.unpK).map(function (k) { return k + ' ' + dy.unpK[k] + ' min'; }).join(', ') : '';
+        var txt = 'heute ' + (fH ? 'gesperrt (' + lgTxt(fH) + ')' : 'frei') + ' · verworfene Tage ' + vw.length + (vw.length ? ' (' + Object.keys(cnt).map(function (k) { return k + ' ' + cnt[k]; }).join(', ') + ')' : '') + (uk ? ' · unplausibel heute: ' + uk : '');
+        rows.splice(rows.findIndex(function (r) { return r[0] === 'Bedarfsmodell A/B'; }) + 1, 0, ['Lern-Gate', txt, fH ? 'warn' : '']);
+        var L = pl.learn.lg || {}, rf = pl.learn.rueckfall, rfA = rf && now < rf.bis, up = L.up && L.up.an, dn = L.dn && L.dn.an;
+        var t2 = (L.n ? (up ? 'Mehrbedarf gegenüber dem Plan-Modell' : (dn ? 'Minderbedarf gegenüber dem Plan-Modell' : 'ruhig')) + ' (CUSUM + ' + f(L.up ? L.up.s : 0, 1) + ' / − ' + f(L.dn ? L.dn.s : 0, 1) + ', ' + L.n + ' Tage)' : 'noch kein A/B-Tag')
+               + (rfA ? ' · Kandidat zurückgenommen ' + stamp(rf.ts).slice(8, 10) + '.' + stamp(rf.ts).slice(5, 7) + '., gesperrt bis ' + stamp(rf.bis).slice(8, 10) + '.' + stamp(rf.bis).slice(5, 7) + '.' : '')
+               + ((pl.learn.coef && pl.learn.coef.aktiv && L.rb) ? ' · Rückfall-CUSUM ' + f(L.rb.s, 1) + ' von ' + f(DRIFT.rbH, 0) : '') + ((pl.learn.coefHist || []).length ? ' · ' + pl.learn.coefHist.length + ' Stände' : '');
+        rows.splice(rows.findIndex(function (r) { return r[0] === 'Lern-Gate'; }) + 1, 0, ['Bedarfsmodell Drift', t2, (up || dn || rfA) ? 'warn' : '']);
     })();
     // Tabelle: 24 h in Stundenbloecken ab dem aktuellen Slot
     for (var b = 0; b < 24; b++) {

@@ -498,15 +498,20 @@ var ENGINE = (function () {
     }
 
     // ------------------------------------------------------------------ Ableitung aus der Eingabe (Schnappschuss) und dem Zustand
+    // Lern- und Eingangs-Hygiene (B, 13.10.2026): Werte ausserhalb dieser Bereiche gelten als fehlend (Idee tvofi INPUT_PLAUSIBLE_RANGE_C: Wasser -20..100 °C;
+    // Aussenluft enger -40..45 °C, Frequenz 0..150 Hz, el. Leistung 0..6 kW, Waerme -15..15 kW wie im Waermefahrplan; ANNAHME). Der Datensatz behaelt die Rohwerte.
+    var PLAUS = {at: [-40, 45], hz: [0, 150], vl: [-20, 100], rl: [-20, 100], soll: [-20, 100], pel: [0, 6000], pth: [-15000, 15000]};
+    function plausV(k, v) { v = num(v); return (have(v) && v >= PLAUS[k][0] && v <= PLAUS[k][1]) ? v : null; }
     function derive(S, inp, cfg) {
         var L = cfg.locks, now = inp.t;
-        var d = {now: now, hz: num(inp.hz), vl: num(inp.vl), rl: num(inp.rl), soll: num(inp.soll), dT: num(inp.dT), at: num(inp.at), q: num(inp.q), shift: num(inp.shift),
-                 pump: num(inp.pump), pel: num(inp.pel), heatOffAT: num(inp.heatOffAT), korr: inp.korr || null, notK: L.notK, arb: S.arb,
+        var d = {now: now, hz: plausV('hz', inp.hz), vl: plausV('vl', inp.vl), rl: plausV('rl', inp.rl), soll: plausV('soll', inp.soll), dT: num(inp.dT), at: plausV('at', inp.at), q: num(inp.q), shift: num(inp.shift),
+                 pump: num(inp.pump), pel: plausV('pel', inp.pel), heatOffAT: num(inp.heatOffAT), korr: inp.korr || null, notK: L.notK, arb: S.arb,
                  vs: (inp.vs && typeof inp.vs === 'object' && Array.isArray(inp.vs.at)) ? inp.vs : null};
         d.fresh = have(num(inp.hpAge)) && num(inp.hpAge) <= L.hpMaxAgeMin && have(d.hz) && have(d.vl) && have(d.soll);
         d.running = have(d.hz) && d.hz > 0;
         d.zustand = d.running ? 'lauf' : (!have(d.pump) ? '?' : (d.pump >= L.pumpOnRpm ? 'pause' : 'heizgrenze'));
-        d.hc = num(inp.hc); d.pth = num(inp.pth);
+        d.hc = num(inp.hc); d.pth = plausV('pth', inp.pth);
+        d.unpl = Object.keys(PLAUS).filter(function (k) { return have(num(inp[k])) && plausV(k, inp[k]) === null; });
         d.vlRueck = (have(d.soll) && have(d.vl)) ? d.soll - d.vl : null;                                       // > 0: Vorlauf unter Soll
         d.rlRueck = (have(d.soll) && have(d.dT) && have(d.rl)) ? (d.soll - d.dT) - d.rl : null;                // > 0: Ruecklauf unter Soll-Ruecklauf
         d.rooms = (inp.rooms || []).map(function (r) { return {id: r.id, name: r.name || r.id, t: num(r.t), age: num(r.age), min: num(r.min), max: num(r.max), valid: !!r.valid && have(num(r.t)), active: r.active !== false}; });
@@ -742,8 +747,8 @@ var ENGINE = (function () {
         if (!T || typeof T !== 'object' || !Array.isArray(T.runs)) { T = taktNew(); }
         if (!T.copT || typeof T.copT !== 'object') { T.copT = {}; }
         c = taktCfg(c);
-        var now = x.t, hz = num(x.hz), age = num(x.hpAge);
-        if (!have(hz) || !have(age) || age > TAKT.maxAgeMin) { T.nOn = 0; T.nOff = 0; return T; }       // keine/alte Daten: weder an noch aus (zaehlt nicht als Stopp)
+        var now = x.t, hz = plausV('hz', x.hz), age = num(x.hpAge);
+        if (!have(hz) || !have(age) || age > TAKT.maxAgeMin) { T.nOn = 0; T.nOff = 0; return T; }       // keine/alte/unplausible Daten: weder an noch aus (zaehlt nicht als Stopp)
         if (hz > 0) { if (!T.nOn) { T.tOn1 = now; } T.nOn++; T.nOff = 0; } else { if (!T.nOff) { T.tOff1 = now; } T.nOff++; T.nOn = 0; }
         if (T.on !== true && T.nOn >= c.probenEin) {
             if (T.on === false && T.tStop > 0 && T.tOn1 - T.tStop < c.minAusMin * MIN && T.runs.length) {  // kurze Luecke: derselbe Lauf geht weiter (kein Start)
@@ -763,7 +768,7 @@ var ENGINE = (function () {
         var lim = now - 48 * 60 * MIN;
         T.starts = T.starts.filter(function (t) { return t >= lim; }); T.runs = T.runs.filter(function (r) { return r[0] >= lim; }).slice(-60); T.pausen = T.pausen.filter(function (r) { return r[0] >= lim; }).slice(-60);
         // stabile Laufminuten: Mindestleistung je 2-K-Band und COP je Modus x Quiet x Band und Tag (ohne Abtauen/Warmwasser, ab Laufminute stabilAbMin)
-        var at = num(x.at), pel = num(x.pel), pth = num(x.pth), q = num(x.q), hc = num(x.hc);
+        var at = plausV('at', x.at), pel = plausV('pel', x.pel), pth = plausV('pth', x.pth), q = num(x.q), hc = num(x.hc);
         if (T.on === true && hz > 0 && now - T.t0 >= c.stabilAbMin * MIN && !num(x.defrost) && !num(x.dhw) && have(at) && have(pel) && have(pth) && pel > 50 && pth > 0) {
             var k = String(Math.floor(at / TAKT.binK) * TAKT.binK), B = T.bins[k] = T.bins[k] || [];
             B.push(Math.round(pth)); if (B.length > TAKT.binMax) { B.splice(0, B.length - TAKT.binMax); }
@@ -926,6 +931,7 @@ var ENGINE = (function () {
         // (jede Minute waeren es ~130 kB/Tag; Budget der Datensaetze 2,7 MB/Tag)
         var tkA = [d.takt.starts24h, d.takt.kurzAnteil, d.takt.minutenPausen, d.takt.bedarfPausen], tkS = JSON.stringify(tkA);
         if (tkS !== S.tkLast || new Date(now).getMinutes() === 0) { rec.abl.tk = tkA; S.tkLast = tkS; }
+        if (d.unpl.length) { rec.abl.unpl = d.unpl; }                                          // unplausible Eingaenge dieser Minute (gelten als fehlend)
         return {S: S, d: d, res: res, prop: prop, rec: rec, ev: ev, scores: sc, ende: ende, halten: halten, locks: locks};
     }
     function recNext(nx) { var o = {}; ['b', 'ist', 's', 'abstand', 'u', 'weitere', 'halt', 'bis'].forEach(function (k) { if (nx[k] !== undefined && nx[k] !== null && nx[k] !== '') { o[k] = nx[k]; } }); return o; }
@@ -1545,7 +1551,7 @@ var ENGINE = (function () {
     }
 
     return {VER: VER, SCORE_VER: SCORE_VER, RULES: RULES, RULE: RULE, LOCKS: LOCKS, LOCK_CFG: LOCK_CFG, SCORE: SCORE, WHITELIST: WHITELIST, APPLY: APPLY,
-            brier: brier, hPunkte: hPunkte, vorschau: vorschau, bedarfK: bedarfK, VS_LIM: VS_LIM, tagesgang: tagesgang, defaults: defaults, mergeCfg: mergeCfg, newState: newState, fixState: fixState, step: step, report: report, messStatus: messStatus, MESS: MESS, TAKT: TAKT, TAKT_SCHWELLEN: TAKT_SCHWELLEN, taktCfg: taktCfg, taktNew: taktNew, taktStep: taktStep, taktKennzahlen: taktKennzahlen, mindestLeistung: mindestLeistung, copSumme: copSumme, copTabelle: copTabelle, bandOf: bandOf, modusOf: modusOf, nlNeu: nlNeu, nlZeilen: nlZeilen, nlEnde: nlEnde, snapshot: snapshot, unsnap: unsnap,
+            brier: brier, hPunkte: hPunkte, vorschau: vorschau, bedarfK: bedarfK, VS_LIM: VS_LIM, PLAUS: PLAUS, tagesgang: tagesgang, defaults: defaults, mergeCfg: mergeCfg, newState: newState, fixState: fixState, step: step, report: report, messStatus: messStatus, MESS: MESS, TAKT: TAKT, TAKT_SCHWELLEN: TAKT_SCHWELLEN, taktCfg: taktCfg, taktNew: taktNew, taktStep: taktStep, taktKennzahlen: taktKennzahlen, mindestLeistung: mindestLeistung, copSumme: copSumme, copTabelle: copTabelle, bandOf: bandOf, modusOf: modusOf, nlNeu: nlNeu, nlZeilen: nlZeilen, nlEnde: nlEnde, snapshot: snapshot, unsnap: unsnap,
             checksum: checksum, newApply: newApply, applyRequest: applyRequest, applyTick: applyTick, iso: iso, ymd: ymd, strZiel: strZiel, hhmm: hhmm, isoWeek: isoWeek, de: de, sg: sg};
 })();
 if (typeof module !== 'undefined' && module.exports) { module.exports = ENGINE; }

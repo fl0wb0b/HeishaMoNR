@@ -1659,19 +1659,19 @@ check('Dateien: Ist, Vergleich, Schnappschuesse und Zustand unter /data/optimize
   // Tagesaggregat ueber einen vollen Tag: kh 240 (10 K x 24 h), PV 2000 W x 24 h = 48 kWh, Wind 6 m/s: wk 1440, OWM 7 °C: khW 192, wkW 1152; ueber der Totzone (4 m/s): wkT 480, wkWT 384
   pworld({wide: true, atBase: 5, running: true, hp: 2500, atNow: 5, pvNow: 2000, windNow: 6, owmTemp: 7}); O.hp = 2500; step(1440 + 5);
   const dayE = fstore.plan.learn.days[0];
-  check('Tagesaggregat: Eintrag mit 15 Werten [d0, hdd, q, n, s, wk, khW, wkW, dtr, sN, wN, owN, wwN, wkT, wkWT]; ein voller Tag ergibt kh ~240, PV ~48 kWh, wk ~1440, khW ~192, wkW ~1152, dtr 0 (konstante Raeume); Wind ueber 4 m/s: wkT ~480, wkWT ~384', fstore.plan.learn.days.length === 1 && dayE.length === 15 && Math.abs(dayE[1] - 240) < 1 && Math.abs(dayE[4] - 48) < 0.3 && Math.abs(dayE[5] - 1440) < 6 && Math.abs(dayE[6] - 192) < 1 && Math.abs(dayE[7] - 1152) < 5 && dayE[8] === 0 && dayE[9] >= 1430 && dayE[10] >= 1430 && dayE[11] >= 1430 && dayE[12] >= 1430 && Math.abs(dayE[13] - 480) < 2 && Math.abs(dayE[14] - 384) < 2, JSON.stringify(dayE));
+  check('Tagesaggregat: Eintrag mit 21 Werten [d0, hdd, q, n, s, wk, khW, wkW, dtr, sN, wN, owN, wwN, wkT, wkWT, Gate, Warmwasser, Abtauen, Luecke, Eingriff, unplausibel]; ein voller Tag ergibt kh ~240, PV ~48 kWh, wk ~1440, khW ~192, wkW ~1152, dtr 0 (konstante Raeume); Wind ueber 4 m/s: wkT ~480, wkWT ~384; Lern-Gate 0 (lernt mit)', fstore.plan.learn.days.length === 1 && dayE.length === 21 && dayE[15] === 0 && dayE.slice(16).every(v => v === 0) && Math.abs(dayE[1] - 240) < 1 && Math.abs(dayE[4] - 48) < 0.3 && Math.abs(dayE[5] - 1440) < 6 && Math.abs(dayE[6] - 192) < 1 && Math.abs(dayE[7] - 1152) < 5 && dayE[8] === 0 && dayE[9] >= 1430 && dayE[10] >= 1430 && dayE[11] >= 1430 && dayE[12] >= 1430 && Math.abs(dayE[13] - 480) < 2 && Math.abs(dayE[14] - 384) < 2, JSON.stringify(dayE));
   check('Tagesaggregat: die ersten vier Werte [d0, hdd, q, n] bleiben wie bisher (Plan-UA liest nur diese)', Math.abs(planNow().model.ua - 0.2333) < 0.004 && fstore.plan.learn.days[0][2] > 59 && fstore.plan.learn.days[0][2] < 61, 'ua ' + planNow().model.ua.toFixed(4));
   const fileLearn = JSON.parse(files['/data/optimizer/plan-state.json'].data).learn.days[0];
-  check('plan-state.json: der 15er-Eintrag wird gesichert und ueberlebt einen Neustart (UA unveraendert)', fileLearn.length === 15 && (() => { const keep = JSON.stringify(fileLearn); delete fstore.plan; step(1); return JSON.stringify(fstore.plan.learn.days[0]) === keep && Math.abs(planNow().model.ua - 0.2333) < 0.004; })(), JSON.stringify(fileLearn));
+  check('plan-state.json: der 21er-Eintrag wird gesichert und ueberlebt einen Neustart (UA unveraendert)', fileLearn.length === 21 && (() => { const keep = JSON.stringify(fileLearn); delete fstore.plan; step(1); return JSON.stringify(fstore.plan.learn.days[0]) === keep && Math.abs(planNow().model.ua - 0.2333) < 0.004; })(), JSON.stringify(fileLearn));
   // Deploy ohne Neustart: Zustand eines aelteren Stands (ohne neue Zaehler, Plan-Version 7, Tag mit 4er-Eintrag) -> kein NaN, Plan neu gerechnet, Tag schliesst mit null fuer die neuen Summen
   pworld({wide: true, atBase: 5, running: true, hp: 2500, atNow: 5, pvNow: 2000, windNow: 4, owmTemp: 7}); O.hp = 2500; step(5);
   ['windS', 'windN', 'clS', 'clN', 'owS', 'owN', 'toS', 'toN', 'tcS', 'tcN'].forEach(k => { delete fstore.plan.acc[k]; });
-  ['s', 'sN', 'wk', 'wN', 'khW', 'owN', 'wkW', 'wwN', 'wkT', 'wTN', 'wkWT', 'wwTN', 'r0', 'rl'].forEach(k => { delete fstore.plan.day[k]; }); fstore.plan.day.n = 700; fstore.plan.day.hdd = 116; fstore.plan.plan.ver = 7; fstore.plan.learn.days = [[1, 100, 25, 1440]];
+  ['s', 'sN', 'wk', 'wN', 'khW', 'owN', 'wkW', 'wwN', 'wkT', 'wTN', 'wkWT', 'wwTN', 'lgN', 'dhwM', 'defM', 'gapM', 'engM', 'unpM', 'r0', 'rl'].forEach(k => { delete fstore.plan.day[k]; }); fstore.plan.day.n = 700; fstore.plan.day.hdd = 116; fstore.plan.plan.ver = 7; fstore.plan.learn.days = [[1, 100, 25, 1440]];
   step(3);
   check('Deploy-Sicherheit: Zustand ohne neue Zaehler und Plan-Version 7 -> keine NaN in den Zaehlern, Plan wird neu gerechnet (Version 10), alter 4er-Eintrag bleibt unveraendert', ['windS', 'windN', 'owS', 'toS', 'tcS'].every(k => Number.isFinite(fstore.plan.acc[k])) && Number.isFinite(fstore.plan.day.s) && Number.isFinite(fstore.plan.day.wk) && planNow().ver === 10 && JSON.stringify(fstore.plan.learn.days[0]) === JSON.stringify([1, 100, 25, 1440]), JSON.stringify({ver: planNow().ver, acc: fstore.plan.acc.windS, day: fstore.plan.day.s}));
   step(1440 - 8);
   const dayD = fstore.plan.learn.days[1];
-  check('Deploy-Sicherheit: ein Tag, der vor dem Deploy begann (nur ein Teil der Minuten mit neuen Summen), schliesst mit null fuer s/wk/khW/wkW und die Totzonen-Summen wkT/wkWT, hdd/q/n bleiben gueltig', fstore.plan.learn.days.length === 2 && dayD.length === 15 && dayD[4] === null && dayD[5] === null && dayD[6] === null && dayD[7] === null && dayD[13] === null && dayD[14] === null && dayD[1] > 100 && dayD[3] >= 1200, JSON.stringify(dayD));
+  check('Deploy-Sicherheit: ein Tag, der vor dem Deploy begann (nur ein Teil der Minuten mit neuen Summen), schliesst mit null fuer s/wk/khW/wkW und die Totzonen-Summen wkT/wkWT, hdd/q/n bleiben gueltig', fstore.plan.learn.days.length === 2 && dayD.length === 21 && dayD[4] === null && dayD[5] === null && dayD[6] === null && dayD[7] === null && dayD[13] === null && dayD[14] === null && dayD[15] === null && dayD[1] > 100 && dayD[3] >= 1200, JSON.stringify(dayD));
   // Sicherheit: Ausgaenge unveraendert
   const planNode = JSON.parse(fs.readFileSync(flowsFile, 'utf8')).find(n => n.id === 'opt_plan');
   check('Sicherheit (Flow-Datei): opt_plan hat dieselben 5 Ausgaenge (Karte, Ist, Vergleich, Schnappschuss, frei), kein node.send im Code', JSON.stringify(planNode.wires) === JSON.stringify([['opt_t_plan'], ['opt_f_pact'], ['opt_f_peval'], ['opt_f_psnap'], []]) && !/node\.send\s*\(/.test(planNode.func), JSON.stringify(planNode.wires));
@@ -1843,7 +1843,7 @@ check('Dateien: Ist, Vergleich, Schnappschuesse und Zustand unter /data/optimize
     const cf1 = fstore.plan.learn.coef;
     check('S5 Hysterese: war aktiv; bei gleichfoermigen PV-Tagen faellt das Gate durch, aktiv bleibt solange der Kandidat nicht schlechter als der Plan-Schaetzer ist (Fehler Kandidat ≤ Plan)', cf1.gate.ok === false && cf1.n === 12 && ((cf1.maeSun !== null && cf1.maeBase > 0 && cf1.maeSun <= cf1.maeBase) === cf1.aktiv), JSON.stringify({aktiv: cf1.aktiv, base: cf1.maeBase, sun: cf1.maeSun, why: cf1.gate.why})); }
   // Sicherheit A (13.10.): kuenstlich negativer / zu grosser / nicht endlicher Fit
-  const PUA = new Function(/\/\/ == REIN-BEGIN ==[\s\S]*?\/\/ == REIN-END ==/.exec(F['opt_plan'])[0] + '\n; return {gateCheck, coefSafe, coefHardFail, prepRows, fitModel, windEff, COEF_LIM, WIND_TOT, MODELL_VER};')();
+  const PUA = new Function(/\/\/ == REIN-BEGIN ==[\s\S]*?\/\/ == REIN-END ==/.exec(F['opt_plan'])[0] + '\n; return {gateCheck, coefSafe, coefHardFail, prepRows, fitModel, windEff, COEF_LIM, WIND_TOT, MODELL_VER, lgFlags, lgTxt, cusum, abSchritt, PLAUS, LERN_GATE, DRIFT, daysFromRows, parseCsv, d0Of};')();
   { const fx = {ua: 0.25, bw: 0, bs: 0.05}, rows10 = Array.from({length: 10}, (_, i) => ({y: 30, x1: 120, x2: 0, x3: i % 2 ? 20 : 80}));
     const gNeg = PUA.gateCheck(12, rows10, 10, 8, {ua: 0.25, bw: -0.01, bs: -0.2}, {minDays: 10}), gNaN = PUA.gateCheck(12, rows10, 10, 8, {ua: 0.25, bw: 0, bs: NaN}, {minDays: 10}), gBig = PUA.gateCheck(12, rows10, 10, 8, {ua: 0.25, bw: 0.06, bs: 0.1}, {minDays: 10}), gOk = PUA.gateCheck(12, rows10, 10, 8, fx, {minDays: 10});
     check('Sicherheit A Gate: negativer Fit -> "Koeffizient negativ", NaN -> "nicht endlich", bw 0,06 -> "unplausibel"; jeweils harter Fehler; plausibler Fit ok', gNeg.why.includes('Koeffizient negativ') && gNaN.why.includes('Koeffizient nicht endlich') && gBig.why.includes('Koeffizient unplausibel') && [gNeg, gNaN, gBig].every(PUA.coefHardFail) && gOk.ok && !PUA.coefHardFail(gOk), JSON.stringify([gNeg.why, gNaN.why, gBig.why, gOk.why]));
@@ -1865,6 +1865,46 @@ check('Dateien: Ist, Vergleich, Schnappschuesse und Zustand unter /data/optimize
   prep({cfg: {coefActivate: 1}}); { const cfOld = Object.assign({}, fstore.plan.learn.coef, {aktiv: true, sig: '12|alt', ver: undefined}); fstore.plan.learn.days = fstore.plan.learn.days.map(d => { const e = d.slice(); e[4] = 50; return e; }); fstore.plan.learn.coef = cfOld; fstore.plan.bf = {days: []}; step(1);
     const cfN = fstore.plan.learn.coef;
     check('Modellversion: gespeicherte Koeffizienten ohne Version (roher Wind) werden neu gerechnet (Signatur "v2|...", ver 2); ihr "aktiv" wird nicht uebernommen (gleichfoermige PV-Tage: Gate zu, keine Hysterese) ', cfN.ver === 2 && /^v2\|/.test(cfN.sig) && cfN.aktiv === false && cfN.gate.ok === false && fstore.plan.bf.v === 2, JSON.stringify({ver: cfN.ver, sig: cfN.sig.slice(0, 12), aktiv: cfN.aktiv, why: cfN.gate.why, bf: fstore.plan.bf.v})); }
+  // Lern-Hygiene (B, 13.10.2026): Plausibilitaet, Tages-Gate, Drift; Absicherung (D): Rueckfall mit Sperre, Schnappschuesse
+  { const F0 = {dhwM: 0, defM: 0, gapM: 0, engM: 0, unpM: 0};
+    check('Lern-Gate (rein): Grenzen 120/90/60/60/60 min (ANNAHME) -> Bitmaske 1 Warmwasser, 2 Abtauen, 4 Luecke, 8 Eingriff, 16 unplausibel; genau an der Grenze lernt der Tag mit',
+          PUA.lgFlags(F0) === 0 && PUA.lgFlags(Object.assign({}, F0, {dhwM: 121})) === 1 && PUA.lgFlags(Object.assign({}, F0, {dhwM: 120})) === 0 && PUA.lgFlags(Object.assign({}, F0, {defM: 91, gapM: 61})) === 6 && PUA.lgFlags(Object.assign({}, F0, {engM: 61, unpM: 61})) === 24 && PUA.lgTxt(6) === 'Abtauen, Datenlücke' && PUA.LERN_GATE.dhwMaxMin === 120, '');
+    let txt = 'slot_start,ist_aussen,ist_pv_w,ist_waerme_kwh,ist_ww_min,ist_abtau_min\n'; for (let i = 0; i < 96; i++) { const h = Math.floor(i / 4), m = (i % 4) * 15; txt += '2026-11-10 ' + (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m + ',5,0,0.6,' + (i < 10 ? 15 : 0) + ',0\n'; }
+    for (let i = 0; i < 96; i++) { const h = Math.floor(i / 4), m = (i % 4) * 15; txt += '2026-11-11 ' + (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m + ',5,0,0.6,' + (i < 6 ? 15 : 0) + ',0\n'; }
+    const dsW = PUA.daysFromRows(PUA.parseCsv(txt), 15);
+    check('Lern-Gate in der Rueckrechnung (plan-actuals): 150 min Warmwasser -> Tag gesperrt (1), 90 min -> lernt mit (0)', dsW.length === 2 && dsW[0].flags === 1 && dsW[1].flags === 0, JSON.stringify(dsW.map(d => d.flags)));
+    const st = []; let c = null; [1.5, 1.5, 1.5, 0, 0, 0].forEach(x => { c = PUA.cusum(c, x, 0.5, 3); st.push(c.s + (c.an ? '!' : '')); });
+    check('CUSUM (Idee tvofi drift.py): s = min(1,5 h, max(0, s + x − k)); x 1,5 je Tag, k 0,5, h 3 -> 1, 2, 3 (Alarm), danach 2,5, 2, 1,5 (Alarm bleibt bis s <= h/4)', st.join(' ') === '1 2 3! 2.5! 2! 1.5!' && PUA.cusum({s: 0.7, an: true}, 0, 0.5, 3).an === false, st.join(' '));
+    const L = {}, e = (q, b, k) => ({L24: {n: 96, q, b, k}}), r1 = PUA.abSchritt(L, e(90, 80, 60), true), r2 = PUA.abSchritt(L, e(90, 80, 60), true), r3 = PUA.abSchritt({}, {L24: {n: 40, q: 90, b: 80, k: 60}}, true);
+    check('A/B-Pruefung (rein): Kandidat 30 kWh daneben, Plan-Modell 10 kWh (Streuung 9 kWh) -> y = +2,22 je Tag, Rueckfall am 2. Tag; Drift des Plan-Modells (q > b: r = 1,11) zaehlt nach oben; Tag mit weniger als 80 Slots zaehlt nicht',
+          r1.genutzt && !r1.rueckfall && r2.rueckfall === true && Math.abs(r1.y - 20 / 9) < 1e-9 && Math.abs(L.up.s - 2 * (10 / 9 - 0.5)) < 1e-9 && L.dn.s === 0 && r3.genutzt === false, JSON.stringify([r1, r2, L.rb]));
+    const r4 = PUA.abSchritt(L, e(90, 80, 60), false);
+    check('A/B-Pruefung: ohne aktiven Kandidaten wird der Rueckfall-Zaehler zurueckgesetzt', r4.genutzt && L.rb.s === 0 && L.rb.an === false, ''); }
+  // Integration: Plausibilitaet und Tages-Gate im Live-Tag; Anzeige
+  { pworld({wide: true, atBase: 5, running: true, hp: 2500, atNow: 5, pvNow: 2000, windNow: 6, owmTemp: 7}); O.hp = 2500;
+    step(1440 + 5, m => { if (m >= 100 && m < 175) { gstore.TOP14_Outside_Temp = -127; } if (m >= 300 && m < 430) { gstore.TOP20_ThreeWay_Valve_State = 1; } else { gstore.TOP20_ThreeWay_Valve_State = 0; } });
+    const dG = fstore.plan.learn.days[0];
+    check('Lern-Gate live: 75 min Aussentemperatur −127 °C (Fuehlerfehler) und 130 min Warmwasser -> Tag mit Gate 17 (Warmwasser + unplausibel), Zaehler 130/0/0/0/75; die unplausiblen Minuten fehlen in den Heizgradstunden (kh ~ 240 − 75/60·10)',
+          dG && dG[15] === 17 && dG[16] === 130 && dG[20] === 75 && Math.abs(dG[1] - (240 - 75 / 60 * 10)) < 1.5, JSON.stringify(dG && dG.slice(13)));
+    step(2); const rG = (planRows().find(r => r[0] === 'Lern-Gate') || [])[1];
+    check('Anzeige "Lern-Gate": heute frei, 1 verworfener Tag (Warmwasser 1, unplausibel 1); der Tag fehlt im Gebaeudemodell', /^heute frei · verworfene Tage 1 \(Warmwasser 1, unplausibel 1\)$/.test(rG) && fstore.plan.lgVerw.length === 1 && (fstore.plan.learn.coef || {n: 0}).n === 0, rG);
+    step(1, () => { gstore.MQTT = {block_active: 1}; }); for (let i = 0; i < 61; i++) { step(1, () => { gstore.MQTT = {block_active: 1}; }); }
+    const rG2 = (planRows().find(r => r[0] === 'Lern-Gate') || [])[1];
+    check('Anzeige "Lern-Gate": nach 62 min MQTT-Sperre heute "gesperrt (Eingriff)"', /^heute gesperrt \(Eingriff\)/.test(rG2), rG2); }
+  { pworld({wide: true, atBase: 5, running: true, hp: 2500, atNow: 5}); delete gstore.OPT_hp; O.hp = 0; step(70);
+    check('Lern-Gate live: Anlagendaten fehlen (kein OPT_hp) -> Datenluecke wird gezaehlt (70 min) und heute gesperrt', fstore.plan.day.gapM >= 69 && /heute gesperrt \(Datenlücke\)/.test((planRows().find(r => r[0] === 'Lern-Gate') || [])[1]), String(fstore.plan.day.gapM)); }
+  // Absicherung (D): Rueckfall im laufenden Fluss (Tageswechsel mit A/B-Tag) und Sperre bei der naechsten Neuberechnung
+  { pworld({wide: true, pvPeak: 6000, windF: 4, start: 18 * HH, cfg: {coefActivate: 1}}); step(2); fstore.plan.bf = {days: [], v: 2}; fstore.plan.learn.days = sunDays(12); delete fstore.plan.learn.coef; fstore.plan.planSlot = 0; step(1);
+    const akt0 = fstore.plan.learn.coef.aktiv, hist0 = (fstore.plan.learn.coefHist || []).length;
+    fstore.plan.ab = {d0: new RealDate(NOW).setHours(0, 0, 0, 0), L24: {n: 96, q: 84, b: 80, k: 60}, L6: {n: 96, q: 84, b: 80, k: 60}}; fstore.plan.learn.lg = {rb: {s: 2.5, an: false}};
+    step(6 * 60 + 30); const rf = fstore.plan.learn.rueckfall, cfR = fstore.plan.learn.coef, rD = (planRows().find(r => r[0] === 'Bedarfsmodell Drift') || [])[1];
+    check('Rueckfall (D): aktiver Kandidat (Gate ok, coefActivate), A/B-Tag mit Kandidat 24 kWh daneben (Plan-Modell 4) -> nach Mitternacht zurueckgenommen (aktiv false), Sperre 7 Tage, Grund mit CUSUM; Anzeige "Kandidat zurückgenommen"; Schnappschuss der aktiven Lernwerte vorhanden',
+          akt0 === true && hist0 >= 1 && rf && /Kandidat im A\/B schlechter als das Plan-Modell \(CUSUM [\d.]+\)/.test(rf.grund) && Math.abs(rf.bis - rf.ts - 7 * 86400000) < 1 && cfR.aktiv === false && /Kandidat zurückgenommen \d\d\.\d\d\., gesperrt bis \d\d\.\d\d\./.test(rD) && rf.stand && rf.stand.bs > 0 && (gstore.OPT_plan.model || {}).aktiv === false,
+          JSON.stringify({akt0, rf, rD}).slice(0, 400));
+    delete fstore.plan.learn.coef; step(1); const cfN = fstore.plan.learn.coef;
+    check('Rueckfall-Sperre: bei der naechsten Neuberechnung bleibt der Kandidat trotz bestandenem Gate gesperrt (Gate-Grund "Rückfall bis …")', cfN.aktiv === false && cfN.gate.why.some(w => /^Rückfall bis \d\d\.\d\d\.$/.test(w)), JSON.stringify(cfN.gate.why));
+    fstore.plan.learn.rueckfall.bis = NOW - 1; delete fstore.plan.learn.coef; step(1);
+    check('... nach Ablauf der Sperre wird der Kandidat wieder aktiv (Gate ok)', fstore.plan.learn.coef.aktiv === true, JSON.stringify(fstore.plan.learn.coef.gate.why)); }
   // Schnappschuss, Vergleich und A/B
   prep(); { fstore.plan.snapHour = 0; fstore.plan.planSlot = 0; step(1); const sn = fstore.plan.snaps[fstore.plan.snaps.length - 1], K = sn.cols;
     check('S3 Schnappschuss: fuenf neue Spalten hinten (sonne_kwh, solar_kand_kwh, wind_kand_kwh, bedarf_basis, bedarf_kand), Spaltenzahl stimmt, Kandidat enthaelt Sonne (kleiner als die Basis in PV-Stunden)', K.slice(26).join() === 'sonne_kwh,solar_kand_kwh,wind_kand_kwh,bedarf_basis,bedarf_kand' && sn.slots.every(r => r.length === K.length) && sn.slots.some(r => r[K.indexOf('solar_kand_kwh')] > 0.001 && r[K.indexOf('bedarf_kand')] < r[K.indexOf('bedarf_basis')]), K.slice(24).join()); }
@@ -1933,7 +1973,7 @@ check('Dateien: Ist, Vergleich, Schnappschuesse und Zustand unter /data/optimize
 //      Erzeugen (nur mit dem alten Code!): PLAN_REF=write node tools/optimizer_sim.js ...   danach vergleicht jeder Lauf gegen tools/fixtures/plan_ref_v7.json
 {
   const refFile = path.join(__dirname, 'fixtures', 'plan_ref_v7.json');
-  const NEWROWS = new Set(['Gebäudemodell', 'Fühlerkorrektur', 'Bedarfsmodell A/B']);                          // Zeilen, die erst mit Fahrplan v2 dazukommen
+  const NEWROWS = new Set(['Gebäudemodell', 'Fühlerkorrektur', 'Bedarfsmodell A/B', 'Lern-Gate', 'Bedarfsmodell Drift']);                          // Zeilen, die erst mit Fahrplan v2 dazukommen
   const capture = () => {
     const P = planNow(), sn = fstore.plan.snaps[fstore.plan.snaps.length - 1];
     return {
