@@ -147,7 +147,10 @@ var ENGVIEW = (function (E) {
                     min: ml.length ? ml.map(function (b) { return E.de(b[0], 0) + '…' + E.de(b[0] + E.TAKT.binK, 0) + ' °C ' + E.de(b[3] / 1000, 1) + ' kW'; }).join(' · ') : 'noch zu wenig stabile Laufminuten',
                     cop: cpt.length ? cpt.map(function (r) { return r[2] + ' °C ' + r[0] + ' Q' + r[1] + ' ' + E.de(r[3], 2) + ' (' + E.de(r[4] / 60, 1) + ' h)'; }).join(' · ') : 'noch zu wenig stabile Laufminuten'};
         }
-        var score = {now: now, t0: t0, series: series, tiles: tiles, mess: mess, takt: takt, sv: sv};
+        var LG = S.lag && S.lag.res, lagT = function (x) { return x && have(x.min) ? E.de(x.min, 0) + ' min (' + x.n + ' Ereignisse)' : 'zu wenige Ereignisse (' + (x ? x.n : 0) + ' von ' + E.LAG.minEreignisse + ')'; };
+        var wirk = LG ? 'Anstieg ' + lagT(LG.auf) + ' · Abfall ' + lagT(LG.ab) : 'Puffer ' + ((S.lag && S.lag.o) ? S.lag.o.length : 0) + ' von ' + (Math.round(E.LAG.fensterMin / E.LAG.stepMin) + 2) + ' Proben';
+        var K = S.kb || null, kb = K ? E.sg(K.bias, 1) + ' K · ' + K.tage + ' von ' + E.KB.tage + ' Tagen mit ≥ ' + E.de(E.KB.luftK, 1) + ' K Luft · ' + K.resets + ' Rücksetzungen · ' + (K.tageGesamt || 0) + ' Tage ausgewertet' : '–';
+        var score = {now: now, t0: t0, series: series, tiles: tiles, mess: mess, takt: takt, wirk: wirk, kb: kb, sv: sv};
         return {card: card, rules: {rules: rules}, score: score, log: {rows: logRows(o.V || {}, now, 12)}};
     }
     return {track: track, build: build, logRows: logRows, COL: COL, CHIP: CHIP};

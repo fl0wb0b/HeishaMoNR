@@ -844,6 +844,76 @@ var ENGINE = (function () {
         return T;
     }
 
+    // ------------------------------------------------------------------ Wirkzeit und Heizkurven-Bias (E, nur Auswertung/Anzeige, keine Regel; 13.10.2026)
+    // Wirkzeit: Teilportierung der Idee aus smefa/ClimateOptimizer custom_components/truetemp/lag.py (MIT-Lizenz, Copyright Tomas Smedberg):
+    // ereignisbasiert statt Kreuzkorrelation (im geschlossenen Regelkreis haette die Kreuzkorrelation ihr Maximum bei 0). Gemessen wird die Zeit von einem
+    // Sollsprung (Soll-Vorlauf >= 1 K binnen 30 min) bis der Raum (Mittel der gueltigen Raeume) die Haelfte seiner Reaktion im 6-h-Fenster erreicht hat; Anstieg und
+    // Abfall getrennt; das Fenster endet vor dem naechsten Ereignis; Raum in falscher Richtung oder < 0,08 K: verworfen; Komfortband geaendert: verworfen;
+    // Median aus mindestens 3 sauberen Ereignissen. Werte aus lag.py (Fenster 6 h, Puffer 4 Tage à 15 min, 0,08 K, 3 Ereignisse, Haelfte); Sollsprung 1 K und
+    // 30 min sind fuer unseren ganzzahligen Soll angepasst (ANNAHME). Fehlt ein Raumwert, beginnt der Puffer neu (Luecke wird nicht ueberbrueckt).
+    var LAG = {stepMin: 15, puffer: 384, fensterMin: 360, sollK: 1, maxSchritte: 2, minReaktionK: 0.08, minEreignisse: 3, anteil: 0.5, minFenster: 2, zielK: 0.3, raumAlterMax: 360};
+    function lagEvents(o, rising) {
+        var want = rising ? 1 : -1, ev = [], i = 1;
+        while (i < o.length) {
+            var dl = o[i] - o[i - 1];
+            if (dl * want <= 0) { i++; continue; }
+            var start = i, tr = 0, st = 0, cur = i, qual = false;
+            while (cur < o.length) { var mv = o[cur] - o[cur - 1]; if (mv * want <= 0) { break; } tr += Math.abs(mv); st++; if (tr >= LAG.sollK && st <= LAG.maxSchritte) { qual = true; cur++; break; } if (st > LAG.maxSchritte) { break; } cur++; }
+            if (qual) { ev.push(start); while (cur < o.length && (o[cur] - o[cur - 1]) * want > 0) { cur++; } }
+            i = Math.max(cur, i + 1);
+        }
+        return ev;
+    }
+    function lagZielEvents(z, rising) { var out = []; for (var i = 1; i < z.length; i++) { if ((z[i] - z[i - 1]) * (rising ? 1 : -1) >= LAG.zielK) { out.push(i); } } return out; }
+    function lagMessen(L, rising) {
+        var w = Math.round(LAG.fensterMin / LAG.stepMin), cand = lagZielEvents(L.z, rising).concat(lagEvents(L.o, rising)).sort(function (a, b) { return a - b; });
+        var grenzen = lagZielEvents(L.z, true).concat(lagZielEvents(L.z, false), lagEvents(L.o, true), lagEvents(L.o, false)).sort(function (a, b) { return a - b; }), res = [];
+        cand.forEach(function (s) {
+            var lim = w; for (var k = 0; k < grenzen.length; k++) { if (grenzen[k] > s) { lim = Math.min(w, grenzen[k] - s - 1); break; } }
+            if (lim < LAG.minFenster || s + lim >= L.r.length) { return; }
+            for (var j = s; j <= s + lim; j++) { if (Math.abs(L.z[j] - L.z[s]) >= LAG.zielK) { return; } }        // Komfortband geaendert: nicht lesbar
+            var base = L.r[s], tot = L.r[s + lim] - base;
+            if (rising ? tot < LAG.minReaktionK : tot > -LAG.minReaktionK) { return; }
+            for (var m = 1; m <= lim; m++) { if (Math.abs(L.r[s + m] - base) >= Math.abs(tot) * LAG.anteil) { res.push(m * LAG.stepMin); return; } }
+        });
+        if (res.length < LAG.minEreignisse) { return {min: null, n: res.length}; }
+        res.sort(function (a, b) { return a - b; }); var md = res.length % 2 ? res[(res.length - 1) / 2] : (res[res.length / 2 - 1] + res[res.length / 2]) / 2;
+        return {min: md, n: res.length};
+    }
+    function lagStep(S, d, now) {                                                    // alle 15 min eine Probe: Soll-Vorlauf, Mittel der gueltigen Raeume, Mittel ihrer Bandmitten
+        var L = S.lag = (S.lag && Array.isArray(S.lag.o)) ? S.lag : {o: [], r: [], z: [], next: 0, res: null};
+        if (now < L.next) { return; }
+        L.next = Math.floor(now / (LAG.stepMin * MIN)) * LAG.stepMin * MIN + LAG.stepMin * MIN;
+        var act = d.rooms.filter(function (r) { return r.active && have(r.min) && have(r.max); }), ok = act.filter(function (r) { return have(r.t) && have(r.age) && r.age <= LAG.raumAlterMax; });
+        if (!have(d.soll) || !act.length || ok.length !== act.length) { L.o = []; L.r = []; L.z = []; return; }      // Luecke: Puffer neu
+        L.o.push(d.soll); L.r.push(r2(ok.reduce(function (a, r) { return a + r.t; }, 0) / ok.length)); L.z.push(r2(ok.reduce(function (a, r) { return a + (r.min + r.max) / 2; }, 0) / ok.length));
+        if (L.o.length > LAG.puffer) { L.o.shift(); L.r.shift(); L.z.shift(); }
+        if (L.o.length >= Math.round(LAG.fensterMin / LAG.stepMin) + 2) { L.res = {auf: lagMessen(L, true), ab: lagMessen(L, false), n: L.o.length, t: now}; }
+    }
+    // Heizkurven-Bias: Teilportierung tvofi/heatpump_optimizer custom_components/heatpump_optimizer/curve_learning.py (MIT-Lizenz, Copyright tvofi, Fork von strutsfarm):
+    // stehende Absenkung der Heizkurve in [-4, 0] K. Je Kalendertag die knappste Luft aller gueltigen Raeume ueber ihrem Minimum: <= 0 K -> sofort zurueck auf 0
+    // (Ruecksetzung), unter 0,3 K -> Zaehler 0, sonst Zaehler +1 und nach 3 solchen Tagen -0,2 K (hoechstens 0,5 K je Woche). Abwaerts langsam und belegt,
+    // aufwaerts sofort. Nur Anzeige (Shadow); die Regel "Raumeinfluss" bleibt bei +-1 K und wird davon nicht beruehrt.
+    var KB = {min: -4, max: 0, wocheK: 0.5, luftK: 0.3, tage: 3, schrittK: 0.2};
+    function kbTag(K, luft, now) {
+        if (!have(luft)) { return K; }
+        if (luft <= 0) { K.tage = 0; if (K.bias < KB.max) { K.bias = 0; K.resets++; K.lastReset = now; } return K; }
+        if (luft < KB.luftK) { K.tage = 0; return K; }
+        K.tage++;
+        if (K.tage >= KB.tage) {
+            var maxNow = K.lastStep ? KB.wocheK * (now - K.lastStep) / (7 * 24 * 60 * MIN) : KB.schrittK, stp = Math.min(KB.schrittK, maxNow);
+            if (stp > 0) { K.bias = Math.round(Math.min(KB.max, Math.max(KB.min, K.bias - stp)) * 100) / 100; K.tage = 0; K.lastStep = now; }
+        }
+        return K;
+    }
+    function kbStep(S, d, now) {                                                     // knappste Luft je Kalendertag (gueltige Raeume, Datenalter wie in der Bewertung), bei Tageswechsel buchen
+        var K = S.kb = (S.kb && have(S.kb.bias)) ? S.kb : {bias: 0, tage: 0, resets: 0, lastStep: 0, lastReset: 0, day: '', luft: null, tageGesamt: 0};
+        var dk = ymd(now);
+        if (K.day && K.day !== dk) { kbTag(K, K.luft, now); if (have(K.luft)) { K.tageGesamt++; } K.luft = null; }
+        K.day = dk;
+        d.rooms.forEach(function (r) { if (r.active && have(r.t) && have(r.min) && have(r.age) && r.age <= SCORE.raumAlterMax) { var m = r.t - r.min; K.luft = have(K.luft) ? Math.min(K.luft, m) : m; } });
+    }
+
     // ------------------------------------------------------------------ Schnappschuss fuer den Datensatz (gerundet; reicht zum Nachspielen)
     var SNAP_KEYS = ['hpAge', 'hz', 'vl', 'rl', 'soll', 'dT', 'pel', 'pth', 'flow', 'pump', 'q', 'qPrio', 'hc', 'at', 'defrost', 'dhw', 'ss', 'rt', 'shift', 'heatMode', 'z1Sensor',
                      'heaterI', 'heaterE', 'htrOnAT', 'htrStartDelta', 'heatOffAT', 'sollKurve', 'block', 'otherQ', 'otherShift', 'kzRad'];
@@ -875,6 +945,7 @@ var ENGINE = (function () {
         if (!(S.takt && S.takt.nl && S.takt.nl.laeuft)) { S.takt = taktStep(S.takt, inp, cfg.takt); }     // waehrend des Nachladens fuehrt die Datei, nicht die Live-Eingabe
         d.takt = taktKennzahlen(S.takt, now, cfg.takt);
         d.tc = cfg.takt; d.copSum = copSumme(S.takt, cfg.takt, now);                     // COP-Summen fuer die Zielstufe von "Laufzeit strecken" (v3)
+        lagStep(S, d, now); kbStep(S, d, now);                                          // Wirkzeit und Heizkurven-Bias (nur Auswertung)
         tgUpdate(S, d); d.vsBase = tagesgang(S, now); d.vsDk = bedarfK(d.vs, cfg.rules.vorausschau, d.vsBase);
         if (!S.arb.owner) {                                                          // Arbitrierung nach dem Laden eines aelteren Zustands: laufenden Vorschlag als Eigentuemer eintragen
             RULES.forEach(function (R) { var p0 = S.rules[R.id].prop; if (R.groesse === 'shift' && p0 && !S.arb.owner) { S.arb.owner = R.id; S.arb.soll = p0.cmd.value; S.arb.von = p0.von; S.arb.start = p0.ts; } });
@@ -1551,7 +1622,7 @@ var ENGINE = (function () {
     }
 
     return {VER: VER, SCORE_VER: SCORE_VER, RULES: RULES, RULE: RULE, LOCKS: LOCKS, LOCK_CFG: LOCK_CFG, SCORE: SCORE, WHITELIST: WHITELIST, APPLY: APPLY,
-            brier: brier, hPunkte: hPunkte, vorschau: vorschau, bedarfK: bedarfK, VS_LIM: VS_LIM, PLAUS: PLAUS, tagesgang: tagesgang, defaults: defaults, mergeCfg: mergeCfg, newState: newState, fixState: fixState, step: step, report: report, messStatus: messStatus, MESS: MESS, TAKT: TAKT, TAKT_SCHWELLEN: TAKT_SCHWELLEN, taktCfg: taktCfg, taktNew: taktNew, taktStep: taktStep, taktKennzahlen: taktKennzahlen, mindestLeistung: mindestLeistung, copSumme: copSumme, copTabelle: copTabelle, bandOf: bandOf, modusOf: modusOf, nlNeu: nlNeu, nlZeilen: nlZeilen, nlEnde: nlEnde, snapshot: snapshot, unsnap: unsnap,
+            brier: brier, hPunkte: hPunkte, vorschau: vorschau, bedarfK: bedarfK, VS_LIM: VS_LIM, PLAUS: PLAUS, tagesgang: tagesgang, defaults: defaults, mergeCfg: mergeCfg, newState: newState, fixState: fixState, step: step, report: report, messStatus: messStatus, MESS: MESS, TAKT: TAKT, TAKT_SCHWELLEN: TAKT_SCHWELLEN, taktCfg: taktCfg, taktNew: taktNew, taktStep: taktStep, taktKennzahlen: taktKennzahlen, mindestLeistung: mindestLeistung, copSumme: copSumme, copTabelle: copTabelle, bandOf: bandOf, modusOf: modusOf, nlNeu: nlNeu, nlZeilen: nlZeilen, nlEnde: nlEnde, LAG: LAG, lagMessen: lagMessen, lagStep: lagStep, KB: KB, kbTag: kbTag, kbStep: kbStep, snapshot: snapshot, unsnap: unsnap,
             checksum: checksum, newApply: newApply, applyRequest: applyRequest, applyTick: applyTick, iso: iso, ymd: ymd, strZiel: strZiel, hhmm: hhmm, isoWeek: isoWeek, de: de, sg: sg};
 })();
 if (typeof module !== 'undefined' && module.exports) { module.exports = ENGINE; }

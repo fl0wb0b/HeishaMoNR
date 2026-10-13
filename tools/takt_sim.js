@@ -53,6 +53,27 @@ const nul = n => Array.from({length: n}, () => ({hz: null}));
   check('Plausibilitaet: Aussentemperatur −127 °C -> Lauf zaehlt, aber keine Mindestleistungs-/COP-Minute', T.runs.length === 1 && Object.keys(T.bins).length === 0 && Object.keys(T.copT).length === 0, JSON.stringify(T.bins)); }
 { const o = E.step(null, {t: T0, hpAge: 0, hz: 30, vl: 30, rl: 27, soll: 30, dT: 3, at: -127, pel: 9000, pth: 2000, pump: 1500, q: 0, hc: 1}, null);
   check('Plausibilitaet in der Maschine: at −127 und pel 9000 gelten als fehlend (d.at/d.pel null), Datensatz nennt sie (abl.unpl), Rohwerte bleiben im Schnappschuss', o.d.at === null && o.d.pel === null && JSON.stringify(o.rec.abl.unpl) === '["at","pel"]' && o.rec.in.at === -127, JSON.stringify(o.rec.abl.unpl)); }
+// E) Wirkzeit (Idee/Teilportierung ClimateOptimizer lag.py, MIT) und Heizkurven-Bias (Teilportierung tvofi curve_learning.py, MIT)
+{ const L = {o: [], r: [], z: []}; let room = 21, soll = 30, ziel = 21;
+  const ev = [[10, 2], [40, -2], [70, 2], [100, -2], [130, 2], [160, -2]];                     // Sollspruenge alle 30 Proben (7,5 h)
+  let base = 21, t0 = -999, dir = 0;
+  for (let i = 0; i < 200; i++) { const e = ev.find(x => x[0] === i); if (e) { soll += e[1]; base = room; t0 = i; dir = Math.sign(e[1]); }
+    if (t0 >= 0) { const t = (i - t0) * 15; room = base + dir * 0.5 * (1 - Math.exp(-t / 90)); }
+    L.o.push(soll); L.r.push(Math.round(room * 1000) / 1000); L.z.push(ziel); }
+  const up = E.lagMessen(L, true), dn = E.lagMessen(L, false);
+  check('Wirkzeit (synthetisch, Raum folgt dem Sollsprung mit tau 90 min): Haelfte der Reaktion nach 75 min (erste 15-min-Probe nach 61 min), je 3 Ereignisse fuer Anstieg und Abfall', up.min === 75 && up.n === 3 && dn.min === 75 && dn.n === 3, JSON.stringify([up, dn]));
+  const L2 = JSON.parse(JSON.stringify(L)); for (let i = 40; i < 70; i++) { L2.r[i] = L2.r[39] + 0.3 * ((i - 40) / 30); }     // Raum steigt trotz Sollsprung nach unten
+  const dn2 = E.lagMessen(L2, false);
+  check('Wirkzeit: Raum in falscher Richtung -> Ereignis verworfen (Abfall nur noch 2 von 3)', dn2.min === null && dn2.n === 2, JSON.stringify(dn2));
+  const L3 = JSON.parse(JSON.stringify(L)); for (let i = 135; i < 200; i++) { L3.z[i] = 21 + Math.min(0.5, 0.1 * (i - 134)); }     // Band waechst in Schritten < 0,3 K (kein eigenes Ereignis), zusammen 0,5 K
+  check('Wirkzeit: Komfortband im Fenster geaendert -> Ereignis nicht lesbar (Anstieg 2 von 3)', E.lagMessen(L3, true).n === 2, JSON.stringify(E.lagMessen(L3, true))); }
+{ const D = 24 * 60 * MIN; let K = {bias: 0, tage: 0, resets: 0, lastStep: 0};
+  const seq = [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.2, 0.5, 0.5, 0.5, -0.1], out = [];
+  seq.forEach((l, i) => { K = E.kbTag(K, l, T0 + i * D); out.push(K.bias); });
+  check('Heizkurven-Bias (tvofi): 3 Tage mit >= 0,3 K Luft -> −0,2 K; nach weiteren 3 Tagen −0,4 K; 0,2 K Luft setzt den Zaehler zurueck; Komfortmiss (−0,1 K) -> sofort 0 und 1 Ruecksetzung', out.join(' ') === '0 0 -0.2 -0.2 -0.2 -0.4 -0.4 -0.4 -0.4 -0.6 0' && K.resets === 1, out.join(' '));
+  let K2 = {bias: 0, tage: 0, resets: 0, lastStep: 0}, K3 = {bias: 0, tage: 0, resets: 0, lastStep: 0};
+  for (let i = 0; i < 30; i++) { K2 = E.kbTag(K2, 1.0, T0 + i * D); } for (let i = 0; i < 100; i++) { K3 = E.kbTag(K3, 1.0, T0 + i * D); }
+  check('Heizkurven-Bias: hoechstens 0,5 K je Woche (30 Tage Luft -> 10 Schritte = −2,0 K, Grenze 2,14 K) und nie unter −4 K (100 Tage -> −4 K)', K2.bias === -2 && K3.bias === -4, K2.bias + ' / ' + K3.bias); }
 // Replay mit echten Daten
 const dir = process.argv[2];
 if (dir) {
@@ -66,6 +87,9 @@ if (dir) {
     console.log('Mindestleistung (Bin, Q10 W th, n, monoton): ' + JSON.stringify(E.mindestLeistung(T)));
     console.log('COP je Modus x Quiet x Band (>= 60 min): ' + JSON.stringify(E.copTabelle(T)));
     check('Replay laeuft ohne Fehler und findet Laeufe', all.length > 0, '');
+    { let S = null; const cfgE = E.defaults(); inputs.forEach(x => { S = E.step(S, x, cfgE).S; });
+      console.log('Wirkzeit (Replay): ' + JSON.stringify(S.lag && S.lag.res) + ' Puffer ' + (S.lag ? S.lag.o.length : 0) + ' · Heizkurven-Bias: ' + JSON.stringify(S.kb));
+      check('Replay: Wirkzeit und Heizkurven-Bias laufen ohne Fehler ueber die echten Daten', !!S.kb && Array.isArray(S.lag.o), ''); }
     // Nachladen wie in der Huelle (stueckweise, nur ganze Zeilen; Vormonat fehlt) muss dasselbe ergeben wie das Replay ueber buildInputs
     const nachladenSim = (files, chunk) => {
         const T2 = E.taktNew(); T2.nl = E.nlNeu(files, 0); const buf = Buffer.alloc(chunk); let reads = 0;
