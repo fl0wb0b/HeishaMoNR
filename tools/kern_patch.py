@@ -8,7 +8,8 @@ die Summenfunktion bleibt Byte fuer Byte unveraendert. Drei Teile, alle mit Mark
     HeishaMoNR will (gleiche Summe wie "Calculate new SP Zone 1 + 2": CCC + Raumregelung + Nachtabsenkung + Softstart, gerundet, auf +-5 begrenzt,
     aufgerundet). Sendet NUR nach UNTEN (Anlage hoeher als gewollt) und nur genau den gewollten Wert. Nicht bei: anderem Modus (nur Heizkurvenmodus,
     Zone 1, Wasserfuehler, Waermepumpe an), MQTT-Sperre, HeishaMon-Werten aelter als 6 min, Abweichung > 2 K (dann ist es kein verlorener Befehl, sondern
-    eine bewusste Einstellung), aktiver Uebernahme des Optimierers (OPT_apply.aktiv mit SetZ1HeatRequestTemperature und genau diesem Wert), Schalter
+    eine bewusste Einstellung), gueltiger Uebernahme des Optimierers (OPT_apply hoechstens 2 min alt, Verschiebung aus ak.shift bzw. aktiv mit genau diesem Wert,
+    bestaetigt, ohne abgebrochenen Rueckweg, vor aktiv.bis; Regel-Review B6), Schalter
     global OPT_kern_aus = true. Zeitplan: fruehestens 2 min nach dem Erkennen, dann alle 3 min (5 Befehle), danach alle 30 min, hoechstens 12 je
     Abweichung; Alarm (Hinweis) nach 15 min. Ausgang 1 -> Ratenbegrenzung vor MQTT OUT (bfa541a4cf7363ca, dahinter die globale Sperre), Ausgang 2 -> Log.
  K2 Filter wieder durchlaessig machen (im selben Knoten, Ausgang 3 -> Filter 78cd6de319a6d061): einmal je Node-RED-Start, sobald TOP42 und TOP27 gemeldet
@@ -75,10 +76,17 @@ var HP = global.get('OPT_hp'), fresh = true;
 if (HP && typeof HP === 'object') { fresh = Object.keys(HP).some(function (k) { return HP[k] && typeof HP[k].ts === 'number' && now - HP[k].ts <= 6 * MIN; }); }
 var mqtt = G('MQTT.block_active') === 1;
 var modeOk = G('TOP76_Heating_Mode') === 0 && G('TOP94_Zones_State') === 0 && G('TOP111_Z1_Sensor_Settings') === 0 && G('TOP0_Heatpump_State') === 1;
-var ap = global.get('OPT_apply'), apAktiv = !!(ap && ap.aktiv && ap.aktiv.name === 'SetZ1HeatRequestTemperature' && ap.aktiv.value === hp);
+// Ausnahme nur fuer eine gueltige Optimierer-Uebernahme (Regel-Review B6/5.5): frischer Zustand (OPT_apply alle 15 s, hoechstens 2 min alt), bestaetigter Wert,
+// kein abgebrochener Rueckweg, vor dem Ablauf (aktiv.bis); Verschiebung aus OPT_apply.ak.shift (seit 13.10. je Groesse) oder aelter aus OPT_apply.aktiv
+var ap = global.get('OPT_apply'), apA = null;
+if (ap && typeof ap === 'object' && typeof ap.ts === 'number' && now - ap.ts <= 2 * MIN) {
+    var c0 = (ap.ak && ap.ak.shift) || (ap.aktiv && ap.aktiv.name === 'SetZ1HeatRequestTemperature' ? ap.aktiv : null);
+    if (c0 && c0.name === 'SetZ1HeatRequestTemperature' && c0.bestaetigt === true && !c0.rueckFehl && !c0.unbestaetigt && !(typeof c0.bis === 'number' && now >= c0.bis) && c0.value === hp) { apA = c0; }
+}
+var apAktiv = !!apA;
 if (typeof hp === 'number' && want !== null && hp <= want) { clear(); return [null, done('Anlage ' + hp + ' K, HeishaMoNR will ' + want + ' K: in Ordnung')]; }
 if (!modeOk) { clear(); return [null, done('Wärmepumpe aus oder nicht Heizkurvenmodus/Zone 1/Wasserfühler: kein Abgleich')]; }
-if (apAktiv) { clear(); return [null, done('Übernahme des Optimierers aktiv (' + hp + ' K): kein Abgleich')]; }
+if (apAktiv) { clear(); return [null, done('Übernahme des Optimierers aktiv (' + hp + ' K' + (typeof apA.bis === 'number' ? ', bis ' + new Date(apA.bis).toTimeString().slice(0, 5) : '') + '): kein Abgleich')]; }
 if (!st.since) { st.since = now; }
 var mins = Math.round((now - st.since) / MIN);
 var alarmTxt = mins >= 15 ? 'Kern-Abgleich: Verschiebung an der Anlage seit ' + mins + ' min höher als HeishaMoNR will' : '';

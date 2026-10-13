@@ -1,6 +1,6 @@
 # Optimierer: Entscheidungsmaschine, Punktesystem, Ein-Klick-Übernahme, Bonsai-Beobachter
 
-Stand 13.10.2026, Branch `quiet-freigabe-v2` (Änderungen gegenüber 12.10.: Abschnitt 13; Seite „Optimierer“ und Klickweg: Abschnitt 14; Seiten: Abschnitte 15–16; Quiet-Freigabe v2 und Deckel/Laufzeit v4: Abschnitt 17). **Alles ist Shadow.** Die Maschine rechnet jede Minute aus, was sie schalten *würde*, und schreibt das auf. Sie sendet nichts. Der einzige Sendeweg ist ein Klick des Betreibers auf „Übernehmen“. Dieser Weg wird gesperrt ausgeliefert.
+Stand 13.10.2026, Branch `quiet-freigabe-v2` (Änderungen gegenüber 12.10.: Abschnitt 13; Seite „Optimierer“ und Klickweg: Abschnitt 14; Seiten: Abschnitte 15–16; Quiet-Freigabe v2 und Deckel/Laufzeit v4: Abschnitt 17, zweiter Review-Durchgang: 17.9). **Alles ist Shadow.** Die Maschine rechnet jede Minute aus, was sie schalten *würde*, und schreibt das auf. Sie sendet nichts. Der einzige Sendeweg ist ein Klick des Betreibers auf „Übernehmen“. Dieser Weg wird gesperrt ausgeliefert.
 
 ## 1. Kurzfassung
 
@@ -16,7 +16,7 @@ Stand 13.10.2026, Branch `quiet-freigabe-v2` (Änderungen gegenüber 12.10.: Abs
 - **Quiet-Regeln seit 13.10.** (Abschnitt 17, Nutzerregel „wir schalten so, wie es am effizientesten ist“):
   - **Quiet-Freigabe v2** schlägt nur bei echtem Bedarf vor (Raum unter Minimum oder auf dem Weg dorthin, Heizstab-Nähe, Boost von Hand). Sie erkennt den Deckel je Stufe und Außentemperatur, gibt nur so weit frei wie nötig und hat einen automatischen Rückweg.
   - **Deckel/Laufzeit v4** (vorher „Laufzeit strecken“) hat zwei Hebel: Quiet höher als Effizienz-Deckel, wenn der Verdichter ohne Bedarf mit ≥ 22 Hz läuft; Heizkurve +1 K nur bei belegtem Takt und wenn der geschätzte Nutzen die Kosten übersteigt.
-  - Beide Quiet-Regeln teilen sich eine Arbitrierung (4b). Der Mindestabstand gilt über Quiet und Verschiebung gemeinsam, und es läuft höchstens eine Übernahme zur Zeit.
+  - Beide Quiet-Regeln teilen sich eine Arbitrierung (4b). Der Mindestabstand gilt über Quiet und Verschiebung gemeinsam (ein Notfall überbrückt ihn nach 10 min); je Größe läuft eine Übernahme, die dieselbe Regel in derselben Richtung fortsetzen darf (17.9).
 - **Ein-Klick-Übernahme** `opt_apply`: Es gibt die Knöpfe „Übernehmen“, „Verwerfen“, „Zurücksetzen“ und „Übernahme sperren“. Ausgeliefert wird sie doppelt gesperrt:
   1. Der `mqtt out` ist deaktiviert.
   2. Der Hauptschalter in `apply.json` fehlt, das heißt „aus“.
@@ -116,9 +116,9 @@ Abgeleitet je Minute (`abl` im Datensatz):
 
 | Regel | schaltet (würde), wenn ALLES gilt | dann Befehl | Rückweg |
 |---|---|---|---|
-| **Quiet-Freigabe** (v2) | Quiet ≥ 1 · Lauf ≥ 15 min (bei Heizstab-Nähe ≥ 10 min) · **Bedarf**: Raum unter Minimum, *oder* Raum fällt im Lauf ≥ 0,2 K/h und erreicht das Minimum binnen 2 h, *oder* Heizstab-Nähe (Außen < Heizstab-Freigabe + 2 K, Vorlauf ≥ 2,5 K unter Soll), *oder* Boost von Hand (Soll über der Heizkurve) · Verdichter am Deckel der Stufe (≥ Deckel − 1 Hz; Deckel aus Messung oder gelernt) · Vorlauf ≥ 1,5 K unter Soll · Rücklauf ≥ 1,5 K unter Soll-Rücklauf · **10 min am Stück** (Heizstab-Nähe 3 min) · keine Sperre | `SetQuietMode` = nächste niedrigere Stufe mit ≥ 60 min Daten, deren Deckel ≥ 4 Hz höher liegt (eine tiefere nur mit > 10 % besserem COP); bei Heizstab-Nähe oder ohne Daten 0 | automatisch zurück auf die vorige Stufe, sobald der Bedarf 15 min gedeckt ist (alle Räume ≥ Minimum + 0,3 K, Rücklauf ≤ 0,5 K unter Soll) oder ein Raum über Maximum steigt; Frist 4 h, sie ruht, solange Bedarf besteht |
+| **Quiet-Freigabe** (v2) | Quiet ≥ 1 · Lauf ≥ 15 min (bei Heizstab-Nähe ab Heater_Delay_Time − 5 min − Haltezeit, hier Minute 7) · **Bedarf**: Raum unter Minimum, *oder* Raum fällt im Lauf ≥ 0,2 K/h (Regression, Lüften ausgenommen) und erreicht das Minimum binnen 2 h, *oder* Heizstab-Nähe im Lauf (Außen < Heizstab-Freigabe + 2 K, Vorlauf ≥ 2,5 K unter Soll, im Dauerlauf ≥ 2,0 K), *oder* Boost von Hand (Soll über der Heizkurve, vorläufig) · Verdichter am Deckel der Stufe (≥ Deckel − 1 Hz; Deckel aus Messung oder gelernt) · Vorlauf ≥ 1,5 K unter Soll · Rücklauf ≥ 1,5 K unter Soll-Rücklauf · Zielstufe vorhanden · **10 min am Stück** (Heizstab-Nähe 3 min) · keine Sperre (ein Notfall überbrückt Mindestabstand, Wartezeit, Tageslimit, Vorrang und Gegenrichtung nach 10 min). **Kälte-Vorsorge** (auch in der Pause): unter 2 °C, gemessen oder in der Vorhersage der nächsten 6 h, und die Stufe deckelt hart (≤ 17 Hz) | `SetQuietMode` = nächste niedrigere Stufe, deren Deckel ≥ 3 Hz höher liegt: mit ≥ 60 min Daten, ohne Daten nach der Messtabelle (vorläufig); Notfall ohne Daten und Heizstab-Nähe: 0; eine tiefere nur mit > 10 % besserem COP. Kälte-Vorsorge: nächste Stufe ohne harten Deckel (bei Kälte Quiet 2) | automatisch zurück auf die Ausgangsstufe, sobald der Bedarf 15 min gedeckt ist (alle Räume ≥ Minimum + 0,3 K, Rücklauf ≤ 0,5 K unter Soll) oder ein **Bedarfsraum** 15 min über seinem Maximum liegt; Frist 4 h, sie ruht, solange Bedarf besteht oder die Kälte-Vorsorge eine harte Ausgangsstufe hält (unter 3 °C) |
 | **Deckel/Laufzeit** (v4), Hebel Quiet | Quiet < 3 · Lauf ≥ 15 min · ≥ 22 Hz · kein Bedarf (wie bei der Freigabe) und Rücklauf ≤ 1 K unter Soll · alle Räume ≥ Minimum + 0,3 K · seit 2 h kein Bedarf · Außen > 3 °C · Zielstufe aus den Daten (niedrigste höhere Stufe mit ≥ 60 min, Deckel < 22 Hz, COP höchstens 10 % schlechter) · 10 min am Stück · keine Sperre | `SetQuietMode` = Zielstufe | automatisch zurück auf die vorige Stufe bei Bedarf, bei Rücklauf ≥ 2,5 K unter Soll seit 15 min, bei Außen ≤ 3 °C, spätestens nach 8 h |
-| **Deckel/Laufzeit** (v4), Hebel +1 K | Takt belegt (Takt-Messung: > 12 Starts in 24 h oder > 25 % kurze Läufe; oder letzter Lauf < 60 min mit Abschaltung über den Vorlauf **und** ≥ 2 Starts in 3 h) · Verdichter unter 22 Hz oder Pause · Verschiebung 0 · kein Raum über der Bandmitte · im Lauf Vorlauf ≥ Soll +0,5 K (sonst Hochlauf), in der Pause Vorlauf > Soll −2 K (sonst Sofortstart) · Nutzen ≥ Kosten aus dem letzten Zyklus · 10 min am Stück · keine Sperre (auch Verschiebungs-Arbitrierung) | `SetZ1HeatRequestTemperature = +1` | automatisch auf 0, sobald ein Raum über Maximum steigt, spätestens nach 6 h |
+| **Deckel/Laufzeit** (v4), Hebel +1 K | Takt belegt (Takt-Messung: > 12 Starts in 24 h oder > 25 % kurze Läufe; oder letzter Lauf < 60 min mit Abschaltung über den Vorlauf **und** ≥ 2 Starts in 3 h) · Verdichter unter 22 Hz oder Pause · Verschiebung 0 · kein Raum über der Bandmitte · im Lauf Vorlauf ≥ Soll +1,0 K (sonst Hochlauf), in der Pause Vorlauf > Soll −2 K (sonst Sofortstart) · Nutzen ≥ Kosten aus dem letzten Zyklus · 10 min am Stück · keine Sperre (auch Verschiebungs-Arbitrierung) | `SetZ1HeatRequestTemperature = +1` | automatisch auf 0 bei Heizstab-Nähe, wenn ein Raum mehr als 0,3 K über die Bandmitte steigt, wenn zwei Läufe ohne Takt endeten, spätestens nach 6 h |
 | **Raumeinfluss ±1 K** | Raumvorschlag der Phase 2 (−1/0/+1) ≠ Verschiebung der Anlage · seit ≥ 60 min unverändert · bei −1: Soll bleibt ≥ 29 °C · kein Wärmeverteilungsproblem · keine Sperre (u. a. Heizkurvenmodus, Wasserfühler, kein Handeingriff am Soll) | `SetZ1HeatRequestTemperature = −1/0/+1` | automatisch auf 0, sobald der Raumvorschlag 15 min am Stück 0 ist, spätestens nach 6 h |
 | **Vorausschau ±1 K** | Gate des Gebäudemodells offen · Bedarfsänderung **aus dem Wetter** ≥ 2 K (Außentemperatur-Äquivalent: Vorhersage im Mittel +2…+5 h gegen jetzt, beide um den gewöhnlichen Tagesgang bereinigt; Tagesgang aus ≥ 3 Vortagen; Sonne/Wind nur mit `coefActivate`) · alle Räume gültig und im Band · Luft im Band ≥ 0,3 K (bei +1 K wärmster Raum unter Maximum, bei −1 K kältester über Minimum) · bei −1 K Soll ≥ 29 °C · Verschiebung steht auf 0 · **30 min am Stück** · keine Sperre, auch nicht „andere Regel“/„Gegenrichtung“ | `SetZ1HeatRequestTemperature = ±1` | automatisch auf 0, wenn die Vorhersage 15 min unter der halben Schwelle liegt, sofort, wenn ein Raum das Band in Gegenrichtung verlässt, spätestens nach 6 h; nicht, solange der Raumeinfluss denselben Wert verlangt |
 | **Heizgrenze-Hinweis** | Heizgrenze > 10 °C · Lauf ≥ 15 min bei Außentemperatur > 10 °C · alle aktiven Räume gültig und ≥ Minimum + 0,5 K · 15 min am Stück | nur Hinweis `SetHeatingOffOutdoorTemp = 10`, **nie per Klick** | Saisoneinstellung von Hand |
@@ -157,12 +157,12 @@ Die Sim prüft das über 8 Fake-Uhr-Tage (4 gewöhnliche Tage mit Tagesgang ±4 
 ### 4b. Quiet-Arbitrierung (seit 13.10.: Quiet-Freigabe und Deckel/Laufzeit)
 
 Freigabe (Quiet nach unten) und Effizienz-Deckel (Quiet nach oben) stellen dieselbe Größe gegenläufig. Der Kern führt dafür einen gemeinsamen Zustand `S.arbQ` mit denselben Feldern wie `S.arb` (`owner`, `applied`, `last`):
-1. **Eigentum (`vorrang`):** Solange eine Regel einen Quiet-Vorschlag hat oder ihre Stufe an der Anlage steht, schlägt die andere nicht vor. Das gilt auch, wenn jemand von Hand genau die vorgeschlagene Stufe stellt. Eine übernommene Stufe weicht nur einem **Notfall** (Raum ≥ 0,3 K unter Minimum oder Heizstab-Nähe), und das frühestens `quietHaltMin` 60 min nach der Übernahme.
+1. **Eigentum (`vorrang`):** Solange eine Regel einen Quiet-Vorschlag hat oder ihre Stufe an der Anlage steht, schlägt die andere nicht vor. Das gilt auch, wenn jemand von Hand genau die vorgeschlagene Stufe stellt. Eine übernommene Stufe weicht nur einem **Notfall** (Raum ≥ 0,3 K unter Minimum oder Heizstab-Nähe), und das frühestens `notfallMin` 10 min nach der Übernahme (bis zum zweiten Review-Durchgang 60 min).
 2. **Ende der Zuordnung:** Sie endet, sobald der Rückweg-Grund der Eigentümer-Regel gilt oder ihre Frist abläuft und kein Bedarf sie hält. Das gilt auch, wenn niemand zurückstellt. Sonst hätte im Replay die von Hand übernommene Freigabe vom 10.10. den Deckel 35 h lang blockiert.
-3. **Gegenrichtung (`gegenrichtung`):** frühestens 60 min nach dem Ende der letzten Änderung (bei beendeter Zuordnung ab der Übernahme). Zwischen 60 und 240 min (`quietGegenMin`) nur mit Notfall.
+3. **Gegenrichtung (`gegenrichtung`):** frühestens 60 min nach dem Ende der letzten Änderung (bei beendeter Zuordnung ab der Übernahme), ein Notfall schon nach 10 min. Zwischen 60 und 240 min (`quietGegenMin`) nur mit Notfall.
 4. **Ruhe nach Bedarf:** Der Deckel schlägt binnen 2 h nach einem Bedarf der Freigabe nicht vor (`ruheMin`). Die Freigabe wartet nie auf den Deckel (Komfort vor Effizienz).
-5. **Mindestabstand über beide Größen** (Review 3.4): binnen 60 min nach einer Verschiebung keine Quiet-Änderung und umgekehrt. Sonst lässt sich keine Wirkung zuordnen, und Freigabe und +1 K würden doppelt heizen.
-6. **Übernahme:** höchstens eine zur Zeit (vorher eine je Größe). Jede hat ihren eigenen Rückweg: `endReason["regel|groesse"]` vor `endReason["regel"]`, und `halten` hält die Freigabe, solange Bedarf besteht.
+5. **Mindestabstand über beide Größen** (Review 3.4): binnen 60 min nach einer Verschiebung keine Quiet-Änderung und umgekehrt. Sonst lässt sich keine Wirkung zuordnen, und Freigabe und +1 K würden doppelt heizen. Ein Quiet-Notfall überbrückt ihn nach 10 min (Review B4: sonst sperrte eine Quiet-Änderung von Hand die Heizstab-Nähe bis Laufminute 30).
+6. **Übernahme:** je Größe eine (`OPT_apply.ak.quiet`, `.shift`); Quiet und Verschiebung dürfen nebeneinander übernommen sein, wenn die Arbitrierung es zulässt (Review R6). Dieselbe Regel darf ihre Übernahme in derselben Richtung **fortsetzen** (Review B1: 3 → 2, dann 2 → 0; der Ausgangswert 3 bleibt für den Rückweg). Jede Übernahme hat ihren eigenen Rückweg: `endReason["regel|groesse"]` vor `endReason["regel"]`, und `halten` hält die Freigabe, solange Bedarf besteht. Gründe und `halten` gelten nur von einer Maschine, die höchstens 5 min alt ist; sonst gilt die Frist, nach 30 min ohne Rechnung geht jede Übernahme auf ihren Ausgangswert zurück (Review B7).
 7. **Hebel +1 K** von Deckel/Laufzeit gehört in die Verschiebungs-Arbitrierung (`S.arb`, mit Raumeinfluss und Vorausschau). Beide Hebel gleichzeitig gibt es nicht, weil jede Regel nur einen Vorschlag hat:
    - Quiet ändert unter 22 Hz die Frequenz nicht.
    - +1 K bei Vorlauf unter Soll löst unter Quiet 0 einen Hochlauf aus.
@@ -209,16 +209,27 @@ Tabellen aus dem Regelwerk, erzeugt mit `node tools/engine_doc.js`. Die Sim prü
 | Schwelle | Standard | Einheit | Herkunft |
 |---|---|---|---|
 | `laufMin` | 15 | min | Startroutine: Pumpenspitze 11–16 min nach jedem Start; Kaltstarts haben 15–25 min lang naturgemäß Rückstand (gilt für Raum-Bedarf und Boost) |
-| `laufMinHeizstab` | 10 | min | Heizstab-Nähe: der Heizstab startet nach Heater_Delay_Time 15 min Thermo-EIN unter Soll −3 K (Servicehandbuch J Z. 9316–9322). Jeder Neustart beginnt bei Soll −3,25 K und holt in Efficiency 30–45 min lang auf (Regel-Review 13.10., QF-6): erst ab Laufminute 10 zeigt der Rückstand, dass der Deckel den Heizstab riskiert; mit 3 min Haltezeit Vorschlag vor Minute 15 |
-| `heizstabAbstandK` | 0,5 | K | Heizstab-Nähe: Vorlauf mindestens \|Heater_Start_Delta\| − 0,5 K (hier 2,5 K) unter Soll bei Außentemperatur unter Heater_On_Outdoor_Temp + 2 K (Regel-Review QF-6); ANNAHME |
+| `heizstabVorlaufMin` | 5 | min | Heizstab-Nähe: der Heizstab startet nach Heater_Delay_Time (hier 15 min, Servicehandbuch J Z. 9316–9322) Thermo-EIN unter Soll −3 K. Die Startphase endet Heater_Delay_Time − 5 min − Haltezeit, der Vorschlag kommt also 5 min vor der Heizstab-Freigabe (Regel-Review B4: Laufminute 13 war zu spät); ohne gemeldete Heater_Delay_Time 15 min; ANNAHME |
+| `heizstabAbstandK` | 0,5 | K | Heizstab-Nähe in der Startphase: Vorlauf mindestens \|Heater_Start_Delta\| − 0,5 K (hier 2,5 K) unter Soll bei Außentemperatur unter Heater_On_Outdoor_Temp + 2 K (Regel-Review QF-6); ANNAHME |
+| `heizstabDauerK` | 1 | K | Heizstab-Nähe im Dauerlauf (Lauf länger als Heater_Delay_Time): der Heizstab hat dann keine Verzögerung mehr, und ein natürlicher Sollsprung +1 K hebt den Rückstand in einem 5-min-Schritt um 1 K (Regel-Review B4) → Abstand 1,0 K (Vorlauf ab 2,0 K unter Soll); ANNAHME |
 | `vlRueckK` | 1,5 | K | Auftrag/Wächter (escCapDevK 1,5); 13.10. 16:36 half die Freigabe bei 2,5–3 K |
 | `rlRueckK` | 1,5 | K | Messung: die Freigabe wirkt nur mit Rücklauf-Rückstand: 10.10. 11:17 ≤ 0,25 K keine Reaktion; 13.10. 16:36 Quiet 2 → 1 bei 1,75 K: 17 → 20–21 Hz in 2 min; Boost 2,5–6,75 K: 33–34 Hz. Quiet 0 lief 07.–13.10. bei 1,5–2,5 K nur in 20–39 % der Minuten über 20 Hz, ab 2,5 K immer; 1,5 K bleibt ANNAHME |
-| `mehrHz` | 4 | Hz | Zielstufe: ihr Deckel muss mindestens 4 Hz über dem jetzigen liegen, sonst bringt sie keine Leistung (Messung 13.10. 16:36: +4 Hz = +80–100 W el, ≈ +0,4 kW th); Quiet 2 deckelt bei Mildwetter wie Quiet 3 (16–17 Hz) |
-| `trendKh` | 0,2 | K/h | Raum fällt: Verlauf der letzten 2 h mindestens 0,2 K/h abwärts (Shelly Gen3 melden erst ab 0,5 K: 0,5 K in 2,5 h); ANNAHME |
+| `mehrHz` | 3 | Hz | Zielstufe: ihr Deckel muss mindestens 3 Hz über dem jetzigen liegen, sonst bringt sie keine Leistung (Messung 13.10. 16:36: 17 → 20–21 Hz = +80–100 W el, ≈ +0,4 kW th); Quiet 2 deckelt bei Mildwetter wie Quiet 3 (16–17 Hz). Vorher 4 Hz: dann fiel Quiet 2 (21 Hz) gegen den gelernten Quiet-3-Deckel 18 Hz bei 3…7 °C aus (Regel-Review QF-3/R1) |
+| `trendKh` | 0,2 | K/h | Raum fällt: Regression über den Verlauf der letzten 2 h im Lauf (5-min-Raster, letzte Meldung gilt weiter) mindestens 0,2 K/h abwärts, und der Raum steigt in den letzten 30 min nicht (Shelly Gen3 melden erst ab 0,5 K: 0,5 K in 2,5 h; Regel-Review B3: vorher Endpunkt gegen Endpunkt); ANNAHME |
+| `lueftungK` | 1 | K | Raumtrend: fällt ein Raum um 1 K oder mehr binnen 60 min, ist das Lüften (wie der Lüftungsverdacht der Bewertung); der Verlauf zählt erst ab dem Ende des Sturzes (Regel-Review B3: 08.10. 18:33 Wohnzimmer „−6,9 K/h, Minimum in 5 min“) |
 | `prognoseMin` | 120 | min | Prognose: Raum erreicht beim jetzigen Gefälle binnen 2 h das Minimum (Wirkzeit Raum noch nicht gemessen); ANNAHME |
 | `haltMin` | 10 | min | Auftrag/Wächter (escCapMin 10): Bedingungen 10 min am Stück nach der Startphase |
 | `haltHeizstabMin` | 3 | min | Heizstab-Nähe: kurze Haltezeit (Heater_Delay_Time 15 min); ANNAHME |
 | `rueckRlK` | 0,5 | K | Rückweg: Bedarf gedeckt, wenn alle Räume mindestens notK 0,3 K über Minimum liegen, kein Bedarf mehr besteht und der Rücklauf höchstens 0,5 K unter Soll ist, 15 min am Stück (Quiet 0 lief 07.–13.10. bei ≤ 0,5 K Rückstand meist am Minimum); ANNAHME |
+| `rueckRaumMin` | 15 | min | Rückweg, wenn ein Bedarfsraum dieser Freigabe 15 min am Stück über seinem Maximum liegt. Andere Räume über Maximum zählen nicht: das Wohnzimmer lag 29–74 % der Zeit über Maximum (Wärmeverteilung), der Rückweg pendelte (Regel-Review B2, Szenario D) |
+| `kaltC` | 2 | °C | Kälte-Vorsorge (vorläufig): unter 2 °C, gemessen oder in der Vorhersage der nächsten vorsorgeH Stunden, keine Stufe mit hartem Deckel. Nutzererfahrung 07.10. „bei 1–3 °C muss Quiet aus sein“; Regel-Review B4: vorbeugen statt nachträglich freigeben (der Heizstab ist im Dauerlauf ohne Verzögerung frei) |
+| `hartHz` | 17 | Hz | harter Deckel: die Stufe hält höchstens 17 Hz (Quiet 3 immer, Quiet 2 ab 7 °C; Messung 07.–13.10.) |
+| `vorsorgeH` | 6 | h | Kälte-Vorsorge: OWM-Vorhersage der nächsten 6 h (am Messwert verankert), damit der Vorschlag am Abend kommt und nicht erst in der Nacht, in der niemand klickt (Regel-Review B4); ANNAHME |
+| `boostBedarf` | 1 | ja/nein | Boost von Hand (Soll über der Heizkurve) zählt als Bedarf: 1 = ja (Nutzer vorläufig, 13.10.) |
+| `ohneDatenSchrittweise` | 1 | ja/nein | ohne 60 min Daten einer tieferen Stufe: 1 = schrittweise nach der Messtabelle DECKEL, ein Notfall (Heizstab-Nähe, Raum ≥ 0,3 K unter Minimum) direkt Quiet 0; 0 = immer Quiet 0 (Nutzer vorläufig, 13.10.) |
+| `nachtQuietMin` | -1 | Stufe | Lärmgrenze nachts: die Freigabe geht nachts nicht unter diese Stufe (außer bei Heizstab-Nähe); −1 = aus (Nutzer vorläufig, 13.10.: keine Lärmgrenze) |
+| `nachtVonH` | 22 | Uhr | Beginn der Nacht für nachtQuietMin; ANNAHME |
+| `nachtBisH` | 6 | Uhr | Ende der Nacht für nachtQuietMin; ANNAHME |
 | `copTol` | 0,1 | Anteil | eine tiefere Stufe statt der nächsten nur mit mehr als 10 % besserem COP: Pth ist Durchfluss × ΔT mit 0,25-K-Schritten (±10 %), bei gleicher Frequenz unterscheiden sich Quiet 0 und 3 um −9…+5 % (Tag, Feuchte, Vorlauf), Regel-Review LS-4/QF-8; Mindestdaten je Kombination copMinMin (Nutzerentscheidung 13.10.2026) |
 | `proTag` | 3 | Vorschläge | Schreibbudget; ANNAHME |
 | `gueltigMin` | 30 | min | Quiet wirkt in 1–2 min; nach 30 min ist die Lage eine andere (ANNAHME) |
@@ -227,7 +238,7 @@ Tabellen aus dem Regelwerk, erzeugt mit `node tools/engine_doc.js`. Die Sim prü
 
 *Erwartung:* Ziel Quiet 0: Verdichter ≥ 25 Hz binnen 5 min, elektrische Leistung +350 bis +650 W, Vorlauf +2 K in 30 min (gemessen 10.10.2026 08:41, Efficiency, 11–12 °C). Ziel Quiet 1 oder 2: Verdichter mindestens 3 Hz über dem alten Deckel binnen 10 min, +60 W oder mehr (gemessen 13.10. 16:36 Quiet 2 → 1: 17 → 20–21 Hz, +80–100 W bei 12 °C). Nicht gemessen: Kälte, Abtauen
 
-*Rückweg:* Automatisch zurück auf die vorherige Stufe, sobald der Bedarf 15 min am Stück gedeckt ist (alle Räume ≥ Minimum + 0,3 K, Rücklauf höchstens 0,5 K unter Soll) oder ein Raum über Maximum steigt; spätestens nach 4 h, solange kein Bedarf besteht; höchstens 3 Sendeversuche.
+*Rückweg:* Automatisch zurück auf die Ausgangsstufe, sobald der Bedarf 15 min am Stück gedeckt ist (alle Räume ≥ Minimum + 0,3 K, Rücklauf höchstens 0,5 K unter Soll) oder ein Bedarfsraum 15 min über seinem Maximum liegt; spätestens nach 4 h, solange weder Bedarf noch Kälte-Vorsorge besteht; höchstens 3 Sendeversuche.
 
 *Kalibriermessungen (Wirkungsfälle dort zählen 0 Punkte):* 2026-10-10 08:40, 2026-10-08 22:54, 2026-10-10 11:17, 2026-10-13 16:36
 
@@ -253,19 +264,20 @@ Tabellen aus dem Regelwerk, erzeugt mit `node tools/engine_doc.js`. Die Sim prü
 | `pauseMinusMin` | 18 | min | +1 K hebt auch die Startschwelle: Pause kürzer um die Zeit von Soll −2,25 bis −3,25 K, Median 18 min (11–67 min, 07.–12.10.); ANNAHME |
 | `startWh` | 15 | Wh | ein Start kostet 7–12 Wh (Review 09.10.) plus Pumpenspitze 4–10 Wh (2900 U/min für 11–16 min); ANNAHME |
 | `kurveWK` | 8,5 | W/K | Strom +8,5 W je K Vorlauf während des Laufs (Strommodell 08.10.); Mehrwärme in die Räume nicht eingerechnet; ANNAHME |
-| `laufVlK` | 0,5 | K | +1 K im Lauf nur, wenn der Vorlauf schon mindestens 0,5 K über dem Soll liegt: dann steigt nur die Stoppschwelle; darunter löste +1 K bei Quiet 0 einen Hochlauf aus (11.10. 03:10: 16,5 → 22–23 Hz, +48 % Strom; Regel-Review Abschnitt 2) |
+| `laufVlK` | 1 | K | +1 K im Lauf nur, wenn der Vorlauf schon mindestens 1,0 K über dem Soll liegt: dann steigt nur die Stoppschwelle; darunter löste +1 K bei Quiet 0 einen Hochlauf aus (11.10. 03:10: 16,5 → 22–23 Hz, +48 % Strom; Regel-Review Abschnitt 2). Vorher 0,5 K: bei +0,25 K nach einem natürlichen +1-K-Sprung lief Quiet 0 schon kurz auf 20 Hz (13.10. 02:20), +1 K wirkt erst im nächsten 5-min-Takt (Regel-Review R2) |
 | `pauseVlK` | -2 | K | +1 K in der Pause nur, wenn der Vorlauf über Soll −2 K liegt: läge er nach +1 K bei ≤ neuer Soll −3,25…−3,5 K, startete die Anlage sofort (10.10. 18:20, 11.10. 19:10; Regel-Review Abschnitt 2) und die Pause würde nur kürzer |
 | `haltMin` | 10 | min | wie Quiet-Freigabe |
 | `proTag` | 3 | Vorschläge | ANNAHME (v3: 2; ein Effizienz-Deckel je Lauf bei 3–5 Läufen am Tag) |
 | `gueltigMin` | 30 | min | ANNAHME |
 | `pauseMin` | 120 | min | ANNAHME |
 | `maxDauerMin` | 480 | min | Quiet höher: Rückweg spätestens nach 8 h (≈ zwei Zyklen: Median Lauf 184 min, Pausen 57–158 min); früher bei Bedarf, Rücklauf-Rückstand oder ≤ 3 °C; ANNAHME |
-| `maxDauerKurveMin` | 360 | min | +1 K: Rückweg spätestens nach 6 h (wie Raumeinfluss und Vorausschau); früher, wenn ein Raum über Maximum steigt; ANNAHME |
+| `maxDauerKurveMin` | 360 | min | +1 K: Rückweg spätestens nach 6 h (wie Raumeinfluss und Vorausschau); früher bei Heizstab-Nähe, wenn ein Raum mehr als 0,3 K über die Bandmitte steigt oder der Takt ausbleibt; ANNAHME |
+| `kurveTaktZyklen` | 2 | Läufe | +1 K: Rückweg, wenn nach der Übernahme zwei Läufe ohne Takt-Beleg endeten (beide mindestens kurzerLaufMin lang; Regel-Review B5); ANNAHME |
 | `bedarfRlK` | 2,5 | K | Rückweg Quiet: Rücklauf-Rückstand ≥ 2,5 K seit 15 min = Leistung wird gebraucht (Quiet 0 lief 07.–13.10. ab 2,5 K immer über 20 Hz) |
 
 *Erwartung:* Quiet höher: Verdichter ≤ 21 Hz binnen 10 min, elektrische Leistung −100 W oder mehr (nach Quiet-Wechseln nach oben fiel die Frequenz binnen 5–15 min, 08.10. 09:38, 12.10. 09:30); in diesen Minuten COP +3…+14 % (Schätzung aus den Frequenz-Klassen). Heizkurve +1 K: Soll-Vorlauf +1 K binnen 3 min; Lauf länger, Pause kürzer (Messaufgabe, nicht gemessen)
 
-*Rückweg:* Quiet höher: automatisch zurück auf die vorherige Stufe bei Bedarf (Raum unter Minimum oder fallend, Heizstab-Nähe, Boost), bei Rücklauf-Rückstand ≥ 2,5 K seit 15 min, bei Außentemperatur ≤ 3 °C, spätestens nach 8 h. Heizkurve +1 K: zurück auf 0 K, sobald ein Raum über Maximum steigt, spätestens nach 6 h.
+*Rückweg:* Quiet höher: automatisch zurück auf die vorherige Stufe bei Bedarf (Raum unter Minimum oder fallend, Heizstab-Nähe, Boost), bei Rücklauf-Rückstand ≥ 2,5 K seit 15 min, bei Außentemperatur ≤ 3 °C, spätestens nach 8 h. Heizkurve +1 K: zurück auf 0 K bei Heizstab-Nähe (Außen unter Heater_On_Outdoor_Temp + 2 K), wenn ein Raum mehr als 0,3 K über die Bandmitte steigt, wenn zwei Läufe ohne Takt endeten, spätestens nach 6 h.
 
 *Kalibriermessungen (Wirkungsfälle dort zählen 0 Punkte):* 2026-10-08 09:38, 2026-10-12 09:30
 
@@ -284,7 +296,7 @@ Tabellen aus dem Regelwerk, erzeugt mit `node tools/engine_doc.js`. Die Sim prü
 | `pauseMin` | 120 | min | ANNAHME |
 | `maxDauerMin` | 360 | min | Rückweg spätestens nach 6 h (ANNAHME) |
 
-*Erwartung:* +1 K: Soll-Vorlauf +1 K binnen 3 min, im Taktbetrieb +40–60 min Laufzeit je Lauf (Sollsprünge 07.–10.10.), Strom +2,5–3 % (8,5 W/K); Raumwirkung NICHT gemessen. −1 K: umgekehrt.
+*Erwartung:* +1 K: Soll-Vorlauf +1 K binnen 6 min (5-min-Raster), im Taktbetrieb +40–60 min Laufzeit je Lauf (Sollsprünge 07.–10.10.), Strom +2,5–3 % (8,5 W/K); Raumwirkung NICHT gemessen. −1 K: umgekehrt.
 
 *Rückweg:* Automatisch zurück auf 0 K, sobald der Raumvorschlag 15 min am Stück 0 ist oder spätestens nach 6 h; „Zurücksetzen“ jederzeit.
 
@@ -329,7 +341,7 @@ Tabellen aus dem Regelwerk, erzeugt mit `node tools/engine_doc.js`. Die Sim prü
 | `pauseMin` | 180 | min | ANNAHME |
 | `maxDauerMin` | 360 | min | Rückweg spätestens nach 6 h (wie Raumeinfluss, ANNAHME) |
 
-*Erwartung:* +1 K: Soll-Vorlauf +1 K binnen 3 min, mehr Wärme vor dem erwarteten Bedarf (Strom +2,5–3 %, 8,5 W/K); die Räume bleiben im Band, obwohl der Bedarf steigt. −1 K: umgekehrt bei erwartetem Wärmegewinn. Raumwirkung NICHT gemessen.
+*Erwartung:* +1 K: Soll-Vorlauf +1 K binnen 6 min (5-min-Raster), mehr Wärme vor dem erwarteten Bedarf (Strom +2,5–3 %, 8,5 W/K); die Räume bleiben im Band, obwohl der Bedarf steigt. −1 K: umgekehrt bei erwartetem Wärmegewinn. Raumwirkung NICHT gemessen.
 
 *Rückweg:* Automatisch zurück auf 0 K, sobald die Vorhersage die Änderung 15 min am Stück nicht mehr zeigt (halbe Schwelle), sofort, wenn ein Raum das Band in Gegenrichtung verlässt, spätestens nach 6 h; nicht, solange der Raumeinfluss dieselbe Verschiebung verlangt.
 
@@ -364,16 +376,16 @@ Tabellen aus dem Regelwerk, erzeugt mit `node tools/engine_doc.js`. Die Sim prü
 | `laufbeginn` | Verdichter läuft erst kurz | Start-Pumpenspitze 2900 U/min für 11–16 min bei jedem Start; Quiet wirkt erst nach 1–2 min |
 | `heizgrenze_aus` | Heizgrenze-Aus (Pumpe steht) | Heizgrenze 12 °C mit Hysterese: aus ab 15 °C, ein ab 12 °C, Pumpe 0, Vorlauf ohne Aussage |
 | `regler` | Ein anderer Regler stellt dieselbe Größe | HeishaMoNR-Quiet-Logik/Scheduler/Solar/WP-Zeitplan bzw. Raumregelung/Nachtabsenkung/Sanftanlauf; Verschiebung nur im Heizkurvenmodus mit Wasserfühler und ohne Handeingriff am Soll |
-| `abstand` | Mindestabstand zur letzten Änderung | Wächter: 60 min Abstand; Opus: höchstens 1 Wechsel pro Stunde; seit 13.10. über Quiet und Verschiebung gemeinsam (Regel-Review 3.4: sonst ist keine Wirkung zuzuordnen und Freigabe und +1 K heizen doppelt) |
-| `tageslimit` | Tageslimit der Regel erreicht | Schreibbudget (Opus: höchstens 6 Wechsel/Tag), EEPROM-Verschleiß unbekannt |
-| `abkuehlzeit` | Wartezeit nach dem letzten Vorschlag | kein Flattern: ein abgelaufener oder zurückgezogener Vorschlag kommt erst nach einer Pause wieder |
+| `abstand` | Mindestabstand zur letzten Änderung | Wächter: 60 min Abstand; Opus: höchstens 1 Wechsel pro Stunde; seit 13.10. über Quiet und Verschiebung gemeinsam (Regel-Review 3.4: sonst ist keine Wirkung zuzuordnen und Freigabe und +1 K heizen doppelt). Ein Quiet-Notfall (Heizstab-Nähe, Raum ≥ notK unter Minimum) überbrückt ihn nach notfallMin (10 min; Regel-Review B4) |
+| `tageslimit` | Tageslimit der Regel erreicht | Schreibbudget (Opus: höchstens 6 Wechsel/Tag), EEPROM-Verschleiß unbekannt. Seit 13.10. zählen bei Befehlsregeln nur übernommene Vorschläge (Regel-Review R5: Vorschläge in der Nacht ohne Klick verbrauchten sonst das Kontingent für den Tag; die Übernahme begrenzt ohnehin auf 6 Befehle am Tag); ein Quiet-Notfall ist ausgenommen |
+| `abkuehlzeit` | Wartezeit nach dem letzten Vorschlag | kein Flattern: ein abgelaufener oder zurückgezogener Vorschlag kommt erst nach einer Pause wieder; ein Quiet-Notfall nach notfallMin (10 min), außer der vorige Notfall-Vorschlag ist nur abgelaufen (nachts klickt niemand, sonst käme derselbe Vorschlag alle 40 min) |
 | `takt` | Takt-Gefahr: Vorlauf über Soll | Anlage schaltet bei Vorlauf ≥ Soll +3,25 K nach ~3 min ab (6 Stopps 07.–10.10.); Sperre ab Soll +1 K für Maßnahmen, die den Vorlauf näher an diese Grenze bringen (mehr Leistung, −1 K) |
 | `heizstab` | Heizstab-Nähe | Heizstab ab Außentemperatur < Heater_On_Outdoor_Temp (0 °C) bei Vorlauf < Soll −3 K nach 15 min; ein +1-K-Schritt vergrößert den Rückstand sofort um 1 K |
 | `modell` | Gebäudemodell noch nicht freigegeben | Wärmefahrplan: Gate des Gebäudemodells (≥ 10 Tage, Fehler ≥ 10 % kleiner als der bisherige Schätzer, plausible Koeffizienten); vorher ist eine Bedarfsvorhersage nicht belegt |
-| `vorrang` | Die Stellgröße gehört einer anderen Regel | Arbitrierung je Stellgröße (Heizkurven-Verschiebung: Raumeinfluss, Vorausschau, +1 K von „Deckel/Laufzeit“; Quiet: Quiet-Freigabe, Deckel/Laufzeit): je Zeit hat genau eine Regel die Größe (laufender Vorschlag oder übernommener Wert); keine zweite Regel schlägt daneben oder dagegen vor. Quiet: eine übernommene Stufe weicht nur einem Notfall (Raum ≥ notK unter Minimum oder Heizstab-Nähe), frühestens quietHaltMin nach der Übernahme |
-| `gegenrichtung` | Gegenrichtung zur letzten Änderung | Kein Hin und Her: Gegenrichtung frühestens shiftHaltMin bzw. quietHaltMin (60 min) nach dem Ende der letzten Änderung derselben Größe und nur mit Notfall (Verschiebung: Raum ≥ notK 0,3 K außerhalb des Bandes; Quiet: Raum ≥ notK unter Minimum oder Heizstab-Nähe), ohne Notfall erst nach gegenMin bzw. quietGegenMin (240 min); ANNAHME |
+| `vorrang` | Die Stellgröße gehört einer anderen Regel | Arbitrierung je Stellgröße (Heizkurven-Verschiebung: Raumeinfluss, Vorausschau, +1 K von „Deckel/Laufzeit“; Quiet: Quiet-Freigabe, Deckel/Laufzeit): je Zeit hat genau eine Regel die Größe (laufender Vorschlag oder übernommener Wert); keine zweite Regel schlägt daneben oder dagegen vor. Quiet: eine übernommene Stufe weicht nur einem Notfall (Raum ≥ notK unter Minimum oder Heizstab-Nähe), frühestens notfallMin (10 min) nach der Übernahme (Regel-Review B4; vorher 60 min) |
+| `gegenrichtung` | Gegenrichtung zur letzten Änderung | Kein Hin und Her: Gegenrichtung frühestens shiftHaltMin bzw. quietHaltMin (60 min) nach dem Ende der letzten Änderung derselben Größe und nur mit Notfall (Verschiebung: Raum ≥ notK 0,3 K außerhalb des Bandes; Quiet: Raum ≥ notK unter Minimum oder Heizstab-Nähe, dort schon nach notfallMin 10 min), ohne Notfall erst nach gegenMin bzw. quietGegenMin (240 min); ANNAHME |
 
-*Sperr-Parameter (Standard):* `hpMaxAgeMin` 5 · `afterDefrostMin` 10 · `afterDhwMin` 10 · `startLockMin` 15 · `gapMin` 60 · `taktK` 1 · `stopK` 3,25 · `heaterMarginK` 2 · `warmupMin` 10 · `pumpOnRpm` 1000 · `kurveTolK` 1,5 · `shiftHaltMin` 60 · `gegenMin` 240 · `notK` 0,3 · `quietHaltMin` 60 · `quietGegenMin` 240
+*Sperr-Parameter (Standard):* `hpMaxAgeMin` 5 · `afterDefrostMin` 10 · `afterDhwMin` 10 · `startLockMin` 15 · `gapMin` 60 · `taktK` 1 · `stopK` 3,25 · `heaterMarginK` 2 · `warmupMin` 10 · `pumpOnRpm` 1000 · `kurveTolK` 1,5 · `shiftHaltMin` 60 · `gegenMin` 240 · `notK` 0,3 · `quietHaltMin` 60 · `quietGegenMin` 240 · `notfallMin` 10
 
 ### Whitelist der Übernahme
 
@@ -382,7 +394,7 @@ Tabellen aus dem Regelwerk, erzeugt mit `node tools/engine_doc.js`. Die Sim prü
 | `SetQuietMode` | `panasonic_heat_pump/commands/SetQuietMode` | 0, 1, 2, 3 | Quiet-Stufe |
 | `SetZ1HeatRequestTemperature` | `panasonic_heat_pump/commands/SetZ1HeatRequestTemperature` | -1, 0, 1 | Heizkurven-Verschiebung (nur Heizkurvenmodus TOP76 = 0, Wasserfühler TOP111 = 0) |
 
-*Übernahme-Grenzen:* `maxAlterMin` 2,5 · `hpMaxAgeMin` 5 · `abstandMin` 10 · `proTag` 6 · `doppelMs` 120000 · `rueckleseS` 90 · `wiederholungen` 2 · `rueckwegVersuche` 3
+*Übernahme-Grenzen:* `maxAlterMin` 2,5 · `hpMaxAgeMin` 5 · `abstandMin` 10 · `proTag` 6 · `doppelMs` 120000 · `rueckleseS` 90 · `wiederholungen` 2 · `rueckwegVersuche` 3 · `engMaxAlterMin` 5 · `engAbbruchMin` 30
 
 ### Bewertungsregeln (Version 5)
 
@@ -486,7 +498,7 @@ Beispiele (gerechnet, auch Teil der Tests):
 | Quiet → 1 oder 2 bei Rücklauf-Rückstand ≥ 1,5 K (seit Freigabe v2) | Verdichter mindestens alter Deckel + 3 Hz binnen 10 min; Leistung +60 W oder mehr (Minute 2–10) | je ±10 |
 | Quiet niedriger ohne Rückstand (< 0,5 K) | ≤ 20 Hz in 10 min | ±10 |
 | Quiet höher bei ≥ 22 Hz (seit Deckel/Laufzeit v4) | ≤ 21 Hz binnen 10 min; −100 W (Minute 5–10); bis v3: ≤ 20 Hz binnen 3 min, −300 W | je ±10 |
-| Verschiebung ±1 | Soll folgt binnen 3 min | ±10 |
+| Verschiebung ±1 | Soll folgt binnen 6 min (der Soll ändert sich im 5-min-Raster; bis 13.10. abends binnen 3 min) | ±10 |
 
 Nicht messbar zählt 0. **Kalibrierfälle** zählen 0 Punkte: Das sind die Messungen, aus denen das Modell stammt (±3 min). Sie werden ausgewertet und angezeigt.
 - Quiet-Freigabe: 10.10. 08:40, 08.10. 22:54, 10.10. 11:17 und seit v2 13.10. 16:36.
@@ -625,7 +637,7 @@ Option (b) ist dokumentiert, aber nicht gebaut. Sie hätte die Ratenbegrenzung d
    - **Abgleich mit dem Ist-Zustand**: die Anlage steht noch auf dem Ausgangswert
    - Verschiebung nur im Heizkurvenmodus mit Wasserfühler
    - kein Befehl offen
-   - keine aktive Übernahme (seit 13.10. höchstens eine zur Zeit, vorher je Größe; jede hat ihren eigenen Rückweg)
+   - keine aktive Übernahme derselben Größe (außer der Fortsetzung derselben Regel in derselben Richtung; Quiet und Verschiebung nebeneinander, jede mit eigenem Rückweg)
    - Rate ≥ 10 min
    - Tageslimit 6
 4. **Unmittelbar vor dem Ausgang** prüft die Hülle noch einmal: Topic aus der Whitelist, erlaubter Wert, keine Notbremse.
@@ -640,11 +652,11 @@ Option (b) ist dokumentiert, aber nicht gebaut. Sie hätte die Ratenbegrenzung d
    | Regel | Rückweg |
    |---|---|
    | Deckel/Laufzeit, Quiet (v4) | nach 8 h oder wenn der Grund endet (Bedarf, Rücklauf-Rückstand ≥ 2,5 K seit 15 min, Außen ≤ 3 °C); bis v3 nach 4 h |
-   | Deckel/Laufzeit, +1 K (v4) | nach 6 h oder sobald ein Raum über Maximum steigt; ruht, solange der Raumeinfluss dieselbe Verschiebung verlangt |
+   | Deckel/Laufzeit, +1 K (v4) | nach 6 h, bei Heizstab-Nähe, wenn ein Raum mehr als 0,3 K über die Bandmitte steigt oder zwei Läufe ohne Takt endeten; ruht, solange der Raumeinfluss dieselbe Verschiebung verlangt |
    | Raumeinfluss | nach 6 h oder Raumvorschlag 15 min am Stück 0 (er flackert, wenn Kinderzimmer-Werte ungültig werden) |
-   | Quiet-Freigabe (v2) | sobald der Bedarf 15 min gedeckt ist oder ein Raum über Maximum steigt; Frist 4 h, sie ruht, solange Bedarf besteht (v1: kein automatischer Rückweg) |
+   | Quiet-Freigabe (v2) | auf die Ausgangsstufe, sobald der Bedarf 15 min gedeckt ist oder ein Bedarfsraum 15 min über seinem Maximum liegt (andere Räume über Maximum zählen nicht); Frist 4 h, sie ruht, solange Bedarf besteht oder die Kälte-Vorsorge hält (v1: kein automatischer Rückweg) |
 
-   „Zurücksetzen“ ist jederzeit möglich, außer bei Notbremse. Der Rückweg macht bis zu 3 Versuche. Bleibt er unbestätigt, endet das automatische Senden mit roter Warnung (seit 13.10.; vorher startete er alle 4,5 min neu, 76 Befehle in 2 h); „Zurücksetzen“ von Hand geht weiter, meldet die Anlage später den Ausgangswert, endet die Übernahme.
+   Rechnet die Maschine nicht mehr (älter als 5 min), gelten ihre Gründe und `halten` nicht, nur die Frist; nach 30 min ohne Rechnung geht jede bestätigte Übernahme auf ihren Ausgangswert zurück („sicherer Abbruch“, Review B7). „Zurücksetzen“ ist jederzeit möglich, außer bei Notbremse; es stellt alle Übernahmen nacheinander zurück. Der Rückweg macht bis zu 3 Versuche. Bleibt er unbestätigt, endet das automatische Senden mit roter Warnung (seit 13.10.; vorher startete er alle 4,5 min neu, 76 Befehle in 2 h); „Zurücksetzen“ von Hand geht weiter, meldet die Anlage später den Ausgangswert, endet die Übernahme.
 9. **Neustart** mitten in der Übernahme: Der Zustand liegt in `apply-state.json`. Rücklesen und Rückweg-Timer laufen weiter. Es wird nichts doppelt gesendet, solange die Anlage den Wert meldet.
 10. **Not-Aus im Dashboard:** „Übernahme sperren“ setzt `apply.json` → `enabled: false`. **Entsperren geht nie über das Dashboard**, nur über die Datei.
 11. **Protokoll:** Jede Aktion steht in `applied-YYYY-MM.jsonl`, auch Ablehnungen mit Grund, und zusätzlich als `optimierer_*` in `quiet-events`.
@@ -714,6 +726,7 @@ Der Beobachter schreibt nie an Anlage, NAS oder MQTT. Einen MQTT-Befundkanal zur
 | 13.10. (Branch `ui-ueberarbeitung`) | `optimizer_sim` **637 OK** (neu: `OPT_plan.lern` auch ohne Plan und gleich den Zeilen „Lern-Gate“/„Bedarfsmodell Drift“, Rückfall), `engine_sim` **255 OK** (mit `replay_data`: 269 OK, dieselben 3 datensatzabhängigen FAIL; neu u. a. Klickweg (c2) mit 31 einzeln ablehnenden Stufen, 7 Grenzwerten, Rücklesen, Wiederholung, Rückweg ohne Endlosschleife, letzter Sicherung mit verfälschtem Kern, Karte „Messwerte & Lernen“, Knopfzustände, Seite mit fünf Gruppen zu 17), `takt_sim` **26 OK**, `kern_chain_sim` **15 OK**. Einspielen mit aktivem Knoten: Flows mit `--uebernahme-knoten-aktiv` und `UEBERNAHME_KNOTEN_AKTIV=1`: `optimizer_sim` alle bestanden, `engine_sim` 254 OK (ohne die Prüfung „wie ausgeliefert“); ohne Ansage schlagen beide an. Vorschau: `ui_vorschau_pruefen.js` mit A–E bei 1024/1920/2560 px: 0 Fehler |
 | 13.10. (Branch `ui-kompakt`) | `optimizer_sim` **639 OK** (neu: Seiten 17 breit/zwei Karten je Wärmefahrplan und Quiet-Messwerte, Quiet-Statistik aufgeteilt, Statuskarten zweispaltig ohne Hinweiszeilen), `engine_sim` **255 OK**, `python3 tools/ui_kompakt_test.py <Live-Export>` **26 OK**; Vorschau `opt_seiten_vorschau.js` + `ui_vorschau_pruefen.js` bei 1024/1920/2560: 0 Fehler |
 | 13.10. (Branch `tabs-zusammen`) | `optimizer_sim` **639 OK** (Seitenprüfung neu: Optimierung mit Wärmefahrplan, Optimierer mit Quiet-Karten, leere Tabs ausgeblendet, Menüplätze unverändert), `engine_sim` **255 OK** (Seite „Optimierer“: fünf Karten der Maschine, danach zwei Quiet-Karten), `python3 tools/tabs_zusammen_test.py <Live-Export>` **51 OK**; Vorschau `opt_seiten_vorschau.js` + `ui_vorschau_pruefen.js` bei 1024/1920/2560: 0 Fehler; Generator gegen Live: 6 `opt_*` geändert, 0 neu, 0 entfernt |
+| 13.10. spät (Branch `quiet-freigabe-v2`, zweiter Review-Durchgang, Abschnitt 17.9) | `optimizer_sim` **639 OK**; `engine_sim` **246 OK** ohne Flow-Datei, **302 OK** mit Flow-Datei, **320 OK** mit Flow-Datei und `replay_data_1310`, **315 OK** mit `replay_data` (neu: Abschnitt (f) mit den Szenarien des Reviews für B1–B7, R1–R6 und die vorläufigen Vorgaben); `kern_chain_sim` **19 OK** (neu R5b: gehärtete Ausnahme); `takt_sim` **26 OK**; Vorschau 30 Seiten/Breiten: 0 Fehler; Generator gegen Live (2b3943e): `opt_engine`, `opt_apply` (nur `func`), 0 neu, 0 entfernt |
 | 13.10. abends (Branch `quiet-freigabe-v2`, nach dem Merge von `tabs-zusammen`) | `optimizer_sim` **639 OK**; `engine_sim` **227 OK** ohne Flow-Datei, **283 OK** mit Flow-Datei, **300 OK** mit Flow-Datei und `replay_data_1310` (07.–13.10.), **296 OK** mit `replay_data` (07.–12.10.); die Replay-Prüfungen hängen jetzt am Datensatz (07.–10.10. / ab 07.–12.10. / 07.–13.10.). Neu u. a.: Abschnitt (e) Quiet-Freigabe v2 (19 Prüfungen), 8-Tage-Fake-Uhr Quiet (Shadow und Übernahme), Effizienz-Deckel 8 Tage mild, Hebel +1 K, Replay 07.–13.10. `takt_sim` **26 OK** mit `replay_data`; mit `replay_data_1310` 1 datenabhängiger FAIL („48-h-Fenster“), gleich auf 2b3943e. `kern_chain_sim` **15 OK**. Vorschau `opt_seiten_vorschau.js` + `ui_vorschau_pruefen.js` (4 Seiten) und `engine_ui_preview.js` (A–E) bei 1024/1920/2560: 0 Fehler. Generator gegen Live (2b3943e, dieselbe Flow-Datei): 2 `opt_*` geändert (`opt_engine`, `opt_apply`, nur `func`), 0 neu, 0 entfernt |
 | `node tools/takt_analyse.js <Datenordner>` | Läufe mit Stopp-Art, Frequenz, Rücklauf-Rückstand, Vorlauf-Anstieg; Treffsicherheit der Vorhersage „Abschaltgrenze in ≤ 45 min“ |
 
@@ -969,7 +982,7 @@ Die Regeln sind neu gebaut: Quiet-Freigabe v1 → v2 und Laufzeit strecken v3 �
    - Die Frist von 4 h ruht, solange Bedarf besteht.
    - Höchstens 3 Sendeversuche; danach rote Warnung (Klickweg).
    - Eine fremde Änderung beendet die Übernahme ohne Rücksetzen.
-5. **Gemeinsame Arbitrierung:** siehe 4b (Eigentum, Notfall nach 60 min, Gegenrichtung nach 60/240 min, Ruhe 2 h, Mindestabstand über beide Größen, eine Übernahme zur Zeit).
+5. **Gemeinsame Arbitrierung:** siehe 4b (Eigentum, Notfall nach 10 min (bis zum zweiten Durchgang 60), Gegenrichtung nach 60/240 min, Ruhe 2 h, Mindestabstand über beide Größen, je Größe eine Übernahme).
 6. **Bewertung:** Die Bewertungsregeln v5 sind unverändert.
    - Die neuen Regelversionen zählen unter `quiet_freigabe|v2|s5` und `quiet_strecken|v4|s5`; die Summen von v1 und v3 bleiben stehen.
    - Die Basisrate wird je neuer Auslösung neu gelernt: `quiet_freigabe|v2`, `quiet_strecken|v4` und `quiet_strecken|v4|kurve`. Die Vergleichslagen folgen der neuen Auslösung.
@@ -980,7 +993,7 @@ Die Regeln sind neu gebaut: Quiet-Freigabe v1 → v2 und Laufzeit strecken v3 �
 7. **Weitere Punkte:**
    - Die Sperre „Mindestabstand“ gilt über Quiet und Verschiebung gemeinsam.
    - Startphase 15 min, bei Heizstab-Nähe 10 min.
-   - Höchstens eine Übernahme zur Zeit. Vorher hätte eine zweite Übernahme den Rückweg der ersten überschrieben.
+   - Je Größe eine Übernahme mit eigenem Rückweg (zuerst eine zur Zeit, seit dem zweiten Durchgang je Größe, 17.9). Vorher hätte eine zweite Übernahme den Rückweg der ersten überschrieben.
    - Behoben: Der Laufzeit-Reset von HeishaMoNR (09.10. 03:01: 583 → 0 min) machte aus einem 601-min-Lauf „17 min mit Abschaltung über den Vorlauf“. Das war ein falscher Takt-Beleg.
    - Die Messaufgabe Comfort/Efficiency ist weiter offen (Efficiency 66 min, Comfort 0 min).
 
@@ -1040,10 +1053,10 @@ Vergleich: `tools/engine_replay.js` mit dem alten Kern (`git show 2b3943e:tools/
 |---|---|
 | QF-1 Komfortbedarf | erfüllt: Bedarf statt Sollvorlauf; im Replay keine Freigabe bei Kaltstarts |
 | QF-2 Deckel je Stufe und AT | erfüllt: Tabelle und gelernter Deckel; „am Deckel“ ≥ Deckel − 1 Hz schließt 21 Hz bei Q1/Q2 ein |
-| QF-3 schrittweise | erfüllt, wenn Daten da sind. Ohne 60 min Daten ist das Ziel Quiet 0 (begründete Abweichung: Nutzerentscheidung `copMinMin`; offene Entscheidung 3) |
-| QF-4 Startphase | erfüllt: 15 min, bei Heizstab-Nähe 10 min. Der träge Efficiency-Anlauf ist kein Bedarf |
-| QF-5 Ende der Übernahme | erfüllt: Rückweg-Gründe und Frist, eine Übernahme zur Zeit, fremde Änderung beendet ohne Rücksetzen |
-| QF-6 Kälte und Heizstab | Heizstab-Schutz erfüllt. Die Wächter-Regel „Quiet aus bei 1–3 °C“ gilt nur im Deckel: nicht unter 3 °C deckeln, Rückweg bei ≤ 3 °C. Als Auslöser der Freigabe ist sie nicht übernommen (offene Entscheidung 2) |
+| QF-3 schrittweise | erfüllt: mit Daten (3 Hz Mehrleistung, Review R1) und ohne Daten nach der Messtabelle (vorläufig); nur ein Notfall ohne Daten geht direkt auf Quiet 0. Per Klick fortsetzbar (B1) |
+| QF-4 Startphase | erfüllt: 15 min, bei Heizstab-Nähe Heater_Delay_Time − 5 − 3 min (Vorschlag 5 min vor der Heizstab-Freigabe). Der träge Efficiency-Anlauf ist kein Bedarf |
+| QF-5 Ende der Übernahme | erfüllt: Rückweg über den gedeckten Bedarf oder den Bedarfsraum über Maximum (kein Pendeln, B2), Frist, je Größe eine Übernahme mit eigenem Rückweg, fremde Änderung beendet ohne Rücksetzen, stehende Maschine (B7) |
+| QF-6 Kälte und Heizstab | erfüllt: Kälte-Vorsorge unter 2 °C (auch aus der Vorhersage, also am Abend), Heizstab-Nähe 5 min vor der Freigabe des Heizstabs und im Dauerlauf mit 1,0 K Abstand, der Notfall überbrückt die Sperren nach 10 min (B4) |
 | QF-7 Erwartung je Stufe | teilweise: Ziel 0 aus dem Boost, Ziel 1/2 aus der Messung vom 13.10.; je Heizregelung und AT fehlen Daten |
 | QF-8 Effizienz normalisiert | teilweise: COP nur als Veto mit 10 %; `hzHoch` aus gleicher Stufe, gleichem Band und gleicher Laufphase. Ein eigener Zähler fehlt |
 | QF-9 kWh und Komfortminuten | nicht umgesetzt: Der Auftrag verlangt v5; dafür braucht es einen Zähler (offene Entscheidung 7) |
@@ -1052,14 +1065,14 @@ Vergleich: `tools/engine_replay.js` mit dem alten Kern (`git show 2b3943e:tools/
 | LS-2 wo Deckeln wirkt | Efficiency/Q0-Phasen mit ≥ 22 Hz ab Laufminute 15: ja. Comfort/Q0-Hochlauf direkt nach dem Start: nein, wegen der Startphase (offene Entscheidung 5). +1 K bei Vorlauf unter Soll: ausgeschlossen (`laufVlK`) |
 | LS-3 Kälte | Deckel nur über 3 °C. Rückweg bei ≤ 3 °C, bei Bedarf oder Heizstab-Nähe; Frist 8 h |
 | LS-4 COP-Wahl | erfüllt: COP nur als Veto |
-| LS-5 +1 K in der Arbitrierung | erfüllt: `S.arb`, kein Raum über der Bandmitte, Nutzen ≥ Kosten |
+| LS-5 +1 K in der Arbitrierung | erfüllt: `S.arb`, kein Raum über der Bandmitte, Nutzen ≥ Kosten, Rückweg bei Heizstab-Nähe, Raum über der Bandmitte + 0,3 K und Takt-Ende (B5); Vorlauf ≥ Soll + 1,0 K (R2) |
 | LS-6 Quiet-Arbitrierung | erfüllt: `S.arbQ`, 60/240 min, Ruhe 2 h, Mindestabstand bei Übergaben |
 | LS-7 Takt entprellt | erfüllt: Takt-Messung, oder kurzer Lauf **und** 2 Starts in 3 h. Die Typen (Bedarfstakt, Minutenpause) sind nicht getrennt |
-| 3.4 Sperre über beide Größen | erfüllt |
+| 3.4 Sperre über beide Größen | erfüllt; ein Quiet-Notfall überbrückt sie nach 10 min |
 | 3.4 Wirkung je (Quiet, Modus) | teilweise: +1 K nie in der Hochlauf-Lage, Ziele je Heizregelung; die Bewertung läuft nicht je Kombination |
-| 3.4 Schreibbudget | Übernahme 6 je Tag gesamt und höchstens eine zur Zeit; die Regeln behalten ihre eigenen Limits |
-| Wirkkette (Abschnitt 2) | Stopp-Art ab +2,75 K (gemessen +3,0…+3,25 K). +1 K in der Pause nur bei Vorlauf > Soll −2 K, im Lauf nur bei Vorlauf ≥ Soll +0,5 K. Heizstab-Logik wie im Handbuch J. `stopK` 3,25 → 3,0 nicht geändert, weil es auf alle Regeln wirkt (offene Entscheidung 8) |
-| 5.5 Kern-Guard | unverändert: nicht Teil dieses Auftrags, `kern_patch.py` ist nicht im Deploy. Vor der Freigabe einer Verschiebungsregel härten (offene Entscheidung 11) |
+| 3.4 Schreibbudget | Übernahme 6 je Tag gesamt; die Tageslimits der Regeln zählen nur übernommene Vorschläge (R5) |
+| Wirkkette (Abschnitt 2) | Stopp-Art ab +2,75 K (gemessen +3,0…+3,25 K). +1 K in der Pause nur bei Vorlauf > Soll −2 K, im Lauf nur bei Vorlauf ≥ Soll +1,0 K; Wirkung „Soll folgt“ binnen 6 min (5-min-Raster). Heizstab-Logik wie im Handbuch J. `stopK` 3,25 → 3,0 nicht geändert, weil es auf alle Regeln wirkt (offene Entscheidung 8) |
+| 5.5 Kern-Guard | gehärtet vorbereitet (`kern_patch.py`, nicht im Deploy): Ausnahme nur bei frischem `OPT_apply` (≤ 2 min), bestätigtem Wert, ohne abgebrochenen Rückweg und vor `aktiv.bis`; liest `OPT_apply.ak.shift` (B6) |
 
 ### 17.7 Geänderte Knoten
 
@@ -1069,16 +1082,41 @@ Vergleich: `tools/engine_replay.js` mit dem alten Kern (`git show 2b3943e:tools/
 
 ### 17.8 Offene Entscheidungen
 
-1. Boost von Hand als Bedarf: heute ja.
-2. Das Fenster 1–3 °C aus dem Wächter als Auslöser der Freigabe; heute gilt es nur im Deckel.
-3. Ziel ohne 60 min Daten: heute Quiet 0. Alternative: schrittweise nach der Messtabelle `DECKEL`.
+1. Boost von Hand als Bedarf: **vorläufig ja** (`boostBedarf` 1).
+2. Das Fenster 1–3 °C: seit dem zweiten Durchgang als **Kälte-Vorsorge** unter 2 °C umgesetzt (`kaltC`, vorläufig); die Grenze bestätigen.
+3. Ziel ohne 60 min Daten: **vorläufig** Notfall direkt Quiet 0, sonst schrittweise nach der Messtabelle (`ohneDatenSchrittweise` 1).
 4. Daten von Comfort und Efficiency zusammenlegen? Die Deckel hängen kaum vom Modus ab, Comfort hat nur ~7 h.
-5. Eine Startvariante des Deckels für den Comfort/Q0-Hochlauf (30–35 Hz etwa 25 min nach dem Start, COP 6,0–6,4 statt 7,1)?
-6. Lärm nachts (QF-10): eine Quiet-Untergrenze in der Nacht?
+5. Comfort/Q0-Hochlauf nach dem Start: **vorläufig nicht deckeln**, nur messen (Kennzahl „Hochlauf nach Start“).
+6. Lärm nachts (QF-10): **vorläufig keine Grenze**; Parameter `nachtQuietMin` (−1 = aus), `nachtVonH`/`nachtBisH`.
 7. Bewertung über kWh el und Komfortminuten (QF-9); dafür braucht es einen Zähler.
 8. `stopK` 3,25 → 3,0 (Review 5.5).
 9. Wächter `opt_quiet`: Die Deckel-Annahme 35/45 Hz ist veraltet (Review 4.4).
 10. Ein unabhängiger Stromzähler für die WP (Review 5.1).
-11. Den Kern-Guard härten (Review 5.5).
-12. Höchstens eine Übernahme zur Zeit (statt einer je Größe) bestätigen.
-13. Die Wirkungsprüfung „Soll folgt binnen 3 min“ passt nicht zum 5-min-Raster des Solls (Review 2). Zusammen mit Raumeinfluss v3 anpassen.
+11. Kern-Guard: gehärtet vorbereitet (B6); das Kern-Paket einspielen nur mit Go.
+12. Übernahmen je Größe nebeneinander (R6) und Fortsetzung (B1): umgesetzt, bestätigen.
+13. Tageslimit nur für übernommene Vorschläge (R5): Ohne Klick kommt bei Dauerbedarf alle 90 min ein Vorschlag (Gültigkeit 30 + Wartezeit 60 min); ein abgelaufener Notfall-Vorschlag wartet die volle Wartezeit.
+
+### 17.9 Zweiter Review-Durchgang (REVIEW.md Abschnitt 8, 13.10. spät)
+
+Die Blocker vor dem Einspielen sind behoben, jeder mit einem Test bzw. dem Szenario aus `regel-review/skripte/v2/` (engine_sim Abschnitt (f)):
+
+| Punkt | Änderung | Test |
+|---|---|---|
+| B1 Freigabe nicht fortsetzbar | Fortsetzung derselben Übernahme: dieselbe Regel, derselbe Befehl, dieselbe Richtung, bestätigter Wert; der Ausgangswert bleibt für den Rückweg (`fortsetzung()`); die Maschine merkt die Ausgangsstufe (`von0`) | Szenario C2: Klick 3 → 2, Klick 2 → 0 (Fortsetzung), Rückweg auf 3; Gegenproben (andere Regel, unbestätigt) lehnen ab |
+| B2 Rückweg pendelt | Rückweg nur über den gedeckten Bedarf oder einen **Bedarfsraum** dieser Freigabe 15 min über seinem Maximum (`rueckRaumMin`); andere Räume über Maximum zählen nicht | Szenario D: Wohnzimmer dauernd über Maximum, 2 Befehle statt bis zu 6 |
+| B3 Raumtrend | Regression im 5-min-Raster über 2 h; Lüften (Sturz ≥ 1 K binnen 60 min, `lueftungK`) beendet den Verlauf; steigt der Raum in den letzten 30 min, fällt er nicht | Einheitstests; Replay: Trend-Bedarf 194 statt 415 Laufminuten, kein „Wohnzimmer −6,9 K/h“ am 08.10. |
+| B4 Heizstab-Nähe zu spät | Kälte-Vorsorge unter 2 °C (gemessen oder Vorhersage 6 h; Ziel: Stufe ohne harten Deckel, sie hält unter 3 °C); Heizstab-Nähe nur im Lauf, Startphase aus `Heater_Delay_Time` (neue Eingabe `htrDelay`), im Dauerlauf 1,0 K Abstand; Notfall überbrückt Mindestabstand, Wartezeit, Tageslimit, Vorrang und Gegenrichtung nach `notfallMin` 10 min | Szenarien A1/A2: Vorsorge in der Pause, Vorschlag in Laufminute 10 auch nach Quiet von Hand; Dauerlauf; Delay 20 min |
+| B5 +1 K ohne Rückweg | Rückweg bei Heizstab-Nähe, Raum mehr als 0,3 K über der Bandmitte, zwei Läufe ohne Takt (`kurveTaktZyklen`) | Rückweg-Gründe je Fall |
+| B6 Kern-Guard | Ausnahme nur bei frischem `OPT_apply`, bestätigtem Wert, ohne `rueckFehl`, vor `aktiv.bis`; liest `ak.shift` (nur vorbereitet) | kern_chain_sim R5b (4 Fälle) |
+| B7 stehende Maschine | `halten`/Gründe nur von einer Maschine ≤ 5 min alt; sonst Frist; nach 30 min ohne Rechnung sicherer Abbruch | 5 Fälle |
+| R1/QF-3 | `mehrHz` 3 statt 4 | gelernter Q3-Deckel 18 Hz → Ziel Q2 |
+| R2 | `laufVlK` 1,0 statt 0,5 K | Regel-Auswertung |
+| R3 | Wirkung „Soll folgt“ binnen 6 min | Soll nach 5 min getroffen, nach 7 min nicht |
+| R5 | Tageslimit zählt nur übernommene Vorschläge (Befehlsregeln) | Tageslimit-Test |
+| R6 | Übernahmen je Größe nebeneinander, „Zurücksetzen“ stellt alle nacheinander zurück | R6-Test, Knopf-Tests |
+| Vorgaben (vorläufig) | `boostBedarf` 1, `ohneDatenSchrittweise` 1, Comfort-Hochlauf nur Kennzahl, `nachtQuietMin` −1 | Parameter-Test, Kennzahl-Test |
+
+**Replay 07.–13.10. nach dem zweiten Durchgang:** unverändert eine Freigabe (10.10. 08:36, 3 → 0, jetzt „Notfall … ohne Daten“) und drei Effizienz-Deckel; das dritte Deckel-Ende kommt jetzt über den Raumtrend („Kinderzimmer unten fällt 0,9 K/h“) statt über „Ruhe nach Bedarf“. Kälte-Vorsorge: 102 Minuten unter 2 °C, aber nie mit hartem Deckel (Quiet 2/0), daher kein Vorschlag.
+
+**Geänderte Knoten:** weiterhin nur `opt_engine` (Kern, Ansicht, Eingabe `htrDelay` aus `Heater_Delay_Time`) und `opt_apply` (Kern, `OPT_apply.ak`).
+

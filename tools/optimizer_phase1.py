@@ -3260,7 +3260,7 @@ var inp = {t: now, hpAge: hpTs ? (now - hpTs) / MIN : null,
            q: pick(hpv('Quiet_Mode_Level'), num(G('TOP18_Quiet_Mode_Level'))), qPrio: hpv('Quiet_Mode_Priority'), hc: hpv('Heating_Control'), at: at,
            defrost: num(G('TOP26_Defrosting_State')) === 1 ? 1 : 0, dhw: num(G('TOP20_ThreeWay_Valve_State')) === 1 ? 1 : 0, ss: (ss.state === 1 && Math.abs(num(ss.correction_value) || 0) > 0) ? 1 : 0,
            rt: num(G('compressor_runtime')), shift: pick(hpv('Z1_Heat_Request_Temp'), num(G('TOP27_Z1_Heat_Request_Temp'))), heatMode: num(G('TOP76_Heating_Mode')), z1Sensor: num(G('TOP111_Z1_Sensor_Settings')),
-           heaterI: hpv('Internal_Heater_State'), heaterE: hpv('External_Heater_State'), htrOnAT: hpSet('Heater_On_Outdoor_Temp'), htrStartDelta: hpSet('Heater_Start_Delta'), heatOffAT: hpSet('Heating_Off_Outdoor_Temp'),
+           heaterI: hpv('Internal_Heater_State'), heaterE: hpv('External_Heater_State'), htrOnAT: hpSet('Heater_On_Outdoor_Temp'), htrStartDelta: hpSet('Heater_Start_Delta'), htrDelay: hpSet('Heater_Delay_Time'), heatOffAT: hpSet('Heating_Off_Outdoor_Temp'),
            sollKurve: sollKurve, block: mq.block_active === 1 ? 1 : 0, otherQ: otherQ.length ? otherQ.join(', ') : null, otherShift: otherS.length ? otherS.join(', ') : null,
            kzRad: (KZ.rad && typeof KZ.rad.on === 'boolean') ? (KZ.rad.on ? 1 : 0) : null, rooms: rooms, korr: korr};
 // Vorausschau: OWM-Vorhersage und Gebaeudemodell des Waermefahrplans (Gate, coefActivate); Sonne/Wind nur bei aktivem Modell (sonst nicht in der Eingabe)
@@ -3368,7 +3368,7 @@ if (r.log.length) {
 }
 flow.set('apply', A);
 if (JSON.stringify(A) !== A0) { try { fs.mkdirSync('/data/optimizer', {recursive: true}); fs.writeFileSync('/data/optimizer/apply-state.json', JSON.stringify(A)); } catch (e) { node.warn('apply-state.json: ' + e.message); } }
-global.set('OPT_apply', {ts: now, aktiv: A.aktiv, pending: A.pending, alarm: A.alarm, verworfen: A.verworfen, n: A.n, day: A.day, lastSend: A.lastSend, enabled: AC.enabled, knoten: KNOTEN, rules: AC.rules});
+global.set('OPT_apply', {ts: now, aktiv: A.aktiv, ak: A.ak || {}, pending: A.pending, alarm: A.alarm, verworfen: A.verworfen, n: A.n, day: A.day, lastSend: A.lastSend, enabled: AC.enabled, knoten: KNOTEN, rules: AC.rules});
 var toast = r.toast ? {topic: 'Optimierer', payload: r.toast.text, highlight: r.toast.color || ''} : null;
 var refresh = (t !== 'tick' || r.log.length) ? {topic: 'anzeige'} : null;
 return [out1.length ? out1 : null, toast, files.length ? files : null, refresh];

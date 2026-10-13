@@ -92,7 +92,7 @@ function makeWorld(o) {
       setPath(G, 'MQTT', { block_active: W.blockNow ? 1 : 0, block_mode: 3 });
       G.HEAT_SP_lower_limit = 20; G.HEAT_SP_upper_limit = 100;
       if (W.rtcNow && !W.o.rtcVergessen) { setPath(G, 'F_RTC.z1', { state: W.rtcNow.state, correction_value: W.rtcNow.corr }); }
-      if (W.applyNow) { G.OPT_apply = W.applyNow; }
+      if (W.applyNow) { G.OPT_apply = Object.assign({}, W.applyNow, { ts: NOW }); }
       if (W.kernAus) { G.OPT_kern_aus = true; }
     });
     // Injects (einmal nach X s, dann alle 60 s)
@@ -257,7 +257,10 @@ function makeWorld(o) {
   });
   (o.rtc || []).forEach(r => W.at(o.t0 + r[0] * MIN, () => { W.rtcNow = { state: r[1], corr: r[2] }; setPath(W.rt.G, 'F_RTC.z1', { state: r[1], correction_value: r[2] }); deliver('987d38642eaa3c4c', { payload: 'RTC', _msgid: newId() }); }, 'welt'));
   (o.kicks || []).forEach(t => W.at(t, () => deliver('987d38642eaa3c4c', { payload: 'Vorlauf', _msgid: newId() }), 'welt'));      // zusaetzliche Ereignis-Aufrufe (z. B. Vorlaufaenderung)
-  (o.apply || []).forEach(a => W.at(o.t0 + a[0] * MIN, () => { W.applyNow = a[1]; W.rt.G.OPT_apply = a[1]; if (a[2] !== undefined) { W.publish(SHIFT_TOPIC, a[2], { source: 'Optimierer (Klick)' }); } }, 'welt'));
+  (o.apply || []).forEach(a => W.at(o.t0 + a[0] * MIN, () => { W.applyNow = a[1]; W.rt.G.OPT_apply = Object.assign({}, a[1], { ts: NOW }); if (a[2] !== undefined) { W.publish(SHIFT_TOPIC, a[2], { source: 'Optimierer (Klick)' }); } }, 'welt'));
+  // OPT_apply wie die Huelle opt_apply: alle 15 s neu geschrieben (ts); o.applyStehtAb (min): ab dann nicht mehr (Optimierer-Tab steht)
+  const applyTick = () => { if (W.applyNow && !(o.applyStehtAb !== undefined && NOW >= o.t0 + o.applyStehtAb * MIN)) { W.rt.G.OPT_apply = Object.assign({}, W.applyNow, { ts: NOW }); } W.at(NOW + 15 * SEC, applyTick, 'welt'); };
+  W.at(o.t0 + 2 * SEC, applyTick, 'welt');
   (o.user || []).forEach(a => W.at(o.t0 + a[0] * MIN, () => W.publish(SHIFT_TOPIC, a[1], { source: 'Nutzer' }), 'welt'));
   if (o.kernAus) { W.at(o.t0, () => { W.kernAus = true; W.rt.G.OPT_kern_aus = true; }, 'welt'); }
   return W;
@@ -373,6 +376,22 @@ console.log('--- R5 Übernahme des Optimierers (+1 K per Klick): kein Abgleich, 
   const R = run({ minutes: 5 * 60, plant: EIN, seed: 7, history: true, apply: [[60, ap, 1], [240, { aktiv: null }]] });
   check('R5: während der aktiven Übernahme bleibt +1 stehen (kein Abgleichsbefehl bis 240 min), danach holt der Abgleich die Anlage binnen <= 5 min auf 0', shiftAt(R, DAY0 + 230 * MIN) === 1 && guardCmds(R).filter(c => c.t < DAY0 + 240 * MIN).length === 0 && backTo(R, DAY0 + 240 * MIN, 0) >= 0 && backTo(R, DAY0 + 240 * MIN, 0) <= 5,
         fmt(R) + ' · ' + (R.rt.G.OPT_kern_guard || {}).text);
+}
+
+console.log('--- R5b Ausnahme im Kern-Guard gehärtet (Regel-Review B6): nur frische, bestätigte, gültige Übernahme');
+{
+  const sh1 = (o2) => ({ aktiv: Object.assign({ id: 'x', rule: 'quiet_strecken', groesse: 'shift', name: 'SetZ1HeatRequestTemperature', value: 1, von: 0, bestaetigt: true }, o2 || {}) });
+  const back = R => backTo(R, DAY0 + 60 * MIN, 0);
+  const Rst = run({ minutes: 4 * 60, plant: EIN, seed: 11, history: true, apply: [[60, sh1(), 1]], applyStehtAb: 120 });
+  const Rbis = run({ minutes: 4 * 60, plant: EIN, seed: 12, history: true, apply: [[60, sh1({ bis: DAY0 + 150 * MIN }), 1]] });
+  const Rfe = run({ minutes: 3 * 60, plant: EIN, seed: 13, history: true, apply: [[60, sh1({ rueckFehl: DAY0 + 61 * MIN }), 1]] });
+  const Run = run({ minutes: 3 * 60, plant: EIN, seed: 14, history: true, apply: [[60, sh1({ bestaetigt: false }), 1]] });
+  const Rak = run({ minutes: 4 * 60, plant: EIN, seed: 15, history: true, apply: [[60, { ak: { shift: sh1().aktiv, quiet: { id: 'q', rule: 'quiet_freigabe', name: 'SetQuietMode', value: 0, von: 3, bestaetigt: true } }, aktiv: { id: 'q', rule: 'quiet_freigabe', name: 'SetQuietMode', value: 0, von: 3, bestaetigt: true } }, 1]] });
+  const t1 = backTo(Rst, DAY0 + 120 * MIN, 0), t2 = backTo(Rbis, DAY0 + 150 * MIN, 0), t3 = back(Rfe), t4 = back(Run);
+  check('R5b: Optimierer-Tab steht (OPT_apply ab 120 min nicht mehr geschrieben): +1 bleibt bis 120 min, danach holt der Abgleich die Anlage binnen <= 8 min auf 0 (OPT_apply älter als 2 min zählt nicht)', shiftAt(Rst, DAY0 + 115 * MIN) === 1 && guardCmds(Rst).filter(c => c.t < DAY0 + 120 * MIN).length === 0 && t1 >= 0 && t1 <= 8, 't ' + t1 + ' · ' + fmt(Rst));
+  check('R5b: Übernahme abgelaufen (aktiv.bis 150 min, Rückweg kam nicht): +1 bis 150 min geschützt, danach Abgleich auf 0 binnen <= 6 min', shiftAt(Rbis, DAY0 + 145 * MIN) === 1 && guardCmds(Rbis).filter(c => c.t < DAY0 + 150 * MIN).length === 0 && t2 >= 0 && t2 <= 6, 't ' + t2);
+  check('R5b: abgebrochener Rückweg (rueckFehl) und unbestätigte Übernahme schützen nicht: Abgleich auf 0 binnen <= 6 min', t3 >= 0 && t3 <= 6 && t4 >= 0 && t4 <= 6, 't ' + t3 + ' / ' + t4);
+  check('R5b: Übernahmen je Größe (OPT_apply.ak, seit 13.10.): die Verschiebung aus ak.shift schützt +1, auch wenn aktiv die jüngere Quiet-Übernahme zeigt', shiftAt(Rak, DAY0 + 230 * MIN) === 1 && guardCmds(Rak).length === 0, fmt(Rak));
 }
 
 console.log('--- R6 Verschiebung von Hand (HeishaMon-Oberfläche, +1 K): Single Writer');

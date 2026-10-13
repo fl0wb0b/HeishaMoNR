@@ -12,6 +12,7 @@ const ASSUME = {
     heatOffAT: 12,              // Heating_Off_Outdoor_Temp: live 12 °C (nicht im Protokoll)
     htrOnAT: 0,                 // Heater_On_Outdoor_Temp 0 °C (HeishaMon, 09.10.)
     htrStartDelta: -3,          // Heater_Start_Delta -3 K (nur bis 09.10. ~08:00 nicht im Protokoll)
+    htrDelay: 15,               // Heater_Delay_Time 15 min (Regel-Review 13.10., Servicehandbuch J; nicht im Protokoll)
     heatMode: 0,                // TOP76 Heizkurvenmodus
     z1Sensor: 0,                // TOP111 Wasserfuehler
     block: 0,                   // MQTT.block_active (nicht protokolliert)
@@ -62,7 +63,7 @@ function buildInputs(dataDir, month, model) {
             defrost: n(r.defrost), dhw: n(r.warmwasser), ss: n(r.softstart), rt: n(r.verdichter_laufzeit_min),
             shift: n(r.shift_anlage) !== null ? n(r.shift_anlage) : ASSUME.shift, heatMode: ASSUME.heatMode, z1Sensor: ASSUME.z1Sensor,
             heaterI: n(r.heizstab_intern), heaterE: n(r.heizstab_extern), htrOnAT: ASSUME.htrOnAT,
-            htrStartDelta: n(r.heizstab_start_delta) !== null ? n(r.heizstab_start_delta) : ASSUME.htrStartDelta,
+            htrStartDelta: n(r.heizstab_start_delta) !== null ? n(r.heizstab_start_delta) : ASSUME.htrStartDelta, htrDelay: ASSUME.htrDelay,
             heatOffAT: ASSUME.heatOffAT, sollKurve: curve(n(r.aussen)), block: ASSUME.block, otherQ: null, otherShift: null, kzRad: n(r.kz_radiator_an), rooms: []};
         if (v) {
             ROOMS.forEach(([id, name]) => {
