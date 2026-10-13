@@ -59,7 +59,7 @@ var ENGINE = (function () {
         {id: 'laufbeginn', kurz: 'Laufbeginn', text: 'Verdichter läuft erst kurz', herkunft: 'Start-Pumpenspitze 2900 U/min für 11–16 min bei jedem Start; Quiet wirkt erst nach 1–2 min'},
         {id: 'heizgrenze_aus', kurz: 'Heizgrenze-Aus', text: 'Heizgrenze-Aus (Pumpe steht)', herkunft: 'Heizgrenze 12 °C mit Hysterese: aus ab 15 °C, ein ab 12 °C, Pumpe 0, Vorlauf ohne Aussage'},
         {id: 'regler', kurz: 'anderer Regler', text: 'Ein anderer Regler stellt dieselbe Größe', herkunft: 'HeishaMoNR-Quiet-Logik/Scheduler/Solar/WP-Zeitplan bzw. Raumregelung/Nachtabsenkung/Sanftanlauf; Verschiebung nur im Heizkurvenmodus mit Wasserfühler und ohne Handeingriff am Soll'},
-        {id: 'abstand', kurz: 'Mindestabstand', text: 'Mindestabstand zur letzten Änderung', herkunft: 'Wächter: 60 min Abstand; Opus: höchstens 1 Wechsel pro Stunde'},
+        {id: 'abstand', kurz: 'Mindestabstand', text: 'Mindestabstand zur letzten Änderung', herkunft: 'Wächter: 60 min Abstand; Opus: höchstens 1 Wechsel pro Stunde; seit 13.10. über Quiet und Verschiebung gemeinsam (Regel-Review 3.4: sonst ist keine Wirkung zuzuordnen und Freigabe und +1 K heizen doppelt)'},
         {id: 'tageslimit', kurz: 'Tageslimit', text: 'Tageslimit der Regel erreicht', herkunft: 'Schreibbudget (Opus: höchstens 6 Wechsel/Tag), EEPROM-Verschleiß unbekannt'},
         {id: 'abkuehlzeit', kurz: 'Wartezeit', text: 'Wartezeit nach dem letzten Vorschlag', herkunft: 'kein Flattern: ein abgelaufener oder zurückgezogener Vorschlag kommt erst nach einer Pause wieder'},
         {id: 'takt', kurz: 'Takt-Gefahr', text: 'Takt-Gefahr: Vorlauf über Soll', herkunft: 'Anlage schaltet bei Vorlauf ≥ Soll +3,25 K nach ~3 min ab (6 Stopps 07.–10.10.); Sperre ab Soll +1 K für Maßnahmen, die den Vorlauf näher an diese Grenze bringen (mehr Leistung, −1 K)'},
@@ -188,16 +188,18 @@ var ENGINE = (function () {
             else if (ob && !(q && e.hart && now - A.applied.ts >= halt * MIN)) { add('vorrang', wTxt(g, curOf(d, g)) + ' gehört „' + RULE[ob].kurz + '“' + (q ? ' (Notfall frühestens ' + halt + ' min nach der Übernahme)' : ''), q && e.hart ? A.applied.ts + halt * MIN : null); }
         }
         if (R.sperren.indexOf('gegenrichtung') >= 0 && A.last && dir !== 0 && A.last.dir === -dir) {
-            var ls = A.last, end = arbEnd(A, d, g), el = now - end;
+            var ls = A.last, end = arbEnd(A, d, g), el = now - end, h0 = (q && ls.lapse) ? ls.start : end;   // Zuordnung ohne Aenderung beendet: Mindesthaltezeit ab der Uebernahme, Wartezeit ab dem Ende
             var was = 'letzte Änderung ' + wTxt(g, ls.w) + ' („' + RULE[ls.rule].kurz + '“) bis ' + hhmm(end);
-            if (el < halt * MIN) { add('gegenrichtung', was + ', Mindesthaltezeit ' + halt + ' min', end + halt * MIN); }
+            if (now - h0 < halt * MIN) { add('gegenrichtung', was + ', Mindesthaltezeit ' + halt + ' min', h0 + halt * MIN); }
             else if (el < gegen * MIN && !e.hart) { add('gegenrichtung', was + ', ohne ' + (q ? 'Notfall' : 'Komfort-Notfall') + ' erst nach ' + gegen + ' min', end + gegen * MIN); }
         }
     }
 
     // Laufzeit strecken (v2): Takt ist belegt, wenn der letzte Lauf ueber den Vorlauf abschaltete (Stopp-Art) und kuerzer als kurzerLaufMin war, oder bei
     // mindestens starts3h Starts in 3 h. Die Vorhersage "Abschaltgrenze in <= 45 min" (v1) loest nicht mehr aus (Replay 07.-12.10.: unzuverlaessig bei >= 22 Hz).
-    function taktBeleg(d, c) { return !!((d.lastRunThermo && have(d.lastRunMin) && d.lastRunMin < c.kurzerLaufMin) || d.starts3h >= c.starts3h); }
+    // v4 (Regel-Review LS-7): Takt aus der entprellten Takt-Messung (mehr als startsTagWarn Starts in 24 h oder mehr als kurzAnteilWarn kurze Laeufe bei >= 4 Laeufen)
+    // oder: letzter Lauf mit Abschaltung ueber den Vorlauf kuerzer als kurzerLaufMin UND mindestens starts3h Starts in 3 h (ein einzelner kurzer Lauf ist noch kein Takt)
+    function taktBeleg(d, c) { return !!((d.takt && d.takt.takt) || (d.lastRunThermo && have(d.lastRunMin) && d.lastRunMin < c.kurzerLaufMin && d.starts3h >= c.starts3h)); }
     // ------------------------------------------------------------------ Quiet-Deckel je Stufe (seit Quiet-Freigabe v2 / Deckel/Laufzeit v4, 13.10.2026)
     // Tabelle = gemessene Untergrenze (hoechste Frequenz, die die Stufe bei Rueckstand zugelassen hat; Quelle je Zeile). Gelernt wird die hoechste Frequenz, die eine Stufe
     // mindestens deckelHaltMin Minuten am Stueck gehalten hat (Takt-Messung, je Heizregelung x Quiet x Aussenband, erst deckelNachQMin nach einem Quiet-Wechsel, weil der
@@ -276,7 +278,8 @@ var ENGINE = (function () {
             befehl: {name: 'SetQuietMode', topic: 'panasonic_heat_pump/commands/SetQuietMode'},
             schwellen: [
                 {key: 'laufMin', std: 15, einheit: 'min', herkunft: 'Startroutine: Pumpenspitze 11–16 min nach jedem Start; Kaltstarts haben 15–25 min lang naturgemäß Rückstand (gilt für Raum-Bedarf und Boost)'},
-                {key: 'laufMinHeizstab', std: 5, einheit: 'min', herkunft: 'Heizstab-Nähe: der Heizstab startet nach Heater_Delay_Time 15 min unter Soll −3 K; die Startspitze dauert 1–2 min, ab Minute 3 steht der Verdichter am Deckel (13.10. 16:32); 15 min Startphase plus 10 min Haltezeit kämen zu spät'},
+                {key: 'laufMinHeizstab', std: 10, einheit: 'min', herkunft: 'Heizstab-Nähe: der Heizstab startet nach Heater_Delay_Time 15 min Thermo-EIN unter Soll −3 K (Servicehandbuch J Z. 9316–9322). Jeder Neustart beginnt bei Soll −3,25 K und holt in Efficiency 30–45 min lang auf (Regel-Review 13.10., QF-6): erst ab Laufminute 10 zeigt der Rückstand, dass der Deckel den Heizstab riskiert; mit 3 min Haltezeit Vorschlag vor Minute 15'},
+                {key: 'heizstabAbstandK', std: 0.5, einheit: 'K', herkunft: 'Heizstab-Nähe: Vorlauf mindestens |Heater_Start_Delta| − 0,5 K (hier 2,5 K) unter Soll bei Außentemperatur unter Heater_On_Outdoor_Temp + 2 K (Regel-Review QF-6); ANNAHME'},
                 {key: 'vlRueckK', std: 1.5, einheit: 'K', herkunft: 'Auftrag/Wächter (escCapDevK 1,5); 13.10. 16:36 half die Freigabe bei 2,5–3 K'},
                 {key: 'rlRueckK', std: 1.5, einheit: 'K', herkunft: 'Messung: die Freigabe wirkt nur mit Rücklauf-Rückstand: 10.10. 11:17 ≤ 0,25 K keine Reaktion; 13.10. 16:36 Quiet 2 → 1 bei 1,75 K: 17 → 20–21 Hz in 2 min; Boost 2,5–6,75 K: 33–34 Hz. Quiet 0 lief 07.–13.10. bei 1,5–2,5 K nur in 20–39 % der Minuten über 20 Hz, ab 2,5 K immer; 1,5 K bleibt ANNAHME'},
                 {key: 'mehrHz', std: 4, einheit: 'Hz', herkunft: 'Zielstufe: ihr Deckel muss mindestens 4 Hz über dem jetzigen liegen, sonst bringt sie keine Leistung (Messung 13.10. 16:36: +4 Hz = +80–100 W el, ≈ +0,4 kW th); Quiet 2 deckelt bei Mildwetter wie Quiet 3 (16–17 Hz)'},
@@ -285,7 +288,7 @@ var ENGINE = (function () {
                 {key: 'haltMin', std: 10, einheit: 'min', herkunft: 'Auftrag/Wächter (escCapMin 10): Bedingungen 10 min am Stück nach der Startphase'},
                 {key: 'haltHeizstabMin', std: 3, einheit: 'min', herkunft: 'Heizstab-Nähe: kurze Haltezeit (Heater_Delay_Time 15 min); ANNAHME'},
                 {key: 'rueckRlK', std: 0.5, einheit: 'K', herkunft: 'Rückweg: Bedarf gedeckt, wenn alle Räume mindestens notK 0,3 K über Minimum liegen, kein Bedarf mehr besteht und der Rücklauf höchstens 0,5 K unter Soll ist, 15 min am Stück (Quiet 0 lief 07.–13.10. bei ≤ 0,5 K Rückstand meist am Minimum); ANNAHME'},
-                {key: 'copTol', std: 0.03, einheit: 'Anteil', herkunft: 'eine tiefere Stufe statt der nächsten nur mit mehr als 3 % besserem COP (wie Deckel/Laufzeit; Unterschiede darunter gelten als gleich); Mindestdaten je Kombination copMinMin (Nutzerentscheidung 13.10.2026)'},
+                {key: 'copTol', std: 0.10, einheit: 'Anteil', herkunft: 'eine tiefere Stufe statt der nächsten nur mit mehr als 10 % besserem COP: Pth ist Durchfluss × ΔT mit 0,25-K-Schritten (±10 %), bei gleicher Frequenz unterscheiden sich Quiet 0 und 3 um −9…+5 % (Tag, Feuchte, Vorlauf), Regel-Review LS-4/QF-8; Mindestdaten je Kombination copMinMin (Nutzerentscheidung 13.10.2026)'},
                 {key: 'proTag', std: 3, einheit: 'Vorschläge', herkunft: 'Schreibbudget; ANNAHME'},
                 {key: 'gueltigMin', std: 30, einheit: 'min', herkunft: 'Quiet wirkt in 1–2 min; nach 30 min ist die Lage eine andere (ANNAHME)'},
                 {key: 'pauseMin', std: 60, einheit: 'min', herkunft: 'wie Mindestabstand (ANNAHME)'},
@@ -308,6 +311,8 @@ var ENGINE = (function () {
                     {k: 'rlRueck', kz: 'Rücklauf-Rückstand', t: 'Rücklauf mindestens ' + de(c.rlRueckK, 1) + ' K unter Soll-Rücklauf', tn: 'Rücklauf ' + rueckTxt(d.rlRueck) + ' (Schwelle ' + de(c.rlRueckK, 1) + ' K darunter)', ok: have(d.rlRueck) && d.rlRueck >= c.rlRueckK, ist: r2(d.rlRueck), it: rueckTxt(d.rlRueck), soll: c.rlRueckK, op: '>=', u: 'K', dyn: true}
                 ];
                 return {cond: cond, halt: B.heizstab ? c.haltHeizstabMin : c.haltMin, wert: zl.ziel, von: d.q, hart: B.notfall, startMin: lm, groesse: 'quiet', maxDauerMin: c.maxDauerMin,
+                        erwartung: zl.ziel === 0 ? 'Verdichter ≥ 25 Hz binnen 5 min, elektrische Leistung +350 bis +650 W, Vorlauf +2 K in 30 min (gemessen 10.10.2026 08:41, Efficiency, 11–12 °C: 29 Hz nach 1 min, 34 Hz nach 2 min, +490–590 W, Vorlauf +4 K in 20 min; nicht gemessen: Kälte, Abtauen)'
+                                                 : 'Verdichter mindestens ' + de(have(cap.hz) ? cap.hz + 3 : null, 0) + ' Hz binnen 10 min (3 Hz über dem Deckel von Quiet ' + d.q + '), elektrische Leistung +60 W oder mehr (gemessen 13.10. 16:36 Quiet 2 → 1: 17 → 20–21 Hz, +80–100 W bei 12 °C)',
                         was: 'Quiet-Stufe ' + d.q + ' → ' + zl.ziel,
                         warum: 'Verdichter ' + de(d.hz, 0) + ' Hz am Deckel von Quiet ' + d.q + ', Vorlauf ' + de(d.vlRueck, 1) + ' K und Rücklauf ' + de(d.rlRueck, 1) + ' K unter Soll, Lauf ' + de(d.runMin, 0) + ' min; Bedarf: ' + B.txt + '; Ziel: ' + zl.warum};
             }
@@ -330,12 +335,13 @@ var ENGINE = (function () {
                 {key: 'kurzerLaufMin', std: 60, einheit: 'min', herkunft: 'Takt belegt: letzter Lauf mit Abschaltung über den Vorlauf kürzer als 60 min (Opus: Mindestlauf 60 min). 07.–13.10.: 24 abgeschlossene Läufe, 20 Abschaltungen über den Vorlauf mit 97–970 min, keine unter 60 min'},
                 {key: 'thermoStoppK', std: 2.75, einheit: 'K', herkunft: 'Stopp-Art: der Lauf endete mit Vorlauf ≥ Soll +2,75 K = Abschaltung über den Vorlauf (gemessen +3,0…+3,25 K bei 20 von 20; Handbuch: Vorlauf − interner Soll > 2 K für 3 min). Läufe, die an der Heizgrenze oder nach einem Sollsprung nach unten enden, sind kein Takt'},
                 {key: 'starts3h', std: 2, einheit: 'Starts', herkunft: 'Takt belegt: mindestens 2 Starts in 3 h (07.–13.10.: höchstens 1)'},
-                {key: 'copTol', std: 0.03, einheit: 'Anteil', herkunft: 'Veto: Zielstufe höchstens 3 % COP unter der jetzigen (nur wenn beide copMinMin Minuten haben, Nutzerentscheidung 13.10.2026). Die Matrix zeigt bei gleicher Frequenz (16–17 Hz) zwischen Quiet 0 und 3 −9…+5 % (Tag, Feuchte, Vorlauf), bei Quiet-Wechseln im Lauf am Minimum −2…+6 %: deshalb nur Veto; gewählt wird die niedrigste deckelnde Stufe'},
+                {key: 'copTol', std: 0.10, einheit: 'Anteil', herkunft: 'Veto: Zielstufe höchstens 10 % COP unter der jetzigen (nur wenn beide copMinMin Minuten haben, Nutzerentscheidung 13.10.2026). Die Matrix zeigt bei gleicher Frequenz (16–17 Hz) zwischen Quiet 0 und 3 −9…+5 % (Tag, Feuchte, Vorlauf), bei Quiet-Wechseln im Lauf am Minimum −2…+6 %, Messunsicherheit Pth ±10 % (Regel-Review LS-4): deshalb nur Veto; gewählt wird die niedrigste deckelnde Stufe'},
                 {key: 'laufPlusMin', std: 40, einheit: 'min', herkunft: '+1 K verlängert den Lauf um 1 K ÷ Vorlauf-Anstieg am Laufende (Median 1,5 K/h, 07.–12.10.) ≈ 40 min (20–60); nicht gemessen, Verzögerungstest steht aus; ANNAHME'},
                 {key: 'pauseMinusMin', std: 18, einheit: 'min', herkunft: '+1 K hebt auch die Startschwelle: Pause kürzer um die Zeit von Soll −2,25 bis −3,25 K, Median 18 min (11–67 min, 07.–12.10.); ANNAHME'},
                 {key: 'startWh', std: 15, einheit: 'Wh', herkunft: 'ein Start kostet 7–12 Wh (Review 09.10.) plus Pumpenspitze 4–10 Wh (2900 U/min für 11–16 min); ANNAHME'},
                 {key: 'kurveWK', std: 8.5, einheit: 'W/K', herkunft: 'Strom +8,5 W je K Vorlauf während des Laufs (Strommodell 08.10.); Mehrwärme in die Räume nicht eingerechnet; ANNAHME'},
-                {key: 'reserveK', std: 0.3, einheit: 'K', herkunft: '+1 K nur mit Luft nach oben: wärmster Raum mindestens 0,3 K unter Maximum (wie Vorausschau); ANNAHME'},
+                {key: 'laufVlK', std: 0.5, einheit: 'K', herkunft: '+1 K im Lauf nur, wenn der Vorlauf schon mindestens 0,5 K über dem Soll liegt: dann steigt nur die Stoppschwelle; darunter löste +1 K bei Quiet 0 einen Hochlauf aus (11.10. 03:10: 16,5 → 22–23 Hz, +48 % Strom; Regel-Review Abschnitt 2)'},
+                {key: 'pauseVlK', std: -2, einheit: 'K', herkunft: '+1 K in der Pause nur, wenn der Vorlauf über Soll −2 K liegt: läge er nach +1 K bei ≤ neuer Soll −3,25…−3,5 K, startete die Anlage sofort (10.10. 18:20, 11.10. 19:10; Regel-Review Abschnitt 2) und die Pause würde nur kürzer'},
                 {key: 'haltMin', std: 10, einheit: 'min', herkunft: 'wie Quiet-Freigabe'},
                 {key: 'proTag', std: 3, einheit: 'Vorschläge', herkunft: 'ANNAHME (v3: 2; ein Effizienz-Deckel je Lauf bei 3–5 Läufen am Tag)'},
                 {key: 'gueltigMin', std: 30, einheit: 'min', herkunft: 'ANNAHME'},
@@ -371,21 +377,27 @@ var ENGINE = (function () {
                         {k: 'ziel', kz: 'Zielstufe', t: z ? 'Zielstufe aus den Daten: Quiet ' + z.q + ' (' + zl.mod + ', ' + zl.band + ' °C: Deckel ' + de(z.deckel, 0) + ' Hz, ' + de(z.min / 60, 1) + ' h Daten' + (have(z.cop) ? ', COP ' + de(z.cop, 2) : '') + ')' : 'Zielstufe aus den Daten', tn: zl.warum, ok: !!z}
                     ];
                     return {cond: cond, halt: c.haltMin, wert: z ? z.q : null, von: d.q, groesse: 'quiet', hebel: 'quiet', dir: 'weniger_leistung', maxDauerMin: c.maxDauerMin,
+                            erwartung: 'Verdichter ≤ 21 Hz binnen 10 min, elektrische Leistung −100 W oder mehr (nach Quiet-Wechseln nach oben fiel die Frequenz binnen 5–15 min, 08.10. 09:38, 12.10. 09:30); in diesen Minuten COP +3…+14 % (Schätzung aus den Frequenz-Klassen 07.–13.10.)',
+                            rueckweg: 'Automatisch zurück auf Quiet ' + d.q + ' bei Bedarf (Raum unter Minimum oder fallend, Heizstab-Nähe, Boost), bei Rücklauf-Rückstand ≥ ' + de(c.bedarfRlK, 1) + ' K seit 15 min, bei Außentemperatur ≤ ' + de(c.atMinC, 0) + ' °C, spätestens nach ' + de(c.maxDauerMin / 60, 0) + ' h.',
                             was: 'Quiet-Stufe ' + d.q + ' → ' + (z ? z.q : '–') + ' (Effizienz-Deckel)',
                             warum: 'Verdichter ' + de(d.hz, 0) + ' Hz ohne Bedarf (Rücklauf ' + rueckTxt(d.rlRueck) + ', alle Räume mindestens ' + de(c.komfortK, 1) + ' K über Minimum, Außen ' + de(d.at, 0) + ' °C)' + (taktTxt.length ? '; Takt: ' + taktTxt.join(', ') : '') + (z ? '; Quiet ' + z.q + ' deckelt bei ' + de(z.deckel, 0) + ' Hz (' + zl.mod + ', ' + zl.band + ' °C, ' + de(z.min / 60, 1) + ' h Daten)' : '')};
                 }
-                var NK = nutzenKurve(d, c), warm = null;
-                d.rooms.forEach(function (r) { if (r.active && r.valid && have(r.max) && (warm === null || r.max - r.t < warm.max - warm.t)) { warm = r; } });
-                var luft = warm ? warm.max - warm.t : null, sollNeu = have(d.soll) ? d.soll + 1 : null;
+                var NK = nutzenKurve(d, c), warm = null;                              // waermster Raum relativ zur Bandmitte (Regel-Review LS-5: +1 K ist sonst Gegenspieler zu Raumeinfluss −1 K)
+                d.rooms.forEach(function (r) { if (r.active && r.valid && have(r.max) && have(r.min) && (warm === null || r.t - (r.min + r.max) / 2 > warm.t - (warm.min + warm.max) / 2)) { warm = r; } });
+                var luft = warm ? (warm.min + warm.max) / 2 - warm.t : null, sollNeu = have(d.soll) ? d.soll + 1 : null, vlS = have(d.vl) && have(d.soll) ? d.vl - d.soll : null;
                 // +1 K auch in der Pause (hebt die Startschwelle; bei Laeufen unter 25 min gaebe es im Lauf nach Startphase und Haltezeit keine Gelegenheit)
                 var cond2 = [
                     {k: 'takt', kz: 'Takt belegt', t: 'Takt belegt (' + (taktTxt.join(', ') || 'kurzer Lauf oder viele Starts') + ')', tn: 'kein Takt belegt: ' + lr + ', ' + d.starts3h + ' Start' + (d.starts3h === 1 ? '' : 's') + ' in 3 h', ok: takt},
                     {k: 'minimum', kz: 'Frequenz', t: 'Verdichter unter ' + c.hzHoch + ' Hz oder in der Pause: Quiet deckelt nichts mehr', tn: 'Verdichter bei ' + de(d.hz, 0) + ' Hz: zuerst Quiet höher', ok: !hoch},
                     {k: 'verschiebung', kz: 'Verschiebung', t: 'Verschiebung steht auf 0 K', tn: 'Verschiebung steht auf ' + sg(d.shift, 0) + ' K', ok: d.shift === 0},
-                    {k: 'luft', kz: 'Luft im Band', t: 'wärmster Raum mindestens ' + de(c.reserveK, 1) + ' K unter Maximum', tn: warm ? warm.name + ' nur ' + de(luft, 1) + ' K unter Maximum' : 'Raumlage unbekannt', ok: have(luft) && luft >= c.reserveK - 1e-9, ist: r2(luft), soll: c.reserveK, op: '>=', u: 'K', dyn: true},
+                    {k: 'luft', kz: 'Räume', t: 'kein Raum über der Bandmitte', tn: warm ? warm.name + ' ' + de(-luft, 1) + ' K über der Bandmitte' : 'Raumlage unbekannt', ok: have(luft) && luft >= -1e-9, ist: r2(luft), soll: 0, op: '>=', u: 'K', dyn: true},
+                    d.running ? {k: 'vorlauf', kz: 'Vorlauf', t: 'Vorlauf mindestens ' + de(c.laufVlK, 1) + ' K über Soll (nur die Stoppschwelle steigt)', tn: 'Vorlauf ' + sg(vlS, 2) + ' K zum Soll: +1 K löste einen Hochlauf aus', ok: have(vlS) && vlS >= c.laufVlK, ist: r2(vlS), soll: c.laufVlK, op: '>=', u: 'K', dyn: true}
+                              : {k: 'vorlauf', kz: 'Vorlauf', t: 'Vorlauf über Soll ' + sg(c.pauseVlK, 0) + ' K (kein sofortiger Start)', tn: 'Vorlauf ' + sg(vlS, 2) + ' K zum Soll: +1 K startete den Verdichter sofort', ok: have(vlS) && vlS > c.pauseVlK, ist: r2(vlS), soll: c.pauseVlK, op: '>=', u: 'K', dyn: true},
                     {k: 'nutzen', kz: 'Nutzen > Kosten', t: 'Nutzen ≥ Kosten (' + NK.txt + ')', tn: 'Nutzen kleiner als Kosten: ' + NK.txt, ok: NK.ok}
                 ];
                 return {cond: cond2, halt: c.haltMin, wert: 1, von: d.shift, groesse: 'shift', hebel: 'shift', dir: 'soll_hoch', befehl: RULE.quiet_strecken.hebel.shift, maxDauerMin: c.maxDauerKurveMin,
+                        erwartung: 'Soll-Vorlauf +1 K binnen 3 min; Lauf länger (Annahme +' + c.laufPlusMin + ' min), Pause kürzer (Annahme −' + c.pauseMinusMin + ' min), Strom +' + de(c.kurveWK, 1) + ' W im Lauf; Wirkung nicht gemessen (Messaufgabe)',
+                        rueckweg: 'Automatisch zurück auf 0 K, sobald ein Raum über Maximum steigt, spätestens nach ' + de(c.maxDauerKurveMin / 60, 0) + ' h.',
                         was: 'Heizkurve 0 → +1 K (Soll-Vorlauf ' + de(d.soll, 0) + ' → ' + de(sollNeu, 0) + ' °C, Laufzeit)',
                         warum: 'Takt: ' + taktTxt.join(', ') + '; Verdichter bei ' + de(d.hz, 0) + ' Hz, Quiet deckelt nichts mehr; ' + NK.txt};
             }
@@ -580,7 +592,7 @@ var ENGINE = (function () {
             if (eta <= c.prognoseMin && (!o.trend || eta < o.trend.eta)) { o.trend = {r: r, tr: tr, eta: eta}; }
         });
         if (o.trend) { parts.push(o.trend.r.name + ' fällt ' + de(-o.trend.tr, 1) + ' K/h (Minimum in ~' + de(o.trend.eta, 0) + ' min)'); }
-        o.heizstab = !!(d.htrNear && have(d.vlRueck) && d.vlRueck >= d.htrSd - 1);
+        o.heizstab = !!(d.htrNear && have(d.vlRueck) && d.vlRueck >= d.htrSd - c.heizstabAbstandK);   // Heizstab ab Vorlauf < Soll + Start-Delta (−3 K) nach 15 min bei AT < 0 °C
         if (o.heizstab) { parts.push('Heizstab-Nähe (Außen ' + de(d.at, 0) + ' °C, Vorlauf ' + de(d.vlRueck, 1) + ' K unter Soll, Heizstab ab ' + de(d.htrSd, 0) + ' K)'); }
         o.boost = !!d.boost;
         if (o.boost) { parts.push('Soll von Hand ' + de(d.soll, 0) + ' °C über der Heizkurve (' + de(d.sollKurve, 1) + ' °C)'); }
@@ -738,10 +750,11 @@ var ENGINE = (function () {
         S.rtr = S.rtr || {};
         d.rooms.forEach(function (r) {
             if (!r.active || !r.valid || !have(r.t)) { return; }
-            var L = S.rtr[r.id] = Array.isArray(S.rtr[r.id]) ? S.rtr[r.id] : [];
-            if (!L.length || L[L.length - 1][1] !== r.t) { L.push([now, r.t]); }
+            var L = S.rtr[r.id] = Array.isArray(S.rtr[r.id]) ? S.rtr[r.id] : [], la = L[L.length - 1], g5 = Math.floor(now / (5 * MIN));
+            if (la && la[1] !== r.t && Math.floor(la[0] / (5 * MIN)) === g5 && L.length > 1 && Math.floor(L[L.length - 2][0] / (5 * MIN)) === g5) { la[1] = r.t; }   // hoechstens zwei Werte je 5 min (EMA-Werte aendern sich jede Minute)
+            else if (!la || la[1] !== r.t) { L.push([now, r.t]); }
             while (L.length > 1 && L[1][0] <= now - TR.haltH * 60 * MIN) { L.shift(); }
-            if (L.length > 60) { L.splice(0, L.length - 60); }
+            if (L.length > 160) { L.splice(0, L.length - 160); }
         });
         if (S.handWas && !d.hand && have(sk)) { S.shiftChg = now; }
         if (have(sk) && have(d.soll)) { S.handWas = d.hand; }
@@ -785,8 +798,8 @@ var ENGINE = (function () {
                     else if (d.hand) { add(id, 'Soll-Vorlauf ' + de(d.soll, 0) + ' °C weicht von der Heizkurve (' + de(sk, 1) + ' °C) ab: Handeingriff'); }
                 }
             }
-            if (id === 'abstand') {
-                var chg = g === 'quiet' ? S.qChg : (g === 'shift' ? S.shiftChg : 0);
+            if (id === 'abstand') {                                                        // seit 13.10. ueber beide Groessen (Regel-Review 3.4: Wirkung sonst nicht zuzuordnen, Effekte addieren sich)
+                var chg = (g === 'quiet' || g === 'shift') ? Math.max(S.qChg || 0, S.shiftChg || 0) : 0;
                 if (chg && now - chg < L.gapMin * MIN) { add(id, 'letzte Änderung ' + hhmm(chg) + ', noch ' + Math.ceil((chg + L.gapMin * MIN - now) / MIN) + ' min', chg + L.gapMin * MIN); }
             }
             if (id === 'tageslimit' && rs.n >= c.proTag && !rs.prop) { add(id, rs.n + ' von ' + c.proTag); }
@@ -894,7 +907,7 @@ var ENGINE = (function () {
             var bf = e.befehl || R.befehl, g = e.groesse || R.groesse;
             var p = {id: R.id + '@' + isoMin(now).replace(' ', 'T'), rule: R.id, ver: R.ver, art: R.art, name: R.name, ts: now, bis: now + c.gueltigMin * MIN,
                      cmd: {name: bf.name, topic: bf.topic, value: e.wert}, von: e.von, dir: e.dir || R.richtung, lead: e.lead || '',
-                     was: e.was, warum: e.warum, erwartung: R.erwartung, rueckweg: R.rueckweg, wann: 'ausgelöst ' + hhmm(now) + (e.halt ? ' nach ' + e.halt + ' min über allen Schwellen' : '')};
+                     was: e.was, warum: e.warum, erwartung: e.erwartung || R.erwartung, rueckweg: e.rueckweg || R.rueckweg, wann: 'ausgelöst ' + hhmm(now) + (e.halt ? ' nach ' + e.halt + ' min über allen Schwellen' : '')};
             if (g !== R.groesse || e.hebel) { p.groesse = g; p.hebel = e.hebel || null; }                            // Deckel/Laufzeit v4: Hebel des Vorschlags (Quiet oder Heizkurve)
             if (have(e.maxDauerMin)) { p.maxDauerMin = e.maxDauerMin; }                                               // Rueckweg-Frist der Uebernahme (je Hebel)
             p.sum = checksum(p);
@@ -919,7 +932,7 @@ var ENGINE = (function () {
         {key: 'copMinMin', std: 60, einheit: 'min', herkunft: 'Nutzerentscheidung 13.10.2026, vorläufig: Mindestdaten je Kombination Modus × Quiet × Außenband für die Anzeige und als Schwelle, ab der eine Regel eine Umschaltung vorschlagen darf'},
         {key: 'copTage', std: 30, einheit: 'Tage', herkunft: 'COP-Vergleich über die letzten 30 Tage (ANNAHME; stooklijn: 30-Tage-Fenster, Jahreszeiten nicht mischen)'},
         {key: 'deckelNachQMin', std: 15, einheit: 'min', herkunft: 'gelernter Quiet-Deckel: Minuten bis 15 min nach einem Quiet-Wechsel zählen nicht (Messung 12.10. 09:30: nach Quiet 2 → 3 fiel der Verdichter erst nach 15 min von 20 auf 17–18 Hz)'},
-        {key: 'deckelHaltMin', std: 3, einheit: 'min', herkunft: 'gelernter Quiet-Deckel: eine Frequenz zählt erst, wenn die Stufe sie 3 min am Stück gehalten hat (Einzelspitzen zählen nicht; ANNAHME)'},
+        {key: 'deckelHaltMin', std: 5, einheit: 'min', herkunft: 'gelernter Quiet-Deckel: eine Frequenz zählt erst, wenn die Stufe sie 5 min am Stück gehalten hat (Messung 09.10. 01:22–01:24: Quiet 3 lief bei 4 °C ohne Rückstand 3 min mit 20 Hz, vermutlich Ölrückführung; solche Spitzen zählen nicht; ANNAHME)'},
         {key: 'startsTagWarn', std: 12, einheit: 'Starts', herkunft: 'Anzeige „Takt“ ab mehr als 12 Starts in 24 h (Richtwert HeatPump Hero, docs/optimization.md)'},
         {key: 'kurzAnteilWarn', std: 0.25, einheit: 'Anteil', herkunft: 'Anzeige „Takt“ ab mehr als 25 % kurzen Läufen bei mindestens 4 Läufen (Richtwert HeatPump Hero; dort „kurz“ = unter 10 min, bei uns unter 60 min)'}
     ];
@@ -1157,7 +1170,7 @@ var ENGINE = (function () {
         if (AQ.applied && d.q === AQ.applied.w) {
             var ar = AQ.applied.rule, mxD = cfg.rules[ar] && have(cfg.rules[ar].maxDauerMin) ? cfg.rules[ar].maxDauerMin : null;
             if (!QE.halten[ar] && (QE.ende[ar] || (mxD && now - AQ.applied.ts >= mxD * MIN))) {
-                AQ.last = {rule: ar, dir: sgnOf(AQ.applied.w - AQ.applied.von), w: AQ.applied.w, von: AQ.applied.von, start: AQ.applied.ts, end: now, grund: QE.ende[ar] || 'Frist abgelaufen'}; AQ.applied = null;
+                AQ.last = {rule: ar, dir: sgnOf(AQ.applied.w - AQ.applied.von), w: AQ.applied.w, von: AQ.applied.von, start: AQ.applied.ts, end: now, lapse: true, grund: QE.ende[ar] || 'Frist abgelaufen'}; AQ.applied = null;
             }
         }
         [['shift', S.arb], ['quiet', S.arbQ]].forEach(function (x) {                     // Arbitrierung nach dem Laden eines aelteren Zustands: laufenden Vorschlag als Eigentuemer eintragen
@@ -1554,11 +1567,11 @@ var ENGINE = (function () {
             if (!r.locks.every(function (l) { return own.indexOf(l) >= 0; })) { return null; }
             r.locks.forEach(function (l) {
                 var std = false;
-                if (l === 'abstand') { var chg = gr === 'quiet' ? S.qChg : (gr === 'shift' ? S.shiftChg : 0); std = !!chg && now - chg < LOCK_CFG.gapMin * MIN; }
+                if (l === 'abstand') { var chg = (gr === 'quiet' || gr === 'shift') ? Math.max(S.qChg || 0, S.shiftChg || 0) : 0; std = !!chg && now - chg < LOCK_CFG.gapMin * MIN; }
                 if (l === 'tageslimit') { std = rs.n >= stdOf(R, 'proTag'); }
                 if (l === 'abkuehlzeit') { std = rs.cool - (c.pauseMin - stdOf(R, 'pauseMin')) * MIN > now; }
                 if (l === 'vorrang') { std = true; }                                        // Eigentum einer anderen Regel: kein Zeitwert
-                if (l === 'gegenrichtung') { var Ag = arbOf(S, gr), qg = gr === 'quiet'; std = !!(Ag && Ag.last) && now - arbEnd(Ag, d, gr) < (r.hart ? (qg ? LOCK_CFG.quietHaltMin : LOCK_CFG.shiftHaltMin) : (qg ? LOCK_CFG.quietGegenMin : LOCK_CFG.gegenMin)) * MIN; }
+                if (l === 'gegenrichtung') { var Ag = arbOf(S, gr), qg = gr === 'quiet', e0 = Ag && Ag.last ? (r.hart && qg && Ag.last.lapse ? Ag.last.start : arbEnd(Ag, d, gr)) : 0; std = !!(Ag && Ag.last) && now - e0 < (r.hart ? (qg ? LOCK_CFG.quietHaltMin : LOCK_CFG.shiftHaltMin) : (qg ? LOCK_CFG.quietGegenMin : LOCK_CFG.gegenMin)) * MIN; }
                 (std ? ok : ext).push(l);
             });
             return ext.length ? {ext: ext} : {ids: ok};

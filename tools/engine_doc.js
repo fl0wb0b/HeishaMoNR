@@ -7,7 +7,9 @@ function tabellen() {
     const L = [];
     L.push('### Regeln (Version, Art, Befehl, Prognose)', '');
     L.push('| Regel | Version | Art | Stellgröße / Befehl | Richtung | Prognose (p, Horizonte) | Sperren |', '|---|---|---|---|---|---|---|');
-    E.RULES.forEach(R => L.push('| ' + [R.name + ' (`' + R.id + '`)', R.ver, R.art, '`' + R.befehl.name + '`', R.richtung, esc(R.prognose.text) + ' – p = ' + String(R.prognose.p).replace('.', ',') + ', ' + R.prognose.h.join('/') + ' min', R.sperren.join(', ')].join(' | ') + ' |'));
+    const prog = P => esc(P.text) + ' – p = ' + String(P.p).replace('.', ',') + ', ' + P.h.join('/') + ' min';
+    E.RULES.forEach(R => L.push('| ' + [R.name + ' (`' + R.id + '`)', R.ver, R.art, R.hebel ? Object.keys(R.hebel).map(k => '`' + R.hebel[k].name + '`').join(' oder ') : '`' + R.befehl.name + '`',
+                                        R.richtung + (R.hebel ? ' / soll_hoch' : ''), prog(R.prognose) + (R.prognoseKurve ? '; Hebel +1 K: ' + prog(R.prognoseKurve) : ''), R.sperren.join(', ')].join(' | ') + ' |'));
     E.RULES.forEach(R => {
         L.push('', '#### ' + R.name + ' (`' + R.id + '` v' + R.ver + ')', '', '*Zweck:* ' + esc(R.zweck), '', '*Eingänge:* ' + R.eingaenge.join(', '), '');
         L.push('| Schwelle | Standard | Einheit | Herkunft |', '|---|---|---|---|');

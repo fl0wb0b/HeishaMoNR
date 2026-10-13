@@ -84,7 +84,7 @@ console.log('--- (a) Sperren (jede Regel erbt sie)');
     { const R = runSeq(25, i => boost(i, {q: i < 5 ? 2 : 3})); const r = r0(R.outs[24], 'quiet_freigabe'); check('Sperre Mindestabstand: Quiet wurde vor 20 min geaendert (60 min Abstand)', r.st === 'gesperrt' && /Mindestabstand.*letzte Änderung/.test(r.grund) && r.naechste.bis === T0 + 5 * MIN + 60 * MIN, r.grund); }
     { const R = runSeq(25, i => boost(i, {vl: 30, soll: 28.5, rl: 28.25})); const r = r0(R.outs[24], 'quiet_freigabe'); check('Takt-Gefahr: Vorlauf ueber Soll -> keine Freigabe (Bedingung Rueckstand fehlt sowieso)', r.st === 'bereit', r.grund); }
     // Lauf seit 5 min: laufbeginn ist zugleich Bedingung
-    { const R = runSeq(25, i => boost(i, {rt: 2 + i * 0})); const r = r0(R.outs[24], 'quiet_freigabe'); check('Startphase: Lauf erst 2 min -> "bereit: Startphase", keine Haltezeit', r.st === 'bereit' && /Startphase: Lauf erst 2 von 15 min/.test(r.grund), r.grund); }
+    { const R = runSeq(25, i => boost(i, i < 22 ? {hz: 0, rt: 0, pump: 1750} : {rt: i - 22})); const r = r0(R.outs[24], 'quiet_freigabe'); check('Startphase: Lauf erst 2 min -> "bereit: Startphase", keine Haltezeit', r.st === 'bereit' && /Startphase: Lauf erst 2 von 15 min/.test(r.grund), r.grund); }
     // Heizgrenze-Aus fuer Raumregel
     { const R = runSeq(75, i => inp(T0 + i * MIN, {hz: 0, pump: 0, rt: 0, korr: {v: 1, code: 'Raum unter Minimum', distrib: false, lead: 'Kinderzimmer oben'}, rooms: rooms({ki_oben: 21.2})})); const r = r0(R.outs[74], 'raum_offset'); check('Raumregel: Heizgrenze-Aus (Pumpe 0) sperrt die Verschiebung', r.st === 'gesperrt' && /Heizgrenze-Aus/.test(r.grund), r.grund); }
     // Takt-Gefahr richtungsabhaengig: -1 K bei Vorlauf +0,5 K gesperrt (nach -1 K +1,5 K), +1 K nicht
@@ -130,7 +130,7 @@ console.log('--- (a) Randfaelle: fehlende/unsinnige Werte, Neustart, Tageslimit,
 // Nur zur Auswertung (SIM_BASIS=1): Basisrate "bleibt, wie es ist" je Regel und Horizont gegen die Prognose p (Falle p < b: ein Treffer punktet negativ)
 function basisBericht(name, L) {
     if (!process.env.SIM_BASIS || !L || !L.S) { return; }
-    console.log('    [Basisraten ' + name + '] ' + E.RULES.map(R => { const B = L.S.sc.base[R.id] || {}; return R.id + ' p ' + R.prognose.p + ': ' + R.prognose.h.map(h => h + ' min ' + (B[h] ? B[h][1] + '/' + B[h][0] + ' b ' + E.de(B[h][0] >= E.SCORE.baseMinN ? (B[h][1] + 1) / (B[h][0] + 2) : 0.5, 2) + ((B[h][0] >= E.SCORE.baseMinN ? (B[h][1] + 1) / (B[h][0] + 2) : 0.5) > R.prognose.p ? ' > p' : '') : '–')).join(', '); }).join(' | '));
+    console.log('    [Basisraten ' + name + '] ' + E.RULES.map(R => { const B = L.S.sc.base[R.basis || R.id] || {}; return R.id + ' p ' + R.prognose.p + ': ' + R.prognose.h.map(h => h + ' min ' + (B[h] ? B[h][1] + '/' + B[h][0] + ' b ' + E.de(B[h][0] >= E.SCORE.baseMinN ? (B[h][1] + 1) / (B[h][0] + 2) : 0.5, 2) + ((B[h][0] >= E.SCORE.baseMinN ? (B[h][1] + 1) / (B[h][0] + 2) : 0.5) > R.prognose.p ? ' > p' : '') : '–')).join(', '); }).join(' | '));
     console.log('    [Bericht ' + name + '] ' + E.report(L.S).map(r => r.regel + ' ' + (r.punkte === null ? '–' : r.punkte) + ' P, ' + r.faelle + ' F (' + r.treffer + ' T/' + r.fehlalarm + ' FA), Skill ' + (r.skill === null ? '–' : r.skill)).join(' | '));
     const tr = L.scores.filter(x => x.typ === 'ausloeser' && x.ergebnis === 'treffer' && x.punkte < 0);
     console.log('    [Faelle ' + name + '] ' + (L.scores.filter(x => x.typ === 'ausloeser' && !E.RULE[x.regel].art.indexOf('befehl')).map(x => x.fall + ' ' + x.ergebnis + ' ' + x.punkte + ' (' + x.horizonte.map(h => (h.o === null ? '–' : h.o) + '/b ' + h.b + (h.bp ? ' ' + h.bp : '')).join(', ') + ')').join(' | ') || 'keine'));
@@ -234,7 +234,7 @@ console.log('--- (b) Punktesystem');
     let R = runSeq(160, i => boost(i));
     let sc = [].concat.apply([], R.outs.map(o => o.scores)), a = sc.find(s => s.typ === 'ausloeser');
     check('Fall bleibt bestehen (150 min am Deckel mit Rueckstand): Treffer an 30/60/120 min, Basisrate 0,5 (noch < 5 Vergleiche), +21 Punkte', a && a.ergebnis === 'treffer' && a.horizonte.every(h => h.o === 1 && h.b === 0.5) && Math.abs(a.punkte - 21) < 0.01 && a.fall === 'quiet_freigabe@2026-10-12T06:10', a && (a.ergebnis + ' ' + a.punkte + ' ' + a.text));
-    check('Punktebuch: Datensatz mit Regel, Version, Bewertungsversion, Prognose p, je Horizont Ergebnis/Basisrate/Punkte, laufende Summe', a && a.regel === 'quiet_freigabe' && a.v === 1 && a.sv === E.SCORE_VER && a.p === 0.8 && a.horizonte.length === 3 && a.summe === 21, a && JSON.stringify(a.horizonte[0]));
+    check('Punktebuch: Datensatz mit Regel, Version, Bewertungsversion, Prognose p, je Horizont Ergebnis/Basisrate/Punkte, laufende Summe', a && a.regel === 'quiet_freigabe' && a.v === E.RULE.quiet_freigabe.ver && a.sv === E.SCORE_VER && a.p === 0.8 && a.horizonte.length === 3 && a.summe === 21, a && JSON.stringify(a.horizonte[0]));
     // S2: Problem loest sich nach 5 min von selbst -> Fehlalarm an allen Horizonten -> -39
     R = runSeq(160, i => boost(i, i >= 15 ? {vl: 38, rl: 35.5} : {}));
     sc = [].concat.apply([], R.outs.map(o => o.scores)); a = sc.find(s => s.typ === 'ausloeser');
@@ -302,7 +302,7 @@ console.log('--- (b) Punktesystem');
         check('Deckel/Laufzeit v4: Zielstufe ist die niedrigste deckelnde (Quiet 2), nicht die mit dem besten COP (Quiet 3 6,6 gegen 6,1; bei 16–17 Hz ist ein COP-Unterschied zwischen Stufen nicht messbar)', !!f.p && f.p.cmd.value === 2, f.p ? f.p.warum : r0(R3.outs[100], 'quiet_strecken').grund); }
       { const R4 = runSeq(110, i => lauf2(i, 'thermo'), copSeed(null, {'Efficiency|2|7…11': [1000, 6100, 90, 90 * 24, 26, 26], 'Efficiency|3|7…11': [1000, 5000, 120, 120 * 17, 17]}));
         const g4 = r0(R4.outs[30], 'quiet_strecken').grund;
-        check('Deckel/Laufzeit v4: Quiet 2 deckelt laut Daten nicht (26 Hz gehalten), Quiet 3 COP mehr als 3 % unter der jetzigen (5,0 gegen 6,0, Veto) -> keine Zielstufe, kein Vorschlag, Grund nennt beides', !R4.outs.some(o => r0(o, 'quiet_strecken').neu) && /Quiet 2 deckelt nicht \(bis 26 Hz\)/.test(g4) && /Quiet 3 COP 5,00 statt 6,\d\d \(mehr als 3 % schlechter\)/.test(g4), g4); }
+        check('Deckel/Laufzeit v4: Quiet 2 deckelt laut Daten nicht (26 Hz gehalten), Quiet 3 COP mehr als 10 % unter der jetzigen (5,0 gegen 6,0, Veto; Messunsicherheit ±10 %) -> keine Zielstufe, kein Vorschlag, Grund nennt beides', !R4.outs.some(o => r0(o, 'quiet_strecken').neu) && /Quiet 2 deckelt nicht \(bis 26 Hz\)/.test(g4) && /Quiet 3 COP 5,00 statt 6,\d\d \(mehr als 10 % schlechter\)/.test(g4), g4); }
       { const S5 = copSeed(); delete S5.takt.copT[E.ymd(T0)]['Efficiency|2|7…11']; delete S5.takt.copT[E.ymd(T0)]['Efficiency|3|7…11'];
         const R5 = runSeq(110, i => lauf2(i, 'thermo'), S5), g5 = r0(R5.outs[30], 'quiet_strecken').grund, sc5 = allSc(R5);
         check('Deckel/Laufzeit v4: keine Messdaten fuer Quiet 1–3 (Nutzerentscheidung 60 min je Heizregelung x Quiet x Band) -> kein Vorschlag, Grund "keine Zielstufe aus den Daten"; kein "verpasst"', !R5.outs.some(o => r0(o, 'quiet_strecken').neu) && /keine Zielstufe aus den Daten \(Efficiency, 7…11 °C\): Quiet 1: 0 von 60 min Daten; Quiet 2: 0 von 60 min Daten; Quiet 3: 0 von 60 min Daten/.test(g5) && !sc5.some(x => x.regel === 'quiet_strecken' && /^verpasst/.test(x.typ)), g5); }
@@ -317,9 +317,9 @@ console.log('--- (b) Punktesystem');
         check('Deckel/Laufzeit v4: Wirkungsmessung "Deckel" bei Quiet 0 -> 2 mit 24 Hz: <= 21 Hz binnen 10 min und -100 W (Minute 5–10) getroffen, gebucht unter v4', ef.length === 1 && /Quiet 0 → 2 bei 24 Hz/.test(ef[0].text) && ef[0].v === 4 && ef[0].punkte === 20 && ef[0].teile.every(t => t.ergebnis === 'getroffen'), JSON.stringify(ef.map(x => [x.text, x.v, x.punkte]))); }
       // Hebel Heizkurve +1 K: Takt belegt und Verdichter am Minimum (Quiet deckelt nichts mehr); Nutzen (vermiedene Starts) gegen Kosten (Vorlauf +1 K)
       const zyklus = (lauf, pause, o) => i => { const k = i % (lauf + pause), on = k < lauf; return inp(T0 + i * MIN, Object.assign(on ? {q: 3, hz: 17, rt: k, soll: 30, sollKurve: 29.75, vl: Math.round((30.5 + 3 * k / lauf) * 4) / 4, rl: 29, rooms: rooms()} : {q: 3, hz: 0, rt: 0, soll: 30, sollKurve: 29.75, vl: 28, rl: 27.5, pump: 1750, rooms: rooms()}, typeof o === 'function' ? o(i) : (o || {}))); };
-      const Rz = runSeq(120, zyklus(20, 10)), fz = firstProp(Rz), pz = fz.p, Rz46 = runSeq(46, zyklus(20, 10));
-      check('Deckel/Laufzeit v4, Hebel +1 K: Takt (Laeufe 20 min mit Abschaltung ueber den Vorlauf, Pausen 10 min), Verdichter am Minimum, Luft im Band, Nutzen > Kosten -> Vorschlag SetZ1HeatRequestTemperature = 1 (Groesse Verschiebung, Rueckweg-Frist 6 h) in Minute 45 (Haltezeit 10 min, dann Startphase-Sperre bis Laufminute 15); die Verschiebung gehoert dann "Deckel/Laufzeit" (Arbitrierung)',
-            fz.i === 45 && pz && pz.cmd.name === 'SetZ1HeatRequestTemperature' && pz.cmd.value === 1 && pz.von === 0 && pz.groesse === 'shift' && pz.hebel === 'shift' && pz.maxDauerMin === 360 && /^Heizkurve 0 → \+1 K \(Soll-Vorlauf 30 → 31 °C, Laufzeit\)$/.test(pz.was) && /Takt: letzter Lauf nur 20 min/.test(pz.warum) && /Nutzen ~\d+ Wh\/Tag \([\d,]+ Starts weniger\) gegen Kosten ~\d+ Wh\/Tag/.test(pz.warum) && Rz46.S.arb.owner === 'quiet_strecken',
+      const Rz = runSeq(120, zyklus(20, 10)), fz = firstProp(Rz), pz = fz.p, Rz46 = runSeq(76, zyklus(20, 10));
+      check('Deckel/Laufzeit v4, Hebel +1 K: Takt (Laeufe 20 min mit Abschaltung ueber den Vorlauf, Pausen 10 min; belegt ab dem dritten Start: kurzer Lauf UND 2 Starts in 3 h), Verdichter am Minimum, Vorlauf schon ueber Soll (nur die Stoppschwelle steigt), kein Raum ueber der Bandmitte, Nutzen > Kosten -> Vorschlag SetZ1HeatRequestTemperature = 1 (Groesse Verschiebung, Rueckweg-Frist 6 h) in Minute 75 (Haltezeit 10 min, dann Startphase-Sperre bis Laufminute 15); die Verschiebung gehoert dann "Deckel/Laufzeit" (Arbitrierung)',
+            fz.i === 75 && pz && pz.cmd.name === 'SetZ1HeatRequestTemperature' && pz.cmd.value === 1 && pz.von === 0 && pz.groesse === 'shift' && pz.hebel === 'shift' && pz.maxDauerMin === 360 && /^Heizkurve 0 → \+1 K \(Soll-Vorlauf 30 → 31 °C, Laufzeit\)$/.test(pz.was) && /Takt: letzter Lauf nur 20 min/.test(pz.warum) && /Nutzen ~\d+ Wh\/Tag \([\d,]+ Starts weniger\) gegen Kosten ~\d+ Wh\/Tag/.test(pz.warum) && Rz46.S.arb.owner === 'quiet_strecken',
             fz.i + ' · ' + (pz ? pz.was + ' · ' + pz.warum : r0(Rz.outs[60], 'quiet_strecken').grund));
       const nk = E.nutzenKurve({lastRunMin: 20, lastPauseMin: 10}, cfg.rules.quiet_strecken), nl = E.nutzenKurve({lastRunMin: 40, lastPauseMin: 30}, cfg.rules.quiet_strecken);
       check('Nutzen/Kosten +1 K (Annahmen: Lauf +40 min, Pause −18 min, Start 15 Wh, 8,5 W/K im Lauf): Zyklus 20 + 10 min Nutzen ~305 gegen Kosten ~136 Wh/Tag (lohnt); Zyklus 40 + 30 min ~74 gegen ~117 Wh/Tag (lohnt nicht); Gleichstand bei ~50 min Zyklus',
@@ -327,11 +327,13 @@ console.log('--- (b) Punktesystem');
       const Rl = runSeq(150, zyklus(40, 30));
       check('... Zyklus 40 + 30 min: Takt belegt, aber Nutzen kleiner als Kosten -> kein +1 K, Grund nennt die Zahlen', !Rl.outs.some(o => r0(o, 'quiet_strecken').neu) && /Nutzen kleiner als Kosten: Zyklus 40 \+ 30 min: Nutzen ~74 Wh\/Tag/.test(r0(Rl.outs[140], 'quiet_strecken').grund), r0(Rl.outs[140], 'quiet_strecken').grund);
       const Rw = runSeq(120, zyklus(20, 10, {rooms: rooms({ki_oben: 23.3})}));
-      check('... warmer Raum (0,2 K unter Maximum): kein +1 K (Luft im Band 0,3 K)', !Rw.outs.some(o => r0(o, 'quiet_strecken').neu) && /Kinderzimmer oben nur 0,2 K unter Maximum/.test(r0(Rw.outs[60], 'quiet_strecken').grund), r0(Rw.outs[60], 'quiet_strecken').grund);
+      check('... Raum ueber der Bandmitte (Kinderzimmer oben 23,3 °C, Mitte 22,75 °C): kein +1 K (sonst Gegenspieler zu Raumeinfluss −1 K, Regel-Review LS-5)', !Rw.outs.some(o => r0(o, 'quiet_strecken').neu) && /Kinderzimmer oben 0,\d K über der Bandmitte/.test(r0(Rw.outs[70], 'quiet_strecken').grund), r0(Rw.outs[70], 'quiet_strecken').grund);
+      const Rv = runSeq(120, zyklus(20, 10, i => (i % 30 < 18 ? {vl: 30} : (i % 30 >= 20 ? {vl: 27.5} : {}))));
+      check('... Vorlauf im Lauf nur am Soll (+1 K loeste bei Quiet 0 einen Hochlauf aus, 11.10. 03:10) und in der Pause bei Soll −2,5 K (+1 K startete sofort): kein +1 K', !Rv.outs.some(o => r0(o, 'quiet_strecken').neu) && /Vorlauf 0,00 K zum Soll: \+1 K löste einen Hochlauf aus/.test(r0(Rv.outs[76], 'quiet_strecken').grund) && /Vorlauf -2,50 K zum Soll: \+1 K startete den Verdichter sofort/.test(r0(Rv.outs[85], 'quiet_strecken').grund), r0(Rv.outs[76], 'quiet_strecken').grund + ' | ' + r0(Rv.outs[85], 'quiet_strecken').grund);
       { const ca = E.mergeCfg({rules: {raum_offset: {stabilMin: 20}}}); let Sa = null; const sn = [];
-        for (let i = 0; i < 150; i++) { const o = E.step(Sa, zyklus(20, 10, {korr: {v: 1, code: 'Raum unter Minimum', distrib: false, lead: 'Kinderzimmer oben'}})(i), ca); Sa = o.S; const qp = Sa.rules.quiet_strecken.prop; sn.push({ro: !!Sa.rules.raum_offset.prop, qs: !!(qp && qp.groesse === 'shift'), g: r0(o, 'quiet_strecken').grund}); }
-        check('Arbitrierung Verschiebung: Raumeinfluss +1 K (Minute 20) hat die Verschiebung, "Deckel/Laufzeit" will ebenfalls +1 K: "dieselbe Verschiebung +1 K schlägt schon „Raumeinfluss ±1 K“ vor", nie zwei Verschiebungs-Vorschlaege gleichzeitig',
-              sn[20].ro && !sn.some(x => x.ro && x.qs) && /dieselbe Verschiebung \+1 K schlägt schon „Raumeinfluss ±1 K“ vor/.test(sn[45].g), sn[45].g); }
+        for (let i = 0; i < 150; i++) { const o = E.step(Sa, zyklus(20, 10, {korr: {v: 1, code: 'Raum unter Minimum', distrib: false, lead: 'Kinderzimmer oben'}})(i), ca); Sa = o.S; const qp = Sa.rules.quiet_strecken.prop; sn.push({ro: !!Sa.rules.raum_offset.prop, qs: !!(qp && qp.groesse === 'shift'), g: r0(o, 'quiet_strecken').grund, gr: r0(o, 'raum_offset').grund}); }
+        check('Arbitrierung Verschiebung: Raumeinfluss +1 K (Minute 20; die Startsperre zieht ihn in Minute 30 zurueck), "Deckel/Laufzeit" uebernimmt dieselbe Richtung in Minute 75 (keine Gegenrichtung), der Raumeinfluss ist dann "dieselbe Verschiebung +1 K schlägt schon „Deckel/Laufzeit“ vor"; nie zwei Verschiebungs-Vorschlaege gleichzeitig',
+              sn[20].ro && !sn[30].ro && sn[75].qs && !sn.some(x => x.ro && x.qs) && /dieselbe Verschiebung \+1 K schlägt schon „Deckel\/Laufzeit“ vor/.test(sn[76].gr), sn[76].gr); }
       { const Az = E.newApply(); Az.aktiv = {id: 's', rule: 'quiet_strecken', groesse: 'shift', name: 'SetZ1HeatRequestTemperature', value: 1, von: 0, ts: T0, bis: T0 + 360 * MIN, bestaetigt: true};
         const tq = E.applyTick(JSON.parse(JSON.stringify(Az)), {now: T0 + 60 * MIN, plant: {shift: 1, hpAge: 0.3, block: 0}, endReason: {quiet_strecken: 'Bedarf: Kinderzimmer oben 0,4 K unter Minimum'}});
         const ts2 = E.applyTick(JSON.parse(JSON.stringify(Az)), {now: T0 + 60 * MIN, plant: {shift: 1, hpAge: 0.3, block: 0}, endReason: {'quiet_strecken|shift': 'Kinderzimmer oben über Maximum'}});
@@ -353,9 +355,9 @@ console.log('--- (b) Punktesystem');
             R.S.sc.tot['quiet_freigabe|v1|s5'].punkte === -20 && R.S.sc.tot['quiet_freigabe|v2|s5'].faelle === 1 && rpv.v === 2 && rpv.verpasst === 0 && av && av.v === 2 && av.horizonte.every(h => h.b === 0.5) && !!R.S.sc.base['quiet_freigabe|v2'], JSON.stringify(Object.keys(R.S.sc.tot)) + ' ' + JSON.stringify(av && av.horizonte.map(h => h.b))); }
     // S6: Basisrate lernt aus Vergleichslagen: 8 kurze Episoden (Rueckstand 30 min, dann geloest) -> b fuer 60/120 min nahe 0 -> Treffer zaehlt viel
     let S = null; const ep = [];
-    for (let k = 0; k < 8; k++) { for (let i = 0; i < 150; i++) { const t = k * 150 + i; const o = E.step(S, inp(T0 + t * MIN, {rt: 20 + i, soll: 31, sollKurve: 30.5, vl: i < 30 ? 29 : 31.5, rl: i < 30 ? 26.5 : 29.5, q: 3, hz: 16, block: 1}), cfg); S = o.S; } }
-    const B = S.sc.base.quiet_freigabe || {};
-    check('Basisrate "bleibt, wie es ist": aus Vergleichslagen gelernt (8 Episoden mit 30 min Rueckstand: nach 30 min bestand das Problem 8/8, nach 120 min 0/8; 60 min unklar = nicht gezaehlt)', B['30'] && B['30'][0] === 8 && B['30'][1] === 8 && B['120'] && B['120'][0] === 8 && B['120'][1] === 0 && !B['60'], JSON.stringify(B));
+    for (let k = 0; k < 8; k++) { for (let i = 0; i < 150; i++) { const t = k * 150 + i; const o = E.step(S, inp(T0 + t * MIN, {rt: 20 + i, soll: 31, sollKurve: 30.5, vl: i < 30 ? 29 : 31.5, rl: i < 30 ? 26.5 : 29.5, q: 3, hz: 16, block: 1, rooms: rooms({ki_oben: 21.2})}), cfg); S = o.S; } }   // v2: Vergleichslage mit Bedarf (Raum unter Minimum)
+    const B = S.sc.base['quiet_freigabe|v2'] || {};
+    check('Basisrate "bleibt, wie es ist" (v2: eigener Schluessel "quiet_freigabe|v2", Vergleichslage am Deckel mit Rueckstand UND Bedarf): aus Vergleichslagen gelernt (8 Episoden mit 30 min Rueckstand: nach 30 min bestand das Problem 8/8, nach 120 min 0/8; 60 min unklar = nicht gezaehlt)', B['30'] && B['30'][0] === 8 && B['30'][1] === 8 && B['120'] && B['120'][0] === 8 && B['120'][1] === 0 && !B['60'], JSON.stringify(B));
     // S7: Neustart mitten in einem offenen Fall (Zustand per Datei) -> gleiches Ergebnis wie ohne Neustart
     const A1 = runSeq(160, i => boost(i));
     let Sx = null, sx = [];
@@ -404,7 +406,7 @@ console.log('--- (b) Punktesystem');
     check('Befund 12.10. nachgerechnet (v3): Hinweis-Treffer mit p 0,6 gegen Basisrate 0,857 = -14,0, Skill 1 - 0,16/0,0204 = -6,84 (v4: 0 Punkte, Skill "–")', Math.abs(E.brier(0.6, 6 / 7, 1) + 14.0) < 0.1 && Math.abs((1 - 0.16 / Math.pow(1 - 6 / 7, 2)) + 6.84) < 0.01, E.brier(0.6, 6 / 7, 1).toFixed(2));
     // offener Fall: erster Horizont (30 min) abgeschlossen, Fall noch offen (120 min) -> v4 keine Brier-Summen, kein Skill; v3 schon (Befund "Skill -25 bei 0 Faellen")
     const open4 = runSeq(45, i => boost(i)), open3 = runSeq(45, i => boost(i), null, E.mergeCfg({sv: 3}));
-    const T4 = open4.S.sc.tot['quiet_freigabe|v1|s' + E.SCORE_VER], T3 = open3.S.sc.tot['quiet_freigabe|v1|s3'], r4 = E.report(open4.S).find(r => r.regel === 'quiet_freigabe'), r3 = E.report(open3.S, 3).find(r => r.regel === 'quiet_freigabe');
+    const T4 = open4.S.sc.tot['quiet_freigabe|v2|s' + E.SCORE_VER], T3 = open3.S.sc.tot['quiet_freigabe|v2|s3'], r4 = E.report(open4.S).find(r => r.regel === 'quiet_freigabe'), r3 = E.report(open3.S, 3).find(r => r.regel === 'quiet_freigabe');
     check('v4: offener Fall veraendert den Skill nicht (Horizont 30 min abgeschlossen, Fall offen bis 120 min): bs/bsRef 0, Faelle 0, Skill "–"; v3 hatte hier schon bs > 0 und einen Skill bei 0 Faellen',
           open4.S.sc.cases.length === 1 && open4.S.sc.cases[0].done.length === 1 && T4.bs === 0 && T4.bsRef === 0 && T4.faelle === 0 && r4.skill === null && T3.bs > 0 && T3.faelle === 0 && r3.skill !== null,
           JSON.stringify({v4: [T4.bs, T4.bsRef, r4.skill], v3: [T3.bs, T3.bsRef, r3.skill]}));
@@ -430,13 +432,13 @@ console.log('--- (b) Punktesystem');
       const ev5 = (p, b, f) => f * H(p, b, 1, 5).pts + (1 - f) * H(p, b, 0, 5).pts;
       check('v5 kein Gaming: ohne Trennschaerfe (Ergebnis-Haeufigkeit f = Basisrate b) im Mittel <= 0 Punkte, auch bei b >= p (dort nur Abzuege moeglich); b 0,1..0,99, p 0,6..0,8',
             [0.1, 0.3, 0.5, 0.6, 0.7, 0.8, 0.9, 0.99].every(b => [0.6, 0.7, 0.8].every(p => ev5(p, b, b) <= 1e-9)), [0.5, 0.9].map(b => 'b' + b + ':' + ev5(0.7, b, b).toFixed(1)).join(' '));
-      const seed = (k, n) => { const S0 = E.newState(T0 - MIN); S0.sc.base.quiet_freigabe = {30: [n, k], 60: [n, k], 120: [n, k]}; return S0; };    // gelernte Basisrate vorgeben (k von n "bleibt")
+      const seed = (k, n) => { const S0 = E.newState(T0 - MIN); S0.sc.base['quiet_freigabe|v2'] = {30: [n, k], 60: [n, k], 120: [n, k]}; return S0; };    // gelernte Basisrate vorgeben (k von n "bleibt")
       const fall = R0 => allSc(R0).find(s => s.typ === 'ausloeser' && s.regel === 'quiet_freigabe');
       const hi5 = runSeq(160, i => boost(i), seed(19, 20)), hi4 = runSeq(160, i => boost(i), seed(19, 20), E.mergeCfg({sv: 4}));
       const a5 = fall(hi5), a4 = fall(hi4), rp5 = E.report(hi5.S).find(r => r.regel === 'quiet_freigabe');
       check('v5 Ablauf: Quiet-Freigabe bleibt 150 min am Deckel bei gelernter Basisrate 0,91 >= p 0,8 -> Treffer, 0 Punkte, alle Horizonte "neutral", Kennzahl trefferNeutral 1, kein Skill-Beitrag; cfg.sv = 4 rechnet denselben Fall nach (Treffer mit Minus, Datensatz sv 4)',
             a5 && a5.ergebnis === 'treffer' && a5.punkte === 0 && a5.sv === 5 && a5.horizonte.every(h => h.bp === 'neutral' && h.punkte === 0) && a5.treffer_neutral === 1 && /Basisrate 0,9\d ≥ Prognose 0,80: neutral/.test(a5.text) &&
-            rp5.trefferNeutral === 1 && rp5.skillFaelle === 0 && rp5.skill === null && hi5.S.sc.tot['quiet_freigabe|v1|s5'].bs === 0 && a4 && a4.sv === 4 && a4.punkte < 0 && !a4.horizonte.some(h => h.bp) && hi4.outs[5].rec.sv === 4,
+            rp5.trefferNeutral === 1 && rp5.skillFaelle === 0 && rp5.skill === null && hi5.S.sc.tot['quiet_freigabe|v2|s5'].bs === 0 && a4 && a4.sv === 4 && a4.punkte < 0 && !a4.horizonte.some(h => h.bp) && hi4.outs[5].rec.sv === 4,
             (a5 && a5.punkte) + ' / v4 ' + (a4 && a4.punkte));
       const lo5 = runSeq(160, i => boost(i, i >= 15 ? {vl: 38, rl: 35.5} : {}), seed(19, 20)), lo4 = runSeq(160, i => boost(i, i >= 15 ? {vl: 38, rl: 35.5} : {}), seed(19, 20), E.mergeCfg({sv: 4}));
       const f5 = fall(lo5), f4 = fall(lo4);
@@ -446,8 +448,8 @@ console.log('--- (b) Punktesystem');
       check('v5 Ablauf: b < p (gelernte Basisrate 0,09) -> Brier wie bisher, Treffer = v4 (+' + E.de(b5 && b5.punkte, 2) + '), kein Horizont neutral', b5 && b4 && b5.punkte === b4.punkte && b5.punkte > 50 && !b5.horizonte.some(h => h.bp) && !b5.treffer_neutral, (b5 && b5.punkte) + ' / ' + (b4 && b4.punkte));
       // Versionswechsel v4 -> v5 mitten in einem offenen Fall: der Fall endet mit v4 (Brier gegen b, "|s4"), die v5-Summen beginnen bei 0
       const W4 = runSeq(60, i => boost(i), seed(19, 20), E.mergeCfg({sv: 4})), W5 = runSeq(100, i => boost(60 + i), W4.S), aw = fall(W5);
-      check('Versionswechsel v4 -> v5: offener Fall endet mit v4 (sv 4, Brier gegen b, unter "quiet_freigabe|v1|s4"), v5-Summen der Regel bleiben leer, Datensaetze ab dem Wechsel sv 5',
-            aw && aw.sv === 4 && aw.punkte < 0 && !aw.horizonte.some(h => h.bp) && W5.S.sc.tot['quiet_freigabe|v1|s4'].faelle === 1 && W5.S.sc.tot['quiet_freigabe|v1|s5'].faelle === 0 && W5.outs[0].rec.sv === 5 && E.report(W5.S).find(r => r.regel === 'quiet_freigabe').sv === 5,
+      check('Versionswechsel v4 -> v5: offener Fall endet mit v4 (sv 4, Brier gegen b, unter "quiet_freigabe|v2|s4"), v5-Summen der Regel bleiben leer, Datensaetze ab dem Wechsel sv 5',
+            aw && aw.sv === 4 && aw.punkte < 0 && !aw.horizonte.some(h => h.bp) && W5.S.sc.tot['quiet_freigabe|v2|s4'].faelle === 1 && W5.S.sc.tot['quiet_freigabe|v2|s5'].faelle === 0 && W5.outs[0].rec.sv === 5 && E.report(W5.S).find(r => r.regel === 'quiet_freigabe').sv === 5,
             aw && (aw.sv + ' ' + aw.punkte)); }
     const src = fs.readFileSync(path.join(__dirname, 'engine_core.js'), 'utf8'), bewertung = src.slice(src.indexOf('// ------------------------------------------------------------------ Punktesystem'), src.indexOf('// ------------------------------------------------------------------ Ein-Klick'));
     check('Verwerfen ist keine Bewertung: der Bewertungsteil des Kerns kennt weder Klicks noch den Uebernahme-Zustand (keine Nutzereingabe in den Punkten)', bewertung.length > 1000 && !/verworfen|lastClick|applyRequest|uebernehmen/.test(bewertung), bewertung.length + ' Zeichen geprueft');
@@ -518,7 +520,8 @@ console.log('--- (c2) Klickweg: jede Stufe der Pruefkette einzeln, Ruecklesen, W
         ['nicht im Heizkurvenmodus (TOP76 = 1)', b => { b.ctx.plant.heatMode = 1; }, /Heizkurvenmodus/],
         ['nicht mit Wasserfuehler (TOP111 = 1)', b => { b.ctx.plant.z1Sensor = 1; }, /Heizkurvenmodus/],
         ['Befehl wartet noch auf Bestaetigung', b => { b.A.pending = {name: 'SetQuietMode', value: 0, ts: NC - 30000, versuche: 1, art: 'uebernahme', id: 'q'}; }, /wartet noch/],
-        ['Uebernahme derselben Groesse aktiv', b => { b.A.aktiv = {id: 'v', rule: 'vorausschau', groesse: 'shift', name: 'SetZ1HeatRequestTemperature', value: 1, von: 0, ts: NC - 60 * MIN, bis: NC + 60 * MIN, bestaetigt: true}; }, /schon eine Übernahme aktiv/],
+        ['Uebernahme derselben Groesse aktiv', b => { b.A.aktiv = {id: 'v', rule: 'vorausschau', groesse: 'shift', name: 'SetZ1HeatRequestTemperature', value: 1, von: 0, ts: NC - 60 * MIN, bis: NC + 60 * MIN, bestaetigt: true}; }, /Es läuft schon eine Übernahme \(Vorausschau ±1 K\)/],
+        ['Uebernahme einer anderen Groesse aktiv (seit 13.10. eine Uebernahme zur Zeit: jede hat ihren Rueckweg)', b => { b.A.aktiv = {id: 'q', rule: 'quiet_freigabe', groesse: 'quiet', name: 'SetQuietMode', value: 0, von: 3, ts: NC - 60 * MIN, bis: NC + 180 * MIN, bestaetigt: true}; }, /Es läuft schon eine Übernahme \(Quiet-Freigabe\)/],
         ['Rate: letzter Befehl vor 9 min', b => { b.A.lastSend = NC - 9 * MIN; }, /Zu schnell/],
         ['Tageslimit: 6 Befehle heute', b => { b.A.day = E.ymd(NC); b.A.n = 6; }, /Tageslimit/]
     ];
@@ -530,7 +533,6 @@ console.log('--- (c2) Klickweg: jede Stufe der Pruefkette einzeln, Ruecklesen, W
         ['Rate: letzter Befehl genau vor 10 min', b => { b.A.lastSend = NC - 10 * MIN; }],
         ['Tageslimit von gestern (6) zaehlt heute nicht', b => { b.A.day = E.ymd(NC - 24 * 60 * MIN); b.A.n = 6; }],
         ['Doppelklick-Sperre nach 2 min vorbei', b => { b.A.lastClick = {id: b.p.id, ts: NC - 2 * MIN}; }],
-        ['laufende Uebernahme einer anderen Groesse (Quiet)', b => { b.A.aktiv = {id: 'q', rule: 'quiet_freigabe', groesse: 'quiet', name: 'SetQuietMode', value: 0, von: 3, ts: NC - 60 * MIN, bis: null, bestaetigt: true}; }],
         ['Sendeknoten-Angabe fehlt (aeltere Huelle: kein Schalter)', b => { delete b.ctx.knoten; }]
     ];
     const rg = GRENZ.map(s => { const r = click(s[1]); return [s[0], r.send.length === 1, r.toast && r.toast.text]; });
@@ -789,6 +791,129 @@ function shiftSim(days, opts) {
     check('8 Tage, jeder Verschiebungs-Vorschlag sofort uebernommen (Rueckweg ueber Grund/Ablauf/halten): Anlage wechselt nie binnen 60 min, Wirkung je Regel ihrem Vorschlag zugeordnet', L2.errors === 0 && chg.length >= 2 && rev.length === 0 && ap2.length >= 1 && ap2.every(s => chg.some(c0 => c0.rule === s.regel)) && L2.conc === 0, chg.map(c0 => E.iso(c0.t).slice(5, 16) + ' ' + c0.rule + '=' + c0.v).join(', ') + (rev.length ? ' | zu schnell: ' + rev.join(', ') : ''));
 }
 
+// ================================================================== (e) Quiet-Freigabe v2 und Quiet-Arbitrierung (13.10.2026)
+console.log('--- (e) Quiet-Freigabe v2: Bedarf, Deckel je Stufe, Zielstufe, Rueckweg, Arbitrierung mit Deckel/Laufzeit');
+{
+    const qf = (o, id) => r0(o, id || 'quiet_freigabe');
+    const firstNeu = (R0, id) => R0.outs.findIndex(o => r0(o, id || 'quiet_freigabe').neu);
+    // Kaltstart ohne Bedarf (Raeume im Band): v1 haette nach 25 min vorgeschlagen ("Sollvorlauf noch nicht erreicht"), v2 nicht
+    const kalt = i => inp(T0 + i * MIN, {q: 3, hz: 16, rt: i, soll: 32, sollKurve: 31.5, vl: Math.round((27 + 0.08 * i) * 4) / 4, rl: Math.round((25 + 0.08 * i) * 4) / 4});
+    let R = runSeq(60, kalt);
+    check('Kaltstart ohne Bedarf (Raeume im Band, Vorlauf 5 K und Ruecklauf 4 K unter Soll, Quiet 3 am Deckel): keine Quiet-Freigabe, Grund "kein Bedarf"', firstNeu(R) < 0 && /^kein Vorschlag: kein Bedarf: alle gültigen Räume ab Minimum/.test(qf(R.outs[40]).grund), qf(R.outs[40]).grund);
+    // Raum faellt im Lauf auf das Minimum zu (Prognose binnen 2 h): Bedarf ohne Raum unter Minimum
+    const fall = i => inp(T0 + i * MIN, {q: 3, hz: 16, rt: 30 + i, soll: 32, sollKurve: 31.5, vl: 30, rl: 27.5, rooms: rooms({ki_oben: Math.round((22.9 - 0.006 * i) * 100) / 100})});
+    R = runSeq(150, fall); const ft = firstNeu(R), pf = ft >= 0 ? R.outs[ft].prop : null;
+    check('Raum faellt im Lauf 0,36 K/h auf das Minimum zu (Prognose: Minimum binnen 2 h): Bedarf "fällt … (Minimum in ~… min)" -> Freigabe Quiet 3 -> 0 (ohne Messdaten fuer 1/2)', !!pf && pf.cmd.value === 0 && /Kinderzimmer oben fällt 0,4 K\/h \(Minimum in ~\d+ min\)/.test(pf.warum) && ft > 60, ft + ' · ' + (pf ? pf.warum : qf(R.outs[149]).grund));
+    const pauseFall = i => inp(T0 + i * MIN, {q: 3, hz: 0, rt: 0, pump: 1750, soll: 32, sollKurve: 31.5, vl: 29, rl: 28.5, rooms: rooms({ki_oben: Math.round((22.9 - 0.006 * i) * 100) / 100})});
+    R = runSeq(150, pauseFall);
+    check('... derselbe Abfall in der Pause ist kein Bedarf (der naechste Start heizt nach; der Verlauf zaehlt erst ab Laufminute 15)', !R.S.bedT && !qf(R.outs[149]).bed.some(b => b[0] === 'Bedarf' && b[1]), qf(R.outs[149]).grund);
+    // Heizstab-Naehe: kurze Startphase (5 min) und Haltezeit (3 min), Ziel Quiet 0, Notfall
+    const kaltAT = i => inp(T0 + i * MIN, {at: 0, q: 3, hz: i < 2 ? 30 : 16, rt: i, soll: 35, sollKurve: 34.8, vl: 32.5, rl: 30, rooms: rooms()});
+    R = runSeq(20, kaltAT, E.newState(T0 - 20 * MIN)); const fh = firstNeu(R), ph = fh >= 0 ? R.outs[fh].prop : null;
+    check('Heizstab-Naehe (0 °C, Vorlauf 2,5 K unter Soll, Heizstab ab 3 K nach 15 min): Freigabe in Laufminute 13 (Startphase 10 + Haltezeit 3 min, vor dem Heizstab nach 15 min), Ziel Quiet 0, Begruendung "Heizstab-Nähe"', fh === 13 && ph && ph.cmd.value === 0 && /Bedarf: Heizstab-Nähe \(Außen 0 °C, Vorlauf 2,5 K unter Soll, Heizstab ab 3 K\)/.test(ph.warum) && /Ziel: Heizstab-Nähe: volle Leistung/.test(ph.warum) && R.outs[fh].res.find(r => r.id === 'quiet_freigabe').hart, fh + ' · ' + (ph ? ph.warum : qf(R.outs[19]).grund));
+    // Zielstufe aus den Daten (je Heizregelung x Quiet x Band, 60 min): kalt mit Quiet-2-Daten -> 3 -> 2; mild mit Quiet-1-Daten -> 3 -> 1
+    const seedQ = o => { const S0 = E.newState(T0 - MIN); S0.takt.nl = {laeuft: false}; S0.takt.copT[E.ymd(T0)] = o; return S0; };
+    const need = (at, o) => i => inp(T0 + i * MIN, Object.assign({at: at, q: 3, hz: 16, rt: 30 + i, soll: 33, sollKurve: 32.8, vl: 30.5, rl: 28, rooms: rooms({ki_oben: 21.6})}, o || {}));
+    R = runSeq(15, need(2), seedQ({'Efficiency|2|-1…3': [1000, 5000, 149, 149 * 20, 21, 21]}));
+    check('Zielstufe kalt (2 °C): Quiet 2 hat 149 min Daten und deckelt bei 21 Hz (>= 17 + 4) -> Freigabe Quiet 3 -> 2 (die kleinste wirksame Freigabe; wie der Nutzer am 12.10. 06:38)', R.outs[10].prop && R.outs[10].prop.cmd.value === 2 && /Ziel: Quiet 2 deckelt bei 21 Hz \(149 min Daten, COP 5,00\)/.test(R.outs[10].prop.warum), R.outs[10].prop && R.outs[10].prop.warum);
+    R = runSeq(15, need(9), seedQ({'Efficiency|2|7…11': [1000, 6000, 90, 90 * 17, 17, 17], 'Efficiency|1|7…11': [1000, 6100, 70, 70 * 21, 21, 21]}));
+    check('Zielstufe mild (9 °C): Quiet 2 deckelt dort bei 17 Hz (bringt nichts), Quiet 1 mit 70 min Daten bei 21 Hz -> Freigabe Quiet 3 -> 1', R.outs[10].prop && R.outs[10].prop.cmd.value === 1 && /Ziel: Quiet 1 deckelt bei 21 Hz/.test(R.outs[10].prop.warum), R.outs[10].prop && R.outs[10].prop.warum);
+    R = runSeq(15, need(9), seedQ({'Efficiency|2|7…11': [1000, 6000, 90, 90 * 17, 17, 17], 'Efficiency|1|7…11': [1000, 6100, 40, 40 * 21, 21, 21]}));
+    check('... Quiet 1 nur 40 von 60 min Daten (Nutzerentscheidung) -> Rueckfallstufe Quiet 0 mit Grund', R.outs[10].prop && R.outs[10].prop.cmd.value === 0 && /Quiet 0, weil Quiet 2 deckelt bei 17 Hz \(nötig ≥ 21 Hz\); Quiet 1: 40 von 60 min Daten/.test(R.outs[10].prop.warum), R.outs[10].prop && R.outs[10].prop.warum);
+    { const zf = E.zielFrei({q: 3, at: 2, hc: 1, tc: E.taktCfg(null), copSum: {'Efficiency|2|-1…3': [1000, 5000, 149, 0, 21, 21], 'Efficiency|1|-1…3': [1000, 5600, 90, 0, 25, 25]}}, cfg.rules.quiet_freigabe, {heizstab: false});
+      const zh = E.zielFrei({q: 3, at: 2, hc: 1, tc: E.taktCfg(null), copSum: {'Efficiency|2|-1…3': [1000, 5000, 149, 0, 21, 21]}}, cfg.rules.quiet_freigabe, {heizstab: true});
+      const z8 = E.zielFrei({q: 3, at: 2, hc: 1, tc: E.taktCfg(null), copSum: {'Efficiency|2|-1…3': [1000, 5000, 149, 0, 21, 21], 'Efficiency|1|-1…3': [1000, 5400, 90, 0, 25, 25]}}, cfg.rules.quiet_freigabe, {heizstab: false});
+      check('Zielstufe: eine tiefere Stufe statt der naechsten nur mit mehr als 10 % besserem COP (Quiet 1 5,60 gegen Quiet 2 5,00 = +12 % -> Quiet 1; 5,40 = +8 % liegt in der Messunsicherheit -> Quiet 2); Heizstab-Naehe immer Quiet 0', zf.ziel === 1 && z8.ziel === 2 && zh.ziel === 0, zf.warum + ' | ' + z8.warum + ' | ' + zh.warum); }
+    // Deckel je Stufe: Quiet 1 haelt 21 Hz (Messung 13.10.); bei 17 Hz ist Quiet 1 nicht am Deckel, eine Freigabe braechte nichts
+    R = runSeq(15, need(12, {q: 1, hz: 17}));
+    check('Deckel je Stufe: Quiet 1 bei 17 Hz ist nicht am Deckel (Deckel Quiet 1: 21 Hz laut Messung 13.10. 16:36) -> keine Freigabe; v1 nahm fuer alle Stufen 20 Hz an', !R.outs.some(o => qf(o).neu) && /Verdichter nicht am Deckel \(17 Hz, Deckel Quiet 1: 21 Hz\)/.test(qf(R.outs[14]).grund), qf(R.outs[14]).grund);
+    R = runSeq(15, need(12, {q: 1, hz: 21}));
+    check('... Quiet 1 bei 21 Hz mit Rueckstand und Raum unter Minimum: am Deckel -> Freigabe Quiet 1 -> 0 (v1 haette 21 Hz nie als "am Deckel" erkannt)', R.outs[10].prop && R.outs[10].prop.cmd.value === 0 && R.outs[10].prop.von === 1, R.outs[10].prop ? R.outs[10].prop.warum : qf(R.outs[14]).grund);
+    { // gelernter Deckel: hoechste 3 min gehaltene Frequenz, erst 15 min nach einem Quiet-Wechsel (die 20 Hz direkt nach dem Wechsel zaehlen nicht)
+      let T = E.taktNew(); const seq = [];
+      for (let i = 0; i < 20; i++) { seq.push({q: 2, hz: 20}); } for (let i = 0; i < 12; i++) { seq.push({q: 3, hz: 20}); } for (let i = 0; i < 60; i++) { seq.push({q: 3, hz: i < 8 ? 18 : 17}); }
+      seq.forEach((x, i) => { T = E.taktStep(T, Object.assign({t: T0 + i * MIN, hpAge: 0, at: 5, pel: 450, pth: 2500, hc: 1}, x)); });
+      const cs = E.copSumme(T, null, T0 + 100 * MIN);
+      check('Gelernter Deckel (Takt-Messung): nach Quiet 2 -> 3 zaehlen die 20 Hz der ersten 15 min nicht; gehalten (5 min am Stueck) 18 Hz -> Quiet 3 bei 3…7 °C: 18 Hz, Quiet 2: 20 Hz', cs['Efficiency|3|3…7'][5] === 18 && cs['Efficiency|2|3…7'][5] === 20 && cs['Efficiency|3|3…7'][4] === 20, JSON.stringify([cs['Efficiency|3|3…7'], cs['Efficiency|2|3…7']])); }
+    // Rueckweg: Bedarf 15 min am Stueck gedeckt -> Grund fuer die Uebernahme; solange Bedarf besteht "halten" (kein Ablauf)
+    R = runSeq(60, i => need(9, i >= 20 ? {rooms: rooms({ki_oben: 22.4}), rl: 29.5, vl: 30.5} : {})(i));
+    check('Rueckweg-Grund der Freigabe: Bedarf seit 15 min gedeckt (Raeume >= Minimum + 0,3 K, Ruecklauf <= 0,5 K unter Soll) ab Minute 35; davor "halten" (Bedarf besteht weiter)', /Bedarf besteht weiter: Kinderzimmer oben 0,4 K unter Minimum/.test(R.outs[10].halten.quiet_freigabe || '') && !R.outs[30].ende.quiet_freigabe && /^Bedarf seit 15 min gedeckt/.test(R.outs[35].ende.quiet_freigabe || '') && !R.outs[35].halten.quiet_freigabe, (R.outs[35].ende.quiet_freigabe || '–') + ' | ' + (R.outs[10].halten.quiet_freigabe || '–'));
+    { const Af = E.newApply(); Af.aktiv = {id: 'f', rule: 'quiet_freigabe', groesse: 'quiet', name: 'SetQuietMode', value: 0, von: 3, ts: T0, bis: T0 + 240 * MIN, bestaetigt: true};
+      const h1 = E.applyTick(JSON.parse(JSON.stringify(Af)), {now: T0 + 241 * MIN, plant: {q: 0, hpAge: 0.3, block: 0}, halten: {quiet_freigabe: 'Bedarf besteht weiter: x'}});
+      const h2 = E.applyTick(JSON.parse(JSON.stringify(Af)), {now: T0 + 241 * MIN, plant: {q: 0, hpAge: 0.3, block: 0}});
+      const h3 = E.applyTick(JSON.parse(JSON.stringify(Af)), {now: T0 + 60 * MIN, plant: {q: 0, hpAge: 0.3, block: 0}, endReason: {quiet_freigabe: 'Bedarf seit 15 min gedeckt'}});
+      check('Uebernahme der Freigabe: Frist 4 h ruht, solange Bedarf besteht (kein Befehl); ohne Bedarf nach 4 h zurueck auf Quiet 3; bei gedecktem Bedarf sofort (Grund im Protokoll); hoechstens 3 Versuche (Klickweg)', h1.send.length === 0 && h2.send.length === 1 && h2.send[0].payload === '3' && h3.send.length === 1 && /Bedarf seit 15 min gedeckt/.test(h3.log[0].grund), ''); }
+    // Quiet-Arbitrierung: von Hand uebernommener Deckel (Quiet 3 gehoert "Deckel/Laufzeit"); Bedarf beendet die Zuordnung; Freigabe mit Notfall frühestens 60 min nach der Übernahme, ohne Notfall erst 240 min nach dem Ende
+    const seedD = () => seedQ({'Efficiency|0|7…11': [1000, 6000, 120, 120 * 26, 34, 34], 'Efficiency|3|7…11': [1000, 6200, 120, 120 * 17, 17, 17]});
+    const arbQ = (o2) => i => { const x = inp(T0 + i * MIN, {q: i < 30 ? 0 : 3, hz: i < 30 ? 24 : 16, rt: 30 + i, soll: 30, sollKurve: 29.75, vl: 30, rl: 27, rooms: rooms()}); return Object.assign(x, o2 ? o2(i) : {}); };
+    R = runSeq(30, arbQ(), seedD()); const S1 = R.S, S1c = JSON.parse(JSON.stringify(S1));
+    check('Quiet-Arbitrierung: Deckel/Laufzeit schlaegt Quiet 0 -> 3 vor (Minute 10, Effizienz-Deckel), Eigentuemer der Groesse Quiet', S1.arbQ.owner === 'quiet_strecken' && S1.rules.quiet_strecken.prop && S1.rules.quiet_strecken.prop.cmd.value === 3, JSON.stringify(S1.arbQ));
+    const R2 = runSeq(200, i => arbQ(j => (j >= 40 ? {rooms: rooms({ki_oben: 21.6}), vl: 30, rl: 27.5, soll: 33, sollKurve: 32.8} : {}))(i + 30), S1);
+    const fr = R2.outs.map(o => qf(o)), firstF = fr.findIndex(r => r.neu);
+    check('... Nutzer stellt Quiet 3 von Hand (Minute 30): die Stufe gehoert dem Deckel; ab Minute 40 Raum 0,4 K unter Minimum (Notfall): die Zuordnung endet, die Freigabe wartet die Mindesthaltezeit ab der Uebernahme (60 min, bis Minute 90) und schlaegt dann Quiet 3 -> 0 vor; nie zwei Quiet-Vorschlaege gleichzeitig',
+          firstF + 30 === 90 && /Gegenrichtung zur letzten Änderung \(letzte Änderung Quiet 3 \(„Deckel\/Laufzeit“\) bis 06:40, Mindesthaltezeit 60 min\)/.test(fr[50].grund) && R2.outs.every(o => !(qf(o).st === 'vorschlag' && qf(o, 'quiet_strecken').st === 'vorschlag')), (firstF + 30) + ' · ' + fr[50].grund + ' · ' + JSON.stringify(R2.S.arbQ.last));
+    const R3 = runSeq(200, i => arbQ(j => (j >= 40 ? {rooms: rooms({ki_oben: 22.1}), soll: 33, sollKurve: 30.8, vl: 30, rl: 27.5} : {}))(i + 30), S1c);
+    const f3 = R3.outs.map(o => qf(o)), first3 = f3.findIndex(r => r.neu);
+    check('... ohne Notfall (Boost von Hand, Raum im Band): Gegenrichtung erst 240 min nach dem Ende der Zuordnung (Minute 40 -> 280), im Fenster keine Freigabe', first3 < 0 && /ohne Notfall erst nach 240 min/.test(f3[120].grund), f3[120].grund);
+}
+// ------------------------------------------------------------------ Mehrtages-Simulation beider Quiet-Regeln (Fake-Uhr): mild mit Uebersteuern nach dem Start, dann Kaelte mit Heizstab-Naehe
+function quietSim(days, opts) {
+    opts = opts || {};
+    const P = {on: false, tw: 31, room: 22.6, over: 0, under: 0, q: opts.q !== undefined ? opts.q : 0, rt: 0, pauseStart: 0, lastPause: 999, htr: 0, heater: 0};
+    let S = opts.S0 || null, akt = null; const log = {props: [], chg: [], errors: 0, conc: 0, hzHigh: 0, hzHighMin: 0, hzHighMild: 0, starts: 0, heaterMin: 0, maxSendable: 0, needAtProp: [], scores: []};
+    const start = new Date(2026, 10, 2, 0, 0, 0).getTime();
+    const atOf = i => { const h = (i % 1440) / 60, day = i / 1440, base = day >= 3.5 && day < 5.5 ? -1 : 9; return base + 4 * Math.sin(2 * Math.PI * (h - 9) / 24); };   // 3,5 Tage mild (5-13 °C), 2 Tage Kaelte (-5…3 °C), dann mild
+    for (let i = 0; i < days * 1440; i++) {
+        const t = start + i * MIN, at = atOf(i), atI = Math.round(at), kurve = Math.max(29, 29 + 0.375 * (11 - atI)), soll = Math.ceil(kurve);
+        const spread = P.on ? 2.5 : 0, vl = Math.round((P.tw + spread / 2) * 4) / 4, rl = Math.round((P.tw - spread / 2) * 4) / 4, rlR = soll - 3 - rl;
+        const cap = P.q === 0 ? 34 : (P.q === 1 ? 21 : (P.q === 2 ? (atI < 7 ? 21 : 17) : 17));
+        let want = 17; if (P.on) { if (P.lastPause >= 60 && P.rt < 40 && atI >= 3) { want = 27; } if (rlR >= 2.5) { want = 33; } else if (rlR >= 1.5) { want = 21; } }   // Uebersteuern nach langer Pause (mild), Bedarf bei Rueckstand
+        const hz = !P.on ? 0 : Math.min(cap, want), pth = !P.on ? 0 : 2100 + (hz - 17) * 170, qrad = 0.25 * (P.tw - P.room);
+        P.heater = P.on && at < 0 && vl < soll - 3 ? P.heater + 1 : 0; const heaterOn = P.heater > 15;
+        P.tw += ((pth + (heaterOn ? 3000 : 0)) / 1000 - qrad) / 0.4 / 60; P.room += (qrad - 0.2 * (P.room - at) + 0.6) / 8 / 60;
+        if (heaterOn) { log.heaterMin++; }
+        if (P.on) { P.rt++; if (vl >= soll + 3.25) { P.over++; } else { P.over = 0; } if (P.over >= 3) { P.on = false; P.rt = 0; P.over = 0; P.pauseStart = i; } }
+        else { if (vl <= soll - 3) { P.under++; } else { P.under = 0; } if (P.under >= 6 && at < 15) { P.on = true; P.under = 0; P.lastPause = i - P.pauseStart; log.starts++; } }
+        if (P.on && hz >= 22) { log.hzHigh += pth / 60; log.hzHighMin++; if (at > 3) { log.hzHighMild++; } }
+        if (opts.userQ3At && i === opts.userQ3At) { P.q = 3; akt = null; }                  // der Nutzer stellt Quiet 3 von Hand (fremde Aenderung beendet eine Uebernahme)
+        const x = {t: t, hpAge: 0.4, hz: hz, vl: vl, rl: rl, soll: soll, dT: 3, pel: P.on ? Math.round(pth / (hz >= 22 ? 5.6 : 6.2)) : 15, pth: pth, flow: 13.5, pump: P.on || at < 15 ? 1750 : 0,
+                   q: P.q, qPrio: 1, hc: 1, at: atI, defrost: 0, dhw: 0, ss: 0, rt: P.rt, shift: 0, heatMode: 0, z1Sensor: 0, heaterI: heaterOn ? 1 : 0, heaterE: 0, htrOnAT: 0, htrStartDelta: -3, heatOffAT: 12, sollKurve: kurve, block: 0, otherQ: null, otherShift: null, kzRad: 1,
+                   rooms: [{id: 'ki_oben', name: 'Kinderzimmer oben', t: Math.round(P.room * 10) / 10, age: 20, min: 22, max: 23.5, valid: true, active: true}], korr: {v: 0, code: 'alle im Band', distrib: false, lead: ''}};
+        try {
+            const o = E.step(S, x, opts.cfg || cfg); S = o.S;
+            const pf = S.rules.quiet_freigabe.prop, ps = S.rules.quiet_strecken.prop;
+            if (pf && ps && (ps.groesse || 'quiet') === 'quiet') { log.conc++; }
+            o.res.forEach(r => { if (r.neu && (r.id === 'quiet_freigabe' || r.id === 'quiet_strecken')) { const p = S.rules[r.id].prop; log.props.push({t: t, i: i, rule: r.id, v: p.cmd.value, von: p.von, groesse: p.groesse || 'quiet', at: atI, bedarf: o.d.bedQ.ja, warum: p.warum}); if (r.locks.length) { log.maxSendable++; } } });
+            o.scores.forEach(s0 => log.scores.push(s0));
+            if (opts.apply) {                                                                // "Nutzer klickt jeden Quiet-Vorschlag"; Rueckweg wie die Uebernahme (Grund, Frist, halten), eine Uebernahme zur Zeit
+                const p = o.prop && (o.prop.rule === 'quiet_freigabe' || (o.prop.rule === 'quiet_strecken' && (o.prop.groesse || 'quiet') === 'quiet')) ? o.prop : null;
+                if (p && !akt && p.von === P.q) { akt = {rule: p.rule, von: P.q, bis: i + (p.maxDauerMin || 240)}; P.q = p.cmd.value; log.chg.push({i: i, rule: p.rule, q: P.q, dir: Math.sign(P.q - akt.von)}); }
+                else if (akt && (o.ende[akt.rule] || (i >= akt.bis && !o.halten[akt.rule]))) { log.chg.push({i: i, rule: akt.rule + ' (Rückweg)', q: akt.von, dir: Math.sign(akt.von - P.q), grund: o.ende[akt.rule] || 'Frist'}); P.q = akt.von; akt = null; }
+            }
+        } catch (e) { log.errors++; if (log.errors < 3) { console.log(e.stack); } }
+    }
+    log.S = S;
+    return log;
+}
+{
+    const seedAll = () => { const S0 = E.newState(new Date(2026, 10, 1, 23, 59).getTime()); S0.takt.nl = {laeuft: false}; const dk = '2026-11-01'; S0.takt.copT[dk] = {};
+                            ['-1…3', '3…7', '7…11', '11…15'].forEach(b => { S0.takt.copT[dk]['Efficiency|0|' + b] = [1000, 5800, 300, 300 * 20, 34, 34]; S0.takt.copT[dk]['Efficiency|3|' + b] = [1000, 6100, 300, 300 * 17, 17, 17]; }); return S0; };
+    const L = quietSim(8, {S0: seedAll(), userQ3At: Math.round(3.6 * 1440)}), LA = quietSim(8, {S0: seedAll(), apply: true, userQ3At: Math.round(3.6 * 1440)});
+    const fr = L.props.filter(p => p.rule === 'quiet_freigabe'), dk = L.props.filter(p => p.rule === 'quiet_strecken');
+    const day = p => Math.floor(p.i / 1440);
+    check('8 Tage Fake-Uhr (3,5 Tage mild mit Uebersteuern nach langen Pausen, 2 Tage Kaelte -5…3 °C mit Heizstab-Naehe, Nutzer stellt dort Quiet 3, dann mild), Shadow: kein Fehler, nie zwei Quiet-Vorschlaege gleichzeitig, keiner in einer Sperrminute; Deckel nur mild ohne Bedarf (> 3 °C), Freigabe nur mit Bedarf (Kaelte)',
+          L.errors === 0 && L.conc === 0 && L.maxSendable === 0 && dk.length >= 1 && dk.every(p => p.at > 3 && !p.bedarf && p.v > p.von) && fr.length >= 1 && fr.every(p => p.bedarf && p.v < p.von),
+          'Deckel ' + dk.length + ' (' + dk.map(p => E.iso(p.t).slice(5, 16)).join(', ') + ') · Freigabe ' + fr.length + ' (' + fr.map(p => E.iso(p.t).slice(5, 16) + ' ' + p.von + '→' + p.v).join(', ') + ')');
+    const ch = LA.chg, flip = []; for (let k = 1; k < ch.length; k++) { if (ch[k].i - ch[k - 1].i < 60 && ch[k].dir === -ch[k - 1].dir && !/Rückweg/.test(ch[k].rule)) { flip.push(ch[k].i + ' ' + ch[k].rule); } }
+    const perDay = {}; ch.forEach(c => { perDay[Math.floor(c.i / 1440)] = (perDay[Math.floor(c.i / 1440)] || 0) + 1; });
+    const fA = LA.props.filter(p => p.rule === 'quiet_freigabe'), dA = LA.props.filter(p => p.rule === 'quiet_strecken');
+    check('... jeder Quiet-Vorschlag sofort uebernommen (Rueckweg ueber Grund/Frist/halten, eine Uebernahme zur Zeit): kein Ping-Pong (keine Gegenrichtung binnen 60 min ausser dem eigenen Rueckweg), hoechstens 6 Quiet-Wechsel je Tag, nie zwei Quiet-Vorschlaege gleichzeitig; der Deckel kehrt bei Kaelte (≤ 3 °C oder Bedarf) zurueck',
+          LA.errors === 0 && LA.conc === 0 && flip.length === 0 && Object.keys(perDay).every(k => perDay[k] <= 6) && ch.some(c => /quiet_strecken \(Rückweg\)/.test(c.rule)) && dA.length >= 1,
+          ch.map(c => E.iso(new Date(2026, 10, 2).getTime() + c.i * MIN).slice(5, 16) + ' ' + c.rule + ' q' + c.q + (c.grund ? ' (' + String(c.grund).slice(0, 40) + ')' : '')).join(', ') + (flip.length ? ' | Ping-Pong: ' + flip.join(', ') : ''));
+    check('... Wirkung: mit Uebernahme bei Mildwetter (> 3 °C) weniger Minuten ueber 21 Hz (Deckel) als im Shadow; Heizstab im Kaeltefenster mit Freigabe kuerzer als ohne (Quiet 3 von Hand)', LA.hzHighMild < L.hzHighMild && LA.heaterMin < L.heaterMin, 'Minuten >= 22 Hz mild ' + LA.hzHighMild + ' gegen ' + L.hzHighMild + ' (gesamt ' + LA.hzHighMin + ' gegen ' + L.hzHighMin + '), Heizstab ' + LA.heaterMin + ' gegen ' + L.heaterMin + ' min, Freigaben (Klick) ' + fA.length + ', Deckel (Klick) ' + dA.length);
+    basisBericht('8 Tage Quiet', L);
+}
+
 // ================================================================== Seite "Optimierer": Karten-Daten (engine_view.js) und Darstellung (eng_ui.js)
 console.log('--- Seite "Optimierer": Karten-Daten und Darstellung');
 {
@@ -821,14 +946,14 @@ console.log('--- Seite "Optimierer": Karten-Daten und Darstellung');
     check('Vorschlagskarte (13.10.): hervorgehoben, Befehl, Zielwert, Begruendung, erwartete Wirkung und Rueckweg offen sichtbar (nicht eingeklappt), Knopf Übernehmen grau mit Grund "gesperrt: Hauptschalter aus", Verwerfen',
           /class="oe-prop"/.test(hc) && /<button data-a="uebernehmen" disabled>Übernehmen<\/button>/.test(hc) && /🔒 gesperrt: Hauptschalter aus/.test(hc) && /data-a="verwerfen"/.test(hc) && !/data-a="zuruecksetzen"|data-a="sperren"/.test(hc) && !/<details/.test(hc) &&
           ['Befehl', 'Zielwert', 'Begründung', 'Erwartete Wirkung', 'Rückweg'].every(k => hc.includes('<dt>' + k + '</dt>')) && pB.befehl === 'SetQuietMode = 0' && pB.ziel === 'Quiet 0 (jetzt Quiet 3)' &&
-          pB.erwartung === 'Verdichter ≥ 25 Hz binnen 5 min, elektrische Leistung +350 bis +650 W, Vorlauf +2 K in 30 min' && hc.includes('title="' + pB.erwartungLang.slice(0, 40)) && /^kein automatischer · „Zurücksetzen“ stellt Quiet 3 wieder her$/.test(pB.rueck) && B.card.knopf.grund === 'gesperrt: Hauptschalter aus',
+          pB.erwartung === 'Verdichter ≥ 25 Hz binnen 5 min, elektrische Leistung +350 bis +650 W, Vorlauf +2 K in 30 min' && hc.includes('title="' + pB.erwartungLang.slice(0, 40)) && /^automatisch zurück auf Quiet 3, spätestens nach 4 h$/.test(pB.rueck) && B.card.knopf.grund === 'gesperrt: Hauptschalter aus',
           JSON.stringify({befehl: pB.befehl, ziel: pB.ziel, rueck: pB.rueck, knopf: B.card.knopf}));
     const hC = UI.html('card', VW.build({now: last.t, last: last, S: S, V: V, AP: {aktiv: {name: 'SetZ1HeatRequestTemperature', value: 1, von: 0, ts: last.t - 5 * MIN, bestaetigt: true, groesse: 'shift', rule: 'raum_offset'}, rules: ['quiet_freigabe']}, enabled: true}).card);
-    check('Hauptschalter AN, Regel frei, aktive Übernahme einer anderen Größe: Übernehmen aktiv ("frei · heute 0/6 Befehle"), Zurücksetzen und Übernahme sperren sichtbar', /<button data-a="uebernehmen">Übernehmen<\/button>/.test(hC) && /frei · heute 0\/6 Befehle/.test(hC) && /data-a="zuruecksetzen"/.test(hC) && /data-a="sperren"/.test(hC), '');
+    check('Hauptschalter AN, Regel frei, aktive Übernahme einer anderen Größe: Übernehmen grau ("gesperrt: Übernahme Raumeinfluss läuft", eine Übernahme zur Zeit), Zurücksetzen und Übernahme sperren sichtbar', /<button data-a="uebernehmen" disabled>Übernehmen<\/button>/.test(hC) && /gesperrt: Übernahme Raumeinfluss läuft/.test(hC) && /data-a="zuruecksetzen"/.test(hC) && /data-a="sperren"/.test(hC), '');
     check('Textmenge: Statuskarte ohne Vorschlag < 300 Zeichen (Letzter Vorschlag, letzte 24 h, Übernahme), Regelkarte < 400, Entscheidungen je Zeile < 160', txt(UI.html('card', snap.card)).length < 300 && txt(UI.html('rules', B.rules)).length < 400 && B.log.rows.every(r => txt(UI.html('log', {rows: [r]})).length < 160 + 30), txt(UI.html('card', snap.card)).length + ' / ' + txt(UI.html('rules', B.rules)).length);
     check('Kacheln: 5 Spalten gleicher Breite (eine je Regel; bei 17 Einheiten = 912 px je Kachel ~170 px), Kachelnamen mit "…" statt Ueberlauf', /\.oe-grid\{display:grid;grid-template-columns:repeat\(5,minmax\(0,1fr\)\)/.test(UI.css) && /\.oe-nm\{[^}]*text-overflow:ellipsis/.test(UI.css) && Math.floor((17 * 48 + 16 * 6 - 24 - 4 * 8) / 5) >= 170, '');
     check('Kacheln ohne Abschneiden (Nutzer 11.10.): kurze Kachelnamen (hoechstens 17 Zeichen, ~140 px), Status-Chip unter dem Namen, Zeilentexte umbrechen statt "…" (geprueft in der statischen Vorschau bei 1024/1920/2560 px: 0 abgeschnitten)',
-          E.RULES.every(R0 => R0.kachel && R0.kachel.length <= 17) && B.rules.rules.map(r => r.name).join(',') === 'Quiet-Freigabe,Laufzeit strecken,Raumeinfluss,Heizgrenze,Vorausschau' && /<div class="oe-st"><span class="oe-chip/.test(UI.html('rules', B.rules)) && /\.oe-ln span\{white-space:normal/.test(UI.css) && !/\.oe-sub\{[^}]*ellipsis/.test(UI.css), B.rules.rules.map(r => r.name).join(','));
+          E.RULES.every(R0 => R0.kachel && R0.kachel.length <= 17) && B.rules.rules.map(r => r.name).join(',') === 'Quiet-Freigabe,Deckel/Laufzeit,Raumeinfluss,Heizgrenze,Vorausschau' && /<div class="oe-st"><span class="oe-chip/.test(UI.html('rules', B.rules)) && /\.oe-ln span\{white-space:normal/.test(UI.css) && !/\.oe-sub\{[^}]*ellipsis/.test(UI.css), B.rules.rules.map(r => r.name).join(','));
     const sc = B.score, msA = B.mess.takt.find(t => /^Messaufgabe/.test(t.k));
     check('Punkte-Karte: 4 Kacheln mit Punkten, Freigabereife n/m (Kriterien nur eingeklappt), keine Mess-/Lernzeilen mehr (eigene Karte "Messwerte & Lernen", dort die Messaufgabe als Kachel); ohne Punkteverlauf kein leeres Diagramm',
           sc.tiles.length === 5 && sc.tiles[0].reife.m === 6 && sc.tiles[3].reife === null && !UI.html('score', sc).includes('oe_chart') && /<details data-k="reife_quiet_freigabe"><summary>Kriterien<\/summary>/.test(UI.html('score', sc)) &&
@@ -846,7 +971,7 @@ console.log('--- Seite "Optimierer": Karten-Daten und Darstellung');
       check('Punkte-Karte (v4): Heizgrenze-Kachel "–" statt Punktezahl, "1 Fall · 1 Treffer · 0 Fehlalarm", kein Skill, "nur Hinweis", nicht im Diagramm (kein leeres Diagramm); v3 zeigte +9,0 mit Linie',
             th.punkte === '–' && !th.neg && th.sub === '1 Fall · 1 Treffer · 0 Fehlalarm' && th.more === '' && th.reife === null && sh.series.length === 0 && !hh.includes('oe_chart') && hh.includes('<span>nur Hinweis</span>') && sh.tiles.length === 5 &&
             sh3.tiles.find(t => t.id === 'heizgrenze_hinweis').punkte === '+9,0' && sh3.series.some(x => x.id === 'heizgrenze_hinweis'), JSON.stringify({p: th.punkte, sub: th.sub, more: th.more})); }
-    { const S0 = E.newState(T0 - MIN); S0.sc.base.quiet_freigabe = {30: [20, 19], 60: [20, 19], 120: [20, 19]};
+    { const S0 = E.newState(T0 - MIN); S0.sc.base['quiet_freigabe|v2'] = {30: [20, 19], 60: [20, 19], 120: [20, 19]};
       const AQ = runSeq(160, i => inp(T0 + i * MIN, {rt: 30 + i, soll: 38, sollKurve: 29.75, vl: 30, rl: 28.25, q: 3, hz: 16, rooms: rooms({ki_oben: 21.2})}), S0);
       const sq = VW.build({now: T0 + 159 * MIN, last: {t: T0 + 159 * MIN, res: AQ.outs[159].res, anl: {}}, S: AQ.S, V: {}, AP: {}}).score, tq = sq.tiles[0];
       check('Punkte-Karte (v5): Treffer bei hoher Basisrate als Kennzahl "davon 1 Treffer neutral (Basisrate ≥ Prognose)" in der Kachel, Summe 0, kein Skill',
@@ -884,9 +1009,9 @@ console.log('--- Seite "Optimierer": Karten-Daten und Darstellung');
     // ---- Karte "Aktueller Vorschlag": Zustand des Knopfs (Spiegel der Pruefkette des Servers), Zustand ohne Vorschlag
     { const p = {id: 'raum_offset@x', rule: 'raum_offset', art: 'befehl'}, ok = (AP, en, kn, rel) => VW.knopfOf(p, AP, en === undefined ? true : en, kn === undefined ? true : kn, rel || ['raum_offset'], T0);
       const ks = [ok({}, false), ok({}, true, false), ok({}, true, true, ['quiet_freigabe']), ok({pending: {ts: T0 - 30000}}), ok({aktiv: {groesse: 'shift', rule: 'vorausschau', name: 'SetZ1HeatRequestTemperature'}}),
-                  ok({lastSend: T0 - 4 * MIN}), ok({day: E.ymd(T0), n: 6}), VW.knopfOf({rule: 'heizgrenze_hinweis', art: 'hinweis'}, {}, true, true, ['heizgrenze_hinweis'], T0), ok({day: E.ymd(T0 - 86400000), n: 6, aktiv: {groesse: 'quiet', rule: 'quiet_freigabe'}, lastSend: T0 - 10 * MIN})];
-      check('Knopf "Übernehmen": grau mit Grund in der Reihenfolge der Pruefkette (Hauptschalter, Sendeknoten, Freigabe, Bestaetigung, laufende Uebernahme derselben Groesse, Abstand 10 min, Tageslimit, Hinweis); sonst frei mit Tageszaehler',
-            ks.map(k => (k.ok ? 'OK ' : '') + k.grund).join('|') === 'gesperrt: Hauptschalter aus|gesperrt: Sendeknoten deaktiviert|gesperrt: Regel nicht freigegeben|wartet auf Bestätigung der Anlage|gesperrt: Übernahme Vorausschau läuft|gesperrt bis 06:06 (Abstand 10 min)|gesperrt: Tageslimit 6/6 Befehle|nur Hinweis, von Hand einstellen|OK frei · heute 0/6 Befehle',
+                  ok({lastSend: T0 - 4 * MIN}), ok({day: E.ymd(T0), n: 6}), VW.knopfOf({rule: 'heizgrenze_hinweis', art: 'hinweis'}, {}, true, true, ['heizgrenze_hinweis'], T0), ok({aktiv: {groesse: 'quiet', rule: 'quiet_freigabe'}}), ok({day: E.ymd(T0 - 86400000), n: 6, lastSend: T0 - 10 * MIN})];
+      check('Knopf "Übernehmen": grau mit Grund in der Reihenfolge der Pruefkette (Hauptschalter, Sendeknoten, Freigabe, Bestaetigung, laufende Uebernahme gleich welcher Groesse, Abstand 10 min, Tageslimit, Hinweis); sonst frei mit Tageszaehler',
+            ks.map(k => (k.ok ? 'OK ' : '') + k.grund).join('|') === 'gesperrt: Hauptschalter aus|gesperrt: Sendeknoten deaktiviert|gesperrt: Regel nicht freigegeben|wartet auf Bestätigung der Anlage|gesperrt: Übernahme Vorausschau läuft|gesperrt bis 06:06 (Abstand 10 min)|gesperrt: Tageslimit 6/6 Befehle|nur Hinweis, von Hand einstellen|gesperrt: Übernahme Quiet-Freigabe läuft|OK frei · heute 0/6 Befehle',
             ks.map(k => k.grund).join(' | '));
       const V3 = {ep: [{id: 'quiet_freigabe', t0: T0 - 300 * MIN, t1: T0 - 250 * MIN, st: [['wartet', T0 - 300 * MIN, '', ''], ['vorschlag', T0 - 290 * MIN, '', 'Quiet-Stufe 3 → 0']], end: 'Quiet steht auf 0'},
                        {id: 'heizgrenze_hinweis', t0: T0 - 30 * 60 * MIN, t1: T0 - 29 * 60 * MIN, st: [['hinweis', T0 - 30 * 60 * MIN, '', 'Heizgrenze 12 → 10 °C (nur Hinweis)']], end: 'x'}], open: {}};
@@ -904,42 +1029,50 @@ console.log('--- Seite "Optimierer": Karten-Daten und Darstellung');
     }
 }
 
-// ================================================================== Replay der echten Daten (07.-10.10.)
+// ================================================================== Replay der echten Daten (07.-10.10., 07.-12.10. oder 07.-13.10.; datensatzabhaengige Pruefungen je Zeitraum)
 let RP = null;
 if (fs.existsSync(path.join(dataDir, 'quiet-2026-10.csv'))) {
     console.log('--- Replay der echten Minutenprotokolle (' + dataDir + ')');
     const replay = require('./engine_replay.js').replay;
-    RP = replay(dataDir, {});
+    let lr0904 = null;
+    RP = replay(dataDir, {onStep: (o, inp) => { if (E.iso(inp.t) === '2026-10-09 04:41:00') { lr0904 = [o.d.lastRunMin, o.d.lastRunThermo]; } }});
     const RP2 = replay(dataDir, {});
-    check('Replay: 4110 Minuten 07.10. 16:54 bis 10.10. 13:24, ein Datensatz je Minute', RP.recs.length === RP.inputs.length && RP.inputs.length >= 4100, RP.recs.length);
+    const tEnde = RP.inputs[RP.inputs.length - 1].t, alt = tEnde < new Date(2026, 9, 11).getTime(), neu1310 = tEnde >= new Date(2026, 9, 13, 17, 0).getTime();
+    check('Replay: mindestens 4110 Minuten ab 07.10. 16:54 (bis ' + E.iso(tEnde).slice(0, 16) + '), ein Datensatz je Minute', RP.recs.length === RP.inputs.length && RP.inputs.length >= 4100, RP.recs.length);
     check('Replay ist reproduzierbar (zweiter Lauf bit-identisch: Datensaetze und Punkte)', RP.recs.join('\n') === RP2.recs.join('\n') && JSON.stringify(RP.scores) === JSON.stringify(RP2.scores), '');
     const q = RP.props.filter(p => p.rule === 'quiet_freigabe');
-    check('Boost 10.10.: Quiet-Freigabe genau einmal, 08:36 (Soll 38 seit 08:25, 10 min Haltezeit), vor dem Klick des Nutzers 08:40:41', q.length === 1 && E.iso(q[0].ts) === '2026-10-10 08:36:00' && q[0].cmd.value === 0 && q[0].von === 3, q.map(p => E.iso(p.ts)).join(','));
-    check('Boost: Vorschlag endet, sobald der Nutzer Quiet 0 setzt (08:42 im Minutenraster)', RP.events.some(e => e[0] === '2026-10-10 08:42:00' && e[1] === 'optimierer_ende' && /quiet_freigabe: Quiet steht auf 0/.test(e[2])), '');
-    check('Kaltstarts 07.10. 20:18, 08.10. 09:33 und 17:18 (Rueckstand nur 15-24 min): keine Quiet-Freigabe; 08.10. 09:59 waere sie gesperrt gewesen (Quiet 2->3 von Hand um 09:38)', q.length === 1 && RP.recs.some(l => l.indexOf('"t":"2026-10-08 09:59:00"') >= 0 && /"id":"quiet_freigabe","v":1,"st":"gesperrt","grund":"würde schalten, aber gesperrt: Mindestabstand/.test(l)), '');
+    check('Boost 10.10.: Quiet-Freigabe v2 genau einmal, 08:36 (Soll 38 seit 08:25, Kinderzimmer oben 1,6 K unter Minimum, 10 min Haltezeit), vor dem Klick des Nutzers 08:40:41; Ziel Quiet 0 (fuer Quiet 1/2 keine 60 min Daten)', q.length === 1 && E.iso(q[0].ts) === '2026-10-10 08:36:00' && q[0].cmd.value === 0 && q[0].von === 3 && /Bedarf: Kinderzimmer oben 1,6 K unter Minimum/.test(q[0].warum), q.map(p => E.iso(p.ts)).join(','));
+    check('Boost: Vorschlag endet, sobald der Nutzer Quiet 0 setzt (08:42 im Minutenraster, "übernommen")', RP.events.some(e => e[0] === '2026-10-10 08:42:00' && e[1] === 'optimierer_ende' && /quiet_freigabe: übernommen: Quiet 0 steht/.test(e[2])), '');
+    check('Kaltstarts 07.10. 20:18, 08.10. 09:33 und 17:18 (Rueckstand, Raeume im Band): keine Quiet-Freigabe; 08.10. 09:59 "kein Bedarf" (v1 haette hier ohne die Sperre nach dem Handwechsel vorgeschlagen)', q.length === 1 && RP.recs.some(l => l.indexOf('"t":"2026-10-08 09:59:00"') >= 0 && /"id":"quiet_freigabe","v":2,"st":"bereit","grund":"kein Vorschlag: kein Bedarf/.test(l)), '');
+    check('Laufzeit-Zaehler-Reset von HeishaMoNR (09.10. 03:01): der Lauf 08.10. 17:18 bleibt ein Lauf von 601 min mit Abschaltung ueber den Vorlauf (vorher 17 min = falscher Takt-Beleg)', lr0904 && lr0904[0] === 601 && lr0904[1] === true, JSON.stringify(lr0904));
     check('Raumregel waehrend des Boosts gesperrt (Handeingriff Soll 38) und erst 60 min nach dem Boost wieder frei', RP.recs.some(l => l.indexOf('"t":"2026-10-10 09:13:00"') >= 0 && /Handeingriff/.test(l)) && !RP.props.some(p => p.rule === 'raum_offset' && p.ts >= new Date(2026, 9, 10, 8, 25).getTime() && p.ts < new Date(2026, 9, 10, 10, 25).getTime()), RP.props.filter(p => p.rule === 'raum_offset').map(p => E.iso(p.ts)).join(','));
-    check('Laufzeit strecken: nie (Quiet 3 fast immer; bei Quiet 0 nur im Boost mit Raumbedarf ueber 22 Hz)', !RP.props.some(p => p.rule === 'quiet_strecken'), '');
+    const ds = RP.props.filter(p => p.rule === 'quiet_strecken');
+    check('Deckel/Laufzeit v4 im Replay: Effizienz-Deckel Quiet 0 -> 3 in den Laeufen mit Uebersteuern nach langer Pause (10.10. 15:39, 11.10. 03:26, 11.10. 12:22; 22–25 Hz ohne Bedarf, 8–13 °C); nie +1 K (kein Takt: alle Laeufe >= 97 min)', ds.length === 3 && ds.map(p => E.iso(p.ts).slice(5, 16)).join(',') === '10-10 15:39,10-11 03:26,10-11 12:22' && ds.every(p => p.cmd.name === 'SetQuietMode' && p.cmd.value === 3 && p.von === 0 && p.hebel === 'quiet'), ds.map(p => E.iso(p.ts) + ' ' + p.was).join(' | '));
     check('Kein Vorschlag mit aktiver Sperre und keiner ohne frische Daten', RP.recs.every(l => { const d = JSON.parse(l); return d.r.every(r => !(r.st === 'vorschlag' && r.sperren)); }), '');
-    check('Messaufgabe Comfort/Efficiency: offen, Efficiency 41 min bei Quiet 0 (Boost, max 34 Hz), Comfort 0 min', (() => { const m = E.messStatus(RP.S); return m.offen && m.comfortMin === 0 && m.efficiencyMin >= 35 && m.efficiency.hzMax === 34; })(), E.messStatus(RP.S).text);
     const RV = replay(dataDir, {cfg: {rules: {quiet_freigabe: {rlRueckK: -99}}}}), extra = RV.props.filter(p => p.rule === 'quiet_freigabe').length - 1;
-    const sumV = RV.scores.filter(s0 => s0.regel === 'quiet_freigabe' && s0.typ !== 'wirkung').reduce((a0, s0) => a0 + s0.punkte, 0);
-    check('Begruendung der Ruecklauf-Bedingung: ohne sie 4 zusaetzliche Quiet-Freigaben, alle Fehlalarm, mit Schaden "zu warm" (zusammen rund -213 Punkte)', extra === 4 && RV.scores.filter(s0 => s0.regel === 'quiet_freigabe' && s0.typ === 'ausloeser' && s0.ergebnis === 'fehlalarm').length === 4 && Math.round(sumV) === -213, extra + ' zusaetzlich, ' + sumV.toFixed(2) + ' Punkte');
-    const RP1 = replay(dataDir, {cfg: {sv: 1}}), rv1 = RP1.report.find(r => r.regel === 'raum_offset'), rv2 = RP.report.find(r => r.regel === 'raum_offset');
-    const m1 = RP1.scores.filter(s0 => /^verpasst/.test(s0.typ)), m2 = RP.scores.filter(s0 => /^verpasst/.test(s0.typ));
-    check('Replay v1 reproduzierbar (cfg.sv = 1): Raumeinfluss -23,73 mit "verpasst" 09.10. 21:47 wie im Bericht v1; Datensaetze ausser sv identisch mit v2', rv1.punkte === -23.73 && rv1.verpasst === 1 && m1.length === 1 && m1[0].typ === 'verpasst' && m1[0].t === '2026-10-09 21:47:00' && RP1.recs.every((l, i) => l.replace('"sv":1', '"sv":' + E.SCORE_VER) === RP.recs[i]), rv1.punkte + ' / ' + m1.map(x => x.t + ' ' + x.typ).join(','));
-    check('Replay v2: dieselbe Lage (Kinderzimmer oben ab 18:47) ist "waehrend Sperre" (Stabilitaetszeit des flackernden Raumvorschlags, kein Raum > 1 K unter Minimum) -> 0 Punkte, Raumeinfluss -3,73; sonst gleiche Punkte', rv2.punkte === -3.73 && rv2.verpasst === 0 && rv2.verpasstSperre === 1 && m2.length === 1 && m2[0].typ === 'verpasst_sperre' && JSON.stringify(m2[0].sperre) === '["stabil"]' && JSON.stringify(RP.scores.filter(s0 => !/^verpasst/.test(s0.typ)).map(s0 => [s0.t, s0.typ, s0.punkte])) === JSON.stringify(RP1.scores.filter(s0 => !/^verpasst/.test(s0.typ)).map(s0 => [s0.t, s0.typ, s0.punkte])), rv2.punkte + ' / ' + m2.map(x => x.t + ' ' + x.typ).join(','));
-    // Vorausschau mit den echten Daten (OWM-Vorhersage aus optimizer-v2): Gate zu wie live -> nie ein Vorschlag; Gate testweise offen -> keine Stoerung der anderen Regeln
+    check('Ruecklauf-Bedingung der Freigabe: v2 schlaegt auch ohne sie nicht oefter vor (der Bedarf trennt schon; v1: 4 zusaetzliche Freigaben 07.–10.10., alle Fehlalarm, rund -213 Punkte)', extra === 0, extra + ' zusaetzlich');
+    // Vorausschau mit den echten Daten (OWM-Vorhersage aus optimizer-v2): Gate zu wie live -> nie ein Vorschlag
     const nVs = RP.inputs.filter(x => x.vs).length, vsSt = {}; RP.perMin.forEach(m => { vsSt[m.st[4]] = (vsSt[m.st[4]] || 0) + 1; });
     check('Replay Vorausschau, Gate zu (1 Tag, wie live): Vorhersage in fast jeder Minute vorhanden, nie ein Vorschlag, Status "gesperrt" (Modell-Gate)', nVs >= RP.inputs.length - 30 && !RP.props.some(p => p.rule === 'vorausschau') && vsSt.gesperrt >= nVs - 30, nVs + ' Minuten mit Vorhersage, Status ' + JSON.stringify(vsSt));
-    const RPo = replay(dataDir, {model: Object.assign({}, require('./engine_replay.js').ASSUME.model, {gate: true, n: 12})});
-    const dkOf = R0 => R0.recs.map(l => JSON.parse(l).abl.vs_dk).filter(x => typeof x === 'number');
-    const oth = R0 => JSON.stringify(R0.props.filter(p => p.rule !== 'vorausschau').map(p => [p.id, p.cmd.value]));
-    check('Replay Vorausschau, Gate testweise offen: die Daten reichen fuer keinen sicheren Tagesgang (3 Vortage) -> keine Bedarfsaenderung, kein Vorschlag, alle anderen Vorschlaege identisch, nie zwei Verschiebungs-Vorschlaege gleichzeitig',
-          dkOf(RPo).length === 0 && !RPo.props.some(p => p.rule === 'vorausschau') && oth(RPo) === oth(RP) && !RPo.perMin.some(m => m.st[2] === 'vorschlag' && m.st[4] === 'vorschlag') && /Tagesgang noch nicht sicher \([12] von 3 Vortagen\)/.test(RPo.recs[RPo.recs.length - 1]), JSON.parse(RPo.recs[RPo.recs.length - 1]).r[4].grund);
-    const RP1t = replay(dataDir, {model: Object.assign({}, require('./engine_replay.js').ASSUME.model, {gate: true, n: 12}), cfg: {rules: {vorausschau: {tagesgangTage: 1}}}}), dk1 = dkOf(RP1t);
-    check('... testweise mit einem Vortag als Tagesgang: die Kaltfront vom 08.10. abends erscheint am 09.10. als bis zu ' + E.de(Math.max.apply(null, dk1.map(Math.abs)), 1) + ' K (Begruendung fuer 3 Vortage); Vorschlaege trotzdem ' + RP1t.props.filter(p => p.rule === 'vorausschau').length + ' (Raeume ausserhalb des Bandes oder ungueltig), andere Vorschlaege identisch',
-          dk1.length > 1000 && Math.max.apply(null, dk1.map(Math.abs)) >= 4 && oth(RP1t) === oth(RP) && !RP1t.perMin.some(m => m.st[2] === 'vorschlag' && m.st[4] === 'vorschlag'), RP1t.props.filter(p => p.rule === 'vorausschau').map(p => E.iso(p.ts) + ' ' + p.was).join(' | '));
     check('Datensatzgroesse: unter 2,7 MB je Tag (ca. 80 MB/Monat; seit der Vorausschau mit Vorhersage im Schnappschuss und fuenfter Regel)', RP.bytes / (RP.inputs.length / 1440) < 2.7e6, Math.round(RP.bytes / (RP.inputs.length / 1440)) + ' Bytes/Tag');
+    if (alt) {                                                                       // nur der Datensatz 07.–10.10. (Kopie vom 10.10. 13:24, liegt nicht mehr vor)
+        const RP1 = replay(dataDir, {cfg: {sv: 1}}), rv1 = RP1.report.find(r => r.regel === 'raum_offset'), rv2 = RP.report.find(r => r.regel === 'raum_offset');
+        const m1 = RP1.scores.filter(s0 => /^verpasst/.test(s0.typ)), m2 = RP.scores.filter(s0 => /^verpasst/.test(s0.typ));
+        check('Replay v1 reproduzierbar (cfg.sv = 1): Raumeinfluss -23,73 mit "verpasst" 09.10. 21:47 wie im Bericht v1; Datensaetze ausser sv identisch mit v2', rv1.punkte === -23.73 && rv1.verpasst === 1 && m1.length === 1 && m1[0].typ === 'verpasst' && m1[0].t === '2026-10-09 21:47:00' && RP1.recs.every((l, i) => l.replace('"sv":1', '"sv":' + E.SCORE_VER) === RP.recs[i]), rv1.punkte + ' / ' + m1.map(x => x.t + ' ' + x.typ).join(','));
+        check('Replay v2: dieselbe Lage (Kinderzimmer oben ab 18:47) ist "waehrend Sperre" -> 0 Punkte, Raumeinfluss -3,73', rv2.punkte === -3.73 && rv2.verpasst === 0 && rv2.verpasstSperre === 1 && m2.length === 1 && m2[0].typ === 'verpasst_sperre', rv2.punkte + ' / ' + m2.map(x => x.t + ' ' + x.typ).join(','));
+        const RPo = replay(dataDir, {model: Object.assign({}, require('./engine_replay.js').ASSUME.model, {gate: true, n: 12})});
+        check('Replay Vorausschau, Gate testweise offen: die Daten reichen fuer keinen sicheren Tagesgang (3 Vortage) -> keine Bedarfsaenderung, kein Vorschlag', !RPo.props.some(p => p.rule === 'vorausschau'), '');
+        check('Messaufgabe Comfort/Efficiency: offen, Efficiency 41 min bei Quiet 0 (Boost, max 34 Hz), Comfort 0 min', (() => { const m = E.messStatus(RP.S); return m.offen && m.comfortMin === 0 && m.efficiencyMin >= 35 && m.efficiency.hzMax === 34; })(), E.messStatus(RP.S).text);
+    }
+    if (neu1310) {                                                                   // Datensatz 07.–13.10. (replay_data_1310): neue Lagen 12.10. (Kaelte 1–4 °C, Quiet 2/3 von Hand) und 13.10. (Comfort, Quiet 2 -> 1)
+        const at = t => RP.recs.find(l => l.indexOf('"t":"' + t) >= 0), rf = t => JSON.parse(at(t)).r[0];
+        check('12.10. 08:30 (Schlafzimmer am Minimum, Quiet 2 bei 20–21 Hz, Vorlauf am Soll): keine Freigabe – ohne Rueckstand braechte sie keine Leistung (Hebel waere die Heizkurve)', /^kein Vorschlag: Vorlauf genau am Soll/.test(rf('2026-10-12 08:30').grund), rf('2026-10-12 08:30').grund);
+        check('13.10. 16:29 Start mit Quiet 2 (Comfort, Ruecklauf 1,75 K, Raeume im Band): keine Freigabe (Startphase, danach kein Bedarf); der Nutzer stellte um 16:36 Quiet 1 (Wirkung als Kalibrierfall: 17 -> 21 Hz, +98 W)', /Startphase/.test(rf('2026-10-13 16:33').grund) && /kein Bedarf/.test(rf('2026-10-13 16:50').grund) && RP.scores.some(x => x.typ === 'wirkung' && x.regel === 'quiet_freigabe' && x.kalibrierfall === 1 && /Quiet 2 → 1/.test(x.text) && x.teile.every(t => t.ergebnis === 'getroffen')), rf('2026-10-13 16:50').grund);
+        const cs = E.copSumme(RP.S.takt, null, RP.S.last);
+        check('Gelernte Deckel aus den Echtdaten (5 min gehalten, ab 15 min nach einem Quiet-Wechsel): Efficiency Quiet 3 bei 3…7 °C 18 Hz, bei 11…15 °C 17 Hz; Quiet 2 bei -1…3 °C 21 Hz (152 min)', cs['Efficiency|3|3…7'][5] === 18 && cs['Efficiency|3|11…15'][5] === 17 && cs['Efficiency|2|-1…3'][5] === 21 && cs['Efficiency|2|-1…3'][2] >= 150, JSON.stringify([cs['Efficiency|3|3…7'], cs['Efficiency|2|-1…3']]));
+        const rq = RP.report.find(r => r.regel === 'quiet_strecken');
+        check('Deckel/Laufzeit v4 im Replay bewertet: 3 Faelle, keiner Fehlalarm (Prognose "weiter >= 22 Hz" bei Basisrate >= p neutral bzw. Treffer)', rq.faelle === 3 && rq.fehlalarm === 0 && rq.v === 4, JSON.stringify({f: rq.faelle, t: rq.treffer, fa: rq.fehlalarm, n: rq.neutral, p: rq.punkte}));
+    }
 }
 
 // ================================================================== (c) Node-RED-Huellen (opt_engine, opt_apply) und gesperrte Uebernahme, mit der erzeugten Flow-Datei
