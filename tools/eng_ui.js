@@ -88,6 +88,9 @@
                    (t.sperre !== null && t.sperre !== undefined ? '<div class="oe-ln" data-k="sperre"><span>🔒 verpasst während Sperre</span><b>' + esc(String(t.sperre)) + '</b></div>' : '<div class="oe-ln"></div>') + rf + '</div>';
         }).join('') + '</div>';
         if (P.mess) { h += '<div class="oe-line"><span>Messaufgabe Comfort/Efficiency</span>' + chip(P.mess.chip, P.mess.c) + '<span>' + esc(P.mess.t) + '</span></div>'; }
+        if (P.takt) { h += '<div class="oe-line"><span>Takt</span>' + chip(P.takt.chip, P.takt.c) + '<span>' + esc(P.takt.t) + '</span></div>' +
+                           '<div class="oe-line"><span>Mindestleistung</span><span>' + esc(P.takt.min) + '</span></div>' +
+                           '<div class="oe-line"><span>COP je Modus/Quiet</span><span>' + esc(P.takt.cop) + '</span></div>'; }
         return h;
     }
     // ---------------------------------------------------------------- Karte 4: Entscheidungen (Episoden)

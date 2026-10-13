@@ -454,7 +454,7 @@ var ENGINE = (function () {
     function newState(now) {
         var S = {mv: VER, born: now, last: now, run: {on: null, start: 0, reached: false, reachN: 0, sollTop: null}, lastStop: 0, lastStart: 0, runs: [], starts: [],
                  defrostEnd: 0, dhwEnd: 0, defrostWas: false, dhwWas: false, q: null, qChg: 0, shift: null, shiftChg: 0, soll: null, handWas: false, vlHist: [], needSince: 0, korr0Since: 0, vsEndSince: 0, atH: [],
-                 arb: {owner: null, soll: null, von: null, start: 0, applied: null, last: null}, rules: {}, sc: newScore()};
+                 arb: {owner: null, soll: null, von: null, start: 0, applied: null, last: null}, rules: {}, sc: newScore(), takt: taktNew()};
         RULES.forEach(function (r) { S.rules[r.id] = {since: 0, failSince: 0, prop: null, cool: 0, n: 0, day: '', korrV: null, korrSince: 0, last: null}; });
         return S;
     }
@@ -687,6 +687,70 @@ var ENGINE = (function () {
         return res;
     }
 
+    // ------------------------------------------------------------------ Takt- und Mindestleistungs-Messung (nur Messung/Anzeige, keine Regel; 13.10.)
+    // Ideen: tvofi/heatpump_optimizer (StartCounter: entprellt, None != aus), Appesteijn/stooklijn (cycling.py, min_power.py: 10-%-Quantil je 2-K-Bin, monoton).
+    // Kein Code uebernommen. Schwellen: probenEin/Aus 2 (Idee tvofi), minAusMin 3 (ANNAHME), kurzMin 60 (Messung: Regel v2, Takt-Analyse 07.-12.10.),
+    // minutenPauseMin 30 (ANNAHME: Pause bei Minimalmodulation vs. Bedarfstakt), stabilAbMin 15 (wie Messaufgabe), Monotonie der Mindestleistung (ANNAHME:
+    // waermer -> nicht weniger Mindest-Waermeleistung). COP je Heizregelung x Quiet x Aussenband als Grundlage, Modus und Quiet als Stellgroesse zu bewerten.
+    // Anzeige nutzt das rohe Quantil; die monotone Spalte ist nur Vergleich (Replay 07.-12.10.: Q10 1,7-1,8 kW flach von 2 bis 16 °C, Bin 0…2 °C 2,2 kW, Monotonie dort nicht belegt)
+    var TAKT = {probenEin: 2, probenAus: 2, minAusMin: 3, kurzMin: 60, minutenPauseMin: 30, stabilAbMin: 15, binK: 2, quantil: 0.1, binMax: 300, maxAgeMin: 5, fensterH: 24};
+    var BAENDER = [[-99, -1, '< -1'], [-1, 3, '-1…3'], [3, 7, '3…7'], [7, 11, '7…11'], [11, 15, '11…15'], [15, 99, '≥ 15']];
+    function taktNew() { return {on: null, nOn: 0, nOff: 0, tOn1: 0, tOff1: 0, t0: 0, tStop: 0, starts: [], runs: [], pausen: [], bins: {}, cop: {}}; }
+    function bandOf(at) { for (var i = 0; i < BAENDER.length; i++) { if (at < BAENDER[i][1]) { return BAENDER[i][2]; } } return BAENDER[BAENDER.length - 1][2]; }
+    function taktStep(T, x) {                                                        // x = Eingabe (t, hz, hpAge, at, pel, pth, q, hc, defrost, dhw); gibt T zurueck
+        if (!T || typeof T !== 'object' || !Array.isArray(T.runs)) { T = taktNew(); }
+        var now = x.t, hz = num(x.hz), age = num(x.hpAge);
+        if (!have(hz) || !have(age) || age > TAKT.maxAgeMin) { T.nOn = 0; T.nOff = 0; return T; }       // keine/alte Daten: weder an noch aus (zaehlt nicht als Stopp)
+        if (hz > 0) { if (!T.nOn) { T.tOn1 = now; } T.nOn++; T.nOff = 0; } else { if (!T.nOff) { T.tOff1 = now; } T.nOff++; T.nOn = 0; }
+        if (T.on !== true && T.nOn >= TAKT.probenEin) {
+            if (T.on === false && T.tStop > 0 && T.tOn1 - T.tStop < TAKT.minAusMin * MIN && T.runs.length) {  // kurze Luecke: derselbe Lauf geht weiter (kein Start)
+                var L = T.runs.pop(); T.t0 = L[0];
+            } else {
+                T.t0 = T.tOn1;
+                if (T.on === false && T.tStop) {
+                    T.starts.push(T.t0);
+                    if (T.tStop < 0) { T.on = true; return T; }                            // aus beobachtet, aber Beginn der Pause unbekannt: Start ja, Pause nein
+                    var pm = Math.round((T.t0 - T.tStop) / MIN); T.pausen.push([T.tStop, pm, pm < TAKT.minutenPauseMin ? 'minuten' : 'bedarf']);
+                }
+            }
+            T.on = true;
+        } else if (T.on !== false && T.nOff >= TAKT.probenAus) {
+            if (T.on === true) { T.runs.push([T.t0, Math.round((T.tOff1 - T.t0) / MIN), have(num(x.at)) ? r2(num(x.at)) : null]); }
+            T.tStop = T.on === true ? T.tOff1 : -1; T.on = false;                    // -1: aus seit Datenbeginn (Pausenlaenge unbekannt)
+        }
+        var lim = now - 48 * 60 * MIN;
+        T.starts = T.starts.filter(function (t) { return t >= lim; }); T.runs = T.runs.filter(function (r) { return r[0] >= lim; }).slice(-60); T.pausen = T.pausen.filter(function (r) { return r[0] >= lim; }).slice(-60);
+        // stabile Laufminuten: Mindestleistung je 2-K-Bin und COP je Modus x Quiet x Band (ohne Abtauen/Warmwasser, ab Laufminute 15)
+        var at = num(x.at), pel = num(x.pel), pth = num(x.pth), q = num(x.q), hc = num(x.hc);
+        if (T.on === true && now - T.t0 >= TAKT.stabilAbMin * MIN && !num(x.defrost) && !num(x.dhw) && have(at) && have(pel) && have(pth) && pel > 50 && pth > 0) {
+            var k = String(Math.floor(at / TAKT.binK) * TAKT.binK), B = T.bins[k] = T.bins[k] || [];
+            B.push(Math.round(pth)); if (B.length > TAKT.binMax) { B.splice(0, B.length - TAKT.binMax); }
+            var ck = (hc === 0 ? 'Comfort' : (hc === 1 ? 'Efficiency' : '?')) + '|' + (have(q) ? q : '?') + '|' + bandOf(at), C = T.cop[ck] = T.cop[ck] || [0, 0, 0];
+            C[0] += pel / 60; C[1] += pth / 60; C[2]++;                                     // Wh el, Wh th, Minuten
+        }
+        return T;
+    }
+    function quantil(a, p) { var v = a.slice().sort(function (x, y) { return x - y; }); if (!v.length) { return null; } var i = (v.length - 1) * p, lo = Math.floor(i), hi = Math.ceil(i); return v[lo] + (v[hi] - v[lo]) * (i - lo); }
+    function mindestLeistung(T, minN) {                                            // [[Bin-Untergrenze, 10-%-Quantil W th, n, monoton W th]]; monoton: von kalt nach warm nicht fallend
+        minN = minN || 30;
+        var ks = Object.keys(T.bins || {}).map(Number).sort(function (a, b) { return a - b; }), out = [], run = null;
+        ks.forEach(function (k) { var B = T.bins[String(k)]; if (B.length < minN) { return; } var qv = Math.round(quantil(B, TAKT.quantil)); run = run === null ? qv : Math.max(run, qv); out.push([k, qv, B.length, run]); });
+        return out;
+    }
+    function taktKennzahlen(T, now) {
+        T = T || taktNew();
+        var lim = now - TAKT.fensterH * 60 * MIN, st = T.starts.filter(function (t) { return t >= lim; }), rn = T.runs.filter(function (r) { return r[0] + r[1] * MIN >= lim; }), pz = T.pausen.filter(function (r) { return r[0] >= lim; });
+        var kurz = rn.filter(function (r) { return r[1] < TAKT.kurzMin; }).length;
+        return {starts24h: st.length, startsH: r2(st.length / TAKT.fensterH), starts1h: T.starts.filter(function (t) { return t >= now - 60 * MIN; }).length, laeufe: rn.length, kurz: kurz,
+                kurzAnteil: rn.length ? r2(kurz / rn.length) : null, minutenPausen: pz.filter(function (r) { return r[2] === 'minuten'; }).length, bedarfPausen: pz.filter(function (r) { return r[2] === 'bedarf'; }).length,
+                letztePause: T.pausen.length ? T.pausen[T.pausen.length - 1][2] : null, mittelLaufMin: rn.length ? Math.round(rn.reduce(function (a, r) { return a + r[1]; }, 0) / rn.length) : null};
+    }
+    function copTabelle(T, minMin) {                                               // [[Modus, Quiet, Band, COP, Minuten]] ab minMin Minuten (Standard 60)
+        minMin = minMin || 60;
+        return Object.keys(T.cop || {}).map(function (k) { var c = T.cop[k], p = k.split('|'); return [p[0], p[1], p[2], c[0] > 0 ? r2(c[1] / c[0]) : null, c[2]]; })
+            .filter(function (r) { return r[4] >= minMin; }).sort(function (a, b) { return a[2] < b[2] ? -1 : (a[2] > b[2] ? 1 : (a[0] + a[1] < b[0] + b[1] ? -1 : 1)); });
+    }
+
     // ------------------------------------------------------------------ Schnappschuss fuer den Datensatz (gerundet; reicht zum Nachspielen)
     var SNAP_KEYS = ['hpAge', 'hz', 'vl', 'rl', 'soll', 'dT', 'pel', 'pth', 'flow', 'pump', 'q', 'qPrio', 'hc', 'at', 'defrost', 'dhw', 'ss', 'rt', 'shift', 'heatMode', 'z1Sensor',
                      'heaterI', 'heaterE', 'htrOnAT', 'htrStartDelta', 'heatOffAT', 'sollKurve', 'block', 'otherQ', 'otherShift', 'kzRad'];
@@ -715,6 +779,7 @@ var ENGINE = (function () {
         S = fixState(S, now);
         var d = derive(S, inp, cfg);
         track(S, d, inp, cfg);
+        S.takt = taktStep(S.takt, inp); d.takt = taktKennzahlen(S.takt, now);
         tgUpdate(S, d); d.vsBase = tagesgang(S, now); d.vsDk = bedarfK(d.vs, cfg.rules.vorausschau, d.vsBase);
         if (!S.arb.owner) {                                                          // Arbitrierung nach dem Laden eines aelteren Zustands: laufenden Vorschlag als Eigentuemer eintragen
             RULES.forEach(function (R) { var p0 = S.rules[R.id].prop; if (R.groesse === 'shift' && p0 && !S.arb.owner) { S.arb.owner = R.id; S.arb.soll = p0.cmd.value; S.arb.von = p0.von; S.arb.start = p0.ts; } });
@@ -764,7 +829,8 @@ var ENGINE = (function () {
         Object.keys(halten).forEach(function (k) { delete ende[k]; });
         S.last = now;
         var rec = {t: iso(now), mv: VER, sv: svOf(cfg), in: snapshot(inp),
-                   abl: {z: d.zustand, lauf_min: r2(d.runMin), vl_rueck: r2(d.vlRueck), rl_rueck: r2(d.rlRueck), erreicht: d.reached ? 1 : 0, vl_k_h: r2(d.vlSlope), stopp_in_min: r2(d.stopEtaMin), starts_3h: d.starts3h, vs_dk: d.vsDk},
+                   abl: {z: d.zustand, lauf_min: r2(d.runMin), vl_rueck: r2(d.vlRueck), rl_rueck: r2(d.rlRueck), erreicht: d.reached ? 1 : 0, vl_k_h: r2(d.vlSlope), stopp_in_min: r2(d.stopEtaMin), starts_3h: d.starts3h, vs_dk: d.vsDk,
+                        takt: {starts_24h: d.takt.starts24h, starts_h: d.takt.startsH, kurz_anteil: d.takt.kurzAnteil, minutenpausen: d.takt.minutenPausen, bedarfspausen: d.takt.bedarfPausen}},
                    r: res.map(function (x) { var o = {id: x.id, v: x.v, st: x.st, grund: x.grund}; if (x.naechste) { o.naechste = recNext(x.naechste); } if (x.p) { o.p = x.p; } if (x.locks.length) { o.sperren = x.locks; } return o; }),
                    vorschlag: prop ? prop.id : null};
         return {S: S, d: d, res: res, prop: prop, rec: rec, ev: ev, scores: sc, ende: ende, halten: halten, locks: locks};
@@ -1386,7 +1452,7 @@ var ENGINE = (function () {
     }
 
     return {VER: VER, SCORE_VER: SCORE_VER, RULES: RULES, RULE: RULE, LOCKS: LOCKS, LOCK_CFG: LOCK_CFG, SCORE: SCORE, WHITELIST: WHITELIST, APPLY: APPLY,
-            brier: brier, hPunkte: hPunkte, vorschau: vorschau, bedarfK: bedarfK, tagesgang: tagesgang, defaults: defaults, mergeCfg: mergeCfg, newState: newState, fixState: fixState, step: step, report: report, messStatus: messStatus, MESS: MESS, snapshot: snapshot, unsnap: unsnap,
+            brier: brier, hPunkte: hPunkte, vorschau: vorschau, bedarfK: bedarfK, tagesgang: tagesgang, defaults: defaults, mergeCfg: mergeCfg, newState: newState, fixState: fixState, step: step, report: report, messStatus: messStatus, MESS: MESS, TAKT: TAKT, taktNew: taktNew, taktStep: taktStep, taktKennzahlen: taktKennzahlen, mindestLeistung: mindestLeistung, copTabelle: copTabelle, bandOf: bandOf, snapshot: snapshot, unsnap: unsnap,
             checksum: checksum, newApply: newApply, applyRequest: applyRequest, applyTick: applyTick, iso: iso, hhmm: hhmm, isoWeek: isoWeek, de: de, sg: sg};
 })();
 if (typeof module !== 'undefined' && module.exports) { module.exports = ENGINE; }

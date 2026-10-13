@@ -138,7 +138,12 @@ var ENGVIEW = (function (E) {
         var ms = E.messStatus(S), mess;
         if (ms.offen) { mess = {t: 'Comfort ' + Math.min(ms.comfortMin, E.MESS.minMin) + '/' + E.MESS.minMin + ' min · Efficiency ' + Math.min(ms.efficiencyMin, E.MESS.minMin) + '/' + E.MESS.minMin + ' min', c: 'warn', chip: 'offen'}; }
         else { var b = ms.befund || {}; mess = {t: 'Comfort bis ' + E.de(b.comfort && b.comfort.hzMax, 0) + ' Hz · Efficiency bis ' + E.de(b.efficiency && b.efficiency.hzMax, 0) + ' Hz', c: 'ok', chip: 'erledigt'}; }
-        var score = {now: now, t0: t0, series: series, tiles: tiles, mess: mess, sv: sv};
+        var tk = E.taktKennzahlen(S.takt, now), ml = E.mindestLeistung(S.takt || {}), cpt = E.copTabelle(S.takt || {});
+        var takt = {t: 'Starts 24 h ' + tk.starts24h + ' (' + E.de(tk.startsH, 2) + '/h) · Läufe ' + tk.laeufe + ', davon < ' + E.TAKT.kurzMin + ' min ' + tk.kurz + ' · Pausen < ' + E.TAKT.minutenPauseMin + ' min ' + tk.minutenPausen + ' · länger ' + tk.bedarfPausen + (have(tk.mittelLaufMin) ? ' · Ø Lauf ' + tk.mittelLaufMin + ' min' : ''),
+                    c: tk.kurz >= 3 || tk.starts1h >= 2 ? 'warn' : 'ok', chip: tk.kurz >= 3 || tk.starts1h >= 2 ? 'Takt' : 'ruhig',
+                    min: ml.length ? ml.map(function (b) { return E.de(b[0], 0) + '…' + E.de(b[0] + E.TAKT.binK, 0) + ' °C ' + E.de(b[1] / 1000, 1) + ' kW'; }).join(' · ') : 'noch zu wenig stabile Laufminuten',
+                    cop: cpt.length ? cpt.map(function (r) { return r[2] + ' °C ' + r[0] + ' Q' + r[1] + ' ' + E.de(r[3], 2) + ' (' + Math.round(r[4] / 60) + ' h)'; }).join(' · ') : 'noch zu wenig stabile Laufminuten'};
+        var score = {now: now, t0: t0, series: series, tiles: tiles, mess: mess, takt: takt, sv: sv};
         return {card: card, rules: {rules: rules}, score: score, log: {rows: logRows(o.V || {}, now, 12)}};
     }
     return {track: track, build: build, logRows: logRows, COL: COL, CHIP: CHIP};
