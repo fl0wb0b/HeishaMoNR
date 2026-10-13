@@ -747,6 +747,10 @@ def bericht(alt, neu, changes, schon, ids, typen, raster):
 
 
 def kurz(v):
+    if v == HIDDEN_GRP:
+        return "versteckt"
+    if v == GUI_TAB:
+        return "Tab GUI"
     if isinstance(v, str) and len(v) > 18:
         return "<%d Zeichen>" % len(v)
     if isinstance(v, dict):
