@@ -1,5 +1,7 @@
-// Statische Vorschau der Seiten Optimierung, Wärmefahrplan, Quiet-Messwerte und Daten & Güte: echte Vorlagen aus der Flow-Datei, Nachrichten aus der Simulation
-// (OPT_UI_DUMP=<datei> node tools/optimizer_sim.js <flows.json>), Diagramm-Verläufe aus dem echten 5-Minuten-Protokoll (opt_hist auf optimizer-v2-YYYY-MM.csv).
+// Statische Vorschau der Seiten Optimierung (Verläufe, Räume, Wärmefahrplan), Optimierer (Entscheidungsmaschine, Quiet-Messwerte) und Daten & Güte (seit 13.10.
+// zusammengelegt): echte Vorlagen aus der Flow-Datei, Nachrichten aus der Simulation (OPT_UI_DUMP=<datei> node tools/optimizer_sim.js <flows.json>), Diagramm-Verläufe
+// aus dem echten 5-Minuten-Protokoll (opt_hist auf optimizer-v2-YYYY-MM.csv), Karten der Maschine aus dem Replay der echten Protokolle (tools/engine_ui_preview.js:
+// optimierer.html = Schnappschuss B ohne Vorschlag, optimierer_vorschlag.html = Schnappschuss A mit Vorschlag; ohne Datenordner bleiben diese Karten leer).
 // Ein kleiner Angular-Ersatz (ng-repeat, ng-repeat-start/-end, ng-if, ng-class, ng-model, ng-bind-html, {{ }}) zeichnet die Karten, die Skripte der Vorlagen
 // laufen mit einer Scope-Attrappe ($watch('msg') sofort). Masonry, Einpassen (FIT_JS) und Prüfung wie tools/engine_ui_preview.js (CHECK_JS): inneres Scrollen,
 // abgeschnittene oder herausragende Elemente, waagrechtes Scrollen, überlappende Gruppen. Bilder und Prüfung je Breite: node tools/ui_vorschau_pruefen.js <ordner> <seite.html> ...
@@ -78,12 +80,19 @@ window.__tpl = function (holder) {
 Array.prototype.forEach.call(document.querySelectorAll('.tplsrc'), function (h) { window.__tpl(h); });
 })();`;
 
-const PAGES = [['opt_ui_tab', 'Optimierung', 'optimierung'], ['opt_ui_tab_plan', 'Wärmefahrplan', 'waermefahrplan'], ['opt_ui_tab_quiet', 'Quiet-Messwerte', 'quiet'], ['opt_ui_tab_data', 'Daten & Güte', 'daten']];
+// Seiten: [Tab, Titel, Datei, Schnappschuss der Maschine]; leere (ausgeblendete) Tabs werden uebersprungen
+const PAGES = [['opt_ui_tab', 'Optimierung', 'optimierung', null], ['opt_eng_ui_tab', 'Optimierer', 'optimierer', 'B'], ['opt_eng_ui_tab', 'Optimierer', 'optimierer_vorschlag', 'A'],
+               ['opt_ui_tab_data', 'Daten & Güte', 'daten', null], ['opt_ui_tab_plan', 'Wärmefahrplan', 'waermefahrplan', null], ['opt_ui_tab_quiet', 'Quiet-Messwerte', 'quiet', null]];
+// Karten der Entscheidungsmaschine: Nachrichten wie opt_engine sie schickt ({payload: V.card} usw.), aus dem Replay der Protokolle im Datenordner
+const ENG_KIND = {opt_t_eng_prop: 'card', opt_t_eng_rules: 'rules', opt_t_eng_score: 'score', opt_t_eng_mess: 'mess', opt_t_eng_log: 'log'};
+const SNAP = (dataDir && flows.some(n => ENG_KIND[n.id])) ? PRE.snapshots(dataDir) : null;
 const PAD = PRE.PAD;
 fs.mkdirSync(outDir, {recursive: true});
 const CHECK = PRE.CHECK_JS.replace("window.addEventListener('load', function () { setTimeout(run, 50); });", "window.addEventListener('load', function () { setTimeout(run, 500); });");
-PAGES.forEach(([tabId, title, file]) => {
+PAGES.forEach(([tabId, title, file, snap]) => {
     const groups = flows.filter(n => n.type === 'ui_group' && n.tab === tabId).sort((a, b) => a.order - b.order);
+    if (!groups.length) { console.log('übersprungen: ' + title + ' (' + tabId + ') hat keine Gruppen'); return; }
+    Object.keys(ENG_KIND).forEach(k => { if (SNAP && snap) { MSG[k] = {payload: SNAP[snap][ENG_KIND[k]]}; } else { delete MSG[k]; } });
     let blobs = '', body = '';
     groups.forEach(g => {
         const tpls = flows.filter(n => n.type === 'ui_template' && n.group === g.id).sort((a, b) => a.order - b.order);
