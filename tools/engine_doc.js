@@ -15,6 +15,8 @@ function tabellen() {
         L.push('', '*Erwartung:* ' + esc(R.erwartung), '', '*Rückweg:* ' + esc(R.rueckweg));
         if (R.kalibriert.length) { L.push('', '*Kalibriermessungen (Wirkungsfälle dort zählen 0 Punkte):* ' + R.kalibriert.join(', ')); }
     });
+    L.push('', '### Takt-Messung (Schwellen, `cfg.takt`)', '', '| Schwelle | Standard | Einheit | Herkunft |', '|---|---|---|---|');
+    E.TAKT_SCHWELLEN.forEach(s => L.push('| `' + s.key + '` | ' + String(s.std).replace('.', ',') + ' | ' + s.einheit + ' | ' + esc(s.herkunft) + ' |'));
     L.push('', '### Sperren, die jede Regel erbt', '', '| Sperre | Text | Herkunft |', '|---|---|---|');
     E.LOCKS.forEach(l => L.push('| `' + l.id + '` | ' + esc(l.text) + ' | ' + esc(l.herkunft) + ' |'));
     L.push('', '*Sperr-Parameter (Standard):* ' + Object.keys(E.LOCK_CFG).map(k => '`' + k + '` ' + String(E.LOCK_CFG[k]).replace('.', ',')).join(' · '));

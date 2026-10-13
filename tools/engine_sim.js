@@ -139,7 +139,7 @@ function basisBericht(name, L) {
 function plantSim(days, opts) {
     opts = opts || {};
     const P = {on: false, tw: 31, room: 22.3, over: 0, under: 0, q: opts.q !== undefined ? opts.q : 3, shift: 0, rt: 0, sollHand: null, defrost: 0};
-    let S = null; const log = {props: [], recs: 0, ev: [], scores: [], lockedProp: 0, maxSendable: 0, errors: 0, minutes: 0, statuses: {}};
+    let S = opts.S0 || null; const log = {props: [], recs: 0, ev: [], scores: [], lockedProp: 0, maxSendable: 0, errors: 0, minutes: 0, statuses: {}, starts: 0, grund: {}};
     const start = new Date(2026, 9, 14, 0, 0, 0).getTime();
     for (let i = 0; i < days * 1440; i++) {
         const t = start + i * MIN, h = (i % 1440) / 60, day = Math.floor(i / 1440);
@@ -151,15 +151,16 @@ function plantSim(days, opts) {
         if (opts.defrostEvery && P.on && i % opts.defrostEvery === 0) { P.defrost = 6; }
         const spread = P.on ? 2.5 : 0, vl = Math.round((P.tw + spread / 2) * 4) / 4, rl = Math.round((P.tw - spread / 2) * 4) / 4;
         const rlRueck = soll - 3 - rl;
-        const hz = !P.on ? 0 : (P.defrost > 0 ? 17 : (P.q >= 1 ? 16 + (i % 2) : (rlRueck >= 2.5 ? 33 : 17)));
-        const pth = !P.on ? 0 : (P.defrost > 0 ? -1000 : (hz >= 30 ? 5000 : 2100)), qrad = 0.25 * (P.tw - P.room);
+        const hzS = opts.hzStart && P.on && P.q === 0 && P.rt < opts.hzStart;                  // opts.hzStart: nach jedem Start so viele Minuten 26 Hz ohne Bedarf (Uebersteuern, wie 10.10.)
+        const hz = !P.on ? 0 : (P.defrost > 0 ? 17 : (hzS ? 26 : (P.q >= 1 ? 16 + (i % 2) : (rlRueck >= 2.5 ? 33 : 17))));
+        const pth = !P.on ? 0 : (P.defrost > 0 ? -1000 : (hz >= 30 ? 5000 : (hzS ? (opts.pthStart || 3000) : 2100))), qrad = 0.25 * (P.tw - P.room);
         P.tw += ((pth / 1000) - qrad) / 0.4 / 60; P.room += (qrad - 0.18 * (P.room - at) + 0.9) / 8 / 60;
         if (P.defrost > 0) { P.defrost--; }
         if (P.on) { P.rt++; if (vl >= soll + 3.25) { P.over++; } else { P.over = 0; } if (P.over >= 3) { P.on = false; P.rt = 0; P.over = 0; } }
-        else { if (vl <= soll - 3) { P.under++; } else { P.under = 0; } if (P.under >= 6 && at < 15) { P.on = true; P.under = 0; } }
+        else { if (vl <= soll - 3) { P.under++; } else { P.under = 0; } if (P.under >= 6 && at < 15) { P.on = true; P.under = 0; log.starts++; } }
         const stale = opts.staleFrom !== undefined && i >= opts.staleFrom && i < opts.staleFrom + 30;
         const korrV = P.room < 21.7 ? 1 : (P.room > 23.6 ? -1 : 0);
-        const x = {t: t, hpAge: stale ? 12 : 0.4, hz: hz, vl: vl, rl: rl, soll: soll, dT: 3, pel: hz >= 30 ? 830 : (P.on ? 300 : 15), pth: pth, flow: 13.5, pump: P.on || at < 15 ? 1750 : 0,
+        const x = {t: t, hpAge: stale ? 12 : 0.4, hz: hz, vl: vl, rl: rl, soll: soll, dT: 3, pel: hz >= 30 ? 830 : (hzS ? (opts.pelStart || 520) : (P.on ? 300 : 15)), pth: pth, flow: 13.5, pump: P.on || at < 15 ? 1750 : 0,
                    q: P.q, qPrio: 1, hc: 1, at: atI, defrost: P.defrost > 0 ? 1 : 0, dhw: 0, ss: 0, rt: P.rt, shift: P.shift, heatMode: 0, z1Sensor: 0, heaterI: 0, heaterE: 0, htrOnAT: 0, htrStartDelta: -3,
                    heatOffAT: 12, sollKurve: kurve, block: opts.block && i % 700 < 30 ? 1 : 0, otherQ: null, otherShift: null, kzRad: 1,
                    rooms: [{id: 'ki_oben', name: 'Kinderzimmer oben', t: Math.round(P.room * 10) / 10, age: 20, min: 22, max: 23.5, valid: !stale, active: true}],
@@ -167,7 +168,9 @@ function plantSim(days, opts) {
         if (opts.restartEvery && i > 0 && i % opts.restartEvery === 0 && S) { S = JSON.parse(JSON.stringify(S)); S.born = t; }
         try {
             const o = E.step(S, x, opts.cfg || cfg); S = o.S; log.recs++; log.minutes++;
-            o.res.forEach(r => { log.statuses[r.st] = (log.statuses[r.st] || 0) + 1; if (r.neu) { log.props.push(S.rules[r.id].prop); if (r.locks.length) { log.lockedProp++; } } });
+            o.res.forEach(r => { log.statuses[r.st] = (log.statuses[r.st] || 0) + 1; if (r.neu) { log.props.push(S.rules[r.id].prop); if (r.locks.length) { log.lockedProp++; } } if (opts.grund === r.id) { log.grund[r.grund] = (log.grund[r.grund] || 0) + 1; } });
+            if (opts.applyStrecken && o.prop && o.prop.rule === 'quiet_strecken' && o.prop.cmd.value !== P.q) { P.q = o.prop.cmd.value; P.qBis = i + 240; P.qVon = o.prop.von; }   // "Nutzer klickt", Rueckweg nach 4 h
+            if (P.qBis && i >= P.qBis) { P.q = P.qVon; P.qBis = 0; }
             if (o.prop && o.prop.art === 'befehl' && (x.block === 1 || stale || x.defrost === 1)) { log.maxSendable++; }
             o.scores.forEach(s => log.scores.push(s)); o.ev.forEach(e => log.ev.push(e));
             if (opts.applyQuiet && o.prop && o.prop.rule === 'quiet_freigabe') { P.q = 0; }           // "Nutzer klickt": Quiet 0
@@ -190,6 +193,19 @@ console.log('--- (a) Mehrtages-Simulation (Anlagenmodell, Fake-Uhr)');
     check('... Raumregel waehrend des Boosts gesperrt (Handeingriff), nie ein Raum-Vorschlag mit Soll 38', !B.props.some(p => p.rule === 'raum_offset' && /38/.test(p.was)), B.props.filter(p => p.rule === 'raum_offset').map(p => p.was).join(' | '));
     const C = plantSim(3, {at: 9, boostAt: 9 * 60, applyQuiet: true});
     check('Boost mit "Klick" (Quiet 0 nach dem Vorschlag): Wirkungsfall wird bewertet (kein Kalibrierfall), Ausloeser-Fall neutral (Eingriff)', C.scores.some(s => s.typ === 'wirkung' && s.regel === 'quiet_freigabe' && s.kalibrierfall === 0) && C.scores.filter(s => s.typ === 'ausloeser' && s.regel === 'quiet_freigabe').every(s => s.ergebnis === 'neutral'), C.scores.filter(s => s.regel === 'quiet_freigabe').map(s => s.typ + ':' + s.punkte).join(', '));
+    { // Laufzeit strecken v3 ueber 8 Tage (Fake-Uhr): mild 11 °C ±4 K, nach jedem Start bis 40 min 26 Hz mit 5 kW ohne Bedarf -> Laeufe von ~35-40 min, Ende ueber den Vorlauf = Takt belegt
+      const seedAll = () => { const S0 = E.newState(new Date(2026, 9, 13, 23, 59).getTime()); S0.takt.nl = {laeuft: false}; const dk = '2026-10-13';
+                              S0.takt.copT[dk] = {}; ['7…11', '11…15', '≥ 15'].forEach(b => { S0.takt.copT[dk]['Efficiency|0|' + b] = [1000, 6000, 120, 120 * 26, 34]; S0.takt.copT[dk]['Efficiency|3|' + b] = [1000, 6300, 120, 120 * 17, 17]; }); return S0; };
+      const PO = {at: 11, q: 0, hzStart: 40, pthStart: 5000, pelStart: 900, grund: 'quiet_strecken'};      // COP bei 26 Hz 5,6 (hohe Frequenz = schlechter, gemessen 10.10.: 6,0 bei 33 Hz gegen 6,9 im Minimum)
+      const V3 = plantSim(8, Object.assign({S0: seedAll()}, PO)), V0 = plantSim(8, PO);
+      const vp = V3.props.filter(p => p.rule === 'quiet_strecken'), v0 = V0.props.filter(p => p.rule === 'quiet_strecken'), tk = E.taktKennzahlen(V3.S.takt, V3.S.last, cfg.takt);
+      const g0 = Object.keys(V0.grund).filter(k => /zu wenig Daten für Quiet 0|keine Zielstufe/.test(k)).reduce((a, k) => a + V0.grund[k], 0);
+      check('Laufzeit strecken v3, 8 Tage Fake-Uhr (mild, Uebersteuern nach dem Start, ' + V3.starts + ' Starts): mit COP-Daten (Quiet 3 besser, deckelt) Vorschlaege Quiet 0 -> 3 (' + vp.length + '), hoechstens 2 je Tag, kein Fehler, keiner in einer Sperrminute; Takt-Messung zaehlt die Starts der Anlage (letzte 24 h ' + tk.starts24h + ')',
+            V3.errors === 0 && V3.recs === 8 * 1440 && vp.length >= 3 && vp.every(p => p.ver === 3 && p.cmd.value === 3 && p.von === 0 && /Quiet 3 gemessen 6,3\d statt/.test(p.warum)) && V3.lockedProp === 0 && ['14', '15', '16', '17', '18', '19', '20', '21'].every(dd => vp.filter(p => E.iso(p.ts).slice(8, 10) === dd).length <= 2) && tk.starts24h > 0 && V3.S.takt.runs.length > 0,
+            vp.length + ' Vorschlaege, Starts Anlage ' + V3.starts + ', Takt 24 h ' + JSON.stringify(tk));
+      check('... ohne COP-Daten fuer andere Stufen (nur Live-Minuten Quiet 0): kein einziger Vorschlag, Grund "keine Zielstufe aus den Daten" bzw. "zu wenig Daten"', V0.errors === 0 && v0.length === 0 && g0 > 0, JSON.stringify(Object.keys(V0.grund).filter(k => /Daten/.test(k)).slice(0, 2)));
+      const VA = plantSim(8, Object.assign({S0: seedAll(), applyStrecken: true}, PO)), pa = VA.props.filter(p => p.rule === 'quiet_strecken'), wa = VA.scores.filter(x => x.regel === 'quiet_strecken' && x.typ === 'wirkung');
+      check('... mit "Klick" (Quiet 3 fuer 4 h, dann zurueck auf die vorherige Stufe 0): Wirkungsfaelle werden unter v3 bewertet, weniger Starts als ohne Klick', VA.errors === 0 && wa.length >= 1 && wa.every(x => x.v === 3) && VA.starts < V3.starts, 'Starts ' + VA.starts + ' gegen ' + V3.starts + ', Wirkung ' + wa.map(x => x.punkte).join('/') + ', Vorschlaege ' + pa.length); }
     const D = plantSim(5, {at: 4, cool: 1.5});
     basisBericht('5 Tage kaelter', D); basisBericht('4 Tage mild', A); basisBericht('3 Tage Boost', B);
     { const D4 = plantSim(5, {at: 4, cool: 1.5, cfg: E.mergeCfg({sv: 4})}), r5 = E.report(D.S), r4 = E.report(D4.S, 4), g = (r, id) => r.find(x => x.regel === id);
@@ -262,7 +278,9 @@ console.log('--- (b) Punktesystem');
     const vx = sc.filter(s => s.typ === 'verpasst');
     check('v2: verlaengerte Sperre entschuldigt nicht - Mindestabstand auf 180 min verlaengert: die Minuten nach dem Standard (60 min) zaehlen frei -> "verpasst" -20 in Minute 99 (Haltezeit bis Minute 79 entschuldigt, ab Minute 80 frei, 20 freie Minuten)', vx.length === 1 && vx[0].punkte === -20 && vx[0].t === E.iso(T0 + 99 * MIN) && /verlängert: Mindestabstand/.test(vx[0].text) && !R.outs.some(o => o.res.find(r => r.id === 'quiet_freigabe').neu), vx.map(s => s.t + ' ' + s.text).join(' | '));
     const stretch = i => inp(T0 + i * MIN, i < 25 ? {q: i === 0 ? 3 : 0, hz: 30, rt: 60 + i, soll: 30, sollKurve: 29.75, vl: Math.round((30.5 + 0.1 * i) * 100) / 100, rl: 26.5} : {q: 0, hz: 0, rt: 0, soll: 30, vl: 33, rl: 30});
-    const seedTakt = () => { const S0 = E.newState(T0 - MIN); S0.runs = [[T0 - 120 * MIN, 40, 1]]; S0.lastStop = T0 - 80 * MIN; return S0; };   // Regel v2: Takt belegt (letzter Lauf 40 min, Abschaltung ueber den Vorlauf)
+    // v3: Zielstufe aus den COP-Daten (Efficiency, 7…11 °C wie inp: at 9, hc 1): Quiet 0 COP 6,0, Quiet 2 6,1, Quiet 3 6,2 (je >= 60 min, Quiet 2/3 hoechstens 17 Hz) -> Ziel Quiet 3
+    const copSeed = (S0, over) => { S0 = S0 || E.newState(T0 - MIN); S0.takt.nl = {laeuft: false}; S0.takt.copT[E.ymd(T0)] = Object.assign({'Efficiency|0|7…11': [1000, 6000, 120, 120 * 30, 34], 'Efficiency|2|7…11': [1000, 6100, 90, 90 * 17, 17], 'Efficiency|3|7…11': [1000, 6200, 120, 120 * 17, 17]}, over || {}); return S0; };
+    const seedTakt = () => { const S0 = copSeed(); S0.runs = [[T0 - 120 * MIN, 40, 1]]; S0.lastStop = T0 - 80 * MIN; return S0; };   // Regel v2: Takt belegt (letzter Lauf 40 min, Abschaltung ueber den Vorlauf)
     R = runSeq(40, stretch, seedTakt()); sc = allSc(R);
     const ts = sc.filter(s => s.regel === 'quiet_strecken');
     check('v2: Takten waehrend Sperre zaehlt - Laufzeit strecken (Takt belegt: letzter Lauf 40 min mit Abschaltung ueber den Vorlauf) nur durch Haltezeit/Mindestabstand (Quiet 3 -> 0 von Hand) zurueckgehalten: erst "verpasst_sperre" (0), der Verdichter-Stopp danach hebt die Entschuldigung auf -> "verpasst" -20 mit Schadensart Takt', ts.length === 2 && ts[0].typ === 'verpasst_sperre' && ts[1].typ === 'verpasst' && ts[1].punkte === -20 && JSON.stringify(ts[1].schaden) === '["takt"]', ts.map(s => s.t.slice(11, 16) + ' ' + s.typ + ' ' + (s.schaden || '')).join(' | '));
@@ -270,15 +288,34 @@ console.log('--- (b) Punktesystem');
     { const lauf2 = (i, ende) => inp(T0 + i * MIN, i < 40 ? {q: 0, hz: 24, rt: i, soll: 30, sollKurve: 29.75, vl: Math.round((ende === 'thermo' ? 29 + 0.11 * i : 28.5 + 0.05 * i) * 4) / 4, rl: 27, rooms: rooms()}
                                                : (i < 70 ? {q: 0, hz: 0, rt: 0, soll: 30, sollKurve: 29.75, vl: 28, rl: 27.5, pump: 1750, rooms: rooms()}
                                                          : {q: 0, hz: 24, rt: i - 70, soll: 30, sollKurve: 29.75, vl: Math.round((28.5 + 0.08 * (i - 70)) * 4) / 4, rl: Math.round((26.25 + 0.08 * (i - 70)) * 4) / 4, rooms: rooms()}));
-      const Rt = runSeq(110, i => lauf2(i, 'thermo')), Rh = runSeq(110, i => lauf2(i, 'heizgrenze'));
+      const Rt = runSeq(110, i => lauf2(i, 'thermo'), copSeed()), Rh = runSeq(110, i => lauf2(i, 'heizgrenze'), copSeed());
       const pt = Rt.outs.findIndex(o => r0(o, 'quiet_strecken').neu), ph = Rh.outs.findIndex(o => r0(o, 'quiet_strecken').neu), p2 = pt >= 0 ? Rt.outs[pt].prop : null;
-      check('Laufzeit strecken v2: letzter Lauf 40 min mit Abschaltung ueber den Vorlauf (Soll +3,25 K) = Takt belegt -> Vorschlag Quiet 0 -> 3 in Minute 95 (Lauf ab 70, 15 min Startphase, 10 min Haltezeit), Begruendung mit Stopp-Art',
-            Rt.S.runs[0][1] === 40 && Rt.S.runs[0][2] === 1 && pt === 95 && p2 && p2.ver === 2 && p2.cmd.value === 3 && /letzter Lauf nur 40 min \(Abschaltung über den Vorlauf\)/.test(p2.warum), pt + ' · ' + (p2 && p2.warum));
+      check('Laufzeit strecken v2/v3: letzter Lauf 40 min mit Abschaltung ueber den Vorlauf (Soll +3,25 K) = Takt belegt -> Vorschlag Quiet 0 -> 3 in Minute 95 (Lauf ab 70, 15 min Startphase, 10 min Haltezeit), Begruendung mit Stopp-Art und gemessenem COP der Zielstufe',
+            Rt.S.runs[0][1] === 40 && Rt.S.runs[0][2] === 1 && pt === 95 && p2 && p2.ver === 3 && p2.cmd.value === 3 && p2.von === 0 && /letzter Lauf nur 40 min \(Abschaltung über den Vorlauf\)/.test(p2.warum) && /Quiet 3 gemessen 6,2\d statt 6,\d\d \(Efficiency, 7…11 °C\)/.test(p2.warum), pt + ' · ' + (p2 && p2.warum));
       check('Laufzeit strecken v2: derselbe Lauf endet an der Heizgrenze (Vorlauf unter Soll, wie 10.10. 11:49) = kein Takt -> kein Vorschlag, Grund "kein Takt belegt … Ende ohne Abschaltung über den Vorlauf" (v1 haette hier vorgeschlagen)',
             Rh.S.runs[0][2] === 0 && ph < 0 && /kein Takt belegt: letzter Lauf 40 min \(Ende ohne Abschaltung über den Vorlauf\), 1 Start in 3 h/.test(r0(Rh.outs[100], 'quiet_strecken').grund), r0(Rh.outs[100], 'quiet_strecken').grund);
       const lauf3 = i => { const k = i % 60, on = i >= 120 || k < 40; return on ? inp(T0 + i * MIN, {q: 0, hz: 24, rt: i >= 120 ? i - 120 : k, soll: 30, sollKurve: 29.75, vl: Math.round((28.5 + 0.08 * (i >= 120 ? i - 120 : k)) * 4) / 4, rl: Math.round((26.25 + 0.08 * (i >= 120 ? i - 120 : k)) * 4) / 4, rooms: rooms()}) : inp(T0 + i * MIN, {q: 0, hz: 0, rt: 0, soll: 30, sollKurve: 29.75, vl: 28, rl: 27.5, pump: 1750, rooms: rooms()}); };
-      const Rs = runSeq(170, lauf3), ps = Rs.outs.findIndex(o => r0(o, 'quiet_strecken').neu);
+      const Rs = runSeq(170, lauf3, copSeed()), ps = Rs.outs.findIndex(o => r0(o, 'quiet_strecken').neu);
       check('Laufzeit strecken v2: 2 Starts in 3 h (Laeufe ohne Abschaltung ueber den Vorlauf) = Takt belegt -> Vorschlag', ps === 145 && /2 Starts in 3 h/.test(Rs.outs[ps].prop.warum), ps + ' · ' + (ps >= 0 ? Rs.outs[ps].prop.warum : r0(Rs.outs[160], 'quiet_strecken').grund));
+      // v3 (Nutzerentscheidung 13.10.2026): auch aus Quiet 1/2, Zielstufe aus den Messdaten (COP je Modus x Quiet x Band, je >= 60 min), Rueckweg auf die vorherige Stufe
+      const lauf2q = (i, q) => { const x = lauf2(i, 'thermo'); if (x.hz > 0) { x.q = q; } else { x.q = q; } return x; };
+      { const R2 = runSeq(110, i => lauf2q(i, 2), copSeed()), p = R2.outs.map(o => o.prop).find(x => x && x.rule === 'quiet_strecken' && x.ts === R2.outs.find(o => r0(o, 'quiet_strecken').neu).S.last);
+        const pr = R2.outs.find(o => r0(o, 'quiet_strecken').neu); const pp = pr ? pr.S.rules.quiet_strecken.prop : null;
+        check('Laufzeit strecken v3: aus Quiet 2 (Takt belegt, 24 Hz, Daten fuer Quiet 2 und 3) -> Vorschlag Quiet 2 -> 3, von = 2 (Rueckweg auf die vorherige Stufe)', !!pp && pp.ver === 3 && pp.cmd.value === 3 && pp.von === 2 && /^Quiet-Stufe 2 → 3/.test(pp.was), pp ? pp.was + ' · ' + pp.warum : r0(R2.outs[100], 'quiet_strecken').grund); }
+      { const R3 = runSeq(110, i => lauf2(i, 'thermo'), copSeed(null, {'Efficiency|2|7…11': [1000, 6400, 90, 90 * 17, 17]})), pr = R3.outs.find(o => r0(o, 'quiet_strecken').neu), pp = pr ? pr.S.rules.quiet_strecken.prop : null;
+        check('Laufzeit strecken v3: Quiet 2 mit dem besten COP (6,4 gegen 6,2 bei Quiet 3) -> Zielstufe 2', !!pp && pp.cmd.value === 2 && /Quiet 2 gemessen 6,4\d/.test(pp.warum), pp ? pp.warum : r0(R3.outs[100], 'quiet_strecken').grund); }
+      { const R4 = runSeq(110, i => lauf2(i, 'thermo'), copSeed(null, {'Efficiency|2|7…11': [1000, 6100, 90, 90 * 24, 26], 'Efficiency|3|7…11': [1000, 5000, 120, 120 * 17, 17]}));
+        const g4 = r0(R4.outs[100], 'quiet_strecken').grund;
+        check('Laufzeit strecken v3: Quiet 2 deckelt nicht (bis 26 Hz), Quiet 3 mehr als 3 % schlechter (COP 5,0 gegen 6,0) -> keine Zielstufe, kein Vorschlag, Grund nennt beides', !R4.outs.some(o => r0(o, 'quiet_strecken').neu) && /Quiet 2 deckelt nicht \(bis 26 Hz gemessen\)/.test(g4) && /Quiet 3 COP 5,00 statt 6,\d\d \(mehr als 3 % schlechter\)/.test(g4), g4); }
+      { const S5 = copSeed(); delete S5.takt.copT[E.ymd(T0)]['Efficiency|0|7…11'];
+        const R5 = runSeq(110, i => lauf2(i, 'thermo'), S5), g5 = r0(R5.outs[100], 'quiet_strecken').grund, sc5 = allSc(R5);
+        check('Laufzeit strecken v3: zu wenig Daten fuer die jetzige Stufe (Quiet 0 nur aus den Live-Minuten, 40 < 60) -> kein Vorschlag, Grund "zu wenig Daten für Quiet 0"; kein "verpasst" (ohne Daten keine Zielstufe)', !R5.outs.some(o => r0(o, 'quiet_strecken').neu) && /zu wenig Daten für Quiet 0 \(Efficiency, 7…11 °C: \d+ von 60 min\)/.test(g5) && !sc5.some(x => x.regel === 'quiet_strecken' && /^verpasst/.test(x.typ)), g5 + ' · ' + sc5.filter(x => x.regel === 'quiet_strecken').map(x => x.typ).join(',')); }
+      { const zl = E.strZiel({q: 0, at: 9, hc: 1, tc: E.taktCfg({copMinMin: 200}), copSum: E.copSumme(copSeed().takt, null, T0)}, cfg.rules.quiet_strecken);
+        check('Laufzeit strecken v3: Mindestdaten aus cfg.takt.copMinMin (200 min statt 60) -> keine Zielstufe', zl.ziel === null && /120 von 200 min/.test(zl.warum), zl.warum); }
+      { const Sx = copSeed(); let S = Sx; const outs = [];
+        for (let i = 0; i < 30; i++) { const o = E.step(S, inp(T0 + i * MIN, {q: i < 20 ? 0 : 2, hz: 24, rt: 30 + i, soll: 30, sollKurve: 29.75, vl: 30, rl: 27.5, rooms: rooms()}), cfg); S = o.S; outs.push(o); }
+        const ef = [].concat(...outs.map(o => o.scores)).filter(x => x.regel === 'quiet_strecken' && x.typ === 'wirkung');
+        check('Laufzeit strecken v3: Wirkungsmessung "Deckel" auch bei Quiet 0 -> 2 (nicht nur -> 3), gebucht unter v3', ef.length === 1 && /Quiet 0 → 2 bei 24 Hz/.test(ef[0].text) && ef[0].v === 3, JSON.stringify(ef.map(x => [x.text, x.v]))); }
       const So = E.newState(T0 - MIN); So.runs = [[T0 - 120 * MIN, 40]]; So.lastStop = T0 - 80 * MIN;                // Zustand aus einer aelteren Datei: Lauf ohne Stopp-Art
       const Ro = runSeq(40, i => inp(T0 + i * MIN, {q: 0, hz: 24, rt: 20 + i, soll: 30, sollKurve: 29.75, vl: 30, rl: 27.5, rooms: rooms()}), So);
       check('Laufzeit strecken v2: aelterer Zustand ohne Stopp-Art (Lauf [Beginn, Dauer]) gilt nicht als Takt-Beleg (vorsichtig, kein Vorschlag)', !Ro.outs.some(o => r0(o, 'quiet_strecken').neu) && /kein Takt belegt/.test(r0(Ro.outs[39], 'quiet_strecken').grund), r0(Ro.outs[39], 'quiet_strecken').grund); }
