@@ -2684,9 +2684,14 @@ return out;
 
 # ---------------------------------------------------------------- dashboard
 upsert({"id": UI_TAB, "type": "ui_tab", "name": "Optimierung", "icon": "tune", "order": 12.5, "disabled": False, "hidden": False})
-# Kartenbreite der vier Optimierungs-Seiten (13.10., wie ENG_W der Seite "Optimierer"): alle Karten gleich breit (Masonry-Falle: gemischte Breiten legt das
+# Kartenbreite der Optimierungs-Seiten (13.10., wie ENG_W der Seite "Optimierer"): alle Karten gleich breit (Masonry-Falle: gemischte Breiten legt das
 # Dashboard uebereinander). 17 Einheiten = 912 px: ab ~1840 px Fensterbreite zwei Spalten (1920 und 2560), bei 1024 px eine Spalte ohne waagrechtes Scrollen.
+# Seiten zusammengelegt (13.10., Branch tabs-zusammen): "Optimierung" = Verlaeufe + Raumkarte + Waermefahrplan, "Optimierer" = Entscheidungsmaschine +
+# Quiet-Messwerte, "Daten & Güte" bleibt. Die Tabs "Wärmefahrplan" und "Quiet-Messwerte" bleiben als leere, ausgeblendete Tabs stehen (IDs und Menue-
+# Positionen bleiben, Lesezeichen #!/n zeigen weiter auf dieselbe Stelle; deploy_opt.sh entfernt keine Knoten).
 OPT_W = 17
+ENG_TAB = "opt_eng_ui_tab"                       # Seite "Optimierer" (eigenes Kennzeichen; ui_tab und Karten der Maschine weiter unten)
+ENG_W = 17                                       # Gruppenbreite der Seite "Optimierer" (Begruendung bei ENG_GROUPS); gilt auch fuer die Quiet-Karten dort (keine gemischten Breiten)
 UI_TAB_DATA = "opt_ui_tab_data"
 upsert({"id": UI_TAB_DATA, "type": "ui_tab", "name": "Daten & Güte", "icon": "analytics", "order": 12.75, "disabled": False, "hidden": False})
 GROUPS = [("opt_g_ch_wp", "Wärmepumpe · letzte 24 h", OPT_W, UI_TAB), ("opt_g_ch_rooms", "Räume · letzte 24 h", OPT_W, UI_TAB), ("opt_g_ch_at", "Außentemperatur · letzte 48 h", OPT_W, UI_TAB),
@@ -2700,16 +2705,18 @@ for gid, gname, gwidth, gtab in GROUPS:
     upsert({"id": gid, "type": "ui_group", "name": gname, "tab": gtab, "order": _ord[gtab], "disp": True,
             "width": gwidth, "collapse": False, "className": ""})
 
-# Waermefahrplan auf eigener Seite, zwei gleich breite Karten: Kennzahlen + Diagramm + Details | Stundenuebersicht (bei >= 1920 px nebeneinander)
+# Waermefahrplan auf der Seite "Optimierung" unter den Verlaeufen, zwei gleich breite Karten: Kennzahlen + Diagramm + Details | Stundenuebersicht (bei >= 1920 px
+# nebeneinander); der Tab "Wärmefahrplan" bleibt leer und ausgeblendet
 UI_TAB_PLAN = "opt_ui_tab_plan"
-upsert({"id": UI_TAB_PLAN, "type": "ui_tab", "name": "Wärmefahrplan", "icon": "schedule", "order": 12.6, "disabled": False, "hidden": False})
-upsert({"id": "opt_g_plan", "type": "ui_group", "name": "Wärmefahrplan (Shadow)", "tab": UI_TAB_PLAN, "order": 1, "disp": True, "width": OPT_W, "collapse": False, "className": ""})
-upsert({"id": "opt_g_plan_tab", "type": "ui_group", "name": "Stundenübersicht", "tab": UI_TAB_PLAN, "order": 2, "disp": True, "width": OPT_W, "collapse": False, "className": ""})
-# Quiet-Statistik auf eigener Seite, zwei gleich breite Karten (dieselben Zeilen, Spalten aufgeteilt): Leistung | Temperaturen und Takt
+upsert({"id": UI_TAB_PLAN, "type": "ui_tab", "name": "Wärmefahrplan", "icon": "schedule", "order": 12.6, "disabled": False, "hidden": True})
+upsert({"id": "opt_g_plan", "type": "ui_group", "name": "Wärmefahrplan (Shadow)", "tab": UI_TAB, "order": 5, "disp": True, "width": OPT_W, "collapse": False, "className": ""})
+upsert({"id": "opt_g_plan_tab", "type": "ui_group", "name": "Stundenübersicht", "tab": UI_TAB, "order": 6, "disp": True, "width": OPT_W, "collapse": False, "className": ""})
+# Quiet-Statistik auf der Seite "Optimierer" unter den Karten der Maschine (Messgrundlage der Quiet-Regeln), zwei gleich breite Karten (dieselben Zeilen,
+# Spalten aufgeteilt): Leistung | Temperaturen und Takt; der Tab "Quiet-Messwerte" bleibt leer und ausgeblendet
 UI_TAB_QUIET = "opt_ui_tab_quiet"
-upsert({"id": UI_TAB_QUIET, "type": "ui_tab", "name": "Quiet-Messwerte", "icon": "equalizer", "order": 12.7, "disabled": False, "hidden": False})
-upsert({"id": "opt_g_qstats", "type": "ui_group", "name": "Quiet-Stufen: Leistung", "tab": UI_TAB_QUIET, "order": 1, "disp": True, "width": OPT_W, "collapse": False, "className": ""})
-upsert({"id": "opt_g_qstats2", "type": "ui_group", "name": "Quiet-Stufen: Temperaturen und Takt", "tab": UI_TAB_QUIET, "order": 2, "disp": True, "width": OPT_W, "collapse": False, "className": ""})
+upsert({"id": UI_TAB_QUIET, "type": "ui_tab", "name": "Quiet-Messwerte", "icon": "equalizer", "order": 12.7, "disabled": False, "hidden": True})
+upsert({"id": "opt_g_qstats", "type": "ui_group", "name": "Quiet-Stufen: Leistung", "tab": ENG_TAB, "order": 6, "disp": True, "width": ENG_W, "collapse": False, "className": ""})
+upsert({"id": "opt_g_qstats2", "type": "ui_group", "name": "Quiet-Stufen: Temperaturen und Takt", "tab": ENG_TAB, "order": 7, "disp": True, "width": ENG_W, "collapse": False, "className": ""})
 
 # The dashboard measures "automatic" card heights only once, before the first data arrives, so such cards stay collapsed.
 # Every card therefore starts with a static height and fits itself to its content (marked .optfit): it sets the card size
@@ -2749,7 +2756,7 @@ FIT_JS = """<script>
 })();
 </script>"""
 
-# Statuskarten (Seite "Daten & Güte", 17 breit): Bezeichnung/Wert-Paare in zwei Spalten (CSS-Spalten, von oben nach unten gelesen), lange Werte brechen in ihrer Spalte um
+# Statuskarten (Seite "Daten & Güte", 17 breit, unveraendert eigene Seite): Bezeichnung/Wert-Paare in zwei Spalten (CSS-Spalten, von oben nach unten gelesen), lange Werte brechen in ihrer Spalte um
 TABLE = ('<style>.optkv{column-count:2;column-gap:28px}'
          ' .optkv .kv{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:3px 2px;border-bottom:1px solid rgba(128,128,128,.18);break-inside:avoid;page-break-inside:avoid}'
          ' .optkv .l{color:#666;flex:0 1 auto;min-width:0} .optkv .v{text-align:right;font-weight:bold;flex:0 1 auto;min-width:0;overflow-wrap:anywhere}'
@@ -3367,13 +3374,13 @@ var refresh = (t !== 'tick' || r.log.length) ? {topic: 'anzeige'} : null;
 return [out1.length ? out1 : null, toast, files.length ? files : null, refresh];
 """
 
-ENG_TAB = "opt_eng_ui_tab"                       # eigene Seite "Optimierer" (eigenes Kennzeichen, die Seitenpruefung der anderen vier Seiten bleibt unberuehrt)
+# Seite "Optimierer" (ENG_TAB oben bei OPT_W definiert): fuenf Karten der Maschine (Gruppen-Reihenfolge 1-5), darunter die beiden Quiet-Statistik-Karten (6, 7)
 upsert({"id": ENG_TAB, "type": "ui_tab", "name": "Optimierer", "icon": "lightbulb_outline", "order": 12.55, "disabled": False, "hidden": False})
 # Gruppenbreite (13.10.): alle Karten gleich breit (Masonry-Falle). 17 Einheiten = 912 px: ab ~1840 px Fensterbreite zwei Spalten (1920 und 2560),
 # bei 1024 px eine Spalte ohne waagrechtes Scrollen (Inhalt ~1007 px). Breiter als 18 (966 px) scrollt bei 1024 waagrecht; 16 und schmaler schneidet
 # die fuenf Kacheln je Zeile (Kachelnamen bis 17 Zeichen). Die Karte "Aktueller Vorschlag" ist immer hoeher als "Regeln" (Mindesthoehe ohne Vorschlag),
-# damit die Masonry die Karten mit und ohne Vorschlag gleich anordnet: links Vorschlag, Messwerte; rechts Regeln, Punkte, Entscheidungen.
-ENG_W = 17
+# damit die Masonry die Karten mit und ohne Vorschlag gleich anordnet: links Vorschlag, Messwerte; rechts Regeln, Punkte, Entscheidungen. Die beiden
+# Quiet-Karten (gleich hoch) folgen danach und fuellen je eine Spalte nach unten auf; sie aendern die Anordnung der fuenf Karten nicht. ENG_W steht oben bei OPT_W.
 # [Gruppe, Titel, Vorlage, Art, Starthoehe in Einheiten (passt ohne Einpassen fuer den ueblichen Inhalt, statische Vorschau 13.10.), y im Editor]
 ENG_GROUPS = (("opt_g_eng_prop", "Aktueller Vorschlag", "opt_t_eng_prop", "card", 4, 2060), ("opt_g_eng_rules", "Regeln", "opt_t_eng_rules", "rules", 3, 2100),
               ("opt_g_eng_score", "Punkte", "opt_t_eng_score", "score", 9, 2140), ("opt_g_eng_mess", "Messwerte & Lernen", "opt_t_eng_mess", "mess", 10, 2160),
