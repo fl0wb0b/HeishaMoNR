@@ -137,7 +137,7 @@ function page(snaps, opt) {
             '<div class="crd" data-k="' + g[0] + '" data-u="' + g[2] + '"><div class="optfit">' + staticCard(g[0], snaps[k][g[0]], cw) + '</div></div></div>').join('') + '</div>').join('') +
         '<script>' + CHECK_JS + '</script></body></html>';
 }
-module.exports = {snapshots: snapshots, coldScenario: coldScenario, staticCard: staticCard, page: page, GROUPS: GROUPS, PLAN_BSP: PLAN_BSP, GRUPPE_W: GRUPPE_W};
+module.exports = {snapshots: snapshots, coldScenario: coldScenario, staticCard: staticCard, page: page, GROUPS: GROUPS, PLAN_BSP: PLAN_BSP, GRUPPE_W: GRUPPE_W, CHECK_JS: CHECK_JS, PAD: PAD};
 if (require.main === module) {
     const dataDir = process.argv[2] || path.join(__dirname, '..', '..', 'engine_brief', 'data');
     const outFile = process.argv[3] || path.join(__dirname, '..', '..', 'engine_work', 'optimierer_vorschau.html');

@@ -34,10 +34,24 @@ const otherOut = n => n.z === 'opt_tab' && n.type === 'mqtt out' && n.id !== APP
 const gfile = {};                                                              // Speicher "file" (HeishaMoNR legt dort Anlagenwerte ab); normalerweise leer -> Rueckfall auf den Standardspeicher
 function makeCtx(store, fileStore) { return { get: (k, s) => (s === 'file' ? (fileStore ? fileStore[k] : undefined) : store[k]), set: (k, v) => { store[k] = v; } }; }
 const compiled = {};
+// Fuer die statische Vorschau der Optimierungs-Seiten (tools/opt_seiten_vorschau.js): OPT_UI_DUMP=<datei> sammelt je Dashboard-Vorlage (opt_t_*) die groesste
+// Nachricht aus dem ganzen Lauf (schlimmster Fall fuer das Layout) und schreibt sie am Ende zusammen mit OPT_cfg in die Datei. Aendert keine Pruefung.
+const UI_DUMP = process.env.OPT_UI_DUMP ? {} : null, WIRES = {};
+ALLNODES.forEach(n => { if (n.id.startsWith('opt_') && n.wires) { WIRES[n.id] = n.wires; } });
+function uiDump(id, ret) {
+  if (!ret || !WIRES[id]) { return; }
+  (Array.isArray(ret) ? ret : [ret]).forEach((m, i) => {
+    if (!m || Array.isArray(m) || typeof m !== 'object') { return; }
+    (WIRES[id][i] || []).forEach(t => { if (!/^opt_t_/.test(t)) { return; } const s = JSON.stringify(m), c = UI_DUMP[t]; if (!c || s.length >= c.len) { UI_DUMP[t] = {len: s.length, msg: JSON.parse(s)}; } });
+  });
+}
+if (UI_DUMP) { process.on('exit', () => { fs.writeFileSync(process.env.OPT_UI_DUMP, JSON.stringify({msgs: UI_DUMP, cfg: gstore.OPT_cfg || null})); }); }
 function run(id, msg) {
   if (!compiled[id]) { compiled[id] = vm.runInNewContext(`(function(msg,global,flow,context,env,node,fs,Date,Buffer){${F[id]}\n})`, {}); }
   const node = { send: m => sent.push({id, m}), warn: () => {}, error: () => {}, status: () => {} };
-  return compiled[id](msg, makeCtx(gstore, gfile), makeCtx(fstore), makeCtx({}), { get: k => envv[k] }, node, fsMock, FakeDate, Buffer);
+  const ret = compiled[id](msg, makeCtx(gstore, gfile), makeCtx(fstore), makeCtx({}), { get: k => envv[k] }, node, fsMock, FakeDate, Buffer);
+  if (UI_DUMP) { uiDump(id, ret); }
+  return ret;
 }
 const set = (k, v) => { gstore[k] = v; };
 // Panasonic-Werte (wie live)
@@ -315,7 +329,7 @@ setv('room:ki_oben:min', 22.0); setv('room:ki_oben:weight', 1.5); setv('room:ki_
 // Aufbau der Seite: eine Raumkarte, die Eingaben gehen an opt_set; keine Einzelfelder mehr
 const flowsAll = JSON.parse(fs.readFileSync(flowsFile, 'utf8')), nodeBy = {}; flowsAll.forEach(n => { nodeBy[n.id] = n; });
 const card = nodeBy['opt_t_rooms'], html = card.format;
-check('Raumkarte: eigene Gruppe (breit), volle Gruppenbreite, feste Starthoehe, Eingaben gehen an opt_set', card.type === 'ui_template' && card.group === 'opt_g_rooms' && nodeBy['opt_g_rooms'].width === 18 && card.width === 0 && card.height === 15 && card.templateScope === 'local' && JSON.stringify(card.wires) === '[["opt_set"]]', JSON.stringify(card.wires));
+check('Raumkarte: eigene Gruppe (17 breit wie alle Karten der Optimierungs-Seiten), volle Gruppenbreite, feste Starthoehe, Eingaben gehen an opt_set', card.type === 'ui_template' && card.group === 'opt_g_rooms' && nodeBy['opt_g_rooms'].width === 17 && card.width === 0 && card.height === 7 && card.templateScope === 'local' && JSON.stringify(card.wires) === '[["opt_set"]]', JSON.stringify(card.wires));
 check('Karten: volle Gruppenbreite, feste Starthoehe und Einpass-Skript mit der eigenen Kennung', ['opt_t_rooms', 'opt_t_wx', 'opt_t_wp', 'opt_t_opt'].every(id => nodeBy[id].width === 0 && nodeBy[id].height > 0 && nodeBy[id].format.includes("var id = '" + id + "'") && nodeBy[id].format.includes('class="optfit"') + nodeBy[id].format.includes('optr optfit') === 1), ['opt_t_rooms', 'opt_t_wx', 'opt_t_wp', 'opt_t_opt'].map(id => nodeBy[id].height).join('/'));
 check('Eingabefelder der Karte haben dieselben Grenzen wie die Pruefung', html.includes('min="10" max="30" step="0.5"') && html.includes('min="12" max="35" step="0.5"') && html.includes('min="0.1" max="5" step="0.1"') && html.includes('min="5" max="720" step="5"'), '');
 const tag = (re) => (html.match(re) || []).length;
@@ -1142,7 +1156,7 @@ check('Eingaenge: ohne Speicher "file" (Normalfall auf der NAS) gilt der Standar
 // 16) Sicherheit (strukturell): kein Sendeweg aus dem Optimierer-Tab, die Quiet-Funktion ruft nie node.send auf, ihre Ausgaenge gehen nur an Anzeige und Dateien
 {
   const nodes = JSON.parse(fs.readFileSync(flowsFile, 'utf8')), tabN = nodes.filter(n => n.z === 'opt_tab'), qf = nodes.find(n => n.id === 'opt_quiet'), hpf = nodes.find(n => n.id === 'opt_hp_in');
-  const allowedQ = new Set(['opt_t_quiet', 'opt_t_qstats', 'opt_f_quiet', 'opt_f_qev', 'opt_f_def']);
+  const allowedQ = new Set(['opt_t_quiet', 'opt_t_qstats', 'opt_t_qstats2', 'opt_f_quiet', 'opt_f_qev', 'opt_f_def']);
   check('Sicherheit: im Tab "WP Optimizer" gibt es keinen mqtt-out-, link-in/out- oder http-in-Knoten, der etwas an die Waermepumpe tragen koennte (nur http request fuer OWM)', tabN.every(n => n.id === APPLY_OUT || !['mqtt out', 'link out', 'link in', 'link call', 'http in', 'http response'].includes(n.type)), tabN.filter(n => n.id !== APPLY_OUT && ['mqtt out', 'link out', 'link in', 'link call'].includes(n.type)).map(n => n.id).join(','));
   check('Sicherheit: opt_quiet und opt_hp_in rufen nirgends node.send auf; alle Ausgaenge von opt_quiet gehen nur an Anzeige-Vorlagen und Datei-Knoten', !/node\.send\s*\(/.test(qf.func) && !/node\.send\s*\(/.test(hpf.func) && qf.wires.every(w => w.every(id => allowedQ.has(id))), JSON.stringify(qf.wires));
 }
@@ -1633,7 +1647,7 @@ check('Gesamtweg: Batterie-SoC wird angezeigt, aber nichts daraus entschieden', 
 // ---- 10) Sicherheit: nur Anzeige und Protokoll
 const flp = JSON.parse(fs.readFileSync(flowsFile, 'utf8'));
 const pn_ = flp.find(n => n.id === 'opt_plan');
-check('Sicherheit: der Plan hat nur Ausgaenge zur Anzeige und zu Protokolldateien, kein MQTT, nichts zur Waermepumpe', pn_.wires.flat().every(id => ['opt_t_plan', 'opt_f_pact', 'opt_f_peval', 'opt_f_psnap'].includes(id)) && !flp.some(otherOut) && !/SetQuietMode|SetOperationMode|node\.send/.test(pn_.func), pn_.wires.flat().join());
+check('Sicherheit: der Plan hat nur Ausgaenge zur Anzeige und zu Protokolldateien, kein MQTT, nichts zur Waermepumpe', pn_.wires.flat().every(id => ['opt_t_plan', 'opt_t_plan_tab', 'opt_f_pact', 'opt_f_peval', 'opt_f_psnap'].includes(id)) && !flp.some(otherOut) && !/SetQuietMode|SetOperationMode|node\.send/.test(pn_.func), pn_.wires.flat().join());
 const nonOptPlan = Object.keys(gstore).filter(k => !k.startsWith('OPT_') && JSON.stringify(gstore[k]) !== JSON.stringify(({Z1_Heat_Curve_Outside_Low_Temp: -13, Z1_Heat_Curve_Outside_High_Temp: 11, Z1_Heat_Curve_Target_Low_Temp: 29, Z1_Heat_Curve_Target_High_Temp: 38, compressor_frequency: 0, TOP26_Defrosting_State: 0, TOP20_ThreeWay_Valve_State: 0})[k]) && k !== 'TOP14_Outside_Temp');
 check('Sicherheit: der Plan schreibt nur OPT_*-Werte (Heizkurve, Quiet und Warmwasser bleiben unberuehrt)', nonOptPlan.length === 0, nonOptPlan.join());
 check('Dateien: Ist, Vergleich, Schnappschuesse und Zustand unter /data/optimizer, Plan-Zustand ohne Zugangsdaten', !/token|appid|key/i.test(files['/data/optimizer/plan-state.json'].data), Object.keys(files).filter(k => /plan/.test(k)).join());
@@ -1678,7 +1692,7 @@ check('Dateien: Ist, Vergleich, Schnappschuesse und Zustand unter /data/optimize
   check('Deploy-Sicherheit: ein Tag, der vor dem Deploy begann (nur ein Teil der Minuten mit neuen Summen), schliesst mit null fuer s/wk/khW/wkW und die Totzonen-Summen wkT/wkWT, hdd/q/n bleiben gueltig', fstore.plan.learn.days.length === 2 && dayD.length === 21 && dayD[4] === null && dayD[5] === null && dayD[6] === null && dayD[7] === null && dayD[13] === null && dayD[14] === null && dayD[15] === null && dayD[1] > 100 && dayD[3] >= 1200, JSON.stringify(dayD));
   // Sicherheit: Ausgaenge unveraendert
   const planNode = JSON.parse(fs.readFileSync(flowsFile, 'utf8')).find(n => n.id === 'opt_plan');
-  check('Sicherheit (Flow-Datei): opt_plan hat dieselben 5 Ausgaenge (Karte, Ist, Vergleich, Schnappschuss, frei), kein node.send im Code', JSON.stringify(planNode.wires) === JSON.stringify([['opt_t_plan'], ['opt_f_pact'], ['opt_f_peval'], ['opt_f_psnap'], []]) && !/node\.send\s*\(/.test(planNode.func), JSON.stringify(planNode.wires));
+  check('Sicherheit (Flow-Datei): opt_plan hat dieselben 5 Ausgaenge (Karten Plan + Stundenuebersicht, Ist, Vergleich, Schnappschuss, frei), kein node.send im Code', JSON.stringify(planNode.wires) === JSON.stringify([['opt_t_plan', 'opt_t_plan_tab'], ['opt_f_pact'], ['opt_f_peval'], ['opt_f_psnap'], []]) && !/node\.send\s*\(/.test(planNode.func), JSON.stringify(planNode.wires));
 }
 
 // ---- S2) Fahrplan v2: Rueckrechnung und Regression (nur berechnen und anzeigen)
@@ -1980,10 +1994,13 @@ check('Dateien: Ist, Vergleich, Schnappschuesse und Zustand unter /data/optimize
     check('Plan-Karte: ohne Wetterprognose keine Diagramm- und Kennzahlendaten (chart null, kpi leer), Statuszeilen bleiben', pn.chart === null && pn.kpi.length === 0 && pn.rows.length >= 1, JSON.stringify(pn.rows[0])); }
   // Seiten und Karten (Flow-Datei)
   { const tabs = flowsAll.filter(n => n.type === 'ui_tab' && /^opt_ui_tab/.test(n.id)), grp = flowsAll.filter(n => n.type === 'ui_group' && /^opt_g_/.test(n.id)), onTab = id => grp.filter(g => g.tab === id);
-    check('Seiten: "Optimierung" hat nur breite Gruppen (3 Diagramme + Raumtabelle, alle 18 breit), "Daten & Güte" nur die sieben schmalen Statuskarten (6 breit): kein Mischen der Breiten (Masonry-Falle)', onTab('opt_ui_tab').length === 4 && onTab('opt_ui_tab').every(g => g.width === 18) && onTab('opt_ui_tab_data').length === 7 && onTab('opt_ui_tab_data').every(g => g.width === 6) && tabs.length === 4, JSON.stringify(tabs.map(t => [t.name, t.order])));
+    check('Seiten (13.10. kompakt): alle Karten der vier Optimierungs-Seiten 17 breit (zwei Spalten ab ~1840 px, eine bei 1024 ohne waagrechtes Scrollen; kein Mischen der Breiten = Masonry-Falle): Optimierung 3 Diagramme + Raumkarte, Wärmefahrplan Plan + Stundenübersicht, Quiet-Messwerte zwei Statistik-Karten, Daten & Güte sieben Statuskarten', onTab('opt_ui_tab').length === 4 && onTab('opt_ui_tab_plan').map(g => g.id).join() === 'opt_g_plan,opt_g_plan_tab' && onTab('opt_ui_tab_quiet').map(g => g.id).join() === 'opt_g_qstats,opt_g_qstats2' && onTab('opt_ui_tab_data').length === 7 && grp.filter(g => /^opt_ui_tab/.test(g.tab)).every(g => g.width === 17) && tabs.length === 4, JSON.stringify(grp.filter(g => /^opt_ui_tab/.test(g.tab)).map(g => g.id + ':' + g.width)));
+    { const q1 = NB('opt_t_qstats').format, q2 = NB('opt_t_qstats2').format, cols = f => (/c in \[([\d,]+)\]/.exec(f) || [0, ''])[1].split(',').map(Number), ths = f => (f.match(/<th>/g) || []).length, a = cols(q1), b = cols(q2);
+      check('Quiet-Statistik: zwei Karten mit denselben Zeilen, Spalten aufgeteilt (Stufe/Außen in beiden, die übrigen 15 Kennzahlen genau einmal), je Spalte eine Überschrift; beide hängen am Ausgang 2 von opt_quiet', a[0] === 0 && a[1] === 1 && b[0] === 0 && b[1] === 1 && a.slice(2).concat(b.slice(2)).sort((x, y) => x - y).join() === '2,3,4,5,6,7,8,9,10,11,12,13,14,15,16' && ths(q1) === a.length && ths(q2) === b.length && JSON.stringify(NB('opt_quiet').wires[1]) === '["opt_t_qstats","opt_t_qstats2"]' && q1.includes('msg.payload.stats') && q2.includes('msg.payload.stats'), a.join() + ' | ' + b.join()); }
+    check('Statuskarten: Bezeichnung/Wert-Paare in zwei Spalten (CSS-Spalten), Quiet-Karte mit einzeiliger Ereignisliste; keine erklärenden Hinweiszeilen in den Vorlagen der Optimierungs-Seiten (Erklärungen nur als Tooltip)', ['opt_t_opt', 'opt_t_wx', 'opt_t_calc', 'opt_t_quiet', 'opt_t_en', 'opt_t_fq', 'opt_t_wp'].every(id => NB(id).format.includes('column-count:2') && NB(id).format.includes('class="optkv"')) && NB('opt_t_quiet').format.includes('class="optev"') && flowsAll.filter(n => n.type === 'ui_template' && /^opt_t_/.test(n.id) && grp.some(g => g.id === n.group && /^opt_ui_tab/.test(g.tab))).every(n => !/class="(note|optq-note)"/.test(n.format)) && /title="Regeln: 1\./.test(NB('opt_t_rooms').format), '');
     check('Seiten: Reihenfolge der Seiten Optimierung (12,5) < Wärmefahrplan (12,6) < Quiet-Messwerte (12,7) < Daten & Güte (12,75) < SYSTEM (13); die bisherigen Seitennummern 12, 13, 14 bleiben', (() => { const o = n => tabs.find(t => t.name === n).order; return o('Optimierung') < o('Wärmefahrplan') && o('Wärmefahrplan') < o('Quiet-Messwerte') && o('Quiet-Messwerte') < o('Daten & Güte') && o('Daten & Güte') < 13; })(), '');
     check('Karten: jede Vorlage der Optimierungs-Seiten gehoert zu einer vorhandenen Gruppe; Diagrammkarten haben ein eigenes Element (optch_wp/rooms/at/plan), zeichnen mit optChart.mount, nehmen die Hoehe ueber .optfit', ['wp', 'rooms', 'at'].every(k => { const n = NB('opt_t_ch_' + k); return n && grp.some(g => g.id === n.group) && n.format.includes('id="optch_' + k + '"') && n.format.includes('optChart.mount') && n.format.includes('class="optfit"'); }) && NB('opt_t_plan').format.includes('id="optch_plan"') && NB('opt_t_plan').format.includes('optChart.mount'), '');
-    check('Karten: in den Skriptteilen kein Angular-Platzhalter ({{ }}), die Diagrammskripte stehen nach dem sichtbaren Teil; Plan-Karte hat Kachelraster, Stundenuebersicht und einklappbare Details', ['opt_t_ch_wp', 'opt_t_ch_rooms', 'opt_t_ch_at', 'opt_t_plan'].every(id => { const f = NB(id).format, sc = f.slice(f.indexOf('<script>')); return !/\{\{/.test(sc); }) && /class="kpi"/.test(NB('opt_t_plan').format) && /Stundenübersicht/.test(NB('opt_t_plan').format) && /plOpen/.test(NB('opt_t_plan').format), '');
+    check('Karten: in den Skriptteilen kein Angular-Platzhalter ({{ }}), die Diagrammskripte stehen nach dem sichtbaren Teil; Plan-Karte hat Kachelraster und einklappbare Details, die Stundenübersicht ist eine eigene Karte (13 Spalten, dieselbe Nachricht)', ['opt_t_ch_wp', 'opt_t_ch_rooms', 'opt_t_ch_at', 'opt_t_plan'].every(id => { const f = NB(id).format, sc = f.slice(f.indexOf('<script>')); return !/\{\{/.test(sc); }) && /class="kpi"/.test(NB('opt_t_plan').format) && /plOpen/.test(NB('opt_t_plan').format) && !/msg\.payload\.plan/.test(NB('opt_t_plan').format) && /msg\.payload\.plan/.test(NB('opt_t_plan_tab').format) && (NB('opt_t_plan_tab').format.match(/<th>/g) || []).length === 13 && NB('opt_t_plan_tab').group === 'opt_g_plan_tab', '');
     check('Sicherheit: opt_hist liest nur (fs, kein mqtt/Link), sein Ausgaenge gehen an die drei Diagrammkarten, die Inject-Vorlage laeuft alle 300 s', JSON.stringify(NB('opt_hist').wires) === JSON.stringify([['opt_t_ch_wp'], ['opt_t_ch_rooms'], ['opt_t_ch_at']]) && NB('opt_i_hist').repeat === '300', ''); }
 }
 

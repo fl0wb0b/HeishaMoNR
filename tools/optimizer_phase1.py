@@ -2684,27 +2684,32 @@ return out;
 
 # ---------------------------------------------------------------- dashboard
 upsert({"id": UI_TAB, "type": "ui_tab", "name": "Optimierung", "icon": "tune", "order": 12.5, "disabled": False, "hidden": False})
-# Seite "Optimierung": nur breite Karten (Diagramme + Raumtabelle); die schmalen Statuskarten liegen auf der Seite "Daten & Güte" (der Masonry-Algorithmus legt gemischte Breiten uebereinander)
+# Kartenbreite der vier Optimierungs-Seiten (13.10., wie ENG_W der Seite "Optimierer"): alle Karten gleich breit (Masonry-Falle: gemischte Breiten legt das
+# Dashboard uebereinander). 17 Einheiten = 912 px: ab ~1840 px Fensterbreite zwei Spalten (1920 und 2560), bei 1024 px eine Spalte ohne waagrechtes Scrollen.
+OPT_W = 17
 UI_TAB_DATA = "opt_ui_tab_data"
 upsert({"id": UI_TAB_DATA, "type": "ui_tab", "name": "Daten & Güte", "icon": "analytics", "order": 12.75, "disabled": False, "hidden": False})
-GROUPS = [("opt_g_ch_wp", "Wärmepumpe · letzte 24 h", 18, UI_TAB), ("opt_g_ch_rooms", "Räume · letzte 24 h", 18, UI_TAB), ("opt_g_ch_at", "Außentemperatur · letzte 48 h", 18, UI_TAB), ("opt_g_rooms", "Räume und Komfortbänder", 18, UI_TAB),
-          ("opt_g_opt", "Optimierung", 6, UI_TAB_DATA),
-          ("opt_g_wx", "Außen & Wetter", 6, UI_TAB_DATA), ("opt_g_calc", "Berechnete Außentemperatur", 6, UI_TAB_DATA), ("opt_g_quiet", "Leistung & Quiet (Shadow)", 6, UI_TAB_DATA), ("opt_g_en", "Energie & Preise (nur Anzeige)", 6, UI_TAB_DATA),
-          ("opt_g_fq", "Prognosegüte (nur Anzeige)", 6, UI_TAB_DATA), ("opt_g_wp", "Wärmepumpe", 6, UI_TAB_DATA)]
+GROUPS = [("opt_g_ch_wp", "Wärmepumpe · letzte 24 h", OPT_W, UI_TAB), ("opt_g_ch_rooms", "Räume · letzte 24 h", OPT_W, UI_TAB), ("opt_g_ch_at", "Außentemperatur · letzte 48 h", OPT_W, UI_TAB),
+          ("opt_g_rooms", "Räume und Komfortbänder", OPT_W, UI_TAB),
+          ("opt_g_opt", "Optimierung", OPT_W, UI_TAB_DATA),
+          ("opt_g_wx", "Außen & Wetter", OPT_W, UI_TAB_DATA), ("opt_g_calc", "Berechnete Außentemperatur", OPT_W, UI_TAB_DATA), ("opt_g_quiet", "Leistung & Quiet (Shadow)", OPT_W, UI_TAB_DATA), ("opt_g_en", "Energie & Preise (nur Anzeige)", OPT_W, UI_TAB_DATA),
+          ("opt_g_fq", "Prognosegüte (nur Anzeige)", OPT_W, UI_TAB_DATA), ("opt_g_wp", "Wärmepumpe", OPT_W, UI_TAB_DATA)]
 _ord = {}
 for gid, gname, gwidth, gtab in GROUPS:
     _ord[gtab] = _ord.get(gtab, 0) + 1
     upsert({"id": gid, "type": "ui_group", "name": gname, "tab": gtab, "order": _ord[gtab], "disp": True,
             "width": gwidth, "collapse": False, "className": ""})
 
-# The heat plan gets its own dashboard page: the dashboard's masonry layout places cards of mixed widths (6/12/18) on top of each other.
+# Waermefahrplan auf eigener Seite, zwei gleich breite Karten: Kennzahlen + Diagramm + Details | Stundenuebersicht (bei >= 1920 px nebeneinander)
 UI_TAB_PLAN = "opt_ui_tab_plan"
 upsert({"id": UI_TAB_PLAN, "type": "ui_tab", "name": "Wärmefahrplan", "icon": "schedule", "order": 12.6, "disabled": False, "hidden": False})
-upsert({"id": "opt_g_plan", "type": "ui_group", "name": "Wärmefahrplan (Shadow)", "tab": UI_TAB_PLAN, "order": 1, "disp": True, "width": 18, "collapse": False, "className": ""})
-# same for the Quiet statistics (12 wide table next to tall 6 wide cards was laid out on top of them)
+upsert({"id": "opt_g_plan", "type": "ui_group", "name": "Wärmefahrplan (Shadow)", "tab": UI_TAB_PLAN, "order": 1, "disp": True, "width": OPT_W, "collapse": False, "className": ""})
+upsert({"id": "opt_g_plan_tab", "type": "ui_group", "name": "Stundenübersicht", "tab": UI_TAB_PLAN, "order": 2, "disp": True, "width": OPT_W, "collapse": False, "className": ""})
+# Quiet-Statistik auf eigener Seite, zwei gleich breite Karten (dieselben Zeilen, Spalten aufgeteilt): Leistung | Temperaturen und Takt
 UI_TAB_QUIET = "opt_ui_tab_quiet"
 upsert({"id": UI_TAB_QUIET, "type": "ui_tab", "name": "Quiet-Messwerte", "icon": "equalizer", "order": 12.7, "disabled": False, "hidden": False})
-upsert({"id": "opt_g_qstats", "type": "ui_group", "name": "Quiet-Stufen: reale Messwerte", "tab": UI_TAB_QUIET, "order": 1, "disp": True, "width": 18, "collapse": False, "className": ""})
+upsert({"id": "opt_g_qstats", "type": "ui_group", "name": "Quiet-Stufen: Leistung", "tab": UI_TAB_QUIET, "order": 1, "disp": True, "width": OPT_W, "collapse": False, "className": ""})
+upsert({"id": "opt_g_qstats2", "type": "ui_group", "name": "Quiet-Stufen: Temperaturen und Takt", "tab": UI_TAB_QUIET, "order": 2, "disp": True, "width": OPT_W, "collapse": False, "className": ""})
 
 # The dashboard measures "automatic" card heights only once, before the first data arrives, so such cards stay collapsed.
 # Every card therefore starts with a static height and fits itself to its content (marked .optfit): it sets the card size
@@ -2744,43 +2749,58 @@ FIT_JS = """<script>
 })();
 </script>"""
 
-TABLE = ('<style>.opt td{padding:3px 4px;vertical-align:top} .opt .l{color:#666} .opt .v{text-align:right;font-weight:bold}'
-         ' .opt .warn{color:#c62828} .opt .ok{color:#2e7d32}</style>'
-         '<div class="optfit"><table class="opt" style="width:100%"><tr ng-repeat="r in msg.payload.rows track by $index">'
-         '<td class="l">{{r[0]}}</td><td class="v" ng-class="r[2]">{{r[1]}}</td></tr></table></div>')
+# Statuskarten (Seite "Daten & Güte", 17 breit): Bezeichnung/Wert-Paare in zwei Spalten (CSS-Spalten, von oben nach unten gelesen), lange Werte brechen in ihrer Spalte um
+TABLE = ('<style>.optkv{column-count:2;column-gap:28px}'
+         ' .optkv .kv{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:3px 2px;border-bottom:1px solid rgba(128,128,128,.18);break-inside:avoid;page-break-inside:avoid}'
+         ' .optkv .l{color:#666;flex:0 1 auto;min-width:0} .optkv .v{text-align:right;font-weight:bold;flex:0 1 auto;min-width:0;overflow-wrap:anywhere}'
+         ' .optkv .warn{color:#c62828} .optkv .ok{color:#2e7d32}</style>'
+         '<div class="optfit"><div class="optkv"><div class="kv" ng-repeat="r in msg.payload.rows track by $index">'
+         '<span class="l">{{r[0]}}</span><span class="v" ng-class="r[2]">{{r[1]}}</span></div></div></div>')
 
 
 def template(i, gid, height, y):
-    """Status card: label/value rows; full group width, static start height (units), fits itself to the content."""
+    """Status card: label/value pairs in two columns; full group width, static start height (units), fits itself to the content."""
     return {"id": i, "type": "ui_template", "z": TAB, "group": gid, "name": "", "order": 1, "width": 0,
             "height": height, "format": TABLE + FIT_JS.replace("__ID__", i), "storeOutMessages": True,
             "fwdInMessages": False, "resendOnRefresh": True, "templateScope": "local", "className": "",
             "x": 1260, "y": y, "wires": [[]]}
 
 
-upsert(template("opt_t_opt", "opt_g_opt", 6, 140))
-upsert(template("opt_t_wx", "opt_g_wx", 7, 200))
-upsert(template("opt_t_calc", "opt_g_calc", 8, 230))
-_qt = template("opt_t_quiet", "opt_g_quiet", 22, 290)
-_qt["format"] = (TABLE.replace('</table></div>', '</table>'
-                 '<div class="opt" ng-if="msg.payload.events && msg.payload.events.length" style="margin-top:10px"><div class="l" style="padding:3px 4px;font-size:12px">Letzte Ereignisse</div>'
-                 '<div ng-repeat="e in msg.payload.events track by $index" style="padding:3px 4px;border-top:1px solid #eee"><span class="l">{{e[0]}}</span> '
-                 '<span ng-class="e[3]" style="font-weight:bold">{{e[1]}}</span><div class="l" style="white-space:normal;word-break:break-word">{{e[2]}}</div></div></div></div>') + FIT_JS.replace("__ID__", "opt_t_quiet"))
+upsert(template("opt_t_opt", "opt_g_opt", 3, 140))
+upsert(template("opt_t_wx", "opt_g_wx", 4, 200))
+upsert(template("opt_t_calc", "opt_g_calc", 3, 230))
+_qt = template("opt_t_quiet", "opt_g_quiet", 12, 290)
+# Quiet-Karte: Paare in zwei Spalten, darunter "Letzte Ereignisse" als einzeilige Liste (Zeit · Ereignis · Text)
+_qt["format"] = ('<style>.optev{margin-top:8px;font-size:13px}.optev .evh{color:#666;font-size:12px;padding:2px}'
+                 '.optev .ev{display:grid;grid-template-columns:84px 170px minmax(0,1fr);column-gap:10px;padding:2px;border-top:1px solid rgba(128,128,128,.18)}'
+                 '.optev .t{color:#666;white-space:nowrap}.optev .n{font-weight:bold}.optev .x{color:#666;overflow-wrap:anywhere}.optev .warn{color:#c62828}.optev .ok{color:#2e7d32}</style>'
+                 + TABLE.replace('</div></div></div>', '</div></div>'
+                 '<div class="optev" ng-if="msg.payload.events && msg.payload.events.length"><div class="evh">Letzte Ereignisse</div>'
+                 '<div class="ev" ng-repeat="e in msg.payload.events track by $index"><span class="t">{{e[0]}}</span>'
+                 '<span class="n" ng-class="e[3]">{{e[1]}}</span><span class="x">{{e[2]}}</span></div></div></div>') + FIT_JS.replace("__ID__", "opt_t_quiet"))
 upsert(_qt)
-upsert(template("opt_t_en", "opt_g_en", 14, 350))
-upsert(template("opt_t_fq", "opt_g_fq", 12, 400))
-QSTATS = """<style>.optq{width:100%;border-collapse:collapse;font-size:13px}
-.optq th{text-align:left;font-weight:normal;color:#666;padding:4px 4px;border-bottom:1px solid #ccc;font-size:12px}
-.optq td{padding:5px 4px;border-bottom:1px solid #eee;white-space:nowrap}
-.optq-note{font-size:12px;color:#777;padding:6px 2px}</style>
-<div class="optfit"><div style="overflow-x:auto"><table class="optq"><tr><th>Stufe</th><th>Außen</th><th>Minuten Lauf</th><th>Ø Hz</th><th>Ø Fan</th><th>Ø P el. (W)</th><th>Ø P th. (W)</th><th>Max Hz</th><th>Max P th. (W, ab 10 min Lauf)</th><th>Ø COP</th>
-<th>Ø VL / RL / ΔT (°C)</th><th>Ø Soll VL / RL</th><th>Ø Flow (l/min)</th><th>Starts/h</th><th>Ø Lauf (min)</th><th>Abtauungen</th><th>Komfortdefizit</th></tr>
-<tr ng-repeat="r in msg.payload.stats track by $index"><td ng-repeat="c in r track by $index">{{c}}</td></tr></table></div>
-<div class="optq-note">Nur Minuten mit laufendem Verdichter, ohne Abtauen und Warmwasser. Die Tabelle füllt sich nur für Stufen, die tatsächlich benutzt werden.</div></div>"""
-upsert({"id": "opt_t_qstats", "type": "ui_template", "z": TAB, "group": "opt_g_qstats", "name": "Quiet-Statistik", "order": 1, "width": 0, "height": 4,
-        "format": QSTATS + FIT_JS.replace("__ID__", "opt_t_qstats"), "storeOutMessages": True, "fwdInMessages": False, "resendOnRefresh": True,
-        "templateScope": "local", "className": "", "x": 1260, "y": 320, "wires": [[]]})
-upsert(template("opt_t_wp", "opt_g_wp", 6, 260))
+upsert(template("opt_t_en", "opt_g_en", 4, 350))
+upsert(template("opt_t_fq", "opt_g_fq", 5, 400))
+# Quiet-Statistik: dieselben Zeilen (Stufe x Aussenband) in zwei gleich breiten Karten, Spalten aufgeteilt (17 Spalten passen nicht ohne Scrollen in eine Karte)
+QSTATS_HEAD = ['Stufe', 'Außen', 'Minuten Lauf', 'Ø Hz', 'Ø Fan', 'Ø P el. (W)', 'Ø P th. (W)', 'Max Hz', 'Max P th. (W, ab 10 min Lauf)', 'Ø COP',
+               'Ø VL / RL / ΔT (°C)', 'Ø Soll VL / RL', 'Ø Flow (l/min)', 'Starts/h', 'Ø Lauf (min)', 'Abtauungen', 'Komfortdefizit']
+QSTATS_COLS = ([0, 1, 2, 3, 4, 5, 6, 7, 8, 9], [0, 1, 10, 11, 12, 13, 14, 15, 16])
+
+
+def qstats_tpl(cols):
+    return ('<style>.optq{width:100%;border-collapse:collapse;font-size:13px}'
+            '.optq th{text-align:left;font-weight:normal;color:#666;padding:3px 4px;border-bottom:1px solid #ccc;font-size:12px;line-height:1.2;vertical-align:bottom}'
+            '.optq td{padding:3px 4px;border-bottom:1px solid rgba(128,128,128,.18);white-space:nowrap}</style>'
+            '<div class="optfit"><table class="optq" title="Nur Minuten mit laufendem Verdichter, ohne Abtauen und Warmwasser; Zeilen nur für benutzte Stufen"><tr>'
+            + ''.join('<th>' + QSTATS_HEAD[c] + '</th>' for c in cols) + '</tr>'
+            '<tr ng-repeat="r in msg.payload.stats track by $index"><td ng-repeat="c in [' + ','.join(str(c) for c in cols) + '] track by $index">{{r[c]}}</td></tr></table></div>')
+
+
+for _qid, _qg, _qn, _qc, _qy in (("opt_t_qstats", "opt_g_qstats", "Quiet-Statistik", QSTATS_COLS[0], 320), ("opt_t_qstats2", "opt_g_qstats2", "Quiet-Statistik Temperaturen", QSTATS_COLS[1], 360)):
+    upsert({"id": _qid, "type": "ui_template", "z": TAB, "group": _qg, "name": _qn, "order": 1, "width": 0, "height": 4,
+            "format": qstats_tpl(_qc) + FIT_JS.replace("__ID__", _qid), "storeOutMessages": True, "fwdInMessages": False, "resendOnRefresh": True,
+            "templateScope": "local", "className": "", "x": 1260, "y": _qy, "wires": [[]]})
+upsert(template("opt_t_wp", "opt_g_wp", 3, 260))
 HIST_JS = r"""
 // Verlaufsdaten fuer die Diagramme (nur lesen): letzte 48 h aus dem 5-Minuten-Protokoll optimizer-v2-YYYY-MM.csv; Kopfzeilen-Abschnitte werden ueber die Spaltennamen zugeordnet.
 // Zeitstempel einmal, Reihen als Zahlenfelder (kleine Nachrichten). Ausgang 1: Waermepumpe 24 h, 2: Raeume 24 h, 3: Aussentemperatur 48 h.
@@ -2840,64 +2860,68 @@ def chart_card(cid, gid, name, units, y, body):
 
 CH_WP = (
     "    var t = P.t; spec = {t0: P.now - 24 * H, t1: P.now, panels: [\n"
-    "        {h: 170, unit: '°C', series: [\n"
+    "        {h: 150, unit: '°C', series: [\n"
     "            {n: 'Soll-VL', c: '#1565c0', k: 'step', dash: '5 3', w: 1.4, dg: 1, u: '°C', d: pairs(t, P.sollVl)},\n"
     "            {n: 'Ist-VL', c: '#1976d2', k: 'line', dg: 2, u: '°C', d: pairs(t, P.vl)},\n"
     "            {n: 'Rücklauf', c: '#ef6c00', k: 'line', dg: 2, u: '°C', d: pairs(t, P.rl)},\n"
     "            {n: 'Außen (Fühler)', c: '#78909c', k: 'line', w: 1.2, dg: 1, u: '°C', d: pairs(t, P.at)}]},\n"
-    "        {h: 90, unit: 'Hz', zero: true, runit: 'W', rzero: true, series: [\n"
+    "        {h: 72, unit: 'Hz', zero: true, runit: 'W', rzero: true, series: [\n"
     "            {n: 'Verdichter', c: '#00897b', k: 'area', dg: 0, u: 'Hz', d: pairs(t, P.hz)},\n"
     "            {n: 'Strom', c: '#6a1b9a', k: 'line', w: 1.2, r: true, dg: 0, u: 'W', d: pairs(t, P.el)}]}]};\n")
 CH_ROOMS = (
     "    var t = P.t, cols = ['#1976d2', '#43a047', '#8e24aa', '#ef6c00', '#00838f', '#6d4c41'], ser = [], bands = [];\n"
     "    P.rooms.forEach(function (r, i) { if (!r.active) { return; } var c = cols[i % cols.length]; ser.push({n: r.name + ' (' + String(r.min).replace('.', ',') + '–' + String(r.max).replace('.', ',') + ')', c: c, k: 'line', w: 1.8, dg: 2, u: '°C', d: pairs(t, r.v)}); bands.push({a: r.min, b: r.max, c: c.replace('#', '') && 'rgba(' + parseInt(c.slice(1, 3), 16) + ',' + parseInt(c.slice(3, 5), 16) + ',' + parseInt(c.slice(5, 7), 16) + ',0.07)'}); });\n"
-    "    spec = {t0: P.now - 24 * H, t1: P.now, panels: [{h: 230, unit: '°C', bands: bands, series: ser}]};\n")
+    "    spec = {t0: P.now - 24 * H, t1: P.now, panels: [{h: 236, unit: '°C', bands: bands, series: ser}]};\n")
 CH_AT = (
     "    var t = P.t; spec = {t0: P.now - 48 * H, t1: P.now, panels: [\n"
-    "        {h: 170, unit: '°C', series: [\n"
+    "        {h: 150, unit: '°C', series: [\n"
     "            {n: 'Fühler (Regelwert)', c: '#37474f', k: 'line', w: 1.8, dg: 1, u: '°C', d: pairs(t, P.at)},\n"
     "            {n: 'Wetterdienst (OWM)', c: '#ef6c00', k: 'line', dg: 1, u: '°C', d: pairs(t, P.owm)},\n"
     "            {n: 'berechnet', c: '#1976d2', k: 'line', dash: '5 3', w: 1.4, dg: 1, u: '°C', d: pairs(t, P.calc)}]},\n"
-    "        {h: 80, unit: 'm/s', zero: true, runit: '%', rmin: 0, rmax: 100, series: [\n"
+    "        {h: 70, unit: 'm/s', zero: true, runit: '%', rmin: 0, rmax: 100, series: [\n"
     "            {n: 'Bewölkung', c: '#b0bec5', k: 'area', r: true, dg: 0, u: '%', d: pairs(t, P.clouds)},\n"
     "            {n: 'Wind', c: '#00897b', k: 'line', w: 1.4, dg: 1, u: 'm/s', d: pairs(t, P.wind)}]}]};\n")
-upsert(chart_card("wp", "opt_g_ch_wp", "Verlauf Wärmepumpe", 9, 520, CH_WP))
-upsert(chart_card("rooms", "opt_g_ch_rooms", "Verlauf Räume", 7, 560, CH_ROOMS))
-upsert(chart_card("at", "opt_g_ch_at", "Verlauf Außentemperatur", 8, 600, CH_AT))
+# Diagrammhoehen (13.10. kompakt): je Karte 6 Rastereinheiten (318 px) bei 17 breit; Raeume mindestens so hoch wie Waermepumpe, damit die Masonry
+# Waermepumpe + Aussentemperatur links und Raeume-Diagramm + Raumkarte rechts anordnet (statische Vorschau tools/opt_seiten_vorschau.js)
+upsert(chart_card("wp", "opt_g_ch_wp", "Verlauf Wärmepumpe", 6, 520, CH_WP))
+upsert(chart_card("rooms", "opt_g_ch_rooms", "Verlauf Räume", 6, 560, CH_ROOMS))
+upsert(chart_card("at", "opt_g_ch_at", "Verlauf Außentemperatur", 6, 600, CH_AT))
 upsert(fn("opt_hist", "Verlaufsdaten (nur lesen)", HIST_JS, 3, [["opt_t_ch_wp"], ["opt_t_ch_rooms"], ["opt_t_ch_at"]], 440, 520, FS))
 upsert(inject("opt_i_hist", "alle 5 Minuten", 300, 20, ["opt_hist"], 140, 520))
 
 PLAN_TPL = """<style>
-.optp{font-size:14px;line-height:1.4}
-.optp .kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(125px,1fr));gap:10px;margin:2px 0 14px}
-.optp .tile{border:1px solid #e0e0e0;border-radius:6px;padding:8px 10px;background:#fafafa}
-.optp .tile .k{font-size:11px;color:#757575;text-transform:uppercase;letter-spacing:.03em}
-.optp .tile .v{font-size:19px;font-weight:600;color:#263238;white-space:nowrap}
-.optp .tile .s{font-size:12px;color:#757575;min-height:16px}
-.optp .sec{margin:16px 0 6px;font-size:13px;color:#546e7a;font-weight:600}
-.optp .sum{display:grid;grid-template-columns:max-content 1fr;gap:3px 16px;margin:2px 0 6px}
+.optp{font-size:14px;line-height:1.35}
+.optp .kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(112px,1fr));gap:6px;margin:2px 0 8px}
+.optp .tile{border:1px solid #e0e0e0;border-radius:5px;padding:5px 7px;background:#fafafa;min-width:0}
+.optp .tile .k{font-size:10.5px;color:#757575;text-transform:uppercase;letter-spacing:.02em;line-height:1.25}
+.optp .tile .v{font-size:17px;font-weight:600;color:#263238;white-space:nowrap}
+.optp .tile .s{font-size:11.5px;color:#757575;min-height:15px}
+.optp .sec{margin:8px 0 4px;font-size:13px;color:#546e7a;font-weight:600}
+.optp .sum{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:2px 14px;margin:2px 0 6px}
 .optp .sum .k{color:#666}
 .optp .sum .v{font-weight:bold}
 .optp .warn{color:#c62828}
 .optp .ok{color:#2e7d32}
-.optp table{width:100%;border-collapse:collapse;font-size:13px}
-.optp th{text-align:right;font-weight:normal;color:#666;padding:4px 6px;border-bottom:1px solid #ccc;font-size:12px;line-height:1.25;vertical-align:bottom}
-.optp td{padding:4px 6px;border-bottom:1px solid #eee;text-align:right;white-space:nowrap}
-.optp th:first-child,.optp td:first-child{text-align:left}
-.optp tr.up td.r{color:#2e7d32;font-weight:bold}
-.optp tr.down td.r{color:#e65100;font-weight:bold}
 </style>
 <div class="optp optfit">
 <div class="kpi"><div class="tile" ng-repeat="t in msg.payload.kpi track by $index"><div class="k">{{t.k}}</div><div class="v">{{t.v}}</div><div class="s">{{t.s}}</div></div></div>
 <div id="optch_plan" style="min-height:120px"></div>
-<div class="sec">Stundenübersicht</div>
-<div style="overflow-x:auto"><table>
-<tr><th>Ab</th><th>Bedarf → Plan kWh</th><th>COP</th><th>Feuchte · Taupunkt</th><th>Preis ct/kWh</th><th>Kosten ct/kWh Wärme</th><th>PV W</th><th>Defrost</th><th>Vertrauen</th><th>Attraktivität</th><th>Empfehlung</th><th>Offset</th><th>Quiet</th></tr>
-<tr ng-repeat="r in msg.payload.plan track by $index" ng-class="r.cls"><td>{{r.z}}</td><td>{{r.b}} → {{r.p}}</td><td>{{r.cop}}</td><td>{{r.h}}</td><td>{{r.pr}}</td><td>{{r.k}}</td><td>{{r.pv}}</td><td>{{r.d}}</td><td>{{r.v}}</td><td>{{r.a}}</td><td class="r">{{r.r}}</td><td>{{r.o}}</td><td>{{r.q}}</td></tr>
-</table></div>
 <div class="sec" style="cursor:pointer" ng-click="plOpen = !plOpen">Details und Modell {{plOpen ? '▾' : '▸'}}</div>
 <div class="sum" ng-if="plOpen"><span ng-repeat-start="r in msg.payload.rows track by $index" class="k">{{r[0]}}</span><span ng-repeat-end class="v" ng-class="r[2]">{{r[1]}}</span></div>
 </div>"""
+# Stundenuebersicht als eigene Karte (dieselbe Nachricht wie die Plan-Karte)
+PLAN_TAB_TPL = """<style>
+.optpt table{width:100%;border-collapse:collapse;font-size:12.5px}
+.optpt th{text-align:right;font-weight:normal;color:#666;padding:3px 4px;border-bottom:1px solid #ccc;font-size:11.5px;line-height:1.2;vertical-align:bottom}
+.optpt td{padding:2px 4px;border-bottom:1px solid rgba(128,128,128,.18);text-align:right;white-space:nowrap}
+.optpt th:first-child,.optpt td:first-child{text-align:left}
+.optpt tr.up td.r{color:#2e7d32;font-weight:bold}
+.optpt tr.down td.r{color:#e65100;font-weight:bold}
+</style>
+<div class="optpt optfit"><table>
+<tr><th>Ab</th><th>Bedarf → Plan kWh</th><th>COP</th><th>Feuchte · Taupunkt</th><th>Preis ct/kWh</th><th>Kosten ct/kWh Wärme</th><th>PV W</th><th>Defrost</th><th>Vertrauen</th><th>Attraktivität</th><th>Empfehlung</th><th>Offset</th><th>Quiet</th></tr>
+<tr ng-repeat="r in msg.payload.plan track by $index" ng-class="r.cls"><td>{{r.z}}</td><td>{{r.b}} → {{r.p}}</td><td>{{r.cop}}</td><td>{{r.h}}</td><td>{{r.pr}}</td><td>{{r.k}}</td><td>{{r.pv}}</td><td>{{r.d}}</td><td>{{r.v}}</td><td>{{r.a}}</td><td class="r">{{r.r}}</td><td>{{r.o}}</td><td>{{r.q}}</td></tr>
+</table></div>"""
 PLAN_CH_JS = ("<script>" + UI_CHART_JS + "</script><script>(function (scope) {\n"
     "var last = null;\n"
     "function draw() {\n"
@@ -2905,13 +2929,13 @@ PLAN_CH_JS = ("<script>" + UI_CHART_JS + "</script><script>(function (scope) {\n
     "    if (!el || !m || !m.payload || !m.payload.chart || !window.optChart) { return; }\n"
     "    var S = m.payload.chart.slots, Q = 900000, t0 = S[0][0], t1 = S[S.length - 1][0] + Q, i, col = function (r) { return r[8] === 1 ? '#2e7d32' : (r[8] === -1 ? '#ef6c00' : '#1976d2'); };\n"
     "    var spec = {t0: t0, t1: t1, panels: [\n"
-    "        {h: 150, unit: 'kW', zero: true, series: [\n"
+    "        {h: 130, unit: 'kW', zero: true, series: [\n"
     "            {n: 'Bedarf (normal)', c: '#b0bec5', k: 'bar', bw: Q, bf: 0.95, dg: 2, u: 'kW', d: S.map(function (r) { return [r[0], r[1]]; })},\n"
     "            {n: 'Plan (grün vorziehen · orange verschieben)', c: '#1976d2', k: 'bar', bw: Q, bf: 0.55, op: 0.95, dg: 2, u: 'kW', d: S.map(function (r) { return [r[0], r[2]]; }), bc: S.map(function (r) { return [r[0], col(r)]; })}]},\n"
-    "        {h: 90, unit: 'ct/kWh', zero: true, runit: 'W', rzero: true, series: [\n"
+    "        {h: 76, unit: 'ct/kWh', zero: true, runit: 'W', rzero: true, series: [\n"
     "            {n: 'PV-Prognose', c: '#fbc02d', k: 'area', r: true, dg: 0, u: 'W', d: S.map(function (r) { return [r[0], r[4]]; })},\n"
     "            {n: 'Strompreis', c: '#ef6c00', k: 'step', w: 1.8, dg: 1, u: 'ct/kWh', d: S.map(function (r) { return [r[0], r[3]]; })}]},\n"
-    "        {h: 90, unit: '°C', runit: 'COP', rzero: false, series: [\n"
+    "        {h: 76, unit: '°C', runit: 'COP', rzero: false, series: [\n"
     "            {n: 'Außen (Plan)', c: '#37474f', k: 'line', w: 1.6, dg: 1, u: '°C', d: S.map(function (r) { return [r[0], r[6]]; })},\n"
     "            {n: 'Außen (Fühler-korrigiert)', c: '#1976d2', k: 'line', dash: '5 3', w: 1.4, dg: 1, u: '°C', d: S.map(function (r) { return [r[0], r[7]]; })},\n"
     "            {n: 'COP', c: '#00897b', k: 'line', w: 1.4, r: true, dg: 1, u: '', d: S.map(function (r) { return [r[0], r[5]]; })}]}]};\n"
@@ -2921,9 +2945,12 @@ PLAN_CH_JS = ("<script>" + UI_CHART_JS + "</script><script>(function (scope) {\n
     "if (!window.__optChRs) { window.__optChRs = true; var tm = null; window.addEventListener('resize', function () { clearTimeout(tm); tm = setTimeout(function () { Object.keys(window.__optChMap).forEach(function (k) { window.__optChMap[k](); }); }, 200); }); }\n"
     "scope.$watch('msg', function (m) { last = m; setTimeout(draw, 40); });\n"
     "})(scope);</script>")
-upsert({"id": "opt_t_plan", "type": "ui_template", "z": TAB, "group": "opt_g_plan", "name": "Wärmefahrplan", "order": 1, "width": 0, "height": 21,
+upsert({"id": "opt_t_plan", "type": "ui_template", "z": TAB, "group": "opt_g_plan", "name": "Wärmefahrplan", "order": 1, "width": 0, "height": 10,
         "format": PLAN_TPL + PLAN_CH_JS + FIT_JS.replace("__ID__", "opt_t_plan"), "storeOutMessages": True, "fwdInMessages": False, "resendOnRefresh": True,
         "templateScope": "local", "className": "", "x": 1260, "y": 440, "wires": [[]]})
+upsert({"id": "opt_t_plan_tab", "type": "ui_template", "z": TAB, "group": "opt_g_plan_tab", "name": "Wärmefahrplan Stunden", "order": 1, "width": 0, "height": 11,
+        "format": PLAN_TAB_TPL + FIT_JS.replace("__ID__", "opt_t_plan_tab"), "storeOutMessages": True, "fwdInMessages": False, "resendOnRefresh": True,
+        "templateScope": "local", "className": "", "x": 1260, "y": 480, "wires": [[]]})
 
 
 def room_input(field):
@@ -2933,24 +2960,25 @@ def room_input(field):
             'ng-change="set(r, \'%s\', r.%s)" min="%s" max="%s" step="%s" title="%s">' % (field, field, field, lo, hi, step, tip))
 
 
-# room card: summary, situation per room, settings per room (inputs write back through scope.send -> opt_set)
+# room card: summary, one table with situation and settings per room (inputs write back through scope.send -> opt_set), proposal for the heating curve.
+# Kompakt (13.10.): Lage und Einstellungen in einer Tabelle, Zusammenfassung und Vorschlag als zweispaltige Paare; die Erklaerungen stehen als Tooltip (title), nicht als Hinweiszeilen.
 ROOMS_TPL = """<style>
-.optr{font-size:14px;line-height:1.4}
-.optr .sum{display:grid;grid-template-columns:max-content 1fr;gap:3px 16px;margin:2px 0 14px}
+.optr{font-size:14px;line-height:1.35}
+.optr .sum{display:grid;grid-template-columns:max-content minmax(0,1fr) max-content minmax(0,1fr);gap:2px 14px;margin:2px 0 8px}
+.optr .sum .wide{grid-column:2 / span 3}
 .optr .k{color:#666}
 .optr .warn{color:#c62828;font-weight:bold}
 .optr .ok{color:#2e7d32;font-weight:bold}
 .optr .mute{color:#999}
-.optr .sec{margin:18px 0 2px;color:#666;font-size:13px}
+.optr .sec{margin:8px 0 2px;color:#666;font-size:13px}
 .optr table{width:100%;border-collapse:collapse}
-.optr th{text-align:left;font-weight:normal;color:#666;font-size:12px;padding:4px 6px;border-bottom:1px solid #ccc}
-.optr td{padding:6px;border-bottom:1px solid #eee;vertical-align:middle}
+.optr th{text-align:left;font-weight:normal;color:#666;font-size:12px;padding:3px 4px;border-bottom:1px solid #ccc;line-height:1.2;vertical-align:bottom}
+.optr td{padding:3px 4px;border-bottom:1px solid rgba(128,128,128,.18);vertical-align:middle}
 .optr .n{text-align:right;white-space:nowrap}
-.optr .role{display:block;font-size:12px;color:#c62828}
-.optr input[type=number]{width:64px;padding:3px 4px;font:inherit;text-align:right;border:1px solid #bbb;border-radius:3px;background:transparent;color:inherit}
-.optr input[type=checkbox]{width:18px;height:18px;vertical-align:middle}
-.optr .note{margin-top:6px;font-size:12px;color:#777}
-/* on narrow screens the 12-unit card would be wider than the screen: fit it, the tables scroll inside */
+.optr .role{display:block;font-size:11px;color:#c62828;line-height:1.1}
+.optr input[type=number]{width:52px;padding:1px 3px;font:inherit;text-align:right;border:1px solid #bbb;border-radius:3px;background:transparent;color:inherit}
+.optr input[type=checkbox]{width:16px;height:16px;vertical-align:middle;margin:0}
+/* on narrow screens the card would be wider than the screen: fit it, the table scrolls inside */
 @media (max-width:700px){ui-card-panel:has(.optr),.nr-dashboard-cardpanel:has(.optr),.nr-dashboard-cardcontainer:has(.optr),md-card.nr-dashboard-template:has(.optr){width:100% !important;min-width:0 !important;max-width:100% !important}}
 </style>
 <div class="optr optfit" ng-if="d">
@@ -2960,31 +2988,23 @@ ROOMS_TPL = """<style>
 <span class="k">Geringster Abstand</span><span ng-class="d.sum.tightCls">{{d.sum.tight}}</span>
 <span class="k">Gültige Räume</span><span ng-class="d.sum.validCls">{{d.sum.valid}}</span>
 </div>
-<div style="overflow-x:auto"><table>
-<tr><th>Raum</th><th class="n">Ist</th><th class="n">Komfortband</th><th class="n">Abstand unten</th><th class="n">Abstand oben</th><th>Trend</th><th>Gültig</th></tr>
+<table title="Abstand: positiv = noch Luft bis zur Grenze, negativ = Grenze verletzt; jeder Raum wird nach seinem eigenen Band bewertet. Änderungen gelten, sobald das Feld verlassen wird; inaktive Räume werden nur angezeigt. Die Gewichtung ist ein Faktor für die Abweichung und entscheidet bei mehreren Verstößen, welcher Raum maßgeblich ist.">
+<tr><th>Raum</th><th class="n">Ist</th><th class="n">Abstand unten</th><th class="n">Abstand oben</th><th>Trend</th><th>Gültig</th><th>Aktiv</th><th class="n">Min °C</th><th class="n">Max °C</th><th class="n">Gewicht</th><th class="n">Alter max. (min)</th></tr>
 <tr ng-repeat="r in d.rooms track by r.id">
 <td>{{r.name}}<span class="role" ng-if="r.role==='heat'">größte Unterschreitung</span><span class="role" ng-if="r.role==='over'">größte Überschreitung</span></td>
-<td class="n" ng-class="r.cls">{{r.ist}}</td><td class="n">{{r.band}}</td>
+<td class="n" ng-class="r.cls">{{r.ist}}</td>
 <td class="n" ng-class="r.cLow">{{r.dLow}}</td><td class="n" ng-class="r.cHigh">{{r.dHigh}}</td>
-<td>{{r.trend}}</td><td ng-class="r.cls==='mute' ? 'mute' : ''">{{r.valid}}</td></tr>
-</table></div>
-<div class="note">Abstand: positiv = noch Luft bis zur Grenze, negativ = Grenze verletzt. Jeder Raum wird nach seinem eigenen Band bewertet.</div>
-<div class="sec">Einstellungen je Raum</div>
-<div style="overflow-x:auto"><table>
-<tr><th>Raum</th><th>Aktiv</th><th class="n">Minimum °C</th><th class="n">Maximum °C</th><th class="n">Gewichtung</th><th class="n">Datenalter-Limit (min)</th></tr>
-<tr ng-repeat="r in d.rooms track by r.id"><td>{{r.name}}</td>
+<td>{{r.trend}}</td><td ng-class="r.cls==='mute' ? 'mute' : ''">{{r.valid}}</td>
 <td><input type="checkbox" ng-model="r.on" ng-change="set(r, 'active', r.on)"></td>
 <td class="n">__IN_min__</td><td class="n">__IN_max__</td><td class="n">__IN_weight__</td><td class="n">__IN_maxAgeMin__</td></tr>
-</table></div>
-<div class="note">Änderungen gelten, sobald das Feld verlassen wird. Inaktive Räume werden nur angezeigt, nicht bewertet. Die Gewichtung ist ein Faktor für die Abweichung und entscheidet bei mehreren Verstößen, welcher Raum maßgeblich ist.</div>
-<div class="sec">Vorschlag für die Heizkurve (nur Anzeige, greift nicht ein)</div>
+</table>
+<div class="sec" title="Regeln: 1. Ein Raum unter seinem Minimum: nie absenken, der Raum mit dem größten Defizit führt, langsam höchstens +1 K. 2. Kein Raum unter Minimum, aber einer über Maximum: Absenkung erlaubt, zunächst -1 K. 3. Alle im Band: niedrigste Heizkurve suchen (0 K oder vorsichtig -1 K testen). 4. Gleichzeitig deutlich zu kalt und zu warm: Wärmeverteilungsproblem, die Heizkurve bleibt unverändert. Der Soll-Vorlauf wird nie unter die Untergrenze von 29 °C gesenkt (Heizkörper). Jede Änderung nur nach der Mindesthaltezeit und nie bei Abtauen, Warmwasser, Verdichterstart oder Sanftanlauf. Der Vorschlag steht im Protokoll (korrektur_vorschlag).">Vorschlag für die Heizkurve (nur Anzeige, greift nicht ein)</div>
 <div class="sum" ng-if="d.ctl">
 <span class="k">Stand</span><span ng-class="d.ctl.statusCls">{{d.ctl.status}}</span>
 <span class="k">Führungsraum</span><span>{{d.ctl.lead}}</span>
-<span class="k">Grund</span><span ng-class="d.ctl.distrib ? 'warn' : ''">{{d.ctl.why}}</span>
-<span class="k">Nächste Änderung</span><span>{{d.ctl.next}}</span>
+<span class="k">Grund</span><span class="wide" ng-class="d.ctl.distrib ? 'warn' : ''">{{d.ctl.why}}</span>
+<span class="k">Nächste Änderung</span><span class="wide">{{d.ctl.next}}</span>
 </div>
-<div class="note">Regeln: 1. Ein Raum unter seinem Minimum: nie absenken, der Raum mit dem größten Defizit führt, langsam höchstens +1 K. 2. Kein Raum unter Minimum, aber einer über Maximum: Absenkung erlaubt, zunächst -1 K. 3. Alle im Band: niedrigste Heizkurve suchen (0 K oder vorsichtig -1 K testen). 4. Gleichzeitig deutlich zu kalt und zu warm: Wärmeverteilungsproblem, die Heizkurve bleibt unverändert. Der Soll-Vorlauf wird nie unter die Untergrenze von 29 °C gesenkt (Heizkörper). Jede Änderung nur nach der Mindesthaltezeit und nie bei Abtauen, Warmwasser, Verdichterstart oder Sanftanlauf. Der Vorschlag steht im Protokoll (korrektur_vorschlag).</div>
 </div>
 <script>
 (function (scope) {
@@ -3001,7 +3021,7 @@ ROOMS_TPL = """<style>
 for _f in ("min", "max", "weight", "maxAgeMin"):
     ROOMS_TPL = ROOMS_TPL.replace("__IN_%s__" % _f, room_input(_f))
 upsert({"id": "opt_t_rooms", "type": "ui_template", "z": TAB, "group": "opt_g_rooms", "name": "Räume", "order": 1,
-        "width": 0, "height": 15, "format": ROOMS_TPL + FIT_JS.replace("__ID__", "opt_t_rooms"), "storeOutMessages": True, "fwdInMessages": False,
+        "width": 0, "height": 7, "format": ROOMS_TPL + FIT_JS.replace("__ID__", "opt_t_rooms"), "storeOutMessages": True, "fwdInMessages": False,
         "resendOnRefresh": True, "templateScope": "local", "className": "", "x": 1260, "y": 320, "wires": [["opt_set"]]})
 
 # ---------------------------------------------------------------- flow nodes
@@ -3045,7 +3065,7 @@ for _i, _t in enumerate(("panasonic_heat_pump/main/+", "panasonic_heat_pump/extr
     upsert({"id": f"opt_mqtt_hp_{_i}", "type": "mqtt in", "z": TAB, "name": "", "topic": _t, "qos": "0", "datatype": "auto-detect",
             "broker": "opt_broker_nas", "nl": False, "rap": True, "rh": 0, "inputs": 0, "x": 160, "y": 1120 + 60 * _i, "wires": [["opt_hp_in"]]})
 upsert(fn("opt_hp_in", "Anlagenwerte lesen (nur lesen)", HP_IN_JS, 1, [["opt_f_qev"]], 440, 1180, FS))
-upsert(fn("opt_quiet", "Quiet-Empfehlung (Shadow)", QUIET_JS, 5, [["opt_t_quiet"], ["opt_t_qstats"], ["opt_f_quiet"], ["opt_f_qev"], ["opt_f_def"]], 700, 1060, FS))
+upsert(fn("opt_quiet", "Quiet-Empfehlung (Shadow)", QUIET_JS, 5, [["opt_t_quiet"], ["opt_t_qstats", "opt_t_qstats2"], ["opt_f_quiet"], ["opt_f_qev"], ["opt_f_def"]], 700, 1060, FS))
 # Kinderzimmer oben: Radiator-Relais und Heizluefter nur mitlesen (Venus/Shelly-Broker); die Regelung dazu liegt im Tab Dashboard
 for _i, _t in enumerate(("shelly-radiator/events/rpc", "shelly-radiator/online", "shellies/shellyplug-s-heiz/relay/0", "shellies/shellyplug-s-heiz/relay/0/power", "shellies/shellyplug-s-heiz/online")):
     upsert({"id": f"opt_mqtt_kz_{_i}", "type": "mqtt in", "z": TAB, "name": "", "topic": _t, "qos": "0", "datatype": "auto-detect",
@@ -3132,7 +3152,7 @@ for _fid, _name, _y in (("opt_f_en", "Energie-Protokoll", 1500), ("opt_f_fc", "P
     upsert({"id": _fid, "type": "file", "z": TAB, "name": _name, "filename": "filename", "filenameType": "msg", "appendNewline": False,
             "createDir": True, "overwriteFile": "false", "encoding": "utf8", "x": 760, "y": _y, "wires": [[]]})
 upsert(inject("opt_i_plan", "jede Minute", 60, 45, ["opt_plan"], 140, 1800))
-upsert(fn("opt_plan", "Wärmefahrplan berechnen (Shadow)", PLAN_JS, 5, [["opt_t_plan"], ["opt_f_pact"], ["opt_f_peval"], ["opt_f_psnap"], []], 440, 1800, FS))
+upsert(fn("opt_plan", "Wärmefahrplan berechnen (Shadow)", PLAN_JS, 5, [["opt_t_plan", "opt_t_plan_tab"], ["opt_f_pact"], ["opt_f_peval"], ["opt_f_psnap"], []], 440, 1800, FS))
 for _fid, _name, _y in (("opt_f_pact", "Plan: Ist-Werte je Slot", 1780), ("opt_f_peval", "Plan: Vergleich Prognose / Ist", 1840), ("opt_f_psnap", "Plan: Schnappschüsse", 1900)):
     upsert({"id": _fid, "type": "file", "z": TAB, "name": _name, "filename": "filename", "filenameType": "msg", "appendNewline": False,
             "createDir": True, "overwriteFile": "false", "encoding": "utf8", "x": 760, "y": _y, "wires": [[]]})
