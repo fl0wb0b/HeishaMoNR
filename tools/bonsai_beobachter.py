@@ -29,11 +29,16 @@ import urllib.request
 
 VERSION = 1
 DATEI_MUSTER = re.compile(r"^(quiet|quiet-events|optimizer-v2|energy|decisions|scores|applied)-\d{4}-\d{2}\.(csv|jsonl)$")
-SSH_STANDARD = ["ssh", "fl0wb0b@10.10.10.128", "docker", "exec", "node_red-node-red-1", "cat", "/data/optimizer/{datei}"]
+SSH_STANDARD = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "10.10.10.128", "docker", "exec", "node_red-node-red-1", "cat", "/data/optimizer/{datei}"]   # Zugang wie bei den Handabrufen (Standardbenutzer, Key-Auth)
 AUSGABE_STANDARD = os.path.expanduser("~/Dokumente/heishamonr-optimizer/bonsai-berichte")
 HOSTS_STANDARD = os.path.expanduser("~/Dokumente/bonsai/llm-hosts.txt")
 RAEUME = [("ki_oben", "Kinderzimmer oben"), ("ki_unten", "Kinderzimmer unten"), ("schlaf", "Schlafzimmer"), ("wohn", "Wohnzimmer")]
 SCHWERE = ("info", "hinweis", "warnung")
+
+
+def llm_schwere(s):
+    """Der LLM-Anteil tritt nie als Warnung auf (hoechstens hinweis); Warnungen kommen nur aus geprueften Regeln."""
+    return "hinweis" if s == "warnung" else s
 
 
 # ------------------------------------------------------------------ Quellen (nur lesen)
@@ -207,6 +212,8 @@ def zusammenfassung(d, tag):
     F["laeufe.mittel_min"] = round(sum(dauer) / len(dauer)) if dauer else 0
     F["laeufe.kuerzester_min"] = min(dauer) if dauer else 0
     F["laeufe.laengster_min"] = max(dauer) if dauer else 0
+    F["laeufe.kurz_unter_60_min"] = sum(1 for x in dauer if x < 60)
+    F["laeufe.kurz_anteil_prozent"] = round(100 * sum(1 for x in dauer if x < 60) / len(dauer)) if dauer else 0
     pausen = [round((s[2] - s[1]).total_seconds() / 60) + 1 for i, s in enumerate(segs) if s[0] == "pause" and 0 < i < len(segs) - 1]
     F["pausen.anzahl"] = len(pausen)
     F["pausen.mittel_min"] = round(sum(pausen) / len(pausen)) if pausen else 0
@@ -354,7 +361,7 @@ FRAGEN = [
     ("datenqualitaet", "Gibt es Hinweise auf Datenfehler oder fehlende Daten?"),
 ]
 SYSTEM_PROMPT = ("Du prüfst Tageskennzahlen einer Luft/Wasser-Wärmepumpe (Panasonic, 5 kW, Heizkörper). Antworte NUR mit einem JSON-Array, "
-                 "höchstens 3 Einträge, jeder Eintrag: {\"titel\": kurz, \"schwere\": \"info\"|\"hinweis\"|\"warnung\", \"beleg\": [Schlüssel aus den Fakten], "
+                 "höchstens 3 Einträge, jeder Eintrag: {\"titel\": kurz, \"schwere\": \"info\"|\"hinweis\", \"beleg\": [Schlüssel aus den Fakten], "
                  "\"text\": ein Satz auf Deutsch}. Verwende NUR Zahlen, die in den genannten Belegen stehen. Keine Vermutung ohne Beleg. Leeres Array, wenn nichts auffällt.")
 
 
@@ -390,7 +397,7 @@ def pruefe_aussage(a, fakten):
     return True, ""
 
 
-def frage_bonsai(frag, fakten, frage, modell=None, timeout=90):
+def frage_bonsai(frag, fakten, frage, modell=None, timeout=300):
     """Eine kurze Frage an Bonsai; frag(messages) -> Antworttext (oder Ausnahme)."""
     msgs = [{"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": "Fakten (JSON):\n" + json.dumps(fakten, ensure_ascii=False, sort_keys=True) + "\n\nFrage: " + frage}]
@@ -405,13 +412,13 @@ def frage_bonsai(frag, fakten, frage, modell=None, timeout=90):
     return arr if isinstance(arr, list) else []
 
 
-def http_frager(hosts, modell=None, timeout=90):
+def http_frager(hosts, modell=None, timeout=300):
     """OpenAI-kompatibler llama-server (Bonsai). Probiert die Hosts der Reihe nach."""
     def frag(msgs):
         fehler = None
         for h in hosts:
             url = h.rstrip("/") + "/v1/chat/completions"
-            body = json.dumps({"model": modell or "bonsai", "messages": msgs, "temperature": 0.1, "max_tokens": 500}).encode("utf-8")
+            body = json.dumps({"model": modell or "bonsai", "messages": msgs, "temperature": 0.1, "max_tokens": 4000, "chat_template_kwargs": {"enable_thinking": False}}).encode("utf-8")
             req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
             try:
                 with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -437,7 +444,7 @@ def bonsai_befunde(frag, F, F_vortag):
         for a in arr:
             ok, grund = pruefe_aussage(a, fakten)
             if ok:
-                gut.append({"schwere": a["schwere"], "titel": str(a.get("titel") or key)[:80], "beleg": a["beleg"], "text": a["text"].strip(), "status": "ungeprüft", "quelle": "Bonsai", "frage": key})
+                gut.append({"schwere": llm_schwere(a["schwere"]), "titel": str(a.get("titel") or key)[:80], "beleg": a["beleg"], "text": a["text"].strip(), "status": "ungeprüft", "quelle": "Bonsai", "frage": key})
             else:
                 verworfen.append({"frage": key, "grund": grund, "aussage": a if isinstance(a, dict) else str(a)})
     return gut, verworfen, fehler
@@ -482,7 +489,136 @@ def schreibe(ausgabe, tag, md, befunde, verworfen):
         json.dump(alle, f, ensure_ascii=False, indent=1, sort_keys=True)
 
 
-def lauf(quelle, tag, ausgabe, frag=None, quelle_txt=""):
+# ------------------------------------------------------------------ Stufe 2: Zeitleiste des Tages (langer Kontext)
+LANG_FRAGEN = [
+    ("muster", "Welche Muster oder Zusammenhaenge zeigt die Zeitleiste (z. B. Starts/Stopps, Frequenz, Vorlauf gegen Soll, Aussentemperatur)? Nenne die Uhrzeiten als Beleg."),
+    ("regeln", "Wo widerspricht die Zeitleiste den Regeln im Block REGELN oder ist dort etwas auffaellig (Stopp-Schwelle, Start, Heizgrenze, Quiet)? Nenne die Uhrzeiten als Beleg."),
+]
+REGELN_TEXT = ("REGELN (Handbuch Serie J, bei der Leisha gemessen): AUS wenn Vorlauf mindestens Soll+3 K (Handbuch +2 K) fuer 3 min; EIN nach mindestens 3 min wenn Vorlauf etwa 3,25 K unter Soll (Start 6-13 min spaeter); "
+               "Heizgrenze 12 Grad: Heizen aus ab Aussen 15, wieder an bei Aussen 12 oder darunter; Verdichter 16-59 Hz, Mindestfrequenz 16-17 Hz; Quiet 3 deckelt auf Minimum; "
+               "Betreiberregel: Quiet bleibt 0 ausser zum Laufzeit-Strecken, keine Comfort/Efficiency-Wechsel wegen Raumtemperatur. Lauf unter 60 min ueber den Vorlauf wuerde als Takt gelten.")
+LANG_PROMPT = ("Du pruefst die Zeitleiste einer Luft/Wasser-Waermepumpe (Panasonic, 5 kW). Zeilen: HH:MM Zustand Hz soll/vl/rl Quiet Heizregelung Aussen. Antworte NUR mit einem JSON-Array, "
+               "hoechstens 3 Eintraege, jeder: {\"titel\": kurz, \"schwere\": \"info\"|\"hinweis\", \"beleg\": [Uhrzeiten HH:MM aus der Zeitleiste], \"text\": ein bis zwei Saetze Deutsch}. "
+               "Verwende NUR Zahlen, die in den genannten Zeilen stehen. Keine Vermutung ohne Beleg. Leeres Array, wenn nichts auffaellt.")
+
+
+def zeitleiste(d, tag):
+    """Kompakte Tagesansicht: 5-min-Raster, Uhrzeit-Zeilen und Ereignisse. Nur Beobachtung, rein deterministisch."""
+    t0 = dt.datetime(tag.year, tag.month, tag.day)
+    t1 = t0 + dt.timedelta(days=1)
+    zeilen, ev = {}, []
+    for r in d["quiet"]:
+        t = r["_t"]
+        if not (t0 <= t < t1):
+            continue
+        k = t.replace(minute=t.minute - t.minute % 5, second=0, microsecond=0)
+        zeilen.setdefault(k, []).append(r)
+    out = []
+    for k in sorted(zeilen):
+        rs = zeilen[k]
+        hz = [zahl(x.get("verdichter_hz")) or 0 for x in rs]
+        l = rs[-1]
+        f = lambda key: ("-" if zahl(l.get(key)) is None else str(r2(zahl(l.get(key)))))
+        out.append("%s %s %s %s/%s/%s Q%s HC%s AT%s" % (k.strftime("%H:%M"), zustand(l), int(round(sum(hz) / len(hz))), f("soll_vl"), f("ist_vl"), f("ist_rl"),
+                                                        l.get("quiet_aktuell", "-"), l.get("heizregelung", "-"), f("aussen")))
+    for e in d["events"]:
+        if t0 <= e["_t"] < t1:
+            ev.append("%s EREIGNIS %s %s" % (e["_t"].strftime("%H:%M"), e.get("ereignis", ""), str(e.get("wechsel", ""))[:120]))
+    return "\n".join(["ZEITLEISTE " + tag.isoformat()] + out + ["EREIGNISSE"] + ev + [REGELN_TEXT])
+
+
+def pruefe_zeit(a, text):
+    if not isinstance(a, dict):
+        return False, "kein Objekt"
+    beleg, txt, schwere = a.get("beleg"), a.get("text"), a.get("schwere")
+    if not isinstance(beleg, list) or not beleg or not all(isinstance(k, str) for k in beleg):
+        return False, "ohne Beleg"
+    zl = {}
+    for l in text.split("\n"):
+        m = re.match(r"^(\d\d:\d\d) ", l)
+        if m:
+            zl.setdefault(m.group(1), []).append(l)
+    fehl = [k for k in beleg if k not in zl]
+    if fehl:
+        return False, "Uhrzeit nicht in der Zeitleiste: " + ", ".join(fehl[:3])
+    if not isinstance(txt, str) or not txt.strip() or len(txt) > 500:
+        return False, "Text fehlt oder zu lang"
+    if schwere not in SCHWERE:
+        return False, "Schweregrad unbekannt"
+    werte = []
+    for k in beleg:
+        for l in zl[k]:
+            werte += zahlen_im_text(l)
+    werte += zahlen_im_text(REGELN_TEXT)
+    uhr = set(float(x.replace(":", ".")) for x in re.findall(r"\d\d:\d\d", txt))
+    for z in zahlen_im_text(re.sub(r"\d\d:\d\d", " ", txt)):
+        if not any(abs(z - w) <= max(0.051, 0.011 * abs(w)) for w in werte):
+            return False, "Zahl %s steht in keiner belegten Zeile" % z
+    return True, ""
+
+
+def bonsai_lang(frag, text):
+    gut, verworfen, fehler = [], [], None
+    for key, frage in LANG_FRAGEN:
+        msgs = [{"role": "system", "content": LANG_PROMPT}, {"role": "user", "content": text + "\n\nFrage: " + frage}]
+        try:
+            raw = frag(msgs)
+        except Exception as e:
+            fehler = str(e)
+            break
+        m = re.search(r"\[.*\]", raw or "", re.S)
+        try:
+            arr = json.loads(m.group(0)) if m else []
+        except ValueError:
+            arr = []
+        for a in (arr if isinstance(arr, list) else []):
+            ok, grund = pruefe_zeit(a, text)
+            if ok:
+                gut.append({"schwere": llm_schwere(a["schwere"]), "titel": str(a.get("titel") or key)[:80], "beleg": a["beleg"], "text": a["text"].strip(), "status": "ungeprüft", "quelle": "Bonsai (Zeitleiste)", "frage": key})
+            else:
+                verworfen.append({"frage": key, "grund": grund, "aussage": a if isinstance(a, dict) else str(a)})
+    return gut, verworfen, fehler
+
+
+BAENDER = [(-99, 3, "unter 3 °C"), (3, 7, "3 bis 7 °C"), (7, 12, "7 bis 12 °C"), (12, 99, "ab 12 °C")]
+
+
+def cop_vergleich(d):
+    """Strom und Waerme je Heizregelung (0 Comfort, 1 Efficiency) und Aussentemperaturband, nur Laufminuten ab Minute 15 (ohne Abtauen/Warmwasser).
+    Rein beschreibend: Waerme = leistung_th_heisha_w, Strom = leistung_el_w, je Zeile eine Minute."""
+    acc = {}
+    for r in d["quiet"]:
+        hz, lm, hc, at = zahl(r.get("verdichter_hz")), zahl(r.get("verdichter_laufzeit_min")), zahl(r.get("heizregelung")), zahl(r.get("aussen"))
+        el, th = zahl(r.get("leistung_el_w")), zahl(r.get("leistung_th_heisha_w"))
+        if not hz or hz <= 0 or lm is None or lm < 15 or hc not in (0, 1) or at is None or el is None or th is None:
+            continue
+        if zahl(r.get("defrost")) == 1 or zahl(r.get("warmwasser")) == 1:
+            continue
+        b = next(x for x in BAENDER if x[0] <= at < x[1])
+        a = acc.setdefault((b[2], int(hc)), {"min": 0, "el": 0.0, "th": 0.0, "hz": 0.0, "fl": 0.0, "n_fl": 0})
+        a["min"] += 1
+        a["el"] += el / 60000.0
+        a["th"] += th / 60000.0
+        a["hz"] += hz
+        fl = zahl(r.get("flow_l_min"))
+        if fl is not None:
+            a["fl"] += fl
+            a["n_fl"] += 1
+    zeilen = ["# COP je Heizregelung und Außentemperaturband", "",
+              "Nur Laufminuten ab Minute 15, ohne Abtauen und Warmwasser. Wärme und Strom aus den Werten der Anlage (leistung_th_heisha_w, leistung_el_w). Beschreibend, kein Beweis: Wetter und Tageszeit können sich unterscheiden.", "",
+              "| Band | Regelung | Minuten | Strom kWh | Wärme kWh | COP | Ø Hz | Ø Durchfluss l/min |", "|---|---|---|---|---|---|---|---|"]
+    for b in BAENDER:
+        for hc, name in ((0, "Comfort"), (1, "Efficiency")):
+            a = acc.get((b[2], hc))
+            if not a:
+                continue
+            cop = "%.2f" % (a["th"] / a["el"]) if a["el"] > 0.05 else "-"
+            fl = "%.1f" % (a["fl"] / a["n_fl"]) if a["n_fl"] else "-"
+            zeilen.append("| %s | %s | %d | %.2f | %.2f | %s | %.1f | %s |" % (b[2], name, a["min"], a["el"], a["th"], cop, a["hz"] / a["min"], fl))
+    return "\n".join(zeilen) + "\n"
+
+
+def lauf(quelle, tag, ausgabe, frag=None, quelle_txt="", lang=True):
     d = lade(quelle, tag)
     F, extra = zusammenfassung(d, tag)
     Fv, _ = zusammenfassung(d, tag - dt.timedelta(days=1))
@@ -491,12 +627,22 @@ def lauf(quelle, tag, ausgabe, frag=None, quelle_txt=""):
     if frag is not None:
         gut, verworfen, fehler = bonsai_befunde(frag, F, Fv)
         befunde += gut
+        if lang and not fehler:
+            g2, v2, f2 = bonsai_lang(frag, zeitleiste(d, tag))
+            befunde += g2
+            verworfen += v2
+            fehler = f2 or fehler
     else:
         fehler = "nicht gefragt (ohne LLM)"
     if d["fehlt"]:
         befunde.append({"schwere": "info", "titel": "Dateien fehlen", "beleg": [], "text": ", ".join(d["fehlt"]), "status": "geprueft (Regel)", "quelle": "Beobachter"})
     md = bericht_md(F, extra, befunde, verworfen, fehler, quelle_txt)
     schreibe(ausgabe, tag, md, befunde, verworfen)
+    try:
+        with open(os.path.join(ausgabe, "cop-vergleich.md"), "w", encoding="utf-8") as fh:
+            fh.write(cop_vergleich(d))
+    except OSError:
+        pass
     return {"fakten": F, "befunde": befunde, "verworfen": verworfen, "fehler": fehler, "md": md}
 
 
@@ -518,7 +664,7 @@ def main(argv=None):
     ap.add_argument("--llm-host", action="append", default=[])
     ap.add_argument("--modell")
     ap.add_argument("--ohne-llm", action="store_true")
-    ap.add_argument("--timeout", type=int, default=90)
+    ap.add_argument("--timeout", type=int, default=300)
     a = ap.parse_args(argv)
     tag = dt.date.fromisoformat(a.tag) if a.tag else dt.date.today() - dt.timedelta(days=1)
     if a.quelle:

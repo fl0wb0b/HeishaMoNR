@@ -206,5 +206,17 @@ class EchteDaten(unittest.TestCase):
             shutil.rmtree(out, ignore_errors=True)
 
 
+class LlmNieWarnung(unittest.TestCase):
+    def test_llm_schwere_gedeckelt(self):
+        self.assertEqual(B.llm_schwere("warnung"), "hinweis")
+        self.assertEqual(B.llm_schwere("hinweis"), "hinweis")
+        self.assertEqual(B.llm_schwere("info"), "info")
+
+    def test_prompt_bietet_keine_warnung(self):
+        src = open(B.__file__, encoding="utf-8").read()
+        self.assertNotIn('\\"hinweis\\"|\\"warnung\\"', src)
+        self.assertEqual(src.count('gut.append({"schwere": llm_schwere('), 2)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
