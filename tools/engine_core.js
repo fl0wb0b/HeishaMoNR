@@ -93,7 +93,7 @@ var ENGINE = (function () {
                  ua: have(num(M.ua)) ? r2(num(M.ua)) : null, tbal: have(num(M.tbal)) ? num(M.tbal) : null, aktiv: aktiv ? 1 : 0};
         for (var h = 0; h <= VS_H; h++) { var x = h === 0 && have(atN) ? atN : ip(now + h * 3600000, 1); o.at.push(have(x) ? Math.round((h === 0 ? x : x + anchor * Math.exp(-h / 4)) * 10) / 10 : null); }
         if (aktiv) {                                                                // Sonne/Wind nur mit coefActivate (und offenem Gate, das prueft der Fahrplan)
-            o.bs = have(num(M.bs)) ? num(M.bs) : 0; o.bw = have(num(M.bw)) ? num(M.bw) : 0; o.wind = []; o.pv = [];
+            o.bs = have(num(M.bs)) ? Math.min(0.5, Math.max(0, num(M.bs))) : 0; o.bw = have(num(M.bw)) ? Math.min(0.05, Math.max(0, num(M.bw))) : 0; o.wind = []; o.pv = [];   // bs/bw: harte Grenzen wie im Fahrplan (coefSafe, ANNAHME 0,5 / 0,05)
             var pv = PI && Array.isArray(PI.pv) ? PI.pv : [];
             for (var j = 0; j <= VS_H; j++) {
                 var w = ip(now + j * 3600000, 4); o.wind.push(have(w) ? Math.round(w * 10) / 10 : null);

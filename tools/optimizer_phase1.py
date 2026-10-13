@@ -1582,9 +1582,22 @@ function gateCheck(n, rows, maeBase, maeCand, fit, o) {                         
     var lowN = sv.filter(function (v) { return v < 0.8 * sm; }).length, highN = sv.filter(function (v) { return v > 1.2 * sm; }).length;
     if (lowN < 2 || highN < 2) { why.push('PV-Tage zu gleichfoermig'); }
     if (!(maeBase > 0 && maeCand !== null && maeCand <= 0.9 * maeBase)) { why.push('Fehler nicht um 10 % besser'); }
-    if (fit.bs > 0.5 || fit.bw > 0.05) { why.push('Koeffizient unplausibel'); }
+    if (!isFinite(fit.bs) || !isFinite(fit.bw) || !isFinite(fit.ua)) { why.push('Koeffizient nicht endlich'); }
+    else if (fit.bs < 0 || fit.bw < 0) { why.push('Koeffizient negativ'); }
+    else if (fit.bs > COEF_LIM.bs || fit.bw > COEF_LIM.bw) { why.push('Koeffizient unplausibel'); }
     return {ok: why.length === 0, why: why};
 }
+// Harte Grenzen fuer Sonne/Wind (Sicherheit A, 13.10.): Vorzeichen physikalisch fest (Sonne senkt, Wind erhoeht den Bedarf), Betrag begrenzt.
+// ANNAHME-Werte: bs <= 0,5 kWh Waerme je kWh PV, bw <= 0,05 kWh/(K*m/s*h); Herkunft: bisherige Gate-Grenzen, keine Messung.
+// Idee aus andox/heat-pump-pilot (bounded_fit) und smefa/ClimateOptimizer (fester Sonnenterm, weil ein frei gelernter negativ wurde); kein Code uebernommen.
+var COEF_LIM = {bs: 0.5, bw: 0.05};
+function coefSafe(c) {                                                                               // wird vor JEDER Nutzung angewandt (Plan und Vorausschau): nicht endlich -> 0, negativ -> 0, zu gross -> Grenze
+    var cl = function (v, hi) { return (typeof v === 'number' && isFinite(v)) ? Math.min(hi, Math.max(0, v)) : 0; };
+    var o = {bs: cl(c && c.bs, COEF_LIM.bs), bw: cl(c && c.bw, COEF_LIM.bw)};
+    o.geklemmt = !c || o.bs !== c.bs || o.bw !== c.bw;
+    return o;
+}
+function coefHardFail(gate) { return !!(gate && gate.why && gate.why.some(function (w) { return /nicht endlich|negativ|unplausibel/.test(w); })); }
 function fitModel(daysIn, P) {                                                                       // alle Varianten rechnen (nur Anzeige in S2): Basis (Plan-Schaetzer), nur UA, + Sonne, + Wind, OWM-Temperatur, Speicherterm
     var o0 = {ua0: P.ua0, sUA: P.sUA, sW: P.sW, sS: P.sS, useS: false, useW: false, tref: 'kh', C: 0};
     var mk = function (patch) { var o = {}; Object.keys(o0).forEach(function (k) { o[k] = o0[k]; }); Object.keys(patch).forEach(function (k) { o[k] = patch[k]; }); return o; };
@@ -1843,7 +1856,9 @@ if (!pl.learn.coef || pl.learn.coef.sig !== mSig) {
         var prevAkt = !!(pl.learn.coef && pl.learn.coef.aktiv), cand = fm.maeWind !== null ? fm.maeWind : fm.maeSun;
         fm.sig = mSig; fm.ts = now;
         // Aktivierung nur mit ausdruecklichem Schalter (plan.coefActivate = 1): Gate ok, oder schon aktiv und der Fehler bleibt besser als beim bisherigen Modell (Hysterese)
-        fm.aktiv = pn('coefActivate', 0) === 1 && ((fm.gate && fm.gate.ok) || (prevAkt && fm.n >= pn('coefMinDays', 10) && cand !== null && fm.maeBase > 0 && cand <= fm.maeBase));
+        // Sicherheit: die Hysterese gilt nie bei hartem Koeffizienten-Fehler (nicht endlich/negativ/zu gross); bei gleichfoermigen PV-Tagen (Sonne nicht identifizierbar) wird der Sonnenterm des bisher aktiven Modells eingefroren
+        if (prevAkt && fm.gate && fm.gate.why.indexOf('PV-Tage zu gleichfoermig') >= 0 && !coefHardFail(fm.gate)) { var pc = pl.learn.coef; fm.bs = coefSafe({bs: pc.bs, bw: 0}).bs; if (fm.bsW !== undefined) { fm.bsW = coefSafe({bs: pc.bsW !== undefined ? pc.bsW : pc.bs, bw: 0}).bs; } fm.frozen = ['Sonne']; }
+        fm.aktiv = pn('coefActivate', 0) === 1 && !coefHardFail(fm.gate) && ((fm.gate && fm.gate.ok) || (prevAkt && fm.n >= pn('coefMinDays', 10) && cand !== null && fm.maeBase > 0 && cand <= fm.maeBase));
         pl.learn.coef = fm; pl.lastSave = 0;                                                      // neue Koeffizienten sofort sichern (ueberstehen so einen Neustart ohne Neuberechnung)
     } catch (e) { pl.learn.coef = {n: 0, sig: mSig, ts: now, aktiv: false, error: String(e && e.message || e)}; }
 }
@@ -1977,7 +1992,7 @@ function buildPlan() {
     var uaKw = ua, dflLoss = pn('defrostLoss', 0.15), uncP = pn('uncertaintyPremium', 0.05), slots = [], cbarS = 0;
     // Sonne und Wind im Bedarf (Fahrplan v2, S3): wirken nur, wenn die gelernten Koeffizienten aktiviert sind; sonst bit-identisch zum bisherigen Modell. Der Kandidat wird immer mitgerechnet und protokolliert.
     var cfM = pl.learn.coef || null;
-    var candC = (cfM && cfM.n >= 3) ? (cfM.maeWind !== null && cfM.maeWind !== undefined ? {bs: cfM.bsW || 0, bw: cfM.bw || 0} : {bs: cfM.bs || 0, bw: 0}) : {bs: 0, bw: 0};
+    var candC = coefSafe((cfM && cfM.n >= 3) ? (cfM.maeWind !== null && cfM.maeWind !== undefined ? {bs: cfM.bsW || 0, bw: cfM.bw || 0} : {bs: cfM.bs || 0, bw: 0}) : {bs: 0, bw: 0});
     var useC = (cfM && cfM.aktiv) ? candC : {bs: 0, bw: 0};
     var solMax = pn('solarMaxShare', 0.6), tauS = pn('solarTauH', 2), alphaS = 1 - Math.exp(-(Q15 / H) / tauS), sPrev = (pl.pvHist && pl.pvHist.length >= 4) ? pl.pvHist.reduce(function (x, y) { return x + y; }, 0) / pl.pvHist.length : 0;
     var wSum = 0, wCnt = 0; for (i = 0; i < NDAY; i++) { if (ok(raw[i].windF)) { wSum += raw[i].windF; wCnt++; } }
@@ -2183,7 +2198,7 @@ if (P.status === 'ok') {                                                        
 }
 out[0] = {payload: {rows: rows, plan: tab, chart: chartD, kpi: kpi}};
 // Gebaeudemodell fuer die Entscheidungsmaschine (Regel Vorausschau): Lernstand, Gate, coefActivate; Sonne/Wind-Koeffizienten nur bei aktivem Modell
-var cfX = pl.learn.coef || {}, cfK = (cfX.aktiv && cfX.n >= 3) ? (cfX.maeWind !== null && cfX.maeWind !== undefined ? {bs: cfX.bsW || 0, bw: cfX.bw || 0} : {bs: cfX.bs || 0, bw: 0}) : {bs: 0, bw: 0};
+var cfX = pl.learn.coef || {}, cfK = coefSafe((cfX.aktiv && cfX.n >= 3) ? (cfX.maeWind !== null && cfX.maeWind !== undefined ? {bs: cfX.bsW || 0, bw: cfX.bw || 0} : {bs: cfX.bs || 0, bw: 0}) : {bs: 0, bw: 0});
 global.set('OPT_plan', {ts: now, s0: P.s0, status: P.status, reserve: P.res || null, slots: P.slots ? P.slots.map(function (x) { return [x.t, x.rec, x.b, x.p, x.cost, x.cA]; }) : null,
                         model: {n: cfX.n || 0, minDays: pn('coefMinDays', 10), gate: !!(cfX.gate && cfX.gate.ok), why: (cfX.gate && cfX.gate.why) || [], aktiv: !!cfX.aktiv, bs: cfK.bs, bw: cfK.bw,
                                 ua: P.model ? P.model.ua : null, tbal: pn('tbalC', 15)}});
