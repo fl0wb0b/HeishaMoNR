@@ -443,6 +443,102 @@ console.log('--- Nachpruefung: Ruecklese-Timeout, Flackern des Raumvorschlags');
     check('Raumvorschlag flackert 1 min auf 0: kein Rueckweg-Grund fuer die Raumregel; 15 min am Stueck 0: Grund gesetzt', !R.outs[5].ende.raum_offset && !R.outs[6].ende.raum_offset && !R.outs[33].ende.raum_offset && /seit 15 min wieder 0 K/.test(R.outs[35].ende.raum_offset || ''), R.outs[35].ende.raum_offset);
 }
 
+// ================================================================== (c2) Klickweg vollstaendig (13.10.): jede Stufe der Pruefkette einzeln, Grenzwerte, Ruecklesen, Wiederholung, Rueckweg
+console.log('--- (c2) Klickweg: jede Stufe der Pruefkette einzeln, Ruecklesen, Wiederholung, Rueckweg');
+{
+    const NC = T0 + 900 * MIN, TOPS = 'panasonic_heat_pump/commands/SetZ1HeatRequestTemperature', TOPQ = 'panasonic_heat_pump/commands/SetQuietMode';
+    const mkP = o => { const p = Object.assign({id: 'raum_offset@k', rule: 'raum_offset', ver: 2, art: 'befehl', ts: NC - MIN, bis: NC + 60 * MIN, cmd: {name: 'SetZ1HeatRequestTemperature', topic: TOPS, value: 1}, von: 0, was: 'Heizkurve 0 → +1 K'}, o || {}); p.sum = E.checksum(p); return p; };
+    // Grundfall: alle Stufen erfuellt. mut(b) veraendert genau eine Stufe; gibt sie eine Anfrage zurueck, wird diese geschickt (sonst ID + Pruefsumme des gespeicherten Vorschlags).
+    const click = (mut, A0) => {
+        const b = {A: A0 || E.newApply(), p: mkP(), ctx: {now: NC, enabled: true, knoten: true, rules: ['raum_offset'], eng: {ts: NC - 30000, prop: null, locks: {}}, plant: {q: 0, shift: 0, hpAge: 0.3, block: 0, heatMode: 0, z1Sensor: 0}, cfg: cfg}};
+        b.ctx.eng.prop = b.p;
+        let req = null; if (mut) { req = mut(b) || null; }
+        if (!req) { req = {topic: 'uebernehmen', payload: {id: b.ctx.eng.prop ? b.ctx.eng.prop.id : b.p.id, sum: b.ctx.eng.prop ? b.ctx.eng.prop.sum : b.p.sum}}; }
+        return E.applyRequest(b.A, req, b.ctx);
+    };
+    const neu = (b, o) => { b.p = mkP(o); b.ctx.eng.prop = b.p; };                     // anderer, korrekt gepruefsummter Vorschlag
+    const g = click();
+    check('Klickweg Grundfall: alle Stufen erfuellt -> genau ein Befehl (Whitelist-Topic, Wert als Text, Quelle "Optimierer (Klick)"), Protokoll "gesendet" mit ID/Pruefsumme, Rueckweg nach maxDauerMin (6 h), wartet auf Bestaetigung',
+          g.send.length === 1 && g.send[0].topic === TOPS && g.send[0].payload === '1' && g.send[0].source === 'Optimierer (Klick)' && g.log.length === 1 && g.log[0].ergebnis === 'gesendet' && g.log[0].sum === mkP().sum && g.A.aktiv.bis === NC + 360 * MIN && g.A.pending.art === 'uebernahme' && g.A.n === 1, JSON.stringify(g.send));
+    const STUFEN = [
+        ['Doppelklick (gleiche ID vor 1 min)', b => { b.A.lastClick = {id: b.p.id, ts: NC - MIN}; }, /Doppelklick/],
+        ['Hauptschalter aus', b => { b.ctx.enabled = false; }, /Hauptschalter/],
+        ['Hauptschalter nur Boolesch true ("true" als Text)', b => { b.ctx.enabled = 'true'; }, /Hauptschalter/],
+        ['Sendeknoten deaktiviert erzeugt (KNOTEN = false)', b => { b.ctx.knoten = false; }, /Sendeknoten/],
+        ['Maschine rechnet nicht (Stand 3 min alt)', b => { b.ctx.eng.ts = NC - 3 * MIN; }, /nicht gerechnet/],
+        ['Maschine ohne Zeitstempel', b => { delete b.ctx.eng.ts; }, /nicht gerechnet/],
+        ['andere Vorschlags-ID', b => ({topic: 'uebernehmen', payload: {id: 'raum_offset@alt', sum: b.p.sum}}), /nicht mehr aktuell/],
+        ['kein Vorschlag mehr', b => { b.ctx.eng.prop = null; }, /nicht mehr aktuell/],
+        ['falsche Pruefsumme vom Browser', b => ({topic: 'uebernehmen', payload: {id: b.p.id, sum: 'deadbeef'}}), /Prüfsumme/],
+        ['gespeicherter Vorschlag nachtraeglich veraendert (Wert 1 -> -1, alte Pruefsumme)', b => { b.p.cmd.value = -1; }, /Prüfsumme/],
+        ['nur Hinweis (art)', b => { b.p.art = 'hinweis'; }, /nur ein Hinweis/],
+        ['Regel nicht freigegeben', b => { b.ctx.rules = ['quiet_freigabe']; }, /nicht freigegeben/],
+        ['Freigabeliste fehlt', b => { delete b.ctx.rules; }, /nicht freigegeben/],
+        ['Vorschlag abgelaufen (jetzt = gueltig bis)', b => { neu(b, {bis: NC}); }, /abgelaufen/],
+        ['Befehl nicht auf der Whitelist (SetHeatingControl)', b => { neu(b, {cmd: {name: 'SetHeatingControl', topic: 'panasonic_heat_pump/commands/SetHeatingControl', value: 1}}); }, /nicht auf der Whitelist/],
+        ['Wert ausserhalb (Verschiebung +2)', b => { neu(b, {cmd: {name: 'SetZ1HeatRequestTemperature', topic: TOPS, value: 2}}); }, /nicht erlaubt/],
+        ['Wert ausserhalb (Quiet 4)', b => { neu(b, {rule: 'quiet_strecken', cmd: {name: 'SetQuietMode', topic: TOPQ, value: 4}}); b.ctx.rules = ['quiet_strecken']; }, /nicht erlaubt/],
+        ['Ausgangswert ausserhalb (Verschiebung von +2: kein Rueckweg moeglich)', b => { neu(b, {von: 2}); b.ctx.plant.shift = 2; }, /Rückweg unmöglich/],
+        ['Topic passt nicht zum Befehl', b => { neu(b, {cmd: {name: 'SetZ1HeatRequestTemperature', topic: TOPQ, value: 1}}); }, /Topic passt nicht/],
+        ['MQTT-Notbremse (block_active)', b => { b.ctx.plant.block = 1; }, /MQTT\.block_active/],
+        ['HeishaMon-Daten 6 min alt', b => { b.ctx.plant.hpAge = 6; }, /veraltet/],
+        ['HeishaMon-Alter unbekannt', b => { b.ctx.plant.hpAge = null; }, /veraltet/],
+        ['Sperre der Regel', b => { b.ctx.eng.locks = {raum_offset: ['Takt-Gefahr']}; }, /Gesperrt: Takt-Gefahr/],
+        ['Anlage steht nicht mehr auf dem Ausgangswert', b => { b.ctx.plant.shift = -1; }, /steht nicht mehr auf 0 \(jetzt -1\)/],
+        ['Ist-Wert unbekannt', b => { b.ctx.plant.shift = null; }, /jetzt unbekannt/],
+        ['nicht im Heizkurvenmodus (TOP76 = 1)', b => { b.ctx.plant.heatMode = 1; }, /Heizkurvenmodus/],
+        ['nicht mit Wasserfuehler (TOP111 = 1)', b => { b.ctx.plant.z1Sensor = 1; }, /Heizkurvenmodus/],
+        ['Befehl wartet noch auf Bestaetigung', b => { b.A.pending = {name: 'SetQuietMode', value: 0, ts: NC - 30000, versuche: 1, art: 'uebernahme', id: 'q'}; }, /wartet noch/],
+        ['Uebernahme derselben Groesse aktiv', b => { b.A.aktiv = {id: 'v', rule: 'vorausschau', groesse: 'shift', name: 'SetZ1HeatRequestTemperature', value: 1, von: 0, ts: NC - 60 * MIN, bis: NC + 60 * MIN, bestaetigt: true}; }, /schon eine Übernahme aktiv/],
+        ['Rate: letzter Befehl vor 9 min', b => { b.A.lastSend = NC - 9 * MIN; }, /Zu schnell/],
+        ['Tageslimit: 6 Befehle heute', b => { b.A.day = E.ymd(NC); b.A.n = 6; }, /Tageslimit/]
+    ];
+    const rs = STUFEN.map(s => { const r = click(s[1]); return [s[0], r.send.length === 0 && !!r.toast && s[2].test(r.toast.text) && r.log.length === 1 && r.log[0].ergebnis === 'abgelehnt' && r.A.n === (s[0].indexOf('Tageslimit') === 0 ? 6 : 0) && !r.A.pending === (s[0].indexOf('wartet') < 0), r.toast && r.toast.text]; });
+    check('Klickweg: jede der ' + STUFEN.length + ' Stufen lehnt EINZELN ab (alle anderen erfuellt): nichts gesendet, Meldung mit Grund, Protokoll "abgelehnt", Zaehler unveraendert', rs.every(x => x[1]), rs.filter(x => !x[1]).map(x => x[0] + ': ' + x[2]).join(' | ') || rs.length + ' Stufen');
+    const GRENZ = [
+        ['Maschine genau 2,5 min alt', b => { b.ctx.eng.ts = NC - 2.5 * MIN; }],
+        ['HeishaMon genau 5 min alt', b => { b.ctx.plant.hpAge = 5; }],
+        ['Rate: letzter Befehl genau vor 10 min', b => { b.A.lastSend = NC - 10 * MIN; }],
+        ['Tageslimit von gestern (6) zaehlt heute nicht', b => { b.A.day = E.ymd(NC - 24 * 60 * MIN); b.A.n = 6; }],
+        ['Doppelklick-Sperre nach 2 min vorbei', b => { b.A.lastClick = {id: b.p.id, ts: NC - 2 * MIN}; }],
+        ['laufende Uebernahme einer anderen Groesse (Quiet)', b => { b.A.aktiv = {id: 'q', rule: 'quiet_freigabe', groesse: 'quiet', name: 'SetQuietMode', value: 0, von: 3, ts: NC - 60 * MIN, bis: null, bestaetigt: true}; }],
+        ['Sendeknoten-Angabe fehlt (aeltere Huelle: kein Schalter)', b => { delete b.ctx.knoten; }]
+    ];
+    const rg = GRENZ.map(s => { const r = click(s[1]); return [s[0], r.send.length === 1, r.toast && r.toast.text]; });
+    check('Klickweg Grenzwerte: genau an der Grenze bzw. ausserhalb der Sperre wird gesendet (' + GRENZ.length + ' Faelle)', rg.every(x => x[1]), rg.filter(x => !x[1]).map(x => x[0] + ': ' + x[2]).join(' | ') || '');
+    const un = E.applyRequest(null, {topic: 'irgendwas', payload: {}}, {now: NC, enabled: true, knoten: true}), z0 = E.applyRequest(null, {topic: 'zuruecksetzen', payload: {}}, {now: NC, plant: {shift: 1, hpAge: 0.3, block: 0}});
+    const Az = E.newApply(); Az.aktiv = {id: 'r', rule: 'raum_offset', groesse: 'shift', name: 'SetZ1HeatRequestTemperature', value: 1, von: 0, ts: NC - 60 * MIN, bis: NC + 60 * MIN, bestaetigt: true};
+    const zB = E.applyRequest(JSON.parse(JSON.stringify(Az)), {topic: 'zuruecksetzen', payload: {}}, {now: NC, plant: {shift: 1, hpAge: 0.3, block: 1}});
+    const z1 = E.applyRequest(JSON.parse(JSON.stringify(Az)), {topic: 'zuruecksetzen', payload: {}}, {now: NC, plant: {shift: 1, hpAge: 0.3, block: 0}}), z2 = E.applyRequest(z1.A, {topic: 'zuruecksetzen', payload: {}}, {now: NC + 20000, plant: {shift: 1, hpAge: 0.3, block: 0}});
+    check('Weitere Aktionen: unbekannte Aktion abgelehnt; Zuruecksetzen ohne Uebernahme abgelehnt, bei Notbremse abgelehnt, sonst genau ein Befehl auf den Ausgangswert (Quelle "Rückweg"), ein zweiter Klick waehrend des Rueckwegs sendet nicht noch einmal',
+          un.send.length === 0 && /Unbekannte Aktion/.test(un.toast.text) && z0.send.length === 0 && /keine aktive Übernahme/.test(z0.toast.text) && zB.send.length === 0 && /block_active/.test(zB.toast.text) &&
+          z1.send.length === 1 && z1.send[0].payload === '0' && z1.send[0].source === 'Optimierer (Rückweg)' && z2.send.length === 0 && /läuft bereits/.test(z2.toast.text), [un.toast.text, z0.toast.text, zB.toast.text, z2.toast.text].join(' | '));
+    // Ruecklesen: Bestaetigung nur mit frischen Daten; Wiederholung erst nach 90 s, hoechstens 2; dann Warnung
+    const Ap = g.A, tick = (A, t, plant, o) => E.applyTick(A, Object.assign({now: t, plant: Object.assign({q: 0, shift: 0, hpAge: 0.3, block: 0, heatMode: 0, z1Sensor: 0}, plant)}, o || {}));
+    const r1 = tick(JSON.parse(JSON.stringify(Ap)), NC + 20000, {shift: 1, hpAge: 7}), r2 = tick(JSON.parse(JSON.stringify(Ap)), NC + 20000, {shift: 1});
+    check('Ruecklesen: Anlage meldet den Zielwert, aber mit veralteten Daten (7 min) -> keine Bestaetigung; mit frischen Daten -> bestaetigt (gruene Meldung, Protokoll "bestaetigt")',
+          r1.A.pending && !r1.A.aktiv.bestaetigt && r1.send.length === 0 && !r2.A.pending && r2.A.aktiv.bestaetigt === true && r2.toast.color === 'green' && r2.log[0].aktion === 'bestaetigt', '');
+    let Aw = JSON.parse(JSON.stringify(Ap)), sW = [];
+    [89, 90, 179, 180, 269, 270, 400].forEach(sec => { const r = tick(Aw, NC + sec * 1000, {shift: 0}); Aw = r.A; sW.push(sec + ':' + r.send.length); });
+    check('Wiederholung: erst nach 90 s ohne Bestaetigung, hoechstens 2 (insgesamt 3 Befehle), danach rote Warnung; Anlage steht nachweislich auf dem Ausgangswert -> Uebernahme beendet',
+          sW.join(',') === '89:0,90:1,179:0,180:1,269:0,270:0,400:0' && /Keine Bestätigung/.test(Aw.alarm.text) && !Aw.pending && Aw.aktiv === null, sW.join(','));
+    // Rueckweg: nach Ablauf (gehoert zum geklickten Vorschlag), nur mit frischen Daten; ohne Bestaetigung hoechstens 3 Versuche, kein endloser Neustart
+    const Ar = E.newApply(); Ar.aktiv = {id: 's', rule: 'quiet_strecken', groesse: 'quiet', name: 'SetQuietMode', value: 3, von: 0, ts: NC - 5 * 3600000, bis: NC - 1, bestaetigt: true};
+    const rv = tick(JSON.parse(JSON.stringify(Ar)), NC, {q: 3, hpAge: 7}), rw = tick(JSON.parse(JSON.stringify(Ar)), NC, {q: 3});
+    check('Rueckweg nach Ablauf: mit veralteten Daten kein Befehl; mit frischen genau einer auf den Ausgangswert (Quelle "Rückweg", Grund im Protokoll)', rv.send.length === 0 && rw.send.length === 1 && rw.send[0].payload === '0' && rw.send[0].source === 'Optimierer (Rückweg)' && /nach Ablauf/.test(rw.log[0].grund), '');
+    let Ax = rw.A, nS = 1, alarmT = null, logs = 0;
+    for (let s = 15; s <= 2 * 3600; s += 15) { const r = tick(Ax, NC + s * 1000, {q: 3}); Ax = r.A; nS += r.send.length; logs += r.log.length; if (!alarmT && Ax.alarm && /Keine Bestätigung/.test(Ax.alarm.text)) { alarmT = s; } }
+    check('Rueckweg ohne Bestaetigung (Anlage bleibt auf 3): hoechstens 3 Befehle, dann rote Warnung und KEIN automatischer Neustart (2 h lang kein weiterer Befehl, kein Protokoll-Rauschen); vorher alle 4,5 min wieder 3 Befehle',
+          nS === 3 && alarmT !== null && alarmT <= 300 && Ax.aktiv && Ax.aktiv.rueckFehl && !Ax.pending && logs === 3, 'Befehle ' + nS + ', Warnung nach ' + alarmT + ' s, Protokoll ' + logs);
+    const zM = E.applyRequest(JSON.parse(JSON.stringify(Ax)), {topic: 'zuruecksetzen', payload: {}}, {now: NC + 2 * 3600000 + 5000, plant: {q: 3, hpAge: 0.3, block: 0}});
+    const nb = tick(JSON.parse(JSON.stringify(Ax)), NC + 2 * 3600000 + 5000, {q: 0}), fr = tick(JSON.parse(JSON.stringify(Ax)), NC + 2 * 3600000 + 5000, {q: 2});
+    check('... danach: "Zurücksetzen" von Hand sendet wieder (ein Befehl); meldet die Anlage spaeter den Ausgangswert, endet die Uebernahme ("nachträglich bestätigt"); ein dritter Wert beendet sie als fremde Aenderung, nie ein Befehl',
+          zM.send.length === 1 && zM.send[0].payload === '0' && nb.A.aktiv === null && nb.send.length === 0 && /nachträglich bestätigt/.test(nb.toast.text) && fr.A.aktiv === null && fr.send.length === 0 && /von außen auf 2/.test(fr.toast.text), '');
+    const Au = E.newApply(); Au.aktiv = {id: 'u', rule: 'raum_offset', groesse: 'shift', name: 'SetZ1HeatRequestTemperature', value: 1, von: 2, ts: NC - 7 * 3600000, bis: NC - 1, bestaetigt: true};
+    let nU = 0, lU = 0, Au2 = Au; for (let s = 0; s < 600; s += 15) { const r = tick(Au2, NC + s * 1000, {shift: 1}); Au2 = r.A; nU += r.send.length; lU += r.log.length; }
+    check('Rueckweg unmoeglich (Ausgangswert ausserhalb der Whitelist, alter Zustand): einmal rote Warnung und Protokoll, danach Ruhe (kein Befehl, keine Meldung je Takt)', nU === 0 && lU === 1 && /Rückweg unmöglich/.test(Au2.alarm.text) && Au2.aktiv.rueckFehl, 'Protokolle ' + lU);
+}
+
 // ================================================================== (d) Vorausschau ±1 K und Verschiebungs-Arbitrierung (keine Regel beisst eine andere)
 console.log('--- (d) Vorausschau und Verschiebungs-Arbitrierung');
 const VSK = {up: [10, 10, 9, 8, 7, 7, 7], down: [8, 8, 9, 10.5, 11, 11, 11], flat: [10, 10, 10, 10, 10, 10, 10]};   // gegen den Tagesgang 10 °C: Bedarf +2,25 K / -2,38 K / 0 K
@@ -1009,6 +1105,23 @@ if (flowsFile) {
             laeuft1 === true && sc1.chip === 'lädt' && k >= 1 && T.nl.laeuft === false && T.nl.zeilen === 8 * 60 - 1 && T.runs.length === 2 && T.runs[0][1] === 120 && T.runs[1][1] === 170 && T.starts.length === 2 && T.pausen.length === 1 && T.pausen[0][1] === 80 && sc2.chip !== 'lädt' && cop2 && cop2.spalten.join() === 'Efficiency Q0' && cop2.zeilen[0].band === '3…7 °C' && !warns.some(w => /Takt nachladen/.test(w)),
             JSON.stringify({k, nl: T.nl, runs: T.runs, starts: T.starts.length, pausen: T.pausen, chip: sc2.chip, cop: cop2}));
       delete gstore.OPT_cfg.engine; }
+    // Huelle opt_apply: Hauptschalter bei jedem Takt aus apply.json, Regel-Liste nur Texte, letzte Sicherung vor dem Ausgang (13.10.)
+    { files['/data/optimizer/apply-state.json'] = JSON.stringify(E.newApply()); restart(); world();
+      files['/data/optimizer/apply.json'] = '{"enabled": true, "rules": [1, null, "quiet_freigabe", {"x": 1}], "_kommentar": "wird nicht gelesen"}';
+      runN('opt_apply', {topic: 'tick', payload: NOW}); const okR = gstore.OPT_apply_enabled === true && JSON.stringify(gstore.OPT_apply.rules) === '["quiet_freigabe"]';
+      files['/data/optimizer/apply.json'] = '{"enabled": true, "rules": ["quiet_freigabe"]';
+      runN('opt_apply', {topic: 'tick', payload: NOW}); const okK = gstore.OPT_apply_enabled === false;
+      delete files['/data/optimizer/apply.json']; runN('opt_apply', {topic: 'tick', payload: NOW}); const okF = gstore.OPT_apply_enabled === false;
+      check('Huelle opt_apply: Hauptschalter wird bei jedem Takt aus apply.json gelesen, kaputte oder fehlende Datei = aus, Regel-Liste nur aus Texten, unbekannte Felder stoeren nicht', okR && okK && okF, JSON.stringify(gstore.OPT_apply.rules));
+      const keepF = FN.opt_apply, w0 = warns.length;
+      const stub = "\nENGINE.applyRequest = function () { return {A: ENGINE.newApply(), send: [{topic: 'panasonic_heat_pump/commands/SetHeatingControl', payload: '1', source: 'x'}, {topic: 'panasonic_heat_pump/commands/SetQuietMode', payload: '7', source: 'x'}, " +
+                   "{topic: 'panasonic_heat_pump/commands/SetZ1HeatRequestTemperature', payload: 'abc', source: 'x'}, {topic: 'panasonic_heat_pump/commands/SetQuietMode', payload: '2', source: 'Optimierer (Klick)'}], toast: null, log: []}; };\n";
+      FN.opt_apply = keepF.replace('// == ENGINE-CORE-ENDE ==', '// == ENGINE-CORE-ENDE ==' + stub); delete comp.opt_apply;
+      const o1 = runN('opt_apply', {topic: 'uebernehmen', payload: {id: 'x', sum: 'y'}}); gstore.MQTT.block_active = 1;
+      const o2 = runN('opt_apply', {topic: 'uebernehmen', payload: {id: 'x', sum: 'y'}}); gstore.MQTT.block_active = 0;
+      FN.opt_apply = keepF; delete comp.opt_apply; files['/data/optimizer/apply-state.json'] = JSON.stringify(E.newApply()); restart();
+      check('Huelle opt_apply, letzte Sicherung vor dem Ausgang (Kern absichtlich verfaelscht): Befehl ausserhalb der Whitelist, unerlaubter Wert und Nicht-Zahl werden verworfen (je Warnung), nur SetQuietMode = 2 geht hinaus (retain aus); bei Notbremse geht gar nichts hinaus',
+            o1[0] && o1[0].length === 1 && o1[0][0].topic === 'panasonic_heat_pump/commands/SetQuietMode' && o1[0][0].payload === '2' && o1[0][0].retain === false && !o2[0] && warns.slice(w0).filter(w => /Befehl verworfen/.test(w)).length === 7, warns.slice(w0).join(' | ')); }
     // Lange Fahrt mit Hauptschalter AN und ALLEN Regeln freigegeben, aber ohne Klick: nie ein Befehl
     files['/data/optimizer/apply.json'] = '{"enabled": true, "rules": ["quiet_freigabe", "quiet_strecken", "raum_offset"]}';
     files['/data/optimizer/apply-state.json'] = JSON.stringify(E.newApply()); restart(); NOW += 3600000; world();
