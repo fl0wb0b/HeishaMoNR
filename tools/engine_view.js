@@ -110,7 +110,7 @@ var ENGVIEW = (function (E) {
         if (!knoten) { return zu('gesperrt: Sendeknoten deaktiviert'); }
         if (rel.indexOf(p.rule) < 0) { return zu('gesperrt: Regel nicht freigegeben'); }
         if (AP.pending) { return zu('wartet auf Bestätigung der Anlage'); }
-        if (AP.aktiv && AP.aktiv.groesse === R.groesse) { return zu('gesperrt: Übernahme ' + ((E.RULE[AP.aktiv.rule] || {}).kachel || AP.aktiv.name) + ' läuft'); }
+        if (AP.aktiv) { return zu('gesperrt: Übernahme ' + ((E.RULE[AP.aktiv.rule] || {}).kachel || AP.aktiv.name) + ' läuft'); }      // eine Uebernahme zur Zeit (jede hat ihren Rueckweg)
         if (AP.lastSend && now - AP.lastSend < X.abstandMin * MIN) { return zu('gesperrt bis ' + hm(AP.lastSend + X.abstandMin * MIN) + ' (Abstand ' + X.abstandMin + ' min)'); }
         if (heute >= X.proTag) { return zu('gesperrt: Tageslimit ' + heute + '/' + X.proTag + ' Befehle'); }
         return {ok: true, text: 'Übernehmen', grund: 'frei · heute ' + heute + '/' + X.proTag + ' Befehle'};
@@ -134,7 +134,7 @@ var ENGVIEW = (function (E) {
                 var cop = a[0] > 0 ? Math.round(a[1] / a[0] * 100) / 100 : null, x = k.split('|');
                 return {cop: cop, v: have(cop) ? E.de(cop, 2) : '–', h: E.de(a[2] / 60, 1) + ' h', grau: a[2] < tc.copMinMin || !have(cop), best: false,
                         title: x[0] + ' Quiet ' + x[1] + ' · ' + b + ' °C: COP ' + (have(cop) ? E.de(cop, 2) : '–') + ' aus ' + Math.round(a[2]) + ' stabilen Minuten (mindestens ' + tc.copMinMin + ')' +
-                               (a[3] ? ' · Ø ' + E.de(a[3] / a[2], 0) + ' Hz' : '') + (have(a[4]) ? ' · max ' + E.de(a[4], 0) + ' Hz' : '') + ' · ' + E.de(a[0] / 1000, 1) + ' kWh el / ' + E.de(a[1] / 1000, 1) + ' kWh th'};
+                               (a[3] ? ' · Ø ' + E.de(a[3] / a[2], 0) + ' Hz' : '') + (have(a[4]) ? ' · max ' + E.de(a[4], 0) + ' Hz' : '') + (have(a[5]) ? ' · gehalten ' + E.de(a[5], 0) + ' Hz' : '') + ' · ' + E.de(a[0] / 1000, 1) + ' kWh el / ' + E.de(a[1] / 1000, 1) + ' kWh th'};
             });
             var ok = zellen.filter(function (z) { return z && !z.grau; });
             if (ok.length >= 2) { var mx = Math.max.apply(null, ok.map(function (z) { return z.cop; })); ok.forEach(function (z) { z.best = z.cop === mx; }); }   // bester Wert nur, wenn es etwas zu vergleichen gibt
@@ -210,11 +210,11 @@ var ENGVIEW = (function (E) {
         if (verw) { st.push({t: 'verworfen: ' + p.was, c: 'mute'}); }
         var card = {status: st, prop: null, knopf: {ok: false, text: 'Übernehmen', grund: 'kein Vorschlag'}, reset: !!AP.aktiv, enabled: en, verworfen: verw ? p.id : null, leer: null};
         if (p && !verw) {
-            var R = E.RULE[p.rule] || {}, cr = cfg.rules[p.rule] || {}, hinweis = p.art === 'hinweis', von = zielTxt(p.cmd.name, p.von);
+            var R = E.RULE[p.rule] || {}, cr = cfg.rules[p.rule] || {}, hinweis = p.art === 'hinweis', von = zielTxt(p.cmd.name, p.von), maxD = have(p.maxDauerMin) ? p.maxDauerMin : cr.maxDauerMin;
             card.prop = {id: p.id, sum: p.sum, rule: p.rule, name: R.kurz || p.rule, c: COL[p.rule] || '#1976d2', hinweis: hinweis, was: p.was, warum: p.warum,
                          befehl: p.cmd.name + ' = ' + p.cmd.value, ziel: zielTxt(p.cmd.name, p.cmd.value) + (have(p.von) ? ' (jetzt ' + von + ')' : ''),
                          seit: hm(p.ts), bis: hm(p.bis), erwartung: ohneKlammern(p.erwartung), erwartungLang: p.erwartung,
-                         rueck: hinweis ? 'von Hand (Saisoneinstellung)' : (have(cr.maxDauerMin) ? 'automatisch zurück auf ' + von + ', spätestens nach ' + E.de(cr.maxDauerMin / 60, 0) + ' h' : 'kein automatischer · „Zurücksetzen“ stellt ' + von + ' wieder her'),
+                         rueck: hinweis ? 'von Hand (Saisoneinstellung)' : (have(maxD) ? 'automatisch zurück auf ' + von + ', spätestens nach ' + E.de(maxD / 60, 0) + ' h' : 'kein automatischer · „Zurücksetzen“ stellt ' + von + ' wieder her'),
                          rueckweg: p.rueckweg};
             card.knopf = knopfOf(p, AP, en, knoten, rel, now);
         } else {
