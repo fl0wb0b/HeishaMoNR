@@ -941,7 +941,7 @@ if (flowsFile) {
     const vm = require('vm');
     const NODES = JSON.parse(fs.readFileSync(flowsFile, 'utf8')), FN = {}; NODES.forEach(n => { if (n.type === 'function') { FN[n.id] = n.func; } });
     check('Flow-Datei: Huellen opt_engine/opt_apply enthalten den Kern unveraendert (Text identisch mit tools/engine_core.js)', ['opt_engine', 'opt_apply'].every(id => FN[id] && FN[id].indexOf(fs.readFileSync(path.join(__dirname, 'engine_core.js'), 'utf8')) === 0), '');
-    check('Struktur des Sendewegs: genau ein deaktivierter mqtt out, nur von opt_apply, Eingaenge nur Karte + Takt', applyPathProblems(NODES).length === 0, applyPathProblems(NODES).join(' | '));
+    check('Struktur des Sendewegs: genau ein ' + (APPLY_AKTIV ? 'AKTIVER (angesagt)' : 'deaktivierter') + ' mqtt out, Schalter KNOTEN in opt_apply passend, nur von opt_apply, Eingaenge nur Karte + Takt', applyPathProblems(NODES).length === 0, applyPathProblems(NODES).join(' | '));
     const mut = (f) => { const c = JSON.parse(JSON.stringify(NODES)); f(c); return applyPathProblems(c); };
     check('Strukturpruefung schlaegt an: Knoten ' + (APPLY_AKTIV ? 'deaktiviert' : 'aktiviert') + ' / Schalter KNOTEN falsch / zweiter mqtt out / opt_engine direkt verdrahtet / Link im Tab',
           mut(c => { const n = c.find(x => x.id === 'opt_apply_mqtt'); if (APPLY_AKTIV) { n.d = true; } else { delete n.d; } }).length > 0 &&

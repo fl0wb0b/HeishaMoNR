@@ -1,6 +1,6 @@
 # Optimierer: Entscheidungsmaschine, Punktesystem, Ein-Klick-Übernahme, Bonsai-Beobachter
 
-Stand 13.10.2026, Branch `todo-umsetzung` (Änderungen gegenüber 12.10.: Abschnitt 13). **Alles ist Shadow.** Die Maschine rechnet jede Minute aus, was sie schalten *würde*, und schreibt das auf. Sie sendet nichts. Der einzige Sendeweg ist ein Klick des Betreibers auf „Übernehmen“. Dieser Weg wird gesperrt ausgeliefert.
+Stand 13.10.2026, Branch `ui-ueberarbeitung` (Änderungen gegenüber 12.10.: Abschnitt 13; Seite „Optimierer“ und Klickweg: Abschnitt 14). **Alles ist Shadow.** Die Maschine rechnet jede Minute aus, was sie schalten *würde*, und schreibt das auf. Sie sendet nichts. Der einzige Sendeweg ist ein Klick des Betreibers auf „Übernehmen“. Dieser Weg wird gesperrt ausgeliefert.
 
 ## 1. Kurzfassung
 
@@ -39,7 +39,7 @@ OPT_kz (Radiator) ────────────────────�
                                                             │       └──────┴──────────────────────────────┘
                                                             ├─► decisions-/scores-YYYY-MM.jsonl, quiet-events (Datei)
                                                             ├─► OPT_engine (global: Vorschlag, Sperren, Rückweg-Gründe)
-                                                            └─► Seite „Optimierer“ (4 Karten): tools/engine_view.js baut die Daten, tools/eng_ui.js zeichnet sie
+                                                            └─► Seite „Optimierer“ (5 Karten): tools/engine_view.js baut die Daten, tools/eng_ui.js zeichnet sie
 Karte „Aktueller Vorschlag“ (Klick: ID + Prüfsumme) ─┐
 Takt alle 15 s (opt_i_apply) ────────────────────────┴─► opt_apply ─► opt_apply_mqtt (mqtt out, DEAKTIVIERT) ─► panasonic_heat_pump/commands/…
                                                                   ├─► Meldung (Toast), applied-YYYY-MM.jsonl, quiet-events
@@ -58,8 +58,8 @@ Takt alle 15 s (opt_i_apply) ─────────────────
 | `opt_apply_mqtt` | mqtt out | **deaktiviert** (`"d": true`) |
 | `opt_broker_cmd` | mqtt-broker | 10.10.10.128, eigener Client `nodered-optimizer-cmd` |
 | `opt_eng_ui_tab` | ui_tab | Seite „Optimierer“, Reihenfolge 12,55 |
-| `opt_g_eng_prop`, `opt_g_eng_rules`, `opt_g_eng_score`, `opt_g_eng_log` | ui_group | je 18 breit |
-| `opt_t_eng_*` | ui_template | die vier Karten |
+| `opt_g_eng_prop`, `opt_g_eng_rules`, `opt_g_eng_score`, `opt_g_eng_mess`, `opt_g_eng_log` | ui_group | je 17 breit (seit 13.10., vorher 18) |
+| `opt_t_eng_*` | ui_template | die fünf Karten (seit 13.10. mit `opt_t_eng_mess` „Messwerte & Lernen“, Ausgang 6 von `opt_engine`) |
 | `opt_c_eng` | comment | |
 
 **Geänderter Knoten:** `opt_eval`. `OPT_state` bekommt zusätzlich die Felder `korr`, `korrCode` und `korrLead`. Das ist der Raumvorschlag der Phase 2, nur lesend. Das Verhalten ändert sich nicht, `optimizer_sim.js` bleibt grün.
@@ -550,11 +550,13 @@ Option (b) ist dokumentiert, aber nicht gebaut. Sie hätte die Ratenbegrenzung d
    - `opt_apply_mqtt` hat `"d": true`. Node-RED legt den Knoten gar nicht an, nichts kann hinaus.
    - `/data/optimizer/apply.json` fehlt, damit gilt der Hauptschalter `OPT_apply_enabled` = aus. Nur `"enabled": true` (Boolesch) schaltet ein.
    - Die Karte zeigt „Übernahme gesperrt“.
+   - Seit 13.10. weiß `opt_apply`, dass der Sendeknoten deaktiviert erzeugt wurde (Generator-Schalter `KNOTEN = false`): ein Klick wird auch mit Hauptschalter AN abgelehnt, die Karte zeigt „Übernahme gesperrt: Sendeknoten deaktiviert“. Vorher hätte ein Klick „gesendet“ gemeldet und wäre am deaktivierten Knoten verpufft (Rücklese-Timeout).
 2. **Nur der Klick sendet.** Es gibt keinen automatischen Sendeweg. Die Sim prüft 36 h mit Hauptschalter AN und allen Regeln freigegeben: 0 Befehle ohne Klick.
    - Einzige Ausnahme ist der **Rückweg einer geklickten Übernahme**. Er ist Teil des angezeigten Vorschlags („Gültig bis … automatisch zurück auf …“) und wird nur in Richtung des vorherigen Werts gesendet.
 3. **Prüfkette je Klick.** Vom Browser kommen nur ID und Prüfsumme. Der Server prüft:
    - Doppelklick
    - Hauptschalter
+   - Sendeknoten aktiv erzeugt (seit 13.10.: `opt_apply` trägt den Generator-Schalter `KNOTEN`; ohne `--uebernahme-knoten-aktiv` lehnt er jeden Klick ab, auch mit Hauptschalter AN)
    - Maschine rechnet (≤ 2,5 min alt)
    - ID = aktueller Vorschlag
    - Prüfsumme
@@ -562,6 +564,7 @@ Option (b) ist dokumentiert, aber nicht gebaut. Sie hätte die Ratenbegrenzung d
    - Regel freigegeben (`apply.json` → `rules`)
    - Gültigkeit
    - Whitelist und Wertebereich: `SetQuietMode` 0–3, `SetZ1HeatRequestTemperature` −1…+1, nichts sonst
+   - Ausgangswert in der Whitelist (seit 13.10.; sonst wäre kein Rückweg möglich)
    - Topic
    - Notbremse `MQTT.block_active`
    - HeishaMon-Daten ≤ 5 min alt
@@ -587,7 +590,7 @@ Option (b) ist dokumentiert, aber nicht gebaut. Sie hätte die Ratenbegrenzung d
    | Raumeinfluss | nach 6 h oder Raumvorschlag 15 min am Stück 0 (er flackert, wenn Kinderzimmer-Werte ungültig werden) |
    | Quiet-Freigabe | kein automatischer, weil Quiet 0 der Standard ist |
 
-   „Zurücksetzen“ ist jederzeit möglich, außer bei Notbremse. Der Rückweg macht bis zu 3 Versuche.
+   „Zurücksetzen“ ist jederzeit möglich, außer bei Notbremse. Der Rückweg macht bis zu 3 Versuche. Bleibt er unbestätigt, endet das automatische Senden mit roter Warnung (seit 13.10.; vorher startete er alle 4,5 min neu, 76 Befehle in 2 h); „Zurücksetzen“ von Hand geht weiter, meldet die Anlage später den Ausgangswert, endet die Übernahme.
 9. **Neustart** mitten in der Übernahme: Der Zustand liegt in `apply-state.json`. Rücklesen und Rückweg-Timer laufen weiter. Es wird nichts doppelt gesendet, solange die Anlage den Wert meldet.
 10. **Not-Aus im Dashboard:** „Übernahme sperren“ setzt `apply.json` → `enabled: false`. **Entsperren geht nie über das Dashboard**, nur über die Datei.
 11. **Protokoll:** Jede Aktion steht in `applied-YYYY-MM.jsonl`, auch Ablehnungen mit Grund, und zusätzlich als `optimierer_*` in `quiet-events`.
@@ -595,26 +598,31 @@ Option (b) ist dokumentiert, aber nicht gebaut. Sie hätte die Ratenbegrenzung d
 ### Freigabe (nur mit Go des Nutzers)
 
 1. Der Nutzer entscheidet je Regel, z. B. nach der Freigabereife-Anzeige.
-2. Flows mit `--uebernahme-knoten-aktiv` erzeugen und deployen (nur `opt_*`).
-3. `/data/optimizer/apply.json` schreiben: `{"enabled": true, "rules": ["quiet_freigabe"]}`. Der Hauptschalter wird bei jedem Takt (15 s) neu gelesen.
-4. Zurück geht es mit „Übernahme sperren“ im Dashboard, durch Löschen der Datei oder durch einen Deploy ohne den Schalter.
+2. Flows mit `--uebernahme-knoten-aktiv` erzeugen und deployen (nur `opt_*`). `deploy_opt.sh` kennt dafür seit dem Patch `deploy_opt_genargs.patch` die Umgebungsvariable `GEN_ARGS`: `GEN_ARGS=--uebernahme-knoten-aktiv ./deploy_opt.sh uebernahme_an`. Das Skript reicht den Schalter an den Generator, setzt für die Sims `UEBERNAHME_KNOTEN_AKTIV=1` (sie verlangen dann den aktiven Sendeknoten und `KNOTEN = true` in `opt_apply`, ohne Ansage schlagen sie bei aktivem Knoten an) und zeigt „opt_apply_mqtt live: … -> neu: …“. Geändert werden genau `opt_apply_mqtt` (aktiv) und `opt_apply` (`KNOTEN = true`).
+3. `/data/optimizer/apply.json` schreiben, Vorschlag: `apply.json.vorschlag` (`{"enabled": true, "rules": ["quiet_freigabe", "quiet_strecken", "raum_offset"]}`; Heizgrenze bleibt Hinweis, Vorausschau erst mit offenem Gate; die Grenzen stehen dort nur zur Erläuterung, sie sind fest im Kern). Der Hauptschalter wird bei jedem Takt (15 s) neu gelesen.
+4. Zurück geht es mit „Übernahme sperren“ im Dashboard, durch Löschen der Datei oder durch einen Deploy ohne den Schalter (dann zeigt das Skript „live: AKTIV -> neu: deaktiviert“).
 
 ## 9. Seite „Optimierer“
 
-Vier Gruppen, alle 18 breit. Gemischte Breiten auf einer Seite legen die Karten übereinander (Masonry-Falle), deshalb sind sie gleich breit. Die Karten passen ihre Höhe selbst an (`FIT_JS`). Keine erklärenden Hinweiszeilen, kein Satz „würde schalten, sobald …“ mehr auf der Seite (er bleibt nur als Feld `naechste` im Datensatz).
+Fünf Gruppen, alle 17 breit (seit 13.10., vorher vier zu 18). Gemischte Breiten auf einer Seite legen die Karten übereinander (Masonry-Falle), deshalb sind sie gleich breit; je Gruppe genau eine Karte. Die Karten passen ihre Höhe selbst an (`FIT_JS`), seit 13.10. zusätzlich sofort nach jedem Zeichnen (der 1,5-s-Takt von `FIT_JS` ruht, solange das Fenster verdeckt ist; dann blieben die Starthöhen stehen und der Inhalt scrollte in der Karte). Starthöhen 4/3/9/10/12 Einheiten passen ohne Einpassen für den üblichen Inhalt. Keine erklärenden Hinweiszeilen, kein Satz „würde schalten, sobald …“ auf der Seite (er bleibt nur als Feld `naechste` im Datensatz); Einzelheiten stehen im Tooltip.
 
-Aufbau (Neufassung 10.10. abends):
-- **Daten** baut `tools/engine_view.js` (`ENGVIEW.build`, rein, in `opt_engine` hinter dem Kern eingebettet). **Darstellung**: `tools/eng_ui.js` (`optEngUi.html`/`mount`, rein, HTML mit Maskierung aller Texte), in jede der vier Vorlagen eingebettet. Die Vorlagen zeichnen per `innerHTML` wie die Diagrammkarten, ohne Angular-Ausdrücke.
+**Gruppenbreite (Entscheidung 13.10.):** 17 Einheiten = 912 px. Ab ~1840 px Fensterbreite stehen zwei Spalten nebeneinander (1920 und 2560 px), bei 1024 px eine Spalte ohne waagrechtes Scrollen (Inhalt ~1007 px). Breiter als 18 Einheiten (966 px) scrollt bei 1024 px waagrecht, eine größere einheitliche Breite scheidet deshalb aus; 16 und schmaler kürzt die fünf Kacheln je Zeile (Namen bis 17 Zeichen). Bei 2560 px bleiben rechts ~700 px frei (drei Spalten bräuchten ≤ 15 Einheiten, zu schmal für die Kacheln). Die Karte „Aktueller Vorschlag“ ist immer höher als „Regeln“ (ohne Vorschlag Mindesthöhe, 4 Einheiten), damit die Masonry mit und ohne Vorschlag gleich anordnet: links „Aktueller Vorschlag“ und „Messwerte & Lernen“, rechts „Regeln“, „Punkte“, „Entscheidungen“; bei 1024 px untereinander in dieser Reihenfolge: Vorschlag, Regeln, Punkte, Messwerte, Entscheidungen. Geprüft nur in der statischen Vorschau (Masonry nachgebildet); im Dashboard nach dem Deploy bei 1024/1920/2560 px ansehen. Fällt die Anordnung live anders aus, genügt `ENG_W = 18` im Generator.
+
+Aufbau:
+- **Daten** baut `tools/engine_view.js` (`ENGVIEW.build`, rein, in `opt_engine` hinter dem Kern eingebettet). **Darstellung**: `tools/eng_ui.js` (`optEngUi.html`/`mount`, rein, HTML mit Maskierung aller Texte), in jede der fünf Vorlagen eingebettet. Die Vorlagen zeichnen per `innerHTML` wie die Diagrammkarten, ohne Angular-Ausdrücke.
 - **Knöpfe** schicken weiter nur Aktion, ID und Prüfsumme (`scope.send` genau viermal im Code, Test).
 
 | Karte | Inhalt |
 |---|---|
-| Entscheidungsmaschine | **Statuszeile** aus Chips: „Maschine läuft · hh:mm“ bzw. „Anlaufsperre bis …“, „keine HeishaMon-Daten“, „Maschine rechnet nicht“; Anlage kurz (Lauf · Hz · Quiet · Vorlauf-Abstand); Übernahme („🔒 Übernahme gesperrt“, „Übernahme frei: …“, „Übernommen …“, „wartet auf Bestätigung“); Warnung; „verworfen: …“. **Vorschlag** nur wenn einer da ist: hervorgehobener Kasten mit Regel, Was, Warum (eine Zeile mit Zahlen), Befehl, seit, gültig bis, Rückweg kurz; Erwartung und Rückweg-Text eingeklappt. **Knöpfe**: Übernehmen (deaktiviert mit Grund als Beschriftung), Verwerfen; Zurücksetzen nur bei aktiver Übernahme; Übernahme sperren nur wenn freigegeben |
-| Regeln | 5 Kacheln (eine Zeile, je ~180 px): kurzer Kachelname (`kachel`: Quiet-Freigabe, Laufzeit strecken, Raumeinfluss, Heizgrenze, Vorausschau), darunter Status-Chip (Vorschlag/Hinweis, wartet, gesperrt, prüft, ruht, keine Daten) und je Bedingung ein Segment (grün = erfüllt, Titel = Bedingung), eine Zeile mit dem Engpass und Balken: „Vorlauf-Rückstand 0,5 / 1,5 K“, „Haltezeit 4 / 10 min“, „🔒 Mindestabstand bis 09:38“, „🔒 Modell-Gate 1 / 10 Tage“, „seit 08:36 · gültig bis 09:06“. Texte brechen um statt abgeschnitten zu werden |
-| Punkte | Diagramm der Summen je Befehlsregel (nur wenn es Punkte gibt), 5 Kacheln (Summe, bei der Heizgrenze „–“ und „nur Hinweis“; Fälle/Treffer/Fehlalarm, seit v5 „davon n Treffer neutral (Basisrate ≥ Prognose)“ wenn n > 0, Skill ab 3 Fällen, Wirkung, Schaden/Verpasst rot, Kennzahl „verpasst während Sperre“ (Befehlsregeln), Freigabereife n/m mit Balken, Kriterien eingeklappt), Messaufgabe Comfort/Efficiency als eine Zeile |
-| Entscheidungen | **Episoden** statt Minutenzeilen: je Regel von „alle Bedingungen erfüllt“ (wartet, gesperrt, Vorschlag/Hinweis) bis zum Ende, mit Verlauf als Chips und Ende-Grund; Dauerzustände („prüft“, „ruht“) und Datenlücken erzeugen keine Zeile, kurze „wartet“-Episoden unter 5 min ohne Sperre oder Vorschlag werden ausgeblendet; höchstens 12, neueste oben |
+| Aktueller Vorschlag | **Statuszeile** aus Chips: „Maschine läuft · hh:mm“ bzw. „Anlaufsperre bis …“, „keine HeishaMon-Daten“, „Maschine rechnet nicht“; Anlage kurz (Lauf · Hz · Quiet · Vorlauf-Abstand); Übernahme („🔒 Übernahme gesperrt“, „… Sendeknoten deaktiviert“, „Übernahme frei: … · heute n/6“, „Übernommen …“, „wartet auf Bestätigung“); Warnung; „verworfen: …“. **Mit Vorschlag**: hervorgehobener Kasten mit Regel, seit/gültig bis, Was (groß) und offen sichtbar **Befehl** (`SetQuietMode = 0`), **Zielwert** („Quiet 0 (jetzt Quiet 3)“, „Verschiebung +1 K (jetzt 0 K)“), **Begründung**, **Erwartete Wirkung** (Kernaussage ohne Klammern, voller Text mit Messbelegen im Tooltip), **Rückweg** („automatisch zurück auf Quiet 0, spätestens nach 4 h“, „kein automatischer · „Zurücksetzen“ stellt Quiet 3 wieder her“; Bedingungen im Tooltip). **Knopf** „Übernehmen“: grau mit Grund daneben in der Reihenfolge der Prüfkette des Servers („🔒 gesperrt: Hauptschalter aus“, „… Sendeknoten deaktiviert“, „… Regel nicht freigegeben“, „wartet auf Bestätigung der Anlage“, „… Übernahme Raumeinfluss läuft“, „gesperrt bis 10:52 (Abstand 10 min)“, „… Tageslimit 6/6 Befehle“, „nur Hinweis, von Hand einstellen“), sonst blau mit „frei · heute n/6 Befehle“; Verwerfen. **Ohne Vorschlag**: „Kein Vorschlag“ mit letztem Vorschlag (Regel, Was, Zeitraum, Ende), Zahl der Vorschläge/Hinweise der letzten 24 h und Übernahme-Stand. Zurücksetzen nur bei aktiver Übernahme, Übernahme sperren nur wenn freigegeben |
+| Regeln | 5 Kacheln (eine Zeile, je ~170 px): kurzer Kachelname (`kachel`: Quiet-Freigabe, Laufzeit strecken, Raumeinfluss, Heizgrenze, Vorausschau), darunter Status-Chip (Vorschlag/Hinweis, wartet, gesperrt, prüft, ruht, keine Daten) und je Bedingung ein Segment (grün = erfüllt, Titel = Bedingung), eine Zeile mit dem Engpass und Balken: „Vorlauf-Rückstand 0,5 / 1,5 K“, „Haltezeit 4 / 10 min“, „🔒 Mindestabstand bis 09:38“, „🔒 Modell-Gate 1 / 10 Tage“, „seit 08:36 · gültig bis 09:06“. Texte brechen um statt abgeschnitten zu werden |
+| Punkte | Diagramm der Summen je Befehlsregel (nur wenn es Punkte gibt), 5 Kacheln (Summe, bei der Heizgrenze „–“ und „nur Hinweis“; Fälle/Treffer/Fehlalarm, seit v5 „davon n Treffer neutral (Basisrate ≥ Prognose)“ wenn n > 0, Skill ab 3 Fällen, Wirkung, Schaden/Verpasst rot, Kennzahl „verpasst während Sperre“ (Befehlsregeln), Freigabereife n/m mit Balken, Kriterien eingeklappt). Keine Mess-/Lernzeilen mehr |
+| Messwerte & Lernen (neu 13.10.) | **Takt und Leistung**: Kacheln Takt (ruhig/Takt, Starts in 24 h), Läufe 24 h (Ø, kurze), Pausen 24 h (davon Minutenpausen), Heizgrenze beobachtet (Ø, max, Läufe), Messaufgabe Comfort/Efficiency (offen/erledigt). **Mindestleistung je Außenband**: Zellen „Band über Wert“ (laufendes Minimum von warm nach kalt; Quantil und Minuten im Tooltip), nur Bänder mit ≥ 30 stabilen Minuten. **COP je Modus und Quiet · 30 Tage**: Matrix Zeilen = Außenband (kalt → warm), Spalten = vorhandene Kombinationen Comfort/Efficiency × Q0–Q3 (Einträge mit unbekannter Heizregelung oder Quiet „?“ zählen nicht), Zelle = COP und Stunden, unter `cfg.takt.copMinMin` (60 min) grau, bester gültiger Wert je Zeile grün (nur wenn es mindestens zwei gültige gibt), Minuten/Hz/kWh im Tooltip. **Lernen**: Kacheln Gebäudemodell (n/10 Tage, Gate zu/offen/aktiv), Lern-Gate heute (frei/gesperrt, verworfene Tage), Bedarfsmodell Drift (ruhig/Mehrbedarf/Minderbedarf, CUSUM von 4), Wirkzeit Raum ↑/↓ (Minuten oder „sammelt“ n/3 Ereignisse, Puffer im Tooltip), Heizkurven-Bias (K, „sammelt“ n/3 Tage oder „Absenkung“). Ohne Daten Chip „sammelt“ bzw. „keine Daten“ |
+| Entscheidungen | **Episoden** statt Minutenzeilen: je Regel von „alle Bedingungen erfüllt“ (wartet, gesperrt, Vorschlag/Hinweis) bis zum Ende, mit Verlauf als Chips und Ende-Grund (bei Dauersperre Modell-Gate seit 13.10. die fehlende Bedingung, z. B. „Vorhersage: Bedarf -1,6 K“, statt des Gate-Textes); Dauerzustände („prüft“, „ruht“) und Datenlücken erzeugen keine Zeile, kurze „wartet“-Episoden unter 5 min ohne Sperre oder Vorschlag werden ausgeblendet; höchstens 12, neueste oben |
 
-**Vorschau ohne Dashboard:** `node tools/engine_ui_preview.js [Datenordner] [Ausgabe.html]` spielt die echten Protokolle durch den Kern und zeichnet vier Schnappschüsse (10.10. 08:38 mit Vorschlag; Replay-Ende; Hauptschalter an mit aktiver Übernahme; 5 Tage Kälte-Szenario mit Punkten) in eine HTML-Datei, die das Dashboard nachbildet (Gruppenbreite 966 px).
+**Lern-Gate und Bedarfsmodell Drift:** Die Zeilen gibt es auf der Seite „Wärmefahrplan“ unter „Details und Modell ▸“ (eingeklappt) und nur, solange ein Plan steht (`P.status` ok). Deshalb waren sie nicht zu finden. Seit 13.10. legt `opt_plan` den Lernstand zusätzlich als `OPT_plan.lern` ab (immer, auch ohne Plan: Bitmaske und Gründe von heute, verworfene Tage, CUSUM auf/ab mit Alarm, Rückfall-Sperre), die Karte „Messwerte & Lernen“ zeigt ihn als Kacheln. Die Zeilen im Wärmefahrplan bleiben unverändert (Test: gleiche Werte).
+
+**Vorschau ohne Dashboard:** `node tools/engine_ui_preview.js [Datenordner] [Ausgabe.html]` spielt die echten Protokolle durch den Kern und zeichnet fünf Schnappschüsse (A 10.10. 08:38 mit Vorschlag, Übernahme gesperrt; B Replay-Ende ohne Vorschlag; C Hauptschalter an mit aktiver Übernahme; D 5 Tage Kälte-Szenario mit Punkten; E wie A mit Übernahme frei) in HTML-Dateien, die das Dashboard nachbilden: Raster aus `ui_base` (48/6 px), Gruppen 17 Einheiten, Masonry (höchste freie Stelle, links zuerst), Karten mit fester Höhe und innerem Scrollen wie `ui_template`, Einpassen wie `FIT_JS`; Lernstand des Wärmefahrplans mit Beispielwerten. Ein Prüfskript in der Seite meldet inneres Scrollen, abgeschnittene oder aus Kacheln ragende Elemente, waagrechtes Scrollen der Seite und überlappende Gruppen. `node tools/ui_vorschau_pruefen.js <ordner> <seite.html> … [--breiten=1024,1920,2560]` öffnet die Seiten offline in Firefox headless (WebDriver BiDi, eigenes Profil, klassische Bildlaufleisten, Netz über toten Proxy), schreibt je Breite ein PNG und gibt die Prüfung aus (Exit 1 bei einem Fehler).
 
 ## 10. Bonsai-Beobachter
 
@@ -649,10 +657,11 @@ Der Beobachter schreibt nie an Anlage, NAS oder MQTT. Einen MQTT-Befundkanal zur
 | `BEOBACHTER_TMP=<ordner> python3 tools/bonsai_beobachter_test.py [Datenordner]` | **9 OK**, LLM nur als Mock |
 | `node tools/engine_replay.js <Datenordner> [Ausgabe]` und `--md` (`--sv4` …) | Replay der echten Protokolle |
 | 13.10. (Branch `todo-umsetzung`) | `optimizer_sim` **632 OK**, `engine_sim` **230 OK** (mit `replay_data` 07.–12.10.: 244 OK, 3 datensatzabhängige FAIL wie auf `0beb6b0`), `node tools/takt_sim.js <Datenordner>` **26 OK**, `node tools/kern_chain_sim.js <flows>` **15 OK** (Kern-Paket, nicht im Deploy) |
+| 13.10. (Branch `ui-ueberarbeitung`) | `optimizer_sim` **637 OK** (neu: `OPT_plan.lern` auch ohne Plan und gleich den Zeilen „Lern-Gate“/„Bedarfsmodell Drift“, Rückfall), `engine_sim` **255 OK** (mit `replay_data`: 269 OK, dieselben 3 datensatzabhängigen FAIL; neu u. a. Klickweg (c2) mit 31 einzeln ablehnenden Stufen, 7 Grenzwerten, Rücklesen, Wiederholung, Rückweg ohne Endlosschleife, letzter Sicherung mit verfälschtem Kern, Karte „Messwerte & Lernen“, Knopfzustände, Seite mit fünf Gruppen zu 17), `takt_sim` **26 OK**, `kern_chain_sim` **15 OK**. Einspielen mit aktivem Knoten: Flows mit `--uebernahme-knoten-aktiv` und `UEBERNAHME_KNOTEN_AKTIV=1`: `optimizer_sim` alle bestanden, `engine_sim` 254 OK (ohne die Prüfung „wie ausgeliefert“); ohne Ansage schlagen beide an. Vorschau: `ui_vorschau_pruefen.js` mit A–E bei 1024/1920/2560 px: 0 Fehler |
 | `node tools/takt_analyse.js <Datenordner>` | Läufe mit Stopp-Art, Frequenz, Rücklauf-Rückstand, Vorlauf-Anstieg; Treffsicherheit der Vorhersage „Abschaltgrenze in ≤ 45 min“ |
 
 Angepasste Sicherheitsprüfungen in `optimizer_sim.js` sind gezielt: Es ist **genau** `opt_apply_mqtt` erlaubt. Eine neue Prüfung verlangt:
-- er ist deaktiviert
+- er ist deaktiviert (nur mit ausdrücklicher Ansage `UEBERNAHME_KNOTEN_AKTIV=1` aktiv, dann muss `opt_apply` auch `KNOTEN = true` tragen)
 - er wird nur von `opt_apply` gespeist
 - `opt_apply` hat nur die Eingänge Karte und Takt
 - er hat einen eigenen Broker-Client
@@ -775,9 +784,9 @@ Mögliche Wege (je eine neue Bewertungsversion; gewählt wurde (b)): (a) p je Re
 | A Sonne/Wind | `coefSafe()` begrenzt `bs`/`bw` vor jeder Nutzung (Plan, Kandidat, `OPT_plan.model`, Vorausschau); Gate kennt „negativ“, „nicht endlich“, „unplausibel“; Hysterese endet bei hartem Fehler; Sonnenterm bei gleichförmigen PV-Tagen eingefroren. Wind-Merkmal `max(0, v − 4)` in Tagessummen (Tageseintrag 13/14), Fit, Plan und Vorausschau (`VS_LIM`); Modellversion 2: alte Koeffizienten werden neu gerechnet, ihr „aktiv“ nicht übernommen | `opt_plan`, `engine_core` |
 | C Takt-Messung | entprellter Start-Zähler, Pausen-Typen, Mindestleistung je 2-K-Band (laufendes Minimum von warm nach kalt), COP je Heizregelung × Quiet × Außenband über 30 Tage; Schwellen mit Herkunft in `TAKT_SCHWELLEN` (`cfg.takt`, Tabelle oben); einmaliges Nachladen aus `quiet-YYYY-MM.csv` (Vormonat und Monat, stückweise ≤ 4 MB bzw. 300 ms je Minute); Datensatz `abl.tk` nur bei Änderung/zur vollen Stunde | `engine_core`, Hülle `opt_engine` |
 | Laufzeit strecken v3 | Auslöser wie v2 (belegter Takt); Zielstufe = höhere Stufe mit dem besten COP (≥ 60 min Daten für jetzige und Zielstufe, deckelt nachweislich < 22 Hz, COP höchstens 3 % unter der jetzigen); ohne Daten kein Vorschlag und kein „verpasst“; Rückweg auf die vorherige Stufe | `engine_core` |
-| B Lern-Hygiene | Plausibilitätsbereiche je Eingang (Plan und Maschine, außerhalb = fehlend); Tages-Gate: Warmwasser > 120 min, Abtauen > 90 min, Datenlücke > 60 min, Eingriff > 60 min, unplausibel > 60 min → Tag lernt nicht mit (Tageseintrag 15–20); Drift des Plan-Modells als CUSUM auf den A/B-Tagen | `opt_plan` („Lern-Gate“, „Bedarfsmodell Drift“) |
+| B Lern-Hygiene | Plausibilitätsbereiche je Eingang (Plan und Maschine, außerhalb = fehlend); Tages-Gate: Warmwasser > 120 min, Abtauen > 90 min, Datenlücke > 60 min, Eingriff > 60 min, unplausibel > 60 min → Tag lernt nicht mit (Tageseintrag 15–20); Drift des Plan-Modells als CUSUM auf den A/B-Tagen | `opt_plan` („Lern-Gate“, „Bedarfsmodell Drift“ unter „Details und Modell“; seit 13.10. auch `OPT_plan.lern` → Karte „Messwerte & Lernen“) |
 | D Validierung | Überanpassungs-Quote Test/Training > 1,5 als Gate-Grund; Schnappschuss-Ring der aktiven Lernwerte; Rückfall: CUSUM auf (\|q−k\| − \|q−b\|)/Streuung, bei Alarm Kandidat aus und 7 Tage gesperrt | `opt_plan` |
-| E Auswertung | Wirkzeit Raum (Idee ClimateOptimizer `lag.py`, ereignisbasiert); Heizkurven-Bias (tvofi `curve_learning.py`: −0,2 K nach 3 Tagen mit ≥ 0,3 K Luft, Komfortmiss → 0); beide nur Anzeige | `engine_core` (Kachel „Punkte“) |
+| E Auswertung | Wirkzeit Raum (Idee ClimateOptimizer `lag.py`, ereignisbasiert); Heizkurven-Bias (tvofi `curve_learning.py`: −0,2 K nach 3 Tagen mit ≥ 0,3 K Luft, Komfortmiss → 0); beide nur Anzeige | `engine_core` (seit 13.10. Karte „Messwerte & Lernen“, vorher Zeilen in „Punkte“) |
 | H | beobachtete Heizgrenze (Außentemperatur am Ende von Läufen ≥ 30 min, 7 Tage) | `engine_core` |
 | G Kern-Robustheit | **vorbereitet, nicht im Deploy:** `tools/kern_patch.py` (Ist/Soll-Abgleich nur nach unten, Filter-Platzhalter, Summenfunktion jede Minute), `tools/kern_chain_sim.js`; Bericht `repo-analyse/kern-robustheit.md` | Kern-Tabs nur mit Go |
 
@@ -791,3 +800,25 @@ Befunde aus den Echtdaten 07.–12.10.:
 - Heizkurven-Bias 0: an keinem Tag ≥ 0,3 K Luft in allen Räumen.
 - Heizgrenze beobachtet: Ø 10,6 °C, höchstens 15 °C (21 Läufe).
 
+## 14. Seite „Optimierer“ überarbeitet, Klickweg geprüft (13.10.2026, Branch `ui-ueberarbeitung`)
+
+Befunde auf der Live-Seite (1920 px) und was daraus wurde:
+
+| Befund | Änderung |
+|---|---|
+| Mess-/Lernzeilen in „Punkte“, „Punkte“ und „Entscheidungen“ scrollen innen | eigene Karte „Messwerte & Lernen“ (gleich breit, unter „Punkte“); Karten passen sich nach jedem Zeichnen sofort ein (Ursache sehr wahrscheinlich: der 1,5-s-Takt von `FIT_JS` ruht bei verdecktem Fenster, dann blieben die Starthöhen 3/6/4 stehen; die Karte „Entscheidungsmaschine“ war genau 3 Einheiten = 156 px hoch); Starthöhen 4/3/9/10/12 passen auch ohne Einpassen |
+| „COP je Modus/Quiet“ als Fließtext | Matrix Außenband × (Modus, Quiet), grau unter 60 min, bester Wert je Zeile grün, „?“ weggelassen |
+| „Mindestleistung“ als Fließtext | Zellen „Band über Wert“ (optChart ist eine Zeitachse, für Bänder ungeeignet) |
+| Wirkzeit, Heizkurven-Bias kryptisch | Kennzahl + Status-Chip („sammelt“ 0/3 Ereignisse bzw. 1/3 Tage, „gemessen“, „Absenkung“), Einzelheiten im Tooltip |
+| Leerraum in der Statuskarte | Karte „Aktueller Vorschlag“: mit Vorschlag Befehl, Zielwert, Begründung, Wirkung, Rückweg, Knopf mit Grund; ohne Vorschlag letzter Vorschlag, letzte 24 h, Übernahme-Stand |
+| Karten nur 966 px breit | 17 Einheiten, zwei Spalten ab ~1840 px (Abschnitt 9) |
+| „Lern-Gate“, „Bedarfsmodell Drift“ nicht gefunden | stehen im Wärmefahrplan eingeklappt unter „Details und Modell ▸“ und nur mit Plan; jetzt auch als Kacheln in „Messwerte & Lernen“ über `OPT_plan.lern` |
+
+**Klickweg (Prüfung auf Vollständigkeit):** Jede Stufe der Prüfkette ist einzeln getestet (alle anderen erfüllt), dazu Grenzwerte, Rücklesen, Wiederholung, Rückweg, die letzte Sicherung der Hülle und das Lesen von `apply.json`. Dabei gefunden und behoben (Kern, `opt_apply`, `opt_engine`):
+1. Ein unbestätigter Rückweg startete nach 3 Versuchen alle 4,5 min neu (alter Kern: 76 Befehle in 2 h, ~900 am Tag). Jetzt Schluss nach 3 Versuchen mit roter Warnung, „Zurücksetzen“ von Hand bleibt, nachträgliche Bestätigung oder fremde Änderung beendet die Übernahme.
+2. Ein unmöglicher Rückweg (Ausgangswert außerhalb der Whitelist) meldete sich in jedem 15-s-Takt (Protokoll-Rauschen). Jetzt einmal; ein Klick mit solchem Ausgangswert wird schon abgelehnt.
+3. Mit `apply.json` an, aber deaktiviertem Sendeknoten meldete ein Klick „gesendet“ und lief in den Rücklese-Timeout. Jetzt kennt `opt_apply` den Generator-Schalter (`KNOTEN`) und lehnt ab; die Karte zeigt es.
+
+**Geänderte Knoten für den Deploy (Diff gegen Live 86f3604, nur `opt_*`):** `opt_engine` (Kern, Anzeige, Ausgang 6), `opt_apply` (Kern, `KNOTEN`, `OPT_apply` mit `day`/`lastSend`/`knoten`), `opt_plan` (`OPT_plan.lern`), `opt_t_eng_prop`, `opt_t_eng_rules`, `opt_t_eng_score`, `opt_t_eng_log`, neu `opt_t_eng_mess`, die Gruppen `opt_g_eng_prop`/`_rules`/`_score`/`_log` (17 breit, „Aktueller Vorschlag“) und neu `opt_g_eng_mess`. Zustand bleibt erhalten; die Episodenliste behält alte Ende-Texte. Ein Seitentitel- oder Gruppenwechsel braucht im Dashboard eventuell einmal Neuladen; der neue Stil ersetzt den alten ohne Neuladen (`data-v`).
+
+**Einspielen mit aktivem Übernahme-Knoten** (nur nach dem Go des Nutzers): `deploy_opt_genargs.patch` (Umgebungsvariable `GEN_ARGS`, siehe Abschnitt 8 „Freigabe“) und `apply.json.vorschlag` liegen in `~/Dokumente/heishamonr-optimizer/`; `deploy_opt.sh` selbst ist unverändert.
