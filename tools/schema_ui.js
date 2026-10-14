@@ -186,6 +186,7 @@ var OPTSCHEMA = (function () {
         o.push(tx(826, 126, 'Heizkörper Zone 1', {c: C.mute, s: 12, a: 'middle'}));
         o.push(tx(780, 306, 'Soll ' + t(W.soll), {s: 14}));
         o.push(tx(780, 324, 'Verschiebung ' + sg(W.shift, 'K'), {s: 13}));
+        o.push(kopfSvg(P));
         o.push('</svg>');
         return o.join('');
     }
@@ -214,7 +215,7 @@ var OPTSCHEMA = (function () {
                     'Heizstab <b>' + (hs.an ? 'AN' : (hs.frei === 0 ? 'gesperrt' : (hs.frei === 1 ? 'aus, freigegeben' : 'aus'))) + '</b>' + (ok(hs.h) ? ' · ' + f(hs.h, 0, 'h') : ''),
                     'Fehler <b' + (P.fehler ? ' class="warn"' : '') + '>' + (P.fehler ? esc(P.fehler) : 'keiner') + '</b>'];
         var stand = P.veraltet ? '<div class="osch-alt">Keine aktuellen Werte' + (ok(P.alter) ? ' (letzter vor ' + Math.round(P.alter) + ' min)' : '') + '</div>' : '';
-        return '<div class="osch" style="--osch-d:-' + (ph % 1.2).toFixed(2) + 's;--osch-r:-' + (ph % 2.4).toFixed(2) + 's">' + kopfZeile(P) +
+        return '<div class="osch" style="--osch-d:-' + (ph % 1.2).toFixed(2) + 's;--osch-r:-' + (ph % 2.4).toFixed(2) + 's">' +
                '<div class="osch-svg">' + svg(P) + '</div><div class="osch-side">' + stand + '<div class="osch-kpi">' + k.join('') + '</div>' +
                '<div class="osch-foot">' + foot.map(function (x) { return '<span>' + x + '</span>'; }).join('') + '</div></div></div>';
     }
@@ -226,63 +227,53 @@ var OPTSCHEMA = (function () {
         el.__osch = sig;
         el.innerHTML = html(P, {phase: Date.now() / 1000});
     }
-    // Kopfzeile wie Lambda: Fuehler-Aussentemperatur, daneben Pfeil und die Temperatur, nach der die Vorhersage rechnet (Fuehler - Bedarfsaenderung aus dem Wetter)
+    // Kopfzeile wie Lambda (im Schema oben rechts, keine eigene Zeile): Fuehler-Aussentemperatur, Pfeil und die Temperatur, nach der die Vorhersage rechnet
+    // (Fuehler - Bedarfsaenderung aus dem Wetter), darunter Fenster und OWM
     function tA(x) { return ok(x) ? (x > 0 ? '+' : '') + t(x) : '–'; }                                // Aussentemperatur mit Vorzeichen (+11 °C, −13 °C)
-    function kopfZeile(P) {
-        var K = P.kopf || {}, at = ok(K.at) ? K.at : P.w.at, fen = (ok(K.von) && ok(K.bis)) ? K.von + '–' + K.bis + '\u00a0h' : '';
-        var h = '<span class="k">Außentemperatur</span><b class="at" title="Fühler (Outside_Temp)">' + t(at) + '</b>';
-        if (ok(K.mat)) {
-            h += '<span class="arr">→</span><b class="mat" title="' + esc('Fühler ' + (K.dk > 0 ? '− ' : '+ ') + dez(Math.abs(K.dk), 1) + ' K: erwartete Bedarfsänderung aus der Wettervorhersage' + (fen ? ' (+' + fen + ')' : '') +
-                 ', ohne den gewohnten Tagesgang, als Außentemperatur (Entscheidungsmaschine)') + '">' + t(K.mat) + '</b><span class="s">(Prognose' + (fen ? ' ' + fen : '') + ')</span>';
-        }
-        if (ok(K.owm)) { h += '<span class="owm" title="OpenWeatherMap, aktuell">OWM ' + t(K.owm) + '</span>'; }
-        return '<div class="osch-kopf">' + h + '</div>';
+    function kopfSvg(P) {
+        var K = P.kopf || {}, at = ok(K.at) ? K.at : (P.w || {}).at, fen = (ok(K.von) && ok(K.bis)) ? K.von + '–' + K.bis + ' h' : '';
+        var tip = ok(K.mat) ? 'Fühler ' + t(at) + ' ' + (K.dk > 0 ? '− ' : '+ ') + dez(Math.abs(K.dk), 1) + ' K: erwartete Bedarfsänderung aus der Wettervorhersage' + (fen ? ' (+' + fen + ')' : '') +
+                  ', ohne den gewohnten Tagesgang, als Außentemperatur (Entscheidungsmaschine)' : 'Fühler (Outside_Temp)';
+        var z2 = '<tspan class="at" style="fill:' + C.luftT + '">' + t(at) + '</tspan>' + (ok(K.mat) ? '<tspan class="mat" style="fill:' + C.txt + '"> → ' + t(K.mat) + '</tspan>' : '');
+        var z3 = [ok(K.mat) ? 'Prognose' + (fen ? ' ' + fen : '') : '', ok(K.owm) ? 'OWM ' + t(K.owm) : ''].filter(function (x) { return x; }).join(' · ');
+        return '<g class="osch-kopf"><title>' + esc(tip) + '</title>' + tx(700, 40, 'Außentemperatur', {c: C.mute, s: 12}) + tx(700, 66, z2, {s: 20, b: true}) + (z3 ? tx(700, 86, z3, {c: C.mute, s: 12}) : '') + '</g>';
     }
-    // ---------------------------------------------------------------- Modulkacheln (Übersicht, Vorlage opt_t_module), Lambda-Stil: links Werte, rechts Zustaende
+    // ---------------------------------------------------------------- Modulkacheln (Übersicht, Vorlage opt_t_module), kompakt: Titel mit Zustands-Chips, darunter Paare in zwei Spalten
     var BETRIEBSART = ['Nur Heizen', 'Nur Kühlen', 'Auto (Heizen)', 'Nur Warmwasser', 'Heizen+WW', 'Kühlen+WW', 'Auto (Heizen)+WW', 'Auto (Kühlen)', 'Auto (Kühlen)+WW'];   // TOP4, wie der Kern-Flow
     function chip(tx0, c, tip) { return '<span class="omod-ch omod-' + c + '"' + (tip ? ' title="' + esc(tip) + '"' : '') + '>' + tx0 + '</span>'; }
-    function zeile(k, v, tip) { return '<dt' + (tip ? ' title="' + esc(tip) + '"' : '') + '>' + k + '</dt><dd>' + v + '</dd>'; }
-    function kachelM(titel, links, rechts) { return '<div class="omod-k"><div class="omod-t">' + titel + '</div><div class="omod-b"><dl class="omod-l">' + links.join('') + '</dl><div class="omod-r">' + rechts.join('') + '</div></div></div>'; }
+    function paar(k, v, tip, breit) { return '<div class="p' + (breit ? ' w' : '') + '"' + (tip ? ' title="' + esc(tip) + '"' : '') + '><span class="l">' + k + '</span> <b>' + v + '</b></div>'; }
+    function kachelM(titel, chips, body) { return '<div class="omod-k"><div class="omod-h"><span class="omod-t">' + titel + '</span><span class="omod-cs">' + chips.join('') + '</span></div>' + body + '</div>'; }
     function modul(P) {
         if (!P || !P.w) { return '<div class="osch-leer">Noch keine Werte der Wärmepumpe.</div>'; }
         var W = P.w, z = (P.zustand && P.zustand.c) || 'unbekannt', hs = P.heizstab || {}, H = P.hk || {}, K = H.kurve;
         // Anforderung aus dem Zustand des Schemas (einzige Quelle): Waermepumpe wie im Schema, Heizkreis nach Lambda (Soll 0 = keine Anforderung: Standby)
         var zw = {lauf: ['Heizen', 'ok'], pause: ['Pause', 'mute'], heizgrenze: ['Heizgrenze', 'warn'], abtauen: ['Abtauen', 'kalt'], aus: ['Aus', 'mute'], stoerung: ['Störung', 'bad']}[z] || ['–', 'mute'];
         var zh = {lauf: ['Anforderung', 'ok'], abtauen: ['Anforderung', 'ok'], pause: ['Standby', 'mute'], heizgrenze: ['Standby', 'mute'], aus: ['Aus', 'mute'], stoerung: ['Störung', 'bad']}[z] || ['–', 'mute'];
-        var wp = kachelM('Wärmepumpe', [
-            zeile('Soll-Vorlauf', t(W.soll)),
-            zeile('Vorlauf / Rücklauf', t(W.vl) + ' / ' + t(W.rl)),
-            zeile('Abgabe thermisch', P.lauf ? f(ok(W.pth) ? W.pth / 1000 : null, 2, 'kW') : '–', 'Heat_Power_Production_Extra'),
-            zeile('Aufnahme elektrisch', f(ok(W.pelK) ? W.pelK / 1000 : null, 2, 'kW'), 'Heat_Power_Consumption_Extra' + (P.lauf ? ' + ' + W.korrW + ' W (TOP16 untertreibt, Forum 189605)' : ', Stillstand roh')),
-            zeile('COP', f(W.cop, 2), 'Wärme / korrigierte Aufnahme'),
-            zeile('Betrieb', f(W.betrH, 0, 'h') + ' · ' + f(W.betrN, 0) + ' Starts'),
-            zeile('Starts heute', f(W.startsHeute, 0))
-        ], [chip(zw[0] + (z === 'stoerung' && P.fehler ? ' ' + esc(P.fehler) : ''), zw[1]), chip('Quiet ' + f(W.quiet, 0), ok(W.quiet) && W.quiet > 0 ? 'act' : 'mute', 'Quiet_Mode_Level 0–3'),
-            chip(W.hc === 1 ? 'Efficiency' : (W.hc === 0 ? 'Comfort' : 'Heizregelung –'), 'mute', 'Heating_Control')].concat(hs.an ? [chip('Heizstab an', 'bad')] : []));
-        var hk = kachelM('Heizkreis Zone 1', [
-            zeile('Heizkurve', K ? '<span class="nw">' + t(K.vlKalt) + ' bei ' + tA(K.atKalt) + ' …</span> <span class="nw">' + t(K.vlWarm) + ' bei ' + tA(K.atWarm) + '</span>' : '–', 'Z1_Heat_Curve_*'),
-            zeile('Verschiebung', W.shift === 0 ? 'keine' : sg(W.shift, 'K'), 'Z1_Heat_Request_Temp'),
-            zeile('Heizgrenze', t(W.grenze), 'Heating_Off_Outdoor_Temp'),
-            zeile('Betriebsart', ok(H.ba) && BETRIEBSART[H.ba] ? BETRIEBSART[H.ba] : '–', 'Operating_Mode_State')
-        ], [chip(zh[0], zh[1]), chip('Zeitplan ' + (H.plan === 1 ? 'an' : (H.plan === 0 ? 'aus' : '–')), H.plan === 1 ? 'act' : 'mute', 'Main_Schedule_State'),
-            chip('Ferien ' + (H.ferien === 1 ? 'an' : (H.ferien === 0 ? 'aus' : '–')), H.ferien === 1 ? 'warn' : 'mute', 'Holiday_Mode_State')]);
-        // Raeume: je Raum Name, Ist, Band, Zustand (mehr als 6 Raeume: zwei Spalten)
+        // Waermepumpe: Soll, Ist, Zaehler (Leistung, COP, Quiet, Modus stehen schon im Schema darueber)
+        var wp = kachelM('Wärmepumpe', [chip(zw[0] + (z === 'stoerung' && P.fehler ? ' ' + esc(P.fehler) : ''), zw[1])].concat(hs.an ? [chip('Heizstab an', 'bad')] : []), '<div class="omod-p">' +
+            paar('Soll', t(W.soll), 'Main_Target_Temp') + paar('VL/RL', (ok(W.vl) ? dez(W.vl, Math.round(W.vl) === W.vl ? 0 : 1) : '–') + '/' + t(W.rl), 'Vorlauf/Rücklauf') +
+            paar('Betrieb', f(W.betrH, 0, 'h'), 'Operations_Hours') + paar('Starts', f(W.betrN, 0) + (ok(W.startsHeute) ? ' (heute ' + f(W.startsHeute, 0) + ')' : ''), 'Operations_Counter, Starts_Today') + '</div>');
+        var hk = kachelM('Heizkreis Zone 1', [chip(zh[0], zh[1])].concat(H.ferien === 1 ? [chip('Ferien', 'warn', 'Holiday_Mode_State')] : []), '<div class="omod-p">' +
+            paar('Heizkurve', K ? t(K.vlKalt) + ' bei ' + tA(K.atKalt) + ' … ' + t(K.vlWarm) + ' bei ' + tA(K.atWarm) : '–', 'Z1_Heat_Curve_*', true) +
+            paar('Verschiebung', W.shift === 0 ? 'keine' : sg(W.shift, 'K'), 'Z1_Heat_Request_Temp') + paar('Heizgrenze', t(W.grenze), 'Heating_Off_Outdoor_Temp') +
+            paar('Betriebsart', ok(H.ba) && BETRIEBSART[H.ba] ? BETRIEBSART[H.ba] : '–', 'Operating_Mode_State') + paar('Zeitplan', H.plan === 1 ? 'an' : (H.plan === 0 ? 'aus' : '–'), 'Main_Schedule_State') + '</div>');
+        // Raeume: eine Zeile je Raum (Name, Ist, Band, Zustand), ab 5 Raeumen zwei Spalten; im Titel die Zusammenfassung
         var RZ = {band: ['im Band', 'ok'], kalt: ['unter Minimum', 'warn'], warm: ['über Maximum', 'warn'], still: ['Fühler still', 'bad'], fehlt: ['keine Daten', 'mute']};
-        var rl = P.raeume || [];
-        var rm = '<div class="omod-k"><div class="omod-t">Räume</div>' + (rl.length ? '<div class="omod-rm' + (rl.length > 6 ? ' zwei' : '') + '">' + rl.map(function (r) {
-            var z = RZ[r.st] || RZ.fehlt, tip = r.st === 'still' ? 'letzte Meldung vor ' + (r.alt >= 120 ? dez(r.alt / 60, 1) + ' h' : r.alt + ' min') : (ok(r.alt) ? 'Meldung vor ' + r.alt + ' min' : '');
-            return '<div class="omod-rz"><span class="n">' + esc(r.n) + '</span><span class="v' + (r.st === 'still' ? ' alt' : '') + '">' + t(r.t) + '</span><span class="b">' + (ok(r.min) && ok(r.max) ? dez(r.min, r.min % 1 ? 1 : 0) + '–' + t(r.max) : '–') + '</span>' + chip(z[0], z[1], tip) + '</div>';
-        }).join('') + '</div>' : '<div class="omod-leer">keine Räume eingerichtet</div>') + '</div>';
-        // Optimierer: Regeln mit Zustand (wie Karte "Regeln"), letzter Vorschlag, Uebernahme, Punkte (OPT_engine_ue)
+        var rl = P.raeume || [], nAus = rl.filter(function (r) { return r.st === 'kalt' || r.st === 'warm'; }).length, nStill = rl.filter(function (r) { return r.st === 'still'; }).length;
+        var rs = !rl.length ? [] : (nStill ? [chip(nStill + ' Fühler still', 'bad')] : []).concat(nAus ? [chip(nAus + ' außerhalb', 'warn')] : (nStill ? [] : [chip('alle im Band', 'ok')]));
+        var rm = kachelM('Räume', rs, rl.length ? '<div class="omod-rm' + (rl.length >= 5 ? ' zwei' : '') + '">' + rl.map(function (r) {
+            var q = RZ[r.st] || RZ.fehlt, tip = r.st === 'still' ? 'letzte Meldung vor ' + (r.alt >= 120 ? dez(r.alt / 60, 1) + ' h' : r.alt + ' min') : (ok(r.alt) ? 'Meldung vor ' + r.alt + ' min' : '');
+            return '<div class="omod-rz"><span class="n">' + esc(r.n) + '</span><b class="v' + (r.st === 'still' ? ' alt' : '') + '">' + t(r.t) + '</b><span class="b">' + (ok(r.min) && ok(r.max) ? dez(r.min, r.min % 1 ? 1 : 0) + '–' + t(r.max) : '–') + '</span>' + chip(q[0], q[1], tip) + '</div>';
+        }).join('') + '</div>' : '<div class="omod-leer">keine Räume eingerichtet</div>');
+        // Optimierer: Regeln als Chips in einer Zeile, letzter Vorschlag, Uebernahme und Punkte (OPT_engine_ue)
         var O = P.opt, op;
-        if (!O) { op = '<div class="omod-k"><div class="omod-t">Optimierer</div><div class="omod-leer">' + (P.optAlt ? 'Entscheidungsmaschine ohne aktuelle Daten' : 'Entscheidungsmaschine noch ohne Daten') + '</div></div>'; }
+        if (!O) { op = kachelM('Optimierer', [], '<div class="omod-leer">' + (P.optAlt ? 'Entscheidungsmaschine ohne aktuelle Daten' : 'Entscheidungsmaschine noch ohne Daten') + '</div>'); }
         else {
-            var lv = O.letzter;
-            op = '<div class="omod-k"><div class="omod-t">Optimierer</div><div class="omod-rg">' + O.rules.map(function (r) { return '<div class="omod-rz"><span class="n">' + esc(r[0]) + '</span>' + chip(esc(r[1]), r[2]) + '</div>'; }).join('') + '</div>' +
-                 '<dl class="omod-l omod-l2">' +
-                 zeile(O.prop ? 'Vorschlag' : 'Letzter Vorschlag', lv ? esc(lv.name) + ' · ' + esc(lv.t) + (lv.ende ? ' · ' + esc(lv.ende) : '') : 'keiner', lv && lv.was ? lv.was : '') +
-                 zeile('Übernahme', esc(O.freiTxt) + ' · Befehle heute ' + O.heute + '/' + O.proTag) +
-                 zeile('Punkte', ok(O.punkte) ? (O.punkte > 0 ? '+' : '') + dez(O.punkte, 1) : '–', 'Summe der Bewertung aller Regeln') + '</dl></div>';
+            var lv = O.letzter, lt = lv ? String(lv.t || '').split('–')[0] : '', le = lv ? String(lv.ende || '').split(':')[0] : '';
+            op = kachelM('Optimierer', [], '<div class="omod-rg">' + O.rules.map(function (r) { return chip(esc(r[0]) + ' ' + esc(r[1]), r[2]); }).join('') + '</div>' +
+                 '<div class="omod-z"' + (lv ? ' title="' + esc((lv.was ? lv.was + ' · ' : '') + (lv.t || '') + (lv.ende ? ' · ' + lv.ende : '')) + '"' : '') + '><span class="l">' + (O.prop ? 'Vorschlag:' : 'Letzter Vorschlag:') + '</span> ' +
+                 (lv ? '<b>' + esc(lv.name) + '</b> ' + esc(lt) + (le ? ' · ' + esc(le) : '') : 'keiner') + '</div>' +
+                 '<div class="omod-z"><span class="l">Übernahme</span> <b>' + esc(O.freiTxt) + '</b> · heute ' + O.heute + '/' + O.proTag + ' · <span class="l">Punkte</span> <b>' + (ok(O.punkte) ? (O.punkte > 0 ? '+' : '') + dez(O.punkte, 1) : '–') + '</b></div>');
         }
         var stand = P.veraltet ? '<div class="osch-alt">Keine aktuellen Werte' + (ok(P.alter) ? ' (letzter vor ' + Math.round(P.alter) + ' min)' : '') + '</div>' : '';
         return stand + '<div class="omod">' + wp + hk + rm + op + '</div>';
@@ -310,26 +301,23 @@ var OPTSCHEMA = (function () {
         '.osch-fl{animation:osch-fl 1.2s linear infinite;animation-delay:var(--osch-d,0s)}@keyframes osch-fl{to{stroke-dashoffset:-36}}' +
         '.osch-rot{animation:osch-rot 2.4s linear infinite;animation-delay:var(--osch-r,0s);transform-box:fill-box;transform-origin:center}@keyframes osch-rot{to{transform:rotate(360deg)}}' +
         '@media (prefers-reduced-motion:reduce){.osch-fl,.osch-rot{animation:none}}' +
-        '.osch-kopf{flex:1 1 100%;display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 10px;color:#546e7a;font-size:14px}' +
-        '.osch-kopf b{font-size:20px;font-weight:600;line-height:1.3}.osch-kopf .at{color:#00727f}.osch-kopf .mat{color:#263238}.osch-kopf .arr{font-size:20px;color:#263238}' +
-        '.osch-kopf .s{font-size:12.5px}.osch-kopf .owm{margin-left:10px;font-size:12.5px}' +
-        '.omod{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}@media (min-width:1600px){.omod{grid-template-columns:repeat(4,minmax(0,1fr))}}' +
-        '.omod-k{border:1px solid #e0e6e9;border-radius:8px;background:#f7f9fa;padding:10px 12px;min-width:0}' +
-        '.omod-t{font-size:16px;font-weight:600;color:#263238;line-height:1.3;margin:0 0 8px;padding-left:8px;border-left:4px solid #0094ce}' +
-        '.omod-b{display:flex;gap:12px;align-items:flex-start}' +
-        '.omod-l{flex:1 1 auto;min-width:0;margin:0;display:grid;grid-template-columns:max-content minmax(0,1fr);gap:3px 14px}' +
-        '.omod-l dt{color:#546e7a;margin:0}.omod-l dd{margin:0;font-weight:600;overflow-wrap:break-word;min-width:0}' +
-        '.omod-r{flex:0 0 auto;display:flex;flex-direction:column;align-items:flex-end;gap:6px}' +
-        '.omod-ch{display:inline-block;padding:2px 10px;border-radius:12px;font-size:12.5px;line-height:19px;font-weight:500;white-space:nowrap;background:#eceff1;color:#455a64}' +
-        '.omod-r .omod-ch:first-child{font-size:14px;font-weight:600;padding:3px 12px}' +
+        '.omod{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;align-items:start;font-size:13px;line-height:19px;color:#263238}' +
+        '@media (min-width:1600px){.omod{grid-template-columns:repeat(4,minmax(0,1fr))}}' +
+        '.omod-k{border:1px solid #e0e6e9;border-radius:6px;background:#f7f9fa;padding:6px 8px;min-width:0}' +
+        '.omod-h{display:flex;align-items:center;gap:6px;min-height:20px;margin-bottom:1px}' +
+        '.omod-t{font-size:14px;font-weight:600;line-height:20px;white-space:nowrap;padding-left:6px;border-left:3px solid #0094ce}' +
+        '.omod-cs{margin-left:auto;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:4px;min-width:0}' +
+        '.omod-ch{display:inline-block;padding:0 7px;border-radius:9px;font-size:11.5px;line-height:18px;height:18px;font-weight:500;white-space:nowrap;background:#eceff1;color:#455a64}' +
         '.omod-ok{background:#e6f4ea;color:#1b5e20}.omod-warn{background:#fff3e0;color:#8a4b00}.omod-bad{background:#fdecea;color:#b71c1c}' +
         '.omod-kalt{background:#e0f7fa;color:#00626d}.omod-act{background:#007bb0;color:#fff}.omod-mute{background:#eceff1;color:#455a64}' +
-        '.omod-rm,.omod-rg{display:grid;grid-template-columns:minmax(0,1fr);gap:0 24px}.omod-rm.zwei{grid-template-columns:repeat(2,minmax(0,1fr))}' +
-        '.omod-rz{display:flex;align-items:center;gap:10px;padding:3px 0;border-bottom:1px solid #e6ebee;min-width:0}.omod-rz:last-child{border-bottom:0}' +
-        '.omod-rz .n{flex:1 1 auto;min-width:0;color:#263238;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
-        '.omod-rz .v{flex:0 0 auto;font-weight:600;white-space:nowrap}.omod-rz .v.alt{color:#546e7a;font-weight:400}' +
-        '.omod-rz .b{flex:0 0 auto;color:#546e7a;font-size:12.5px;white-space:nowrap}.omod-rz .omod-ch{flex:0 0 auto}' +
-        '.omod .nw{white-space:nowrap}.omod-l2{margin-top:8px;padding-top:6px;border-top:1px solid #dfe5e8}.omod-leer{color:#546e7a;font-size:13px}';
+        '.omod-p{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 12px}.omod-p .p{min-width:0}.omod-p .w{grid-column:1 / -1}' +
+        '.omod .l{color:#546e7a}.omod b{font-weight:600}' +
+        '.omod-rm{display:grid;grid-template-columns:minmax(0,1fr);gap:0 14px}.omod-rm.zwei{grid-template-columns:repeat(2,minmax(0,1fr))}' +
+        '.omod-rz{display:flex;align-items:center;gap:8px;min-height:19px;min-width:0}' +
+        '.omod-rz .n{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
+        '.omod-rz .v{flex:0 0 auto;white-space:nowrap}.omod-rz .v.alt{color:#546e7a;font-weight:400}' +
+        '.omod-rz .b{flex:0 0 auto;color:#546e7a;font-size:12px;white-space:nowrap}.omod-rz .omod-ch{flex:0 0 auto}' +
+        '.omod-rg{display:flex;flex-wrap:wrap;gap:3px 4px;margin:1px 0 2px}.omod-leer{color:#546e7a}';
     var S = {v: VER, daten: daten, html: html, svg: svg, mount: mount, modul: modul, modulMount: modulMount, CSS: CSS, fmt: {f: f, t: t, sg: sg}};
     if (typeof window !== 'undefined') { window.optSchema = S; }
     return S;

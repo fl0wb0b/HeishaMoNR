@@ -3231,7 +3231,7 @@ if UE_TAB in B and B[UE_TAB]["type"] == "ui_tab":
     # UI-Lambda (14.10.2026): Modulkacheln "Wärmepumpe", "Heizkreis Zone 1", "Räume", "Optimierer" direkt unter dem Anlagenschema (0,6 < Kern-Gruppen ab 1), volle Breite
     # wie das Schema; 2 x 2 Kacheln, ab 1600 px Fensterbreite 4 nebeneinander (gleich breit)
     upsert({"id": "opt_g_module", "type": "ui_group", "name": "MODULÜBERSICHT", "tab": UE_TAB, "order": 0.6, "disp": True, "width": 24, "collapse": False, "className": ""})
-    upsert(eng_template("opt_t_module", "opt_g_module", "Modulkacheln (Übersicht)", 6, schema_format("opt_t_module", "opt_g_module", True, "modul"), 2500))
+    upsert(eng_template("opt_t_module", "opt_g_module", "Modulkacheln (Übersicht)", 3, schema_format("opt_t_module", "opt_g_module", True, "modul"), 2500))
     _schema_out.append("opt_t_module")
 else:
     print("Hinweis: Seite Übersicht (" + UE_TAB + ") fehlt, Anlagenschema nur auf der Seite Optimierer")
