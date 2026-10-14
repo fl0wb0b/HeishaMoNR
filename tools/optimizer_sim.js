@@ -1830,7 +1830,7 @@ check('Dateien: Ist, Vergleich, Schnappschuesse und Zustand unter /data/optimize
     const byOrder = id => onTab(id).sort((a, b) => a.order - b.order).map(g => g.id).join(), hid = id => (flowsAll.find(n => n.id === id) || {}).hidden;
     check('Seiten (13.10. zusammengelegt): alle Karten der Optimierungs-Seiten 17 breit (zwei Spalten ab ~1840 px, eine bei 1024 ohne waagrechtes Scrollen; kein Mischen der Breiten = Masonry-Falle): Optimierung = 3 Diagramme + Raumkarte + Wärmefahrplan (Plan, Stundenübersicht), Optimierer = fünf Karten der Maschine + zwei Quiet-Statistik-Karten, Daten & Güte sieben Statuskarten; die Tabs Wärmefahrplan und Quiet-Messwerte leer und ausgeblendet',
           byOrder('opt_ui_tab') === 'opt_g_ch_wp,opt_g_ch_rooms,opt_g_ch_at,opt_g_rooms,opt_g_plan,opt_g_plan_tab' && byOrder('opt_eng_ui_tab') === 'opt_g_schema,opt_g_eng_prop,opt_g_eng_rules,opt_g_eng_score,opt_g_eng_mess,opt_g_eng_log,opt_g_qstats,opt_g_qstats2' &&
-          onTab('opt_ui_tab_plan').length === 0 && onTab('opt_ui_tab_quiet').length === 0 && onTab('opt_ui_tab_data').length === 7 && grp.every(g => g.width === 17 || g.id === 'opt_g_schema_ue') && tabs.length === 4 &&
+          onTab('opt_ui_tab_plan').length === 0 && onTab('opt_ui_tab_quiet').length === 0 && onTab('opt_ui_tab_data').length === 7 && grp.every(g => g.width === 17 || g.id === 'opt_g_schema_ue' || g.id === 'opt_g_module') && tabs.length === 4 &&
           hid('opt_ui_tab_plan') === true && hid('opt_ui_tab_quiet') === true && hid('opt_ui_tab') === false && hid('opt_eng_ui_tab') === false && hid('opt_ui_tab_data') === false,
           byOrder('opt_ui_tab') + ' | ' + byOrder('opt_eng_ui_tab') + ' | ' + JSON.stringify(grp.filter(g => g.width !== 17).map(g => g.id + ':' + g.width)));
     { const q1 = NB('opt_t_qstats').format, q2 = NB('opt_t_qstats2').format, cols = f => (/c in \[([\d,]+)\]/.exec(f) || [0, ''])[1].split(',').map(Number), ths = f => (f.match(/<th>/g) || []).length, a = cols(q1), b = cols(q2);
@@ -1994,9 +1994,52 @@ check('ohne Kinderzimmer-Werte (frischer Start): vier Spalten leer, Karte zeigt 
         g1 && g1.tab === 'opt_eng_ui_tab' && g1.order === 0.5 && g1.width === 17 && g2 && g2.tab === 'a5be8588.b8fbc8' && g2.order === 0.5 && ueOrders.length > 0 && ueOrders.every(o => o > 0.5) &&
         t1.group === 'opt_g_schema' && t2.group === 'opt_g_schema_ue' && nodes.filter(n => n.group === 'opt_g_schema' || n.group === 'opt_g_schema_ue').length === 2 &&
         t2.format.includes('ui-card-panel[node-id="opt_g_schema_ue"]{width:calc(100% - 12px)') && !t1.format.includes('width:calc(100% - 12px)') && [t1, t2].every(t => t.format.includes("var id = '" + t.id + "'") && t.format.includes("F.fns['" + t.id + "']") && t.format.includes('id="osch_' + t.id + '"')), ueOrders.join());
-  check('Schema: Sicherheit - opt_schema nur lesen (kein global/flow.set, keine Datei), Ausgang nur an die beiden Karten, Takt alle 10 s; die Karten schicken nichts',
-        f && !/global\.set|flow\.set|fs\./.test(f.func) && JSON.stringify(f.wires) === '[["opt_t_schema","opt_t_schema_ue"]]' && i.repeat === '10' && JSON.stringify(i.wires) === '[["opt_schema"]]' &&
-        [t1, t2].every(t => !/scope\.send/.test(t.format) && JSON.stringify(t.wires) === '[[]]'), '');
+  const t3 = N('opt_t_module'), g3 = N('opt_g_module');
+  check('Schema: Sicherheit - opt_schema nur lesen (kein global/flow.set, keine Datei), Ausgang nur an die beiden Schema-Karten und die Modulkacheln, Takt alle 10 s; die Karten schicken nichts',
+        f && !/global\.set|flow\.set|fs\./.test(f.func) && JSON.stringify(f.wires) === '[["opt_t_schema","opt_t_schema_ue","opt_t_module"]]' && i.repeat === '10' && JSON.stringify(i.wires) === '[["opt_schema"]]' &&
+        [t1, t2, t3].every(t => t && !/scope\.send/.test(t.format) && JSON.stringify(t.wires) === '[[]]'), '');
+  // 14.10.2026 (UI-Lambda): Kopfzeile "modifizierte Aussentemperatur", Bauteile grau -> gruen, Modulkacheln
+  const EN0 = {ts: T - 30000, vs: {dk: 0.6, age: 40, maxMin: 120, von: 2, bis: 5}}, WX0 = {temp: 7.4, ts: T - 10 * 60000};
+  const XV = (vs, owm) => Object.assign({}, X, {vs: vs, owm: owm});
+  const PK = SCH.daten(hpOf(LIVE), XV(Object.assign({ts: EN0.ts}, EN0.vs), {t: WX0.temp, ts: WX0.ts}), 80, T), HK = SCH.html(PK, {}).replace(/\u00a0/g, ' ');
+  check('Lambda Kopfzeile: Fühler 12 °C → 11,4 °C (Fühler − vsDk 0,6 K = mehr Bedarf, Prognose 2–5 h), dazu OWM 7,4 °C',
+        PK.kopf.at === 12 && PK.kopf.mat === 11.4 && PK.kopf.owm === 7.4 && /class="osch-kopf"><span class="k">Außentemperatur<\/span><b class="at"[^>]*>12 °C<\/b><span class="arr">→<\/span><b class="mat"[^>]*>11,4 °C<\/b><span class="s">\(Prognose 2–5 h\)<\/span><span class="owm"[^>]*>OWM 7,4 °C</.test(HK), HK.slice(HK.indexOf('osch-kopf') - 12, HK.indexOf('osch-kopf') + 420));
+  const PKm = SCH.daten(hpOf(LIVE), XV({ts: EN0.ts, dk: -1.25, age: 10, maxMin: 120, von: 2, bis: 5}, null), 80, T);
+  check('Lambda Kopfzeile: Milderung (vsDk −1,25 K) → modifizierte AT höher (13,3 °C); ohne OWM keine OWM-Angabe', PKm.kopf.mat === 13.3 && PKm.kopf.owm === null && !SCH.html(PKm, {}).includes('OWM'), JSON.stringify(PKm.kopf));
+  const kOhne = vs => { const Pq = SCH.daten(hpOf(LIVE), XV(vs, {t: 7.4, ts: T - 150 * 60000}), 80, T), Hq = SCH.html(Pq, {}); return Pq.kopf.mat === null && Pq.kopf.owm === null && !Hq.includes('class="arr"') && Hq.includes('class="osch-kopf"') && /<b class="at"[^>]*>12\u00a0°C</.test(Hq); };
+  check('Lambda Kopfzeile: nur der Fühler (ohne Pfeil), wenn vsDk fehlt (null), die Vorhersage älter als prognoseMaxMin (100 + 30 min > 120), die Maschine älter als 5 min oder OPT_engine.vs fehlt; OWM älter als 120 min weg',
+        kOhne({ts: EN0.ts, dk: null, age: 10, maxMin: 120}) && kOhne({ts: T - 30 * 60000 + 60000, dk: 0.6, age: 100, maxMin: 120}) && kOhne({ts: T - 6 * 60000, dk: 0.6, age: 10, maxMin: 120}) && kOhne(null), '');
+  const LIVEM = Object.assign({}, LIVE, {Z1_Heat_Curve_Target_High_Temp: 37, Z1_Heat_Curve_Outside_Low_Temp: -13, Z1_Heat_Curve_Target_Low_Temp: 29, Z1_Heat_Curve_Outside_High_Temp: 11,
+    Main_Schedule_State: 0, Holiday_Mode_State: 0, Operating_Mode_State: 0, Z1_Heat_Request_Temp: 1});
+  gstore.OPT_engine = EN0; gstore.OPT_weather = WX0; gstore.OPT_hp = hpOf(Object.assign({}, LIVEM, {Z1_Heat_Request_Temp: 0}));      // vollstaendigste Nachricht (auch fuer die Vorschau, OPT_UI_DUMP)
+  const PR = run('opt_schema', {}).payload;
+  check('Lambda Kopfzeile: opt_schema liest OPT_engine.vs (mit dessen ts) und OPT_weather.temp/ts, schreibt nichts', PR.kopf.mat === 11.4 && PR.kopf.owm === 7.4 && PR.kopf.von === 2 && PR.kopf.bis === 5, JSON.stringify(PR.kopf));
+  delete gstore.OPT_engine; delete gstore.OPT_weather;
+  const en = N('opt_engine');
+  check('Lambda Kopfzeile: opt_engine legt vs {dk = d.vsDk, age der Vorhersage, prognoseMaxMin, vonH, bisH} in OPT_engine ab (nur Anzeige)',
+        en && /vs: \{dk: o\.d\.vsDk, age: inp\.vs \? inp\.vs\.age : null, maxMin: cfg\.rules\.vorausschau\.prognoseMaxMin, von: cfg\.rules\.vorausschau\.vonH, bis: cfg\.rules\.vorausschau\.bisH\}/.test(en.func), '');
+  const stroke = (h, re) => { const m = re.exec(h); return m ? m[1] : null; };
+  const vd = h => stroke(h, /<circle cx="370" cy="92" r="38" style="fill:[^;]*;stroke:(#[0-9a-f]{6})/), lf = h => stroke(h, /<circle cx="140" cy="210" r="20" style="fill:[^;]*;stroke:(#[0-9a-f]{6})/),
+        pu = h => stroke(h, /<circle cx="600" cy="270" r="16" style="fill:[^;]*;stroke:(#[0-9a-f]{6})/), ev = h => stroke(h, /<path d="M348,338[^"]*" style="fill:[^;]*;stroke:(#[0-9a-f]{6})/);
+  const Hl = SCH.svg(P), Hp = SCH.svg(P4), Hg = SCH.svg(P5), Ha = SCH.svg(P8), Hh = SCH.svg(P6);
+  check('Lambda Bauteile: im Lauf Verdichter, Lüfter, Pumpe, Expansionsventil grün (#2e7d32), Hz bleibt; Pause: nur die Pumpe grün; Heizgrenze: alles grau (#78909c); Abtauen: Verdichter #00727f; Heizstab an rot',
+        [vd(Hl), lf(Hl), pu(Hl), ev(Hl)].join() === '#2e7d32,#2e7d32,#2e7d32,#2e7d32' && Hl.includes('>17\u00a0Hz<') && [vd(Hp), lf(Hp), pu(Hp), ev(Hp)].join() === '#78909c,#78909c,#2e7d32,#78909c' &&
+        [vd(Hg), lf(Hg), pu(Hg), ev(Hg)].join() === '#78909c,#78909c,#78909c,#78909c' && vd(Ha) === '#00727f' && /<rect x="584" y="140"[^>]*stroke:#c62828/.test(Hh), [vd(Hl), lf(Hl), pu(Hl), ev(Hl)].join() + ' | ' + [vd(Hp), lf(Hp), pu(Hp), ev(Hp)].join() + ' | ' + [vd(Hg), lf(Hg), pu(Hg), ev(Hg)].join() + ' | ' + vd(Ha));
+  const PM = SCH.daten(hpOf(LIVEM), X, 80, T), M = SCH.modul(PM).replace(/\u00a0/g, ' '), chips = h => (h.match(/class="omod-ch omod-\w+"[^>]*>[^<]*</g) || []).map(c => c.replace(/^class="omod-ch omod-(\w+)"[^>]*>([^<]*)<$/, '$2:$1'));
+  check('Lambda Module: Kachel Wärmepumpe (Soll 29 °C, VL/RL 30,3/28 °C, Abgabe thermisch 2,23 kW, Aufnahme elektrisch 0,40 kW, COP 5,58, 10.026 h · 3.952 Starts, 4 Starts heute; Chips Heizen/Quiet 1/Efficiency) und Heizkreis Zone 1 (Kurve 37 °C bei −13 °C … 29 °C bei +11 °C, +1 K, Heizgrenze 12 °C, Nur Heizen; Anforderung, Zeitplan aus, Ferien aus); kein Warmwasser',
+        M.includes('<div class="omod-t">Wärmepumpe</div>') && M.includes('<div class="omod-t">Heizkreis Zone 1</div>') && M.includes('<dt>Soll-Vorlauf</dt><dd>29 °C</dd>') && M.includes('<dd>30,3 °C / 28 °C</dd>') &&
+        /Abgabe thermisch<\/dt><dd>2,23 kW<\/dd>/.test(M) && /Aufnahme elektrisch<\/dt><dd>0,40 kW<\/dd>/.test(M) && M.includes('<dd>5,58</dd>') && M.includes('<dd>10.026 h · 3.952 Starts</dd>') && M.includes('<dt>Starts heute</dt><dd>4</dd>') &&
+        M.includes('<dd>37 °C bei −13 °C … 29 °C bei +11 °C</dd>') && M.includes('<dd>+1 K</dd>') && M.includes('<dd>12 °C</dd>') && M.includes('<dd>Nur Heizen</dd>') &&
+        chips(M).join() === 'Heizen:ok,Quiet 1:act,Efficiency:mute,Anforderung:ok,Zeitplan aus:mute,Ferien aus:mute' && !/Warmwasser|Speicher/.test(M), chips(M).join());
+  const zm = o => chips(SCH.modul(SCH.daten(hpOf(Object.assign({}, LIVEM, o)), X, 80, T)));
+  check('Lambda Module: Anforderung aus dem Schema-Zustand: Pause → Pause/Standby, Heizgrenze → Heizgrenze/Standby, Abtauen → Abtauen/Anforderung, Aus, Störung H23, Heizstab an; Verschiebung 0 = "keine"; Comfort',
+        zm({Compressor_Freq: 0, Pump_Speed: 1750}).filter(c => /Pause|Standby/.test(c)).join() === 'Pause:mute,Standby:mute' && zm({Compressor_Freq: 0, Pump_Speed: 0, Pump_Flow: 0}).filter(c => /Heizgrenze|Standby/.test(c)).join() === 'Heizgrenze:warn,Standby:mute' &&
+        zm({Defrosting_State: 1})[0] === 'Abtauen:kalt' && zm({Defrosting_State: 1})[3] === 'Anforderung:ok' && zm({Heatpump_State: 0})[0] === 'Aus:mute' && zm({Error: 'H23'})[0] === 'Störung H23:bad' && zm({Internal_Heater_State: 1}).includes('Heizstab an:bad') &&
+        SCH.modul(SCH.daten(hpOf(Object.assign({}, LIVEM, {Z1_Heat_Request_Temp: 0, Heating_Control: 0})), X, 80, T)).includes('<dt title="Z1_Heat_Request_Temp">Verschiebung</dt><dd>keine</dd>') && zm({Heating_Control: 0}).includes('Comfort:mute') && zm({Main_Schedule_State: 1, Holiday_Mode_State: 1}).includes('Zeitplan an:act') && zm({Holiday_Mode_State: 1}).includes('Ferien an:warn'), '');
+  check('Lambda Module: fehlende Heizkurve/Werte als Strich, veraltete Werte mit Hinweis, ohne Nutzlast "Noch keine Werte"', PM.hk.kurve && SCH.daten(hpOf(LIVE), X, 80, T).hk.kurve === null && SCH.modul(SCH.daten(hpOf(LIVE), X, 80, T)).includes('<dt title="Z1_Heat_Curve_*">Heizkurve</dt><dd>–</dd>') && SCH.modul(SCH.daten(hpOf(LIVE, 20), {}, 80, T)).includes('Keine aktuellen Werte') && SCH.modul(null).includes('Noch keine Werte'), '');
+  check('Lambda Module: Gruppe "MODULÜBERSICHT" auf der Übersicht direkt nach dem Anlagenschema (0,6, vor den Kern-Gruppen), 24 breit mit voller Inhaltsbreite per node-id, eine Karte mit optSchema.modulMount und Einpassen',
+        g3 && g3.tab === 'a5be8588.b8fbc8' && g3.order === 0.6 && g3.width === 24 && ueOrders.filter(o => o !== 0.6).every(o => o >= 1) && t3.group === 'opt_g_module' && nodes.filter(n => n.group === 'opt_g_module').length === 1 &&
+        t3.format.includes('ui-card-panel[node-id="opt_g_module"]{width:calc(100% - 12px)') && t3.format.includes('window.optSchema.modulMount(el, last.payload)') && t3.format.includes('id="omod_opt_t_module"') && t3.format.includes("F.fns['opt_t_module']"), ueOrders.join());
   Object.keys(gstore).forEach(k => delete gstore[k]); Object.assign(gstore, keep); NOW = nowKeep;
 })();
 

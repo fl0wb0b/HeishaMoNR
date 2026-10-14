@@ -3036,7 +3036,8 @@ if (msg.topic !== 'anzeige') {
     }
     // hc: Heizregelung-Hinweis, deckel: wirksamer Deckel der jetzigen Quiet-Stufe (Review-Paket 13.10.2026: der Waechter opt_quiet zeigt diese Werte an, statt sie selbst zu rechnen)
     global.set('OPT_engine', {ts: now, ver: ENGINE.VER, prop: o.prop, locks: o.locks, ende: o.ende, halten: o.halten, rules: o.res.map(function (r) { return {id: r.id, st: r.st}; }), hc: o.hc, deckel: o.deckel,
-                              hinweise: o.hinweise, stoerung: o.stoerung});                                    // 14.10.2026: Waechter (Waermeverteilung, Dornroeschenschlaf, Kurvenform, H23) und Stoerung (sperrt die Uebernahme)
+                              hinweise: o.hinweise, stoerung: o.stoerung,                                      // 14.10.2026: Waechter (Waermeverteilung, Dornroeschenschlaf, Kurvenform, H23) und Stoerung (sperrt die Uebernahme)
+                              vs: {dk: o.d.vsDk, age: inp.vs ? inp.vs.age : null, maxMin: cfg.rules.vorausschau.prognoseMaxMin, von: cfg.rules.vorausschau.vonH, bis: cfg.rules.vorausschau.bisH}});   // UI-Lambda: Bedarfsaenderung aus dem Wetter (K, > 0 mehr Bedarf) fuer die Kopfzeile des Anlagenschemas, nur Anzeige
     if (!ST.saved || now - ST.saved >= 10 * MIN || o.scores.length || o.ev.length) {
         try { fs.mkdirSync('/data/optimizer', {recursive: true}); fs.writeFileSync('/data/optimizer/engine-state.json', JSON.stringify({S: ST.S, V: ST.V})); ST.saved = now; } catch (e) { node.warn('engine-state.json: ' + e.message); }
     }
@@ -3183,29 +3184,36 @@ upsert(_apply_out)
 SCHEMA_JS = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "schema_ui.js"), encoding="utf-8").read()
 UE_TAB = "a5be8588.b8fbc8"                       # Kern-Seite "Übersicht" (#!/0)
 SCHEMA_CSS = "<style>" + "".join(re.findall(r"'([^']*)'", re.search(r"var CSS = ([\s\S]*?);\n", SCHEMA_JS).group(1))) + "</style>"      # Stil aus schema_ui.js (eine Quelle)
-SCHEMA_VOLL_CSS = ('<style>ui-card-panel[node-id="opt_g_schema_ue"]{width:calc(100% - 12px) !important}'
-                   'ui-card-panel[node-id="opt_g_schema_ue"] .nr-dashboard-cardpanel,ui-card-panel[node-id="opt_g_schema_ue"] .nr-dashboard-cardcontainer{width:100% !important}'
-                   'ui-card-panel[node-id="opt_g_schema_ue"] .nr-dashboard-cardtitle{width:auto !important}'
-                   'md-card[node-id="opt_t_schema_ue"]{width:100% !important;box-sizing:border-box !important}</style>')
+def voll_css(g, t):
+    """Gruppe g (24 breit) per CSS auf die volle Inhaltsbreite, Karte t mit (nur ueber die node-id, siehe oben)"""
+    return ('<style>ui-card-panel[node-id="' + g + '"]{width:calc(100% - 12px) !important}'
+            'ui-card-panel[node-id="' + g + '"] .nr-dashboard-cardpanel,ui-card-panel[node-id="' + g + '"] .nr-dashboard-cardcontainer{width:100% !important}'
+            'ui-card-panel[node-id="' + g + '"] .nr-dashboard-cardtitle{width:auto !important}'
+            'md-card[node-id="' + t + '"]{width:100% !important;box-sizing:border-box !important}</style>')
+
+
 SCHEMA_FN_JS = r"""
-// Anlagenschema: Werte der Waermepumpe fuer die beiden Schema-Karten (Optimierer, Übersicht), alle 10 s. NUR LESEN, schreibt nichts.
+// Anlagenschema: Werte der Waermepumpe fuer die beiden Schema-Karten (Optimierer, Übersicht) und die Modulkacheln (Übersicht), alle 10 s. NUR LESEN, schreibt nichts.
 var G = function (k) { var v; try { v = global.get(k, 'file'); } catch (e) { v = undefined; } return v !== undefined ? v : global.get(k); };
 var cfg = global.get('OPT_cfg') || {};
 __COPKW__
-var P = OPTSCHEMA.daten(G('OPT_hp') || {}, {freq: G('compressor_frequency'), rt: G('compressor_runtime'), rtLast: G('compressor_last_runtime'), starts: G('Starts_Today')}, COP_KW, Date.now());
+var EN = global.get('OPT_engine') || {}, WX = global.get('OPT_weather') || {};                     // Kopfzeile: Vorausschau der Maschine (vsDk) und OWM, nur lesen
+var P = OPTSCHEMA.daten(G('OPT_hp') || {}, {freq: G('compressor_frequency'), rt: G('compressor_runtime'), rtLast: G('compressor_last_runtime'), starts: G('Starts_Today'),
+                                           vs: (EN.vs && typeof EN.ts === 'number') ? Object.assign({ts: EN.ts}, EN.vs) : null, owm: {t: WX.temp, ts: WX.ts}}, COP_KW, Date.now());
 return {payload: P};
 """
 
 
-def schema_format(node_id, group_id, voll):
+def schema_format(node_id, group_id, voll, art="schema"):
     """Schema-Karte: zeichnet die Nutzlast mit optSchema.mount, passt sich danach sofort ein (FIT_JS dieser Karte); auf der Übersicht (voll) einmal die
-    Masonry neu anstossen, damit sie die volle Breite der Gruppe sieht."""
+    Masonry neu anstossen, damit sie die volle Breite der Gruppe sieht. art "modul": dieselbe Nutzlast als Modulkacheln (optSchema.modulMount)."""
+    mfn, pre = ("modulMount", "omod_") if art == "modul" else ("mount", "osch_")
     vollJs = ("if (first) { first = false; try { var p = document.querySelector('ui-card-panel[node-id=\"" + group_id + "\"]'), mas = p && angular.element(p.parentElement).controller('uiMasonry'); "
               "if (mas) { setTimeout(function () { mas.refreshLayout(); }, 80); } } catch (e) { /* Layout bleibt */ } }\n") if voll else ""
-    return (SCHEMA_CSS + (SCHEMA_VOLL_CSS if voll else "") + '<div class="optfit"><div id="osch_' + node_id + '"></div></div>'
+    return (SCHEMA_CSS + (voll_css(group_id, node_id) if voll else "") + '<div class="optfit"><div id="' + pre + node_id + '"></div></div>'
             "<script>" + SCHEMA_JS + "</script><script>(function (scope) {\n"
             "var last = null, first = true;\n"
-            "function draw() { var el = document.getElementById('osch_" + node_id + "'); if (!el || !last || !last.payload || !window.optSchema) { return; } window.optSchema.mount(el, last.payload);\n"
+            "function draw() { var el = document.getElementById('" + pre + node_id + "'); if (!el || !last || !last.payload || !window.optSchema) { return; } window.optSchema." + mfn + "(el, last.payload);\n"
             " var F = window.__optFit; if (F && F.fns && F.fns['" + node_id + "']) { setTimeout(F.fns['" + node_id + "'], 60); }\n" + vollJs + "}\n"
             "scope.$watch('msg', function (m) { if (m) { last = m; setTimeout(draw, 40); } });\n"
             "})(scope);</script>")
@@ -3218,9 +3226,13 @@ if UE_TAB in B and B[UE_TAB]["type"] == "ui_tab":
     upsert({"id": "opt_g_schema_ue", "type": "ui_group", "name": "ANLAGENSCHEMA", "tab": UE_TAB, "order": 0.5, "disp": True, "width": 24, "collapse": False, "className": ""})
     upsert(eng_template("opt_t_schema_ue", "opt_g_schema_ue", "Anlagenschema (Übersicht)", 12, schema_format("opt_t_schema_ue", "opt_g_schema_ue", True), 2460))
     _schema_out.append("opt_t_schema_ue")
+    # UI-Lambda (14.10.2026): Modulkacheln "Wärmepumpe" und "Heizkreis Zone 1" direkt unter dem Anlagenschema (0,6 < Kern-Gruppen ab 1), volle Breite wie das Schema
+    upsert({"id": "opt_g_module", "type": "ui_group", "name": "MODULÜBERSICHT", "tab": UE_TAB, "order": 0.6, "disp": True, "width": 24, "collapse": False, "className": ""})
+    upsert(eng_template("opt_t_module", "opt_g_module", "Modulkacheln (Übersicht)", 5, schema_format("opt_t_module", "opt_g_module", True, "modul"), 2500))
+    _schema_out.append("opt_t_module")
 else:
     print("Hinweis: Seite Übersicht (" + UE_TAB + ") fehlt, Anlagenschema nur auf der Seite Optimierer")
-upsert(comment("opt_c_schema", "Anlagenschema (nur Anzeige): OPT_hp lesen → Karten auf Optimierer und Übersicht", 380, 2380))
+upsert(comment("opt_c_schema", "Anlagenschema (nur Anzeige): OPT_hp lesen → Karten auf Optimierer und Übersicht, Modulkacheln auf der Übersicht", 380, 2380))
 upsert(inject("opt_i_schema", "alle 10 s", 10, 20, ["opt_schema"], 140, 2440))
 upsert(fn("opt_schema", "Anlagenschema: Werte lesen (nur Anzeige)", SCHEMA_JS + SCHEMA_FN_JS.replace("__COPKW__", COP_KW_JS), 1, [_schema_out], 440, 2440))
 
