@@ -3,7 +3,7 @@
  *   optEngUi.html(kind, P)              -> HTML einer Karte (kind: 'card' | 'rules' | 'score' | 'mess' | 'log'), P = Nutzlast aus ENGVIEW.build
  *   optEngUi.mount(el, kind, P, scope)  -> zeichnet in ein Element, Knoepfe schicken nur Aktion + ID + Pruefsumme, Diagramm ueber optChart */
 (function (root) {
-    var VER = 4;                                                                  // 4: Vorschlag mit Befehl/Zielwert/Begruendung/Wirkung/Rueckweg offen, Karte "Messwerte & Lernen"
+    var VER = 5;                                                                  // 5 (14.10.2026): Abschnitt „Räume und Wächter“ in „Messwerte & Lernen“                                                                  // 4: Vorschlag mit Befehl/Zielwert/Begruendung/Wirkung/Rueckweg offen, Karte "Messwerte & Lernen"
     if (root.optEngUi && root.optEngUi.v === VER) { return; }
     var U = {v: VER};
     function esc(s) { return String(s === undefined || s === null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
@@ -131,7 +131,8 @@
         return '<div class="oe-sec">Takt und Leistung</div>' + kpis(P.takt) +
                '<div class="oe-sec">Mindestleistung je Außenband</div>' + ml +
                '<div class="oe-sec"' + tt(P.cop && P.cop.title) + '>COP je Modus und Quiet · 30 Tage</div>' + cop(P.cop) +
-               '<div class="oe-sec">Lernen</div>' + kpis(P.lern);
+               '<div class="oe-sec">Lernen</div>' + kpis(P.lern) +
+               ((P.raum || []).length ? '<div class="oe-sec">Räume und Wächter</div>' + kpis(P.raum) : '');
     }
     // ---------------------------------------------------------------- Karte 5: Entscheidungen (Episoden)
     function log(P) {

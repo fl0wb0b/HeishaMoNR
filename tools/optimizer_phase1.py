@@ -3038,7 +3038,9 @@ var inp = {t: now, hpAge: hpTs ? (now - hpTs) / MIN : null,
            rt: num(G('compressor_runtime')), shift: pick(hpv('Z1_Heat_Request_Temp'), num(G('TOP27_Z1_Heat_Request_Temp'))), heatMode: num(G('TOP76_Heating_Mode')), z1Sensor: num(G('TOP111_Z1_Sensor_Settings')),
            heaterI: hpv('Internal_Heater_State'), heaterE: hpv('External_Heater_State'), htrOnAT: hpSet('Heater_On_Outdoor_Temp'), htrStartDelta: hpSet('Heater_Start_Delta'), htrDelay: hpSet('Heater_Delay_Time'), heatOffAT: hpSet('Heating_Off_Outdoor_Temp'),
            sollKurve: sollKurve, block: mq.block_active === 1 ? 1 : 0, otherQ: otherQ.length ? otherQ.join(', ') : null, otherShift: otherS.length ? otherS.join(', ') : null,
-           kzRad: (KZ.rad && typeof KZ.rad.on === 'boolean') ? (KZ.rad.on ? 1 : 0) : null, rooms: rooms, korr: korr};
+           kzRad: (KZ.rad && typeof KZ.rad.on === 'boolean') ? (KZ.rad.on ? 1 : 0) : null, rooms: rooms, korr: korr,
+           err: (HP.Error && HP.Error.v !== undefined && HP.Error.v !== null) ? String(HP.Error.v) : null, pipeIn: hpv('Inside_Pipe_Temp'),     // 14.10.2026: Fehlercode (TOP44, H23-Waechter), Leitungstemperatur Innengeraet (H23-Vorstufe)
+           kurve: (cvLo !== null && cvHi !== null && cvTl !== null && cvTh !== null) ? [cvLo, cvHi, cvTl, cvTh] : null};                      // Heizkurve Z1 (Kennzahl Kurvenform je Kurve)
 // Vorausschau: OWM-Vorhersage und Gebaeudemodell des Waermefahrplans (Gate, coefActivate); Sonne/Wind nur bei aktivem Modell (sonst nicht in der Eingabe)
 var vsIn = null; try { vsIn = ENGINE.vorschau(G('OPT_weather'), G('OPT_plan'), G('OPT_plan_in'), at, now); } catch (e) { vsIn = null; }
 if (vsIn) { inp.vs = vsIn; }
@@ -3082,7 +3084,8 @@ if (msg.topic !== 'anzeige') {
         files.push({filename: ef, payload: eh + evl.map(function (x) { return ENGINE.iso(now) + ',' + x[0] + ',' + String(x[1]).replace(/,/g, ';').replace(/\n/g, ' ') + '\n'; }).join('')});
     }
     // hc: Heizregelung-Hinweis, deckel: wirksamer Deckel der jetzigen Quiet-Stufe (Review-Paket 13.10.2026: der Waechter opt_quiet zeigt diese Werte an, statt sie selbst zu rechnen)
-    global.set('OPT_engine', {ts: now, ver: ENGINE.VER, prop: o.prop, locks: o.locks, ende: o.ende, halten: o.halten, rules: o.res.map(function (r) { return {id: r.id, st: r.st}; }), hc: o.hc, deckel: o.deckel});
+    global.set('OPT_engine', {ts: now, ver: ENGINE.VER, prop: o.prop, locks: o.locks, ende: o.ende, halten: o.halten, rules: o.res.map(function (r) { return {id: r.id, st: r.st}; }), hc: o.hc, deckel: o.deckel,
+                              hinweise: o.hinweise, stoerung: o.stoerung});                                    // 14.10.2026: Waechter (Waermeverteilung, Dornroeschenschlaf, Kurvenform, H23) und Stoerung (sperrt die Uebernahme)
     if (!ST.saved || now - ST.saved >= 10 * MIN || o.scores.length || o.ev.length) {
         try { fs.mkdirSync('/data/optimizer', {recursive: true}); fs.writeFileSync('/data/optimizer/engine-state.json', JSON.stringify({S: ST.S, V: ST.V})); ST.saved = now; } catch (e) { node.warn('engine-state.json: ' + e.message); }
     }
@@ -3115,7 +3118,8 @@ function hpv(n) { var e = HP[n]; return (e && typeof e.v === 'number' && now - e
 function pick(a, b) { return a !== null ? a : b; }
 var mq = G('MQTT') || {};
 var plant = {q: pick(hpv('Quiet_Mode_Level'), num(G('TOP18_Quiet_Mode_Level'))), shift: pick(hpv('Z1_Heat_Request_Temp'), num(G('TOP27_Z1_Heat_Request_Temp'))), hpAge: hpTs ? (now - hpTs) / MIN : null,
-             block: mq.block_active === 1 ? 1 : 0, heatMode: num(G('TOP76_Heating_Mode')), z1Sensor: num(G('TOP111_Z1_Sensor_Settings'))};
+             block: mq.block_active === 1 ? 1 : 0, heatMode: num(G('TOP76_Heating_Mode')), z1Sensor: num(G('TOP111_Z1_Sensor_Settings')),
+             err: (HP.Error && HP.Error.v !== undefined && HP.Error.v !== null) ? String(HP.Error.v) : null};      // Fehlercode (TOP44): bei einer Stoerung (z. B. H23) keine Uebernahme und kein Rueckweg
 var eng = global.get('OPT_engine') || {};
 var ctx = {now: now, enabled: AC.enabled, knoten: KNOTEN, rules: AC.rules, eng: eng, plant: plant, cfg: ENGINE.mergeCfg(Object.assign({}, ((global.get('OPT_cfg') || {}).engine) || {}, {cop: (global.get('OPT_cfg') || {}).cop || {}})), endReason: eng.ende || {}, halten: eng.halten || {}};
 var t = String(msg.topic || ''), r;
