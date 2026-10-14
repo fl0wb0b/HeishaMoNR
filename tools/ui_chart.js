@@ -2,10 +2,10 @@
  *   optChart.svg(spec, width)  -> {svg: '<svg ...>', geo: {...}}   reine Funktion, testbar
  *   optChart.at(spec, t)       -> [{panel, name, color, text}]      Werte nahe der Zeit t (Tooltip)
  *   optChart.mount(el, spec)   -> zeichnet in ein Element, Tooltip bei Mausbewegung
- * spec = {t0, t1, marks: [{t, label}], panels: [{h, unit, min, max, zero, rmin, rmax, bands: [{a, b, c}], series: [
+ * spec = {t0, t1, legend: false (mount ohne Legende), marks: [{t, label, l (Text links der Linie), c, solid, w}], panels: [{h, unit, min, max, zero, rmin, rmax, bands: [{a, b, c}], series: [
  *          {n, c, d: [[t, v], ...], k: 'line'|'step'|'area'|'bar', w, dash, r: true (rechte Achse), dg: Nachkommastellen, u: Einheit, fill, bw (Balkenbreite in ms), bc: [[t, Farbe]]}]}]} */
 (function (root) {
-    var VER = 5;                                                                                    // 5: UI-Optik 14.10. (Achsen 12 px, Kontrast >= 4,5:1)
+    var VER = 6;                                                                                    // 5: UI-Optik 14.10. (Achsen 12 px, Kontrast >= 4,5:1); 6: Trend 24 h (Tageslinie durchgezogen mit Text links/rechts, mount ohne Legende)
     if (root.optChart && root.optChart.v === VER) { return; }
     var C = {v: VER};
     var MONTHS = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
@@ -85,7 +85,13 @@
         });
         var H = y - GAP + BOT;
         ticks.forEach(function (t) { var d = new Date(t), lab = (d.getHours() === 0) ? p2(d.getDate()) + '. ' + MONTHS[d.getMonth()] : hhmm(t); out.push('<text x="' + X(t).toFixed(1) + '" y="' + (H - 7) + '" text-anchor="middle" font-size="12" fill="' + (d.getHours() === 0 ? '#263238' : '#546e7a') + '"' + (d.getHours() === 0 ? ' font-weight="bold"' : '') + '>' + lab + '</text>'); });
-        (spec.marks || []).forEach(function (m) { if (m.t < t0 || m.t > t1) { return; } var xx = X(m.t).toFixed(1); out.push('<line x1="' + xx + '" x2="' + xx + '" y1="' + TOP + '" y2="' + (H - BOT) + '" stroke="' + (m.c || '#546e7a') + '" stroke-dasharray="4 3"/>' + (m.label ? '<text x="' + (+xx + 4) + '" y="' + (TOP + 10) + '" font-size="10" fill="' + (m.c || '#546e7a') + '">' + esc(m.label) + '</text>' : '')); });
+        (spec.marks || []).forEach(function (m) {
+            if (m.t < t0 || m.t > t1) { return; }
+            var xx = X(m.t).toFixed(1), fs = m.solid ? 12 : 10, ty = m.solid ? TOP - 5 : TOP + 10;
+            out.push('<line x1="' + xx + '" x2="' + xx + '" y1="' + TOP + '" y2="' + (H - BOT) + '" stroke="' + (m.c || '#546e7a') + '"' + (m.solid ? ' stroke-width="' + (m.w || 1.5) + '"' : ' stroke-dasharray="4 3"') + '/>');
+            if (m.l && +xx - x0 > 60) { out.push('<text x="' + (+xx - 5) + '" y="' + ty + '" text-anchor="end" font-size="' + fs + '" fill="' + (m.c || '#546e7a') + '">' + esc(m.l) + '</text>'); }
+            if (m.label && x1 - xx > 50) { out.push('<text x="' + (+xx + (m.solid ? 5 : 4)) + '" y="' + ty + '" font-size="' + fs + '" fill="' + (m.c || '#546e7a') + '">' + esc(m.label) + '</text>'); }
+        });
         geo.H = H;
         return {svg: '<svg xmlns="http://www.w3.org/2000/svg" width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" style="display:block;font-family:inherit">' + out.join('') + '<line class="optch-x" x1="0" x2="0" y1="' + TOP + '" y2="' + (H - BOT) + '" stroke="#37474f" stroke-width="1" visibility="hidden"/></svg>', geo: geo};
     };
@@ -110,7 +116,7 @@
         try {
             if (!el) { return; }
             var W = el.clientWidth || (el.parentElement && el.parentElement.clientWidth) || 800, r = C.svg(spec, W);
-            el.style.position = 'relative'; el.innerHTML = C.legend(spec) + r.svg + '<div class="optch-tip" style="position:absolute;display:none;pointer-events:none;background:rgba(38,50,56,.95);color:#fff;font-size:13px;padding:6px 10px;border-radius:4px;white-space:nowrap;z-index:5"></div>';
+            el.style.position = 'relative'; el.innerHTML = (spec.legend === false ? '' : C.legend(spec)) + r.svg + '<div class="optch-tip" style="position:absolute;display:none;pointer-events:none;background:rgba(38,50,56,.95);color:#fff;font-size:13px;padding:6px 10px;border-radius:4px;white-space:nowrap;z-index:5"></div>';
             var svg = el.querySelector('svg'), tip = el.querySelector('.optch-tip'), cross = el.querySelector('.optch-x'), g = r.geo;
             svg.addEventListener('mousemove', function (ev) {
                 var b = svg.getBoundingClientRect(), mx = (ev.clientX - b.left) * (g.W / b.width);

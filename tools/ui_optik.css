@@ -39,6 +39,24 @@
 .optr input[type=number]{width:52px;padding:2px 4px;font:inherit;font-size:13.5px;text-align:right;border:1px solid #b0bec5;border-radius:4px;background:#fff;color:inherit}
 .optr input[type=number]:focus{outline:none;border-color:#0094ce;box-shadow:0 0 0 2px rgba(0,148,206,.2)}
 .optr input[type=checkbox]{width:16px;height:16px;vertical-align:middle;margin:0;accent-color:#007bb0}
+/* Statistik Waermepumpe (UI-Lambda Teil 2): drei Bloecke nebeneinander, bei 1024 px umbrechend; Zahlen rechtsbuendig */
+.optst{display:flex;flex-wrap:wrap;gap:6px 28px;align-items:flex-start}
+.optst .b{flex:1 1 300px;min-width:0}.optst .bz{max-width:440px}.optst .be{flex-basis:340px;max-width:560px}.optst .bb{flex-basis:430px;max-width:680px}
+.optst .sec{margin:4px 0 6px;font-size:12px;color:#00729f;font-weight:600;text-transform:uppercase;letter-spacing:.06em}
+.optst td+td,.optst th+th{text-align:right;white-space:nowrap}.optst td:first-child{color:#455a64}.optst .bz td+td{font-weight:600;white-space:normal;overflow-wrap:anywhere}
+/* Trend 24 h (UI-Lambda Teil 2): Auswahl, Zeitbereich, Legende */
+.otr-bar{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px 20px;margin:2px 0 8px}
+.otr-sels{display:flex;flex-wrap:wrap;gap:8px 14px}
+.otr-sel{display:inline-flex;align-items:center;gap:6px}
+.otr-sw{display:inline-block;width:14px;height:14px;border-radius:3px;flex:0 0 auto}
+.otr select{font:inherit;font-size:14px;color:#263238;background:#fff;border:1px solid #b0bec5;border-radius:4px;padding:3px 4px;width:200px;max-width:100%}
+.otr select:focus{outline:none;border-color:#0094ce;box-shadow:0 0 0 2px rgba(0,148,206,.2)}
+.otr-zoom{display:inline-flex;border:1px solid #007bb0;border-radius:4px;overflow:hidden}
+.otr-zoom button{font:inherit;font-size:13px;font-weight:600;letter-spacing:.04em;color:#007bb0;background:#fff;border:0;border-left:1px solid #007bb0;padding:4px 12px;cursor:pointer;min-width:52px}
+.otr-zoom button:first-child{border-left:0}.otr-zoom button.on{background:#007bb0;color:#fff}.otr-zoom button:focus-visible{outline:2px solid #0094ce;outline-offset:-3px}
+.otr-leg{display:flex;flex-wrap:wrap;gap:4px 22px;font-size:13.5px;color:#455a64;padding:0 0 4px 52px}
+.otr-ch svg{max-width:100%;height:auto}
+.otr-li{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}.otr-li b{color:#263238;font-weight:600}
 /* Diagramm-Karte ohne Daten: kompakte Zeile statt einer leeren Flaeche */
 .optch-leer{border:1px dashed #b0bec5;border-radius:8px;padding:10px 12px;color:#546e7a;font-size:13px}
 @media (max-width:700px){ui-card-panel:has(.optr),.nr-dashboard-cardpanel:has(.optr),.nr-dashboard-cardcontainer:has(.optr),md-card.nr-dashboard-template:has(.optr){width:100% !important;min-width:0 !important;max-width:100% !important}}

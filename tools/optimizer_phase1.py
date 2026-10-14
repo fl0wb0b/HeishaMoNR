@@ -3236,6 +3236,114 @@ upsert(comment("opt_c_schema", "Anlagenschema (nur Anzeige): OPT_hp lesen → Ka
 upsert(inject("opt_i_schema", "alle 10 s", 10, 20, ["opt_schema"], 140, 2440))
 upsert(fn("opt_schema", "Anlagenschema: Werte lesen (nur Anzeige)", SCHEMA_JS + SCHEMA_FN_JS.replace("__COPKW__", COP_KW_JS), 1, [_schema_out], 440, 2440))
 
+# ---------------------------------------------------------------- UI-Lambda Teil 2 (14.10.2026): Statistik Waermepumpe (Seite "Effizienz") und Trend 24 h (Seite "Auswertung")
+# Vorbild Lambda: Statistik des WP-Moduls und Trenddaten der Menueleiste (lambda-reglerschulung/BERICHT.md). Nur Anzeige, liest Kern-Werte, schreibt nichts an die Anlage.
+# Beide Gruppen nehmen per CSS (nur ueber ihre node-id, wie Anlagenschema und Modulkacheln auf der Übersicht) die volle Inhaltsbreite: auf beiden Seiten stehen
+# 17 breite Kern-Gruppen (bei 1920/2560 zwei Spalten, bei 1024 eine); eine feste Breite 24 wuerde bei 1024 waagrecht scrollen.
+STAT_JS = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "stat_ui.js"), encoding="utf-8").read()       # Statistik (rein, getestet)
+TREND_JS = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "trend_ui.js"), encoding="utf-8").read()     # Trend (rein, getestet)
+EFF_TAB = "1a08b96c5aeb8d6e"                     # Kern-Seite "Effizienz"
+AUS_TAB = "5b5fabb85470bd21"                     # Kern-Seite "Auswertung"
+# Annahmen der Statistik: Nennleistung des internen Heizstabs der WH-WDG05LE5 (3 kW, einphasig) und Laenge des Wiederaufheizens nach dem Abtauen;
+# OPT_cfg.stat darf beides ueberschreiben (config.json)
+STAT = {"heizstabKw": 3, "nachMaxMin": 30}
+STAT_FN_JS = r"""
+// Statistik Waermepumpe (UI-Lambda Teil 2): Minutenprotokoll quiet-YYYY-MM.csv inkrementell weiterzaehlen (Vormonat und laufender Monat, nur neue Zeilen),
+// Kern-Zaehler (kWh, Waerme, COP) NUR LESEN und ins eigene Archiv /data/optimizer/stat-archiv.json uebernehmen (Strom je Tag aelter als 31 Tage, Waerme je Tag).
+// Zustand: global OPT_stat. Schreibt nichts an die Waermepumpe und keine Kern-Variable.
+var cfg = global.get('OPT_cfg') || {};
+__COPKW__
+var SC = Object.assign({}, __STAT__, (cfg.stat && typeof cfg.stat === 'object') ? cfg.stat : {});
+var GF = function (k) { var v; try { v = global.get(k, 'file'); } catch (e) { v = undefined; } return v !== undefined ? v : global.get(k); };
+var now = Date.now(), ARCH = '/data/optimizer/stat-archiv.json';
+function mon(t) { var d = new Date(t); return d.getFullYear() + '-' + (d.getMonth() < 9 ? '0' : '') + (d.getMonth() + 1); }
+var S = global.get('OPT_stat');
+if (!S || S.ver !== OPTSTAT.VER) {
+    S = OPTSTAT.neu();
+    try { var a = JSON.parse(fs.readFileSync(ARCH, 'utf8')); if (a && typeof a === 'object' && a.el) { S.archiv = Object.assign(OPTSTAT.archivNeu(), a); } } catch (e) { /* noch kein Archiv */ }
+}
+var d0 = new Date(now), vm = mon(new Date(d0.getFullYear(), d0.getMonth() - 1, 15).getTime());
+[vm, mon(now)].forEach(function (m) { OPTSTAT.datei(S, fs, '/data/optimizer/quiet-' + m + '.csv', COP_KW, SC); });
+var a0 = JSON.stringify(S.archiv);
+OPTSTAT.kern(S.archiv, {heat31: GF('kwh_HEAT_31d'), prod: GF('HEAT_Prod_24m'), cop: GF('COP_HEAT_24m')}, now);
+OPTSTAT.aufraeumen(S, now);
+if (JSON.stringify(S.archiv) !== a0) { try { fs.mkdirSync('/data/optimizer', {recursive: true}); fs.writeFileSync(ARCH, JSON.stringify(S.archiv)); } catch (e) { node.warn('stat-archiv.json: ' + e.message); } }
+global.set('OPT_stat', S);
+var X = {hp: GF('OPT_hp'), starts: GF('Starts_Today'), defrost: GF('Defrost'), err: GF('Error_Counter'), lastErr: GF('Last_Error'), opH: GF('TOP11_Operations_Hours'), opC: GF('TOP12_Operations_Counter')};
+return {payload: OPTSTAT.daten(S, X, {kw: SC.heizstabKw, nachMaxMin: SC.nachMaxMin, korr: KORR_TXT}, now)};
+"""
+TREND_FN_JS = r"""
+// Trend 24 h (UI-Lambda Teil 2): jede Minute die waehlbaren Kanaele aus OPT_hp (und Raeume, modifizierte AT, OWM) in den Ringpuffer (flow trend, 24 h x 1 min),
+// alle 10 min nach /data/optimizer/trend-puffer.json sichern (beim Start laden). Anfrage einer Karte (topic 'trend') -> nur deren Kanaele, nur an diese Karte.
+// NUR LESEN: schreibt nichts an die Waermepumpe.
+var cfg = global.get('OPT_cfg') || {};
+__COPKW__
+var now = Date.now(), DATEI = '/data/optimizer/trend-puffer.json';
+var B = flow.get('trend');
+if (!B || B.v !== OPTTREND.v) {
+    B = null;
+    try { B = OPTTREND.laden(JSON.parse(fs.readFileSync(DATEI, 'utf8')), now); } catch (e) { B = null; }
+    if (!B) { B = OPTTREND.neu(); }
+    B.gesichert = now;
+    flow.set('trend', B);
+}
+var kat = OPTTREND.katalog(cfg.rooms || []);
+if (msg.topic === 'trend') {
+    var q = (msg.payload && typeof msg.payload === 'object') ? msg.payload : {};
+    var r = {payload: Object.assign({art: 'daten', id: String(q.id || '').slice(0, 40) || null, kat: kat}, OPTTREND.auszug(B, q.keys, kat, now))};
+    if (msg.socketid) { r.socketid = msg.socketid; }
+    return r;
+}
+var EN = global.get('OPT_engine') || {}, WX = global.get('OPT_weather') || {};
+var w = OPTTREND.werte(global.get('OPT_hp') || {}, {vs: (EN.vs && typeof EN.ts === 'number') ? Object.assign({ts: EN.ts}, EN.vs) : null, owm: {t: WX.temp, ts: WX.ts},
+                                                   rooms: global.get('OPT_rooms') || {}, cfgRooms: cfg.rooms || []}, COP_KW, now);
+OPTTREND.eintragen(B, w, now);
+if (now - (B.gesichert || 0) >= 10 * 60000) {
+    try { fs.mkdirSync('/data/optimizer', {recursive: true}); fs.writeFileSync(DATEI, JSON.stringify(OPTTREND.sichern(B))); } catch (e) { node.warn('trend-puffer.json: ' + e.message); }
+    B.gesichert = now;
+}
+return {payload: {art: 'neu', t1: Math.floor(now / 60000), v: OPTTREND.letzte(B, now), kat: kat}};
+"""
+
+
+def lambda2_format(node_id, group_id, kind):
+    """Karte Statistik (optStat.mount) bzw. Trend (optTrend.mount mit ui_chart, schickt Anfragen ueber scope.send); volle Breite per node-id, passt sich sofort ein"""
+    pre, mfn = ("ostat_", "window.optStat.mount(el, last.payload)") if kind == "stat" else ("otr_", "window.optTrend.mount(el, last.payload, scope)")
+    lib = ("<script>" + STAT_JS + "</script>") if kind == "stat" else ("<script>" + UI_CHART_JS + "</script><script>" + TREND_JS + "</script>")
+    return (voll_css(group_id, node_id) + '<div class="optfit"><div id="' + pre + node_id + '"></div></div>' + lib + "<script>(function (scope) {\n"
+            "var last = null, first = true;\n"
+            "function draw() { var el = document.getElementById('" + pre + node_id + "'); if (!el || !last || !last.payload || !window." + ("optStat" if kind == "stat" else "optTrend") + ") { return; } " + mfn + ";\n"
+            " var F = window.__optFit; if (F && F.fns && F.fns['" + node_id + "']) { setTimeout(F.fns['" + node_id + "'], 60); }\n"
+            " if (first) { first = false; try { var p = document.querySelector('ui-card-panel[node-id=\"" + group_id + "\"]'), mas = p && angular.element(p.parentElement).controller('uiMasonry'); "
+            "if (mas) { setTimeout(function () { mas.refreshLayout(); }, 80); } } catch (e) { /* Layout bleibt */ } }\n}\n"
+            + ("window.__optChMap = window.__optChMap || {}; window.__optChMap." + pre + "x = function () { var el = document.getElementById('" + pre + node_id + "'); if (el && el.__ot && window.optTrend) { last = last || {payload: {}}; draw(); } };\n"
+               "if (!window.__optChRs) { window.__optChRs = true; var tm = null; window.addEventListener('resize', function () { clearTimeout(tm); tm = setTimeout(function () { Object.keys(window.__optChMap).forEach(function (k) { window.__optChMap[k](); }); }, 200); }); }\n"
+               if kind == "trend" else "")
+            + "scope.$watch('msg', function (m) { if (m) { last = m; setTimeout(draw, 40); } });\n"
+            "})(scope);</script>")
+
+
+if EFF_TAB in B and B[EFF_TAB]["type"] == "ui_tab":
+    _eff_ord = max([n.get("order", 0) for n in flows if n["type"] == "ui_group" and n.get("tab") == EFF_TAB and not n["id"].startswith("opt_")] + [0]) + 1
+    upsert({"id": "opt_g_stat", "type": "ui_group", "name": "STATISTIK WÄRMEPUMPE", "tab": EFF_TAB, "order": _eff_ord, "disp": True, "width": 24, "collapse": False, "className": ""})
+    upsert(eng_template("opt_t_stat", "opt_g_stat", "Statistik Wärmepumpe (Effizienz)", 9, lambda2_format("opt_t_stat", "opt_g_stat", "stat"), 2600))
+else:
+    print("Hinweis: Seite Effizienz (" + EFF_TAB + ") fehlt, keine Statistik-Karte")
+upsert(comment("opt_c_lambda2", "UI-Lambda Teil 2 (nur Anzeige): Statistik Wärmepumpe (Effizienz) · Trend 24 h (Auswertung)", 380, 2560))
+upsert(inject("opt_i_stat", "alle 5 Minuten", 300, 25, ["opt_stat"], 140, 2600))
+upsert(fn("opt_stat", "Statistik Wärmepumpe (nur lesen)", STAT_JS + STAT_FN_JS.replace("__COPKW__", COP_KW_JS).replace("__STAT__", json.dumps(STAT)), 1,
+          [["opt_t_stat"] if EFF_TAB in B else []], 440, 2600, FS))
+if AUS_TAB in B and B[AUS_TAB]["type"] == "ui_tab":
+    # oben auf der Seite (vor "Wassertemperatur", Reihenfolge 2): die Kern-Gruppen bleiben unveraendert darunter
+    _aus_ord = min([n.get("order", 1) for n in flows if n["type"] == "ui_group" and n.get("tab") == AUS_TAB and not n["id"].startswith("opt_")] + [2]) - 1
+    upsert({"id": "opt_g_trend", "type": "ui_group", "name": "TREND 24 H", "tab": AUS_TAB, "order": max(0.5, _aus_ord), "disp": True, "width": 24, "collapse": False, "className": ""})
+    upsert(eng_template("opt_t_trend", "opt_g_trend", "Trend 24 h (Auswertung)", 8, lambda2_format("opt_t_trend", "opt_g_trend", "trend"), 2660, [["opt_trend"]]))
+else:
+    print("Hinweis: Seite Auswertung (" + AUS_TAB + ") fehlt, keine Trend-Karte")
+upsert(inject("opt_i_trend", "jede Minute", 60, 35, ["opt_trend"], 140, 2660))
+upsert(fn("opt_trend", "Trend 24 h: Puffer und Anfragen (nur lesen)", TREND_JS + TREND_FN_JS.replace("__COPKW__", COP_KW_JS), 1,
+          [["opt_t_trend"] if AUS_TAB in B else []], 440, 2660, FS))
+
 # the new page also belongs into the menu configuration (SYSTEM > menu), otherwise it can not be hidden/shown there
 form = B.get("e35b7df78bc6f722")
 if form and not any(o["value"] == "Optimierung" for o in form["options"]):

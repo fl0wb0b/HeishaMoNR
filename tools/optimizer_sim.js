@@ -1830,7 +1830,7 @@ check('Dateien: Ist, Vergleich, Schnappschuesse und Zustand unter /data/optimize
     const byOrder = id => onTab(id).sort((a, b) => a.order - b.order).map(g => g.id).join(), hid = id => (flowsAll.find(n => n.id === id) || {}).hidden;
     check('Seiten (13.10. zusammengelegt): alle Karten der Optimierungs-Seiten 17 breit (zwei Spalten ab ~1840 px, eine bei 1024 ohne waagrechtes Scrollen; kein Mischen der Breiten = Masonry-Falle): Optimierung = 3 Diagramme + Raumkarte + Wärmefahrplan (Plan, Stundenübersicht), Optimierer = fünf Karten der Maschine + zwei Quiet-Statistik-Karten, Daten & Güte sieben Statuskarten; die Tabs Wärmefahrplan und Quiet-Messwerte leer und ausgeblendet',
           byOrder('opt_ui_tab') === 'opt_g_ch_wp,opt_g_ch_rooms,opt_g_ch_at,opt_g_rooms,opt_g_plan,opt_g_plan_tab' && byOrder('opt_eng_ui_tab') === 'opt_g_schema,opt_g_eng_prop,opt_g_eng_rules,opt_g_eng_score,opt_g_eng_mess,opt_g_eng_log,opt_g_qstats,opt_g_qstats2' &&
-          onTab('opt_ui_tab_plan').length === 0 && onTab('opt_ui_tab_quiet').length === 0 && onTab('opt_ui_tab_data').length === 7 && grp.every(g => g.width === 17 || g.id === 'opt_g_schema_ue' || g.id === 'opt_g_module') && tabs.length === 4 &&
+          onTab('opt_ui_tab_plan').length === 0 && onTab('opt_ui_tab_quiet').length === 0 && onTab('opt_ui_tab_data').length === 7 && grp.every(g => g.width === 17 || ['opt_g_schema_ue', 'opt_g_module', 'opt_g_stat', 'opt_g_trend'].includes(g.id)) && tabs.length === 4 &&
           hid('opt_ui_tab_plan') === true && hid('opt_ui_tab_quiet') === true && hid('opt_ui_tab') === false && hid('opt_eng_ui_tab') === false && hid('opt_ui_tab_data') === false,
           byOrder('opt_ui_tab') + ' | ' + byOrder('opt_eng_ui_tab') + ' | ' + JSON.stringify(grp.filter(g => g.width !== 17).map(g => g.id + ':' + g.width)));
     { const q1 = NB('opt_t_qstats').format, q2 = NB('opt_t_qstats2').format, cols = f => (/c in \[([\d,]+)\]/.exec(f) || [0, ''])[1].split(',').map(Number), ths = f => (f.match(/<th>/g) || []).length, a = cols(q1), b = cols(q2);
@@ -2041,6 +2041,163 @@ check('ohne Kinderzimmer-Werte (frischer Start): vier Spalten leer, Karte zeigt 
         g3 && g3.tab === 'a5be8588.b8fbc8' && g3.order === 0.6 && g3.width === 24 && ueOrders.filter(o => o !== 0.6).every(o => o >= 1) && t3.group === 'opt_g_module' && nodes.filter(n => n.group === 'opt_g_module').length === 1 &&
         t3.format.includes('ui-card-panel[node-id="opt_g_module"]{width:calc(100% - 12px)') && t3.format.includes('window.optSchema.modulMount(el, last.payload)') && t3.format.includes('id="omod_opt_t_module"') && t3.format.includes("F.fns['opt_t_module']"), ueOrders.join());
   Object.keys(gstore).forEach(k => delete gstore[k]); Object.assign(gstore, keep); NOW = nowKeep;
+})();
+
+// 14.10.2026 (UI-Lambda Teil 2): Statistik Waermepumpe (Seite "Effizienz", tools/stat_ui.js) und Trend 24 h (Seite "Auswertung", tools/trend_ui.js).
+// Statistik: Minutenprotokoll quiet-YYYY-MM.csv inkrementell (Abtauen + Wiederaufheizen, Heizstab, Pumpe, Luefter, Starts), Kern-Zaehler nur lesen (kWh je Tag,
+// Waerme/COP je Monat) ins eigene Archiv; Trend: Ringpuffer 24 h x 1 min, Anfrage je Karte, Minutentakt an alle, Sichern alle 10 min.
+(() => {
+  console.log('\n--- UI-Lambda Teil 2: Statistik Wärmepumpe und Trend 24 h');
+  const ST = require(path.join(__dirname, 'stat_ui.js')), TR = require(path.join(__dirname, 'trend_ui.js')), OC = require(path.join(__dirname, 'ui_chart.js'));
+  const nodes = JSON.parse(fs.readFileSync(flowsFile, 'utf8')), N = id => nodes.find(n => n.id === id);
+  const keepG = Object.assign({}, gstore), keepF = Object.assign({}, gfile), nowKeep = NOW, L = (y, mo, d, h, mi) => new Date(y, mo - 1, d, h, mi, 0).getTime();
+  const p2 = x => (x < 10 ? '0' : '') + x, iso = t => { const d = new Date(t); return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()) + ' ' + p2(d.getHours()) + ':' + p2(d.getMinutes()) + ':05'; };
+  // ---- Minutenprotokoll (synthetisch): 13.10. 22:00 bis 14.10. 09:59
+  const HEAD = 'zeit,verdichter_hz,leistung_el_w,flow_l_min,fan1,defrost,ist_vl,heizstab_intern,heizstab_extern,leistung_el_korr_w';
+  const fehlt = new Set(['07:02', '07:03', '08:01', '08:02', '08:03', '08:04']), rows = [];
+  for (let t = L(2026, 10, 13, 22, 0); t < L(2026, 10, 14, 10, 0); t += 60000) {
+    const d = new Date(t), hm = p2(d.getHours()) + ':' + p2(d.getMinutes()), m = d.getHours() * 60 + d.getMinutes(), tag13 = d.getDate() === 13;
+    if (!tag13 && fehlt.has(hm)) { continue; }
+    let hz = 0, pel = 15, fl = 0, fan = 0, def = 0, vl = 26, hs = 0;
+    const lauf = (tag13 && m >= 22 * 60 + 40) || (!tag13 && (m < 120 || m >= 360));
+    if (tag13 && m >= 22 * 60 + 30 && m < 22 * 60 + 40) { fl = 12; }                                 // Pumpe ohne Verdichter (Vorlauf der Pumpe)
+    if (!tag13 && m >= 120 && m < 130) { fl = 12; }                                                  // Nachlauf
+    if (lauf) { hz = 30; pel = 500; fl = 13; fan = 400; vl = 32; }
+    if (!tag13 && m >= 60 && m < 65) { def = 1; pel = 700; vl = 25; }                               // Abtauung 01:00-01:04
+    if (!tag13 && m >= 65 && m < 70) { vl = 28 + (m - 65); }                                         // Wiederaufheizen 01:05-01:08 (28..31), 01:09 = 32 erreicht
+    if (!tag13 && m >= 80 && m < 90) { hs = 1; }                                                     // Heizstab 01:20-01:29
+    if (!tag13 && (hm === '07:00' || hm === '07:01' || hm === '07:04' || hm === '08:00' || hm === '08:05')) { def = 1; pel = 700; vl = 25; }
+    rows.push([iso(t), hz, pel, fl, fan, def, vl, hs, 0, ''].join(','));
+  }
+  const CSV = HEAD + '\n' + rows.join('\n') + '\n';
+  const S1 = ST.neu(); ST.text(S1, CSV, 80, 'x');
+  const T13 = S1.tage['2026-10-13'], T14 = S1.tage['2026-10-14'];
+  check('Statistik: Tageswerte aus dem Minutenprotokoll: 13.10. 120 min erfasst, 80 min Verdichter, 1 Start, Pumpe 90 min davon 10 ohne Verdichter; 14.10. 354 min Verdichter, 1 Start (06:00), Pumpe ohne Verdichter 10 min, Heizstab 10 min',
+        T13.n === 120 && T13.vMin === 80 && T13.st === 1 && T13.pMin === 90 && T13.pOhne === 10 && T13.fMin === 80 && T14.n === 594 && T14.vMin === 354 && T14.st === 1 && T14.pOhne === 10 && T14.hsMin === 10, JSON.stringify({T13, T14}));
+  check('Statistik: Abtauungen 14.10. = 4 (01:00; 07:00 mit 3-min-Lücke überbrückt = eine; 08:00 und 08:05 bei 5-min-Lücke = zwei), 10 Abtau-Minuten, Abtauen 130 Wh (Aufnahme 700 + 80 W), Wiederaufheizen 4 min = 38,7 Wh bis der Vorlauf wieder 32 °C hat',
+        T14.abN === 4 && T14.abMin === 10 && Math.abs(T14.abWh - 130) < 1e-9 && T14.rhMin === 4 && Math.abs(T14.rhWh - 4 * 580 / 60) < 1e-9 && T13.abN === 0, JSON.stringify(T14));
+  // inkrementell: erst bis mitten in die Abtauung (letzte Zeile unvollstaendig), dann der Rest; gleiches Ergebnis, nichts doppelt
+  const cut = CSV.indexOf('2026-10-14 01:03'), S2 = ST.neu(), fsI = {readFileSync: () => files.inc.data};
+  files.inc = {data: CSV.slice(0, cut + 10)}; const n1 = ST.datei(S2, fsI, 'inc', 80); const off1 = S2.dat.inc.off;
+  files.inc = {data: CSV}; const n2 = ST.datei(S2, fsI, 'inc', 80), n3 = ST.datei(S2, fsI, 'inc', 80);
+  check('Statistik: inkrementell lesen (Position in Bytes, unvollständige letzte Zeile bleibt liegen): zwei Teile ergeben dieselben Tageswerte wie ein Durchgang, dritter Aufruf ohne neue Zeilen liest nichts',
+        n1 + n2 === rows.length && n3 === 0 && off1 === cut && JSON.stringify(S2.tage) === JSON.stringify(S1.tage) && S2.dat.inc.off === Buffer.byteLength(CSV), n1 + '+' + n2 + ' ' + off1 + '/' + cut);
+  const S3 = ST.neu(); ST.text(S3, 'zeit,verdichter_hz,leistung_el_w\n' + iso(L(2026, 10, 14, 0, 0)) + ',30,500\n' + 'zeit,leistung_el_w,verdichter_hz,defrost,ist_vl,fan1\n' + iso(L(2026, 10, 14, 0, 1)) + ',600,30,1,30,0\n' + iso(L(2026, 10, 14, 0, 2)) + ',bad,30\n', 50, 'h');
+  check('Statistik: neue Kopfzeile mitten in der Datei (Spalten über den Namen), Zeilen mit falscher Länge übersprungen, Korrektur aus OPT_cfg (50 W)', S3.tage['2026-10-14'].n === 2 && S3.tage['2026-10-14'].abN === 1 && Math.abs(S3.tage['2026-10-14'].abWh - 650 / 60) < 1e-9, JSON.stringify(S3.tage));
+  // ---- Kern-Zaehler (nur lesen): bar-chart-data-Nachrichten wie HeishaMoNR sie global (Speicher file) ablegt
+  const pk = (keys, vals) => ({payload: [{labels: keys.map(k => k.slice(4)), series: ['x'], data: [vals]}], bar_keys: keys, topic: 'x'});
+  const A = ST.archivNeu();
+  ST.kern(A, {heat31: pk(['20261012', '20261013'], [7.783, 6.5]), prod: pk(['202609', '202610'], [100, 150]), cop: pk(['202609', '202610'], [4, 6.1])}, L(2026, 10, 13, 23, 55));
+  ST.kern(A, {heat31: JSON.stringify(pk(['20261012', '20261013', '20261014'], [7.783, 6.859, 0.2])), prod: pk(['202609', '202610'], [100, 150.2]), cop: pk(['202609', '202610'], [4, 6.08])}, L(2026, 10, 14, 0, 0) + 10000);
+  ST.kern(A, {heat31: pk(['20261012', '20261013', '20261014'], [0, 6.859, 3.88]), prod: pk(['202609', '202610'], [0, 178.9]), cop: pk(['202609', '202610'], [0, 6.08])}, L(2026, 10, 14, 10, 0));
+  check('Statistik Kern: Strom je Tag aus kwh_HEAT_31d (bar_keys, auch als Text), vergangene Tage/Monate fallen bei einem Rücksetzen des Kerns nicht auf 0 (Maximum), heute immer der Kernwert; Wärme je Monat aus HEAT_Prod_24m, COP aus COP_HEAT_24m',
+        A.el['20261012'] === 7.783 && A.el['20261013'] === 6.859 && A.el['20261014'] === 3.88 && A.th['202609'] === 100 && A.th['202610'] === 178.9 && A.cop['202609'] === 4 && A.cop['202610'] === 6.08 && ST.pack({payload: [{labels: ['a'], data: [[1]]}]}) === null, JSON.stringify(A.el));
+  const A10 = JSON.parse(JSON.stringify(A));                                                       // Stand 14.10. 10:00 fuer die Karte unten
+  check('Statistik Kern: Wärme heute = Monatszähler jetzt − Stand vor Mitternacht (178,9 − 150 = 28,9 kWh); gestern ohne Stand zu Tagesbeginn = – (keine Schätzung)',
+        Math.abs(ST.waermeTag(A, L(2026, 10, 14, 10, 0), false) - 28.9) < 1e-9 && ST.waermeTag(A, L(2026, 10, 13, 12, 0), true) === null && A.tt['2026-10-14'].ok === true, JSON.stringify(A.tt));
+  ST.kern(A, {prod: pk(['202609', '202610'], [100, 190]), heat31: pk(['20261014'], [6.1])}, L(2026, 10, 14, 23, 57));
+  ST.kern(A, {prod: pk(['202609', '202610'], [100, 190.1]), heat31: pk(['20261014', '20261015'], [6.1, 0.05])}, L(2026, 10, 15, 0, 2));
+  check('Statistik Kern: am nächsten Tag ist gestern vollständig (bis 23:57 beobachtet): 190 − 150 = 40 kWh Wärme bei 6,1 kWh Strom', Math.abs(ST.waermeTag(A, L(2026, 10, 14, 12, 0), true) - 40) < 1e-9 && Math.abs(ST.waermeTag(A, L(2026, 10, 15, 0, 2), false) - 0.1) < 1e-9, '');
+  const B2 = ST.archivNeu();
+  ST.kern(B2, {prod: pk(['202610'], [300])}, L(2026, 10, 31, 23, 58)); ST.kern(B2, {prod: pk(['202610', '202611'], [300.4, 0.3])}, L(2026, 11, 1, 0, 3));
+  check('Statistik Kern: Monatswechsel: der neue Monatszähler beginnt bei 0 (Wärme 1.11. = 0,3 kWh)', Math.abs(ST.waermeTag(B2, L(2026, 11, 1, 0, 3), false) - 0.3) < 1e-9, JSON.stringify(B2.tt));
+  // ---- Nutzlast und Karte
+  const SN = ST.neu(); ST.text(SN, CSV, 80, 'x'); SN.archiv = A10;
+  const T = L(2026, 10, 14, 10, 0), HP = {Operations_Hours: {v: 10029, ts: T}, Operations_Counter: {v: 3953, ts: T}, Room_Heater_Operations_Hours: {v: 76, ts: T}, DHW_Heater_Operations_Hours: {v: 0, ts: T}, Error: {v: 'No error', ts: T}};
+  const P = ST.daten(SN, {hp: HP, starts: 4, defrost: {Counter: 7, Counter_Today: 0}, err: 0, lastErr: undefined}, {kw: 3, nachMaxMin: 30}, T), H = ST.html(P);
+  const zt = P.z.map(r => r[0] + '=' + r[1]).join('|'), be = k => (P.be.find(r => r[0] === k) || [0, []])[1].join('/');
+  check('Statistik Karte: Zähler der Anlage (Betriebsstunden 10.029 h, Starts 3.953, heute 4, Heizstab Heizen 76 h, Abtauungen gesamt 7, Fehler 0; kein Warmwasser-Heizstab bei 0 h)',
+        zt === 'Betriebsstunden=10.029 h|Verdichterstarts gesamt=3.953|Starts heute=4|Heizstab Heizen=76 h|Abtauungen gesamt=7|Fehler=0', zt);
+  check('Statistik Karte: Energie Heizen heute 3,9 kWh Strom / 28,9 kWh Wärme / COP 7,45; gestern Wärme –; Oktober 18,5 kWh (Summe der Tage) / 178,9 / COP 6,08 wie Tabelle Effizienz; Gesamt seit 12.10. mit Wärme gewichtetem Monats-COP 5,12',
+        JSON.stringify(P.en.map(r => r.slice(0, 4))) === JSON.stringify([['Heute', '3,9', '28,9', '7,45'], ['Gestern', '6,9', '–', '–'], ['Oktober', '18,5', '178,9', '6,08'], ['Gesamt seit 12.10.', '18,5', '278,9', '5,12']]), JSON.stringify(P.en));
+  check('Statistik Karte: Betrieb heute/gestern/Oktober: Abtauungen 4/0/4, Abtau-Energie 0,17 kWh (130 + 38,7 Wh), Wiederaufheizen 0,04, Heizstab 0,2 h ≈ 0,5 kWh (3 kW), Verdichter 5,9 h, Ø Lauf 354 min, Pumpe ohne Verdichter 0,2 h',
+        be('Abtauungen') === '4/0/4' && be('Abtau-Energie (kWh)') === '0,17/0,00/0,17' && be('davon Wiederaufheizen (kWh)') === '0,04/0,00/0,04' && be('Heizstab Laufzeit (h)') === '0,2/0,0/0,2' && be('Heizstab Energie geschätzt (kWh)') === '0,5/0,0/0,5' &&
+        be('Verdichter Laufzeit (h)') === '5,9/1,3/7,2' && be('Ø Laufdauer je Start (min)') === '354/80/217' && be('davon ohne Verdichter (h)') === '0,2/0,2/0,3' && P.beKopf.join() === ',Heute,Gestern,Oktober', JSON.stringify(P.be.map(r => r[0] + ':' + r[1].join('/'))));
+  check('Statistik Karte: drei Blöcke (Zähler | Energie Heizen | Betrieb), Tabellen mit Kopf, Pumpe/Ventilator nur als Laufzeit beschriftet, Annahmen nur als Tooltip; ohne Nutzlast "Noch keine Werte."',
+        (H.match(/<div class="b b[zeb]"><div class="sec">/g) || []).length === 3 && H.includes('>Energie Heizen<') && H.includes('<th>Strom (kWh)</th>') && H.includes('>Umwälzpumpe Laufzeit (h)<') && H.includes('>Ventilator Laufzeit (h)<') &&
+        !/Ventilator (Strom|Energie)|Pumpe (Strom|Energie)/.test(H) && H.includes('title="Laufzeit × 3,0 kW Nennleistung (Annahme)"') && ST.html(null).includes('Noch keine Werte'), '');
+  // ---- Function-Knoten opt_stat
+  Object.keys(gstore).forEach(k => delete gstore[k]); Object.keys(gfile).forEach(k => delete gfile[k]);
+  NOW = T; Object.keys(files).forEach(k => { if (/^\/data\/optimizer\/(quiet-|stat-archiv)/.test(k)) { delete files[k]; } }); delete files.inc;
+  files['/data/optimizer/quiet-2026-10.csv'] = {data: CSV};
+  Object.assign(gstore, {OPT_cfg: {cop: {pelKorrW: 80}}, OPT_hp: HP, Starts_Today: 4, Last_Error: 'No error'});
+  Object.assign(gfile, {kwh_HEAT_31d: pk(['20261013', '20261014'], [6.859, 3.88]), HEAT_Prod_24m: pk(['202610'], [178.9]), COP_HEAT_24m: pk(['202610'], [6.08]), Defrost: {Counter: 7}, Error_Counter: 0});
+  const t0 = process.hrtime.bigint(), o1 = run('opt_stat', {}), ms1 = Number(process.hrtime.bigint() - t0) / 1e6, arch = files['/data/optimizer/stat-archiv.json'];
+  check('opt_stat: liest das Minutenprotokoll und die Kern-Zähler (Speicher file), legt OPT_stat ab, schreibt nur das eigene Archiv stat-archiv.json; Karte mit 4 Abtauungen und Oktober 10,7 kWh',
+        o1 && o1.payload && gstore.OPT_stat && gstore.OPT_stat.tage['2026-10-14'].abN === 4 && arch && JSON.parse(arch.data).el['20261014'] === 3.88 && o1.payload.en[2][1] === '10,7' && o1.payload.z[4][1] === '7', ms1.toFixed(1) + ' ms');
+  delete files['/data/optimizer/stat-archiv.json']; const o2 = run('opt_stat', {});
+  check('opt_stat: zweiter Lauf ohne neue Zeilen zählt nichts doppelt, Archiv unverändert = keine Datei geschrieben', JSON.stringify(o2.payload.be) === JSON.stringify(o1.payload.be) && !files['/data/optimizer/stat-archiv.json'], '');
+  files['/data/optimizer/stat-archiv.json'] = arch; delete gstore.OPT_stat; delete gfile.kwh_HEAT_31d; const o3 = run('opt_stat', {});
+  check('opt_stat: nach einem Neustart (OPT_stat leer) Archiv aus der Datei, Tageswerte neu aus dem Protokoll: dieselbe Karte, auch wenn kwh_HEAT_31d (noch) fehlt',
+        JSON.stringify(o3.payload.en) === JSON.stringify(o1.payload.en) && JSON.stringify(o3.payload.be) === JSON.stringify(o1.payload.be), JSON.stringify(o3.payload.en));
+  const fS = N('opt_stat'), sets = (fS.func.match(/global\.set\(\s*'([^']+)'/g) || []).join();
+  check('opt_stat: Sicherheit - einzige globale Variable OPT_stat, kein flow.set, keine Kern-Variable, kein node.send; Ausgang nur an die Karte; Takt alle 5 min',
+        sets === "global.set('OPT_stat'" && !/flow\.set|node\.send/.test(fS.func) && JSON.stringify(fS.wires) === '[["opt_t_stat"]]' && N('opt_i_stat').repeat === '300' && JSON.stringify(N('opt_i_stat').wires) === '[["opt_stat"]]' && JSON.stringify(N('opt_t_stat').wires) === '[[]]' && !/scope\.send/.test(N('opt_t_stat').format), sets);
+  // ---- Trend: Werte, Ringpuffer, Auszug
+  const TT = L(2026, 10, 14, 9, 30), hp = (o, age) => { const r = {}; Object.keys(o).forEach(k => { r[k] = {v: o[k], ts: TT - (age || 0.2) * 60000}; }); return r; };
+  const LIVE = {Outside_Temp: 8, Main_Outlet_Temp: 31.5, Main_Inlet_Temp: 29, Main_Target_Temp: 30, Compressor_Freq: 16, Pump_Flow: 13.38, Pump_Speed: 1750, Fan1_Motor_Speed: 270,
+    Heat_Power_Production: -200, Heat_Power_Production_Extra: 2199, Heat_Power_Consumption: -200, Heat_Power_Consumption_Extra: 341, Outside_Pipe_Temp: 4, Eva_Outlet_Temp: 6, Discharge_Temp: -128,
+    High_Pressure: 10.6, Expansion_Valve: 64, Inside_Pipe_Temp: 29, Main_Hex_Outlet_Temp: 32, Quiet_Mode_Level: 1, Heating_Control: 1, Defrosting_State: 0, Room_Heater_State: 1, Internal_Heater_State: 0,
+    Z1_Heat_Request_Temp: 0, Compressor_Current: 1.6, Water_Pressure: 1.06};
+  const cfgR = [{id: 'schlaf', name: 'Schlafzimmer', maxAgeMin: 90}, {id: 'wohn', name: 'Wohnzimmer', maxAgeMin: 90}];
+  const W = TR.werte(hp(LIVE), {vs: {ts: TT - 30000, dk: 0.6, age: 40, maxMin: 120}, owm: {t: 7.4, ts: TT - 600000}, rooms: {schlaf: {last: 21, ts: TT - 60000}, wohn: {last: 23.9, ts: TT - 100 * 60000}}, cfgRooms: cfgR}, 80, TT);
+  const kat = TR.katalog(cfgR);
+  check('Trend: Kanäle dieser Minute: Wärmeleistung/Aufnahme aus den _Extra-Werten (2199 W; 341 + 80 W im Lauf), -128 = leer, modifizierte AT 8 − 0,6 = 7,4 °C, OWM 7,4 °C, Räume (Wohnzimmer 100 min alt = leer); alle 27 Grundkanäle + 2 Räume wählbar',
+        W.Heat_Power_Production === 2199 && W.Heat_Power_Consumption === 421 && W.Discharge_Temp === null && W.at_mod === 7.4 && W.at_owm === 7.4 && W.raum_schlaf === 21 && W.raum_wohn === null && W.Compressor_Freq === 16 &&
+        kat.length === 29 && kat.every(c => c.k in W) && TR.VOR.join() === 'Outside_Temp,Main_Outlet_Temp,Main_Inlet_Temp,Compressor_Freq', JSON.stringify(W).slice(0, 300));
+  const W2 = TR.werte(hp(LIVE, 20), {}, 80, TT);
+  check('Trend: Werte älter als 15 min und ohne Maschine/OWM leer', W2.Outside_Temp === null && W2.at_mod === null && W2.at_owm === null, '');
+  const Bf = TR.neu(); let tk = TT - 30 * 60000;
+  for (let i = 0; i < 30; i++, tk += 60000) { if (i === 10) { continue; } TR.eintragen(Bf, {Outside_Temp: 8 + i * 0.01, Compressor_Freq: i}, tk); }
+  TR.eintragen(Bf, {Outside_Temp: 9.5, Compressor_Freq: null, raum_schlaf: 21.25}, TT);
+  const ax = TR.auszug(Bf, ['Outside_Temp', 'Compressor_Freq', 'raum_schlaf', 'gibtsnicht', 'Main_Outlet_Temp'], kat, TT), o = ax.k.Outside_Temp;
+  check('Trend: Ringpuffer 1440 Minuten, Auszug ältester → neuester Wert (Minute t1 = jetzt), ausgelassene Minute leer, unbekannte Kanäle verworfen, Werte ×100 gerundet gespeichert',
+        ax.n === 1440 && ax.t1 === Math.floor(TT / 60000) && o.length === 1440 && o[1439] === 9.5 && o[1438] === 8.29 && o[1439 - 20] === null && o[1439 - 21] === 8.09 && o[0] === null && ax.k.Compressor_Freq[1439] === null && ax.k.Compressor_Freq[1438] === 29 &&
+        ax.k.raum_schlaf[1439] === 21.25 && ax.k.raum_schlaf[1438] === null && !('gibtsnicht' in ax.k) && ax.k.Main_Outlet_Temp.every(v => v === null) && Bf.k.Outside_Temp[Math.floor(TT / 60000) % 1440] === 950, JSON.stringify(o.slice(1415)));
+  TR.eintragen(Bf, {Outside_Temp: 1}, TT + 1440 * 60000);
+  const ax2 = TR.auszug(Bf, ['Outside_Temp'], kat, TT + 1440 * 60000);
+  check('Trend: nach 24 h überschreibt die neue Minute denselben Platz, alte Minuten fallen heraus (nur der neue Wert)', ax2.k.Outside_Temp[1439] === 1 && ax2.k.Outside_Temp.filter(v => v !== null).length === 1, '');
+  const Bs = TR.laden(JSON.parse(JSON.stringify(TR.sichern(Bf))), TT + 1440 * 60000 + 5 * 60000), Bx = TR.laden(JSON.parse(JSON.stringify(TR.sichern(Bf))), TT + 3 * 1440 * 60000);
+  check('Trend: Sichern/Laden (JSON) behält Minuten der letzten 24 h, verwirft ältere; falsches Format = null', TR.auszug(Bs, ['Outside_Temp'], kat, TT + 1445 * 60000).k.Outside_Temp[1434] === 1 && Bx.m.every(m => m === null) && TR.laden({v: 9}, TT) === null && TR.laden(null, TT) === null, '');
+  const sp = TR.spec(kat, {t1: ax.t1, k: ax.k}, ['Outside_Temp', 'Main_Outlet_Temp', '', 'Compressor_Freq'], 24), sp2 = TR.spec(kat, {t1: ax.t1, k: ax.k}, ['Outside_Temp', 'Compressor_Freq', 'Pump_Flow', 'Pump_Speed'], 2);
+  check('Trend Diagramm: links °C, rechts Hz (zwei Achsen, ein Feld), feste Farbe je Auswahlfeld, Tageslinie schwarz durchgezogen "gestern | heute" um Mitternacht; 3 weitere Einheiten → zweites Feld; 2 h ohne Mitternacht',
+        sp.panels.length === 1 && sp.panels[0].unit === '°C' && sp.panels[0].runit === 'Hz' && sp.panels[0].series.map(s => s.c + (s.r ? 'R' : 'L')).join() === '#37474f' + 'L,#d32f2f' + 'L,#00897b' + 'R' && sp.legend === false &&
+        sp.marks.length === 1 && sp.marks[0].t === L(2026, 10, 14, 0, 0) && sp.marks[0].solid && sp.marks[0].l === 'gestern' && sp.marks[0].label === 'heute' && sp.t1 - sp.t0 === 24 * 3600000 &&
+        sp2.panels.length === 2 && sp2.panels[0].unit === '°C' && sp2.panels[0].runit === 'Hz' && sp2.panels[1].unit === 'l/min' && sp2.panels[1].runit === 'U/min' && sp2.marks.length === 0 && sp2.panels[0].series[0].d.length <= 122, JSON.stringify(sp.panels[0].series.map(s => s.n)));
+  const sv = OC.svg(sp, 1000).svg;
+  check('ui_chart v6: Tageslinie durchgezogen (Breite 1,5, schwarz) mit "gestern" links und "heute" rechts; mount ohne Legende (spec.legend false)', OC.v === 6 && /<line x1="[\d.]+" x2="[\d.]+" y1="18" y2="\d+" stroke="#000000" stroke-width="1.5"\/>/.test(sv) && sv.includes('text-anchor="end" font-size="12" fill="#000000">gestern</text>') && sv.includes('fill="#000000">heute</text>'), '');
+  // ---- Function-Knoten opt_trend
+  Object.keys(gstore).forEach(k => delete gstore[k]); delete fstore.trend; delete files['/data/optimizer/trend-puffer.json'];
+  Object.assign(gstore, {OPT_cfg: {cop: {pelKorrW: 80}, rooms: cfgR}, OPT_hp: hp(LIVE), OPT_rooms: {schlaf: {last: 21, ts: TT - 60000}}, OPT_engine: {ts: TT - 30000, vs: {dk: 0.6, age: 40, maxMin: 120, von: 2, bis: 5}}, OPT_weather: {temp: 7.4, ts: TT - 600000}});
+  NOW = TT; const r1 = run('opt_trend', {payload: NOW});
+  NOW = TT + 60000; gstore.OPT_hp = hp(Object.assign({}, LIVE, {Outside_Temp: 8.5})); Object.keys(gstore.OPT_hp).forEach(k => { gstore.OPT_hp[k].ts = NOW; }); const r2 = run('opt_trend', {payload: NOW});
+  const rq = run('opt_trend', {topic: 'trend', payload: {id: 'abc', keys: ['Outside_Temp', 'at_mod', 'x']}, socketid: 'sock1'});
+  check('opt_trend: Minutentakt schickt an alle {art neu, t1, Werte aller Kanäle, Katalog}; Anfrage einer Karte → nur deren gültige Kanäle (24 h), Kennung und socketid zurück',
+        r1.payload.art === 'neu' && r2.payload.t1 === r1.payload.t1 + 1 && r2.payload.v.Outside_Temp === 8.5 && r1.payload.v.at_mod === 7.4 && r1.payload.kat.length === 29 &&
+        rq.payload.art === 'daten' && rq.payload.id === 'abc' && rq.socketid === 'sock1' && Object.keys(rq.payload.k).join() === 'Outside_Temp,at_mod' && rq.payload.k.Outside_Temp.slice(-2).join() === '8,8.5' && rq.payload.t1 === r2.payload.t1, JSON.stringify(rq.payload.k.Outside_Temp.slice(-3)));
+  check('opt_trend: Puffer beim Start leer (keine Datei), erste Sicherung erst nach 10 min', !files['/data/optimizer/trend-puffer.json'], '');
+  for (let i = 2; i <= 10; i++) { NOW = TT + i * 60000; run('opt_trend', {payload: NOW}); }
+  const fileT = files['/data/optimizer/trend-puffer.json'];
+  delete fstore.trend; NOW = TT + 11 * 60000; run('opt_trend', {payload: NOW}); const rq2 = run('opt_trend', {topic: 'trend', payload: {id: 'b', keys: ['Outside_Temp']}});
+  check('opt_trend: nach 10 min /data/optimizer/trend-puffer.json gesichert; nach Neustart (Puffer leer) wird die Datei geladen, der Verlauf geht weiter', fileT && JSON.parse(fileT.data).n === 1440 && rq2.payload.k.Outside_Temp.slice(-12).join() === '8,8.5,8.5,8.5,8.5,8.5,8.5,8.5,8.5,8.5,8.5,8.5' && !rq2.socketid, rq2.payload.k.Outside_Temp.slice(-12).join());
+  // Speicher und Rechenzeit eines vollen Puffers (Bericht)
+  const BF = TR.neu(), allW = {}; kat.forEach((c, i) => { allW[c.k] = 10 + i + 0.37; });
+  const tq = process.hrtime.bigint(); for (let i = 0; i < 1440; i++) { TR.eintragen(BF, allW, TT + i * 60000); } const msFill = Number(process.hrtime.bigint() - tq) / 1e6;
+  const tx = process.hrtime.bigint(); const big = TR.auszug(BF, TR.VOR, kat, TT + 1439 * 60000); const msAx = Number(process.hrtime.bigint() - tx) / 1e6;
+  const jsonKB = JSON.stringify(TR.sichern(BF)).length / 1024, reqKB = JSON.stringify(big).length / 1024, pingKB = JSON.stringify({art: 'neu', v: TR.letzte(BF, TT + 1439 * 60000), kat: kat}).length / 1024;
+  console.log('       Trend-Puffer voll (' + kat.length + ' Kanäle x 1440): Eintragen ' + (msFill / 1440).toFixed(3) + ' ms/min, Auszug 4 Kanäle ' + msAx.toFixed(1) + ' ms, Datei ' + jsonKB.toFixed(0) + ' kB, Antwort 4 Kanäle ' + reqKB.toFixed(0) + ' kB, Minutentakt ' + pingKB.toFixed(1) + ' kB');
+  const fT = N('opt_trend'), tSets = (fT.func.match(/(global|flow)\.set\(\s*'([^']+)'/g) || []).join();
+  check('opt_trend: Sicherheit - kein global.set (nur flow trend), kein node.send, Ausgang nur an die Karte; Karte schickt nur Anfragen (topic trend) an opt_trend; Takt jede Minute',
+        tSets === "flow.set('trend'" && !/node\.send/.test(fT.func) && JSON.stringify(fT.wires) === '[["opt_t_trend"]]' && JSON.stringify(N('opt_t_trend').wires) === '[["opt_trend"]]' && N('opt_i_trend').repeat === '60' && JSON.stringify(N('opt_i_trend').wires) === '[["opt_trend"]]' &&
+        N('opt_t_trend').format.includes("window.optTrend.mount(el, last.payload, scope)") && N('opt_t_trend').fwdInMessages === false, tSets);
+  // ---- Gruppen und Seiten
+  const gS = N('opt_g_stat'), gT = N('opt_g_trend'), effO = nodes.filter(n => n.type === 'ui_group' && n.tab === '1a08b96c5aeb8d6e' && n.id !== 'opt_g_stat').map(n => n.order), ausO = nodes.filter(n => n.type === 'ui_group' && n.tab === '5b5fabb85470bd21' && n.id !== 'opt_g_trend').map(n => n.order);
+  check('Seiten: "STATISTIK WÄRMEPUMPE" auf Effizienz unter den Kern-Gruppen, "TREND 24 H" auf Auswertung oben (vor Wassertemperatur); beide 24 breit mit voller Inhaltsbreite per node-id, je eine Karte mit Einpassen; Kern-Gruppen unverändert',
+        gS && gS.tab === '1a08b96c5aeb8d6e' && effO.length > 0 && effO.every(x => x < gS.order) && gS.width === 24 && gS.name === 'STATISTIK WÄRMEPUMPE' && gT && gT.tab === '5b5fabb85470bd21' && ausO.length > 0 && ausO.every(x => x > gT.order) && gT.order > 0 && gT.name === 'TREND 24 H' &&
+        nodes.filter(n => n.group === 'opt_g_stat').length === 1 && nodes.filter(n => n.group === 'opt_g_trend').length === 1 &&
+        N('opt_t_stat').format.includes('ui-card-panel[node-id="opt_g_stat"]{width:calc(100% - 12px)') && N('opt_t_trend').format.includes('ui-card-panel[node-id="opt_g_trend"]{width:calc(100% - 12px)') &&
+        N('opt_t_stat').format.includes("F.fns['opt_t_stat']") && N('opt_t_trend').format.includes("F.fns['opt_t_trend']"), effO.join() + ' < ' + (gS && gS.order) + ' | ' + (gT && gT.order) + ' < ' + ausO.join());
+  Object.keys(gstore).forEach(k => delete gstore[k]); Object.assign(gstore, keepG); Object.keys(gfile).forEach(k => delete gfile[k]); Object.assign(gfile, keepF); NOW = nowKeep; delete fstore.trend;
 })();
 
 console.log('\nERGEBNIS:', assertFails === 0 ? 'alle Pruefungen bestanden' : assertFails + ' Pruefung(en) fehlgeschlagen');
