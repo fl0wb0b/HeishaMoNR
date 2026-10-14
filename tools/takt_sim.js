@@ -116,6 +116,9 @@ if (dir) {
     const Ta = nachladenSim(files2, 65536), Tb = nachladenSim(files2, 1 << 20), Tc = nachladenSim(files2, 4096);
     check('Nachladen (Stuecke 4 kB, 64 kB, 1 MB; Vormonat fehlt) = Replay ueber buildInputs: Starts, Laeufe, Pausen, Baender und COP identisch; Zeilen ' + Ta.nl.zeilen + ', Minuten ' + Ta.nl.minuten, same(Ta, T) && same(Tb, T) && same(Tc, T) && Ta.nl.minuten === inputs.length && Ta.reads > Tb.reads,
           ['starts', 'runs', 'pausen', 'bins', 'copT'].filter(k => JSON.stringify(Ta[k]) !== JSON.stringify(T[k])).join(',') + ' Minuten ' + Ta.nl.minuten + '/' + inputs.length);
+    { const hb = Object.keys(T.hzB || {}), mh = hb.map(k => E.minHzOf(T, Number(k.split('|')[0]) + 1, null));
+      check('Mindestfrequenz gelernt (14.10.2026, Forum F1-a): nur Quiet-0-Minuten ohne Ruecklauf-Rueckstand; Echtdaten 1–15 °C in allen Baendern 16 Hz (= Tabelle, Forum L5 16 Hz); Nachladen ergibt dieselben Werte (Ruecklauf, Soll, Spreizung aus quiet-*.csv)',
+            hb.length >= 3 && mh.every(x => x.hz === 16) && JSON.stringify(Ta.hzB) === JSON.stringify(T.hzB), JSON.stringify(hb.map((k, i) => [k, mh[i].hz, mh[i].quelle, mh[i].n]))); }
     const ML = E.mindestLeistung(Ta);
     console.log('Mindestleistung nach Nachladen (Band, Q10, n, monoton): ' + JSON.stringify(ML));
     check('Befund Echtdaten: Laeufe im 48-h-Fenster 113–970 min, Pausen 57–142 min (Bedarfspausen), Mindestleistung (monoton) 1,7–1,8 kW in allen Baendern', Ta.runs.length && Math.min(...Ta.runs.map(r => r[1])) === 113 && Math.max(...Ta.runs.map(r => r[1])) === 970 && Math.min(...Ta.pausen.map(p => p[1])) === 57 && Math.max(...Ta.pausen.map(p => p[1])) === 142 && Ta.pausen.every(p => p[2] === 'bedarf') && ML.every(b => b[3] >= 1650 && b[3] <= 1850), JSON.stringify(ML.map(b => b[3])));

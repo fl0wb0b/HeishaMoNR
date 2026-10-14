@@ -1944,6 +1944,12 @@ const csv0 = mine.filter(x => x[2]).map(x => x[2].payload).join(''), L0 = csv0.s
 check('ohne Kinderzimmer-Werte (frischer Start): vier Spalten leer, Karte zeigt Striche, kein Absturz', ['kz_radiator_an', 'kz_heizluefter_an', 'kz_heizluefter_w', 'kz_heizluefter_online'].every(n => L0[H0.indexOf(n)] === '') && /Radiator – · Heizlüfter –/.test((mine[mine.length - 1][0].payload.rows.find(rw => rw[0] === 'Kinderzimmer oben') || [])[1]), '');
 })();
 
+// 14.10.2026 (Raumeinfluss v3, Forum 189605): die Huellen geben Fehlercode (TOP44 Error), Leitungstemperatur Innengeraet und Heizkurve an den Kern; OPT_engine traegt Waechter und Stoerung; die Uebernahme kennt den Fehlercode
+(() => {
+  const nodes = JSON.parse(fs.readFileSync(flowsFile, 'utf8')), en = nodes.find(n => n.id === 'opt_engine'), ap = nodes.find(n => n.id === 'opt_apply');
+  check('Huelle opt_engine: Eingaben err (OPT_hp.Error), pipeIn (Inside_Pipe_Temp) und kurve (Z1_Heat_Curve_*); OPT_engine mit hinweise und stoerung; opt_apply: plant.err aus OPT_hp.Error',
+        en && /err: \(HP\.Error && HP\.Error\.v !== undefined/.test(en.func) && /pipeIn: hpv\('Inside_Pipe_Temp'\)/.test(en.func) && /kurve: \(cvLo !== null/.test(en.func) && /hinweise: o\.hinweise, stoerung: o\.stoerung/.test(en.func) && ap && /err: \(HP\.Error && HP\.Error\.v !== undefined/.test(ap.func), '');
+})();
 
 console.log('\nERGEBNIS:', assertFails === 0 ? 'alle Pruefungen bestanden' : assertFails + ' Pruefung(en) fehlgeschlagen');
 process.exit(assertFails ? 1 : 0);

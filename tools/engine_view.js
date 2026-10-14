@@ -20,7 +20,11 @@ var ENGVIEW = (function (E) {
     function num2(v, s, u) { return E.de(v, Number.isInteger(v) && Number.isInteger(s) ? 0 : dg(u)); }
     function clamp(x) { return Math.max(0, Math.min(1, x)); }
     function isDaten(r) { return r.st === 'gesperrt' && r.naechste && r.naechste.b === 'daten'; }
-    function short(t) { return String(t || '').replace(/^kein Vorschlag: /, '').replace(/^Bedingung entfallen: /, '').replace(/^würde schalten, aber gesperrt: /, '').replace(/^gesperrt: /, '').replace(/\s*\([^()]*\)\s*$/, ''); }
+    function short(t) {
+        return String(t || '').replace(/^kein Vorschlag: /, '').replace(/^Bedingung entfallen: /, '').replace(/^würde schalten, aber gesperrt: /, '').replace(/^gesperrt: /, '')
+            .replace(/^Räume brauchen keine Verschiebung: [\s\S]*$/, 'keine Verschiebung nötig').replace(/^Wärmeverteilungsproblem, keine Verschiebung: [\s\S]*$/, 'Wärmeverteilung (Hinweis)')   // Raumeinfluss v3: kurzer Grund in der Kachel
+            .replace(/^(Verschiebung \S+ K) \(Raumeinfluss\) steht; [\s\S]*$/, '$1 steht, Rückweg offen').replace(/\s*\([^()]*\)\s*$/, '');
+    }
     function endeText(r) {                                                          // Ende einer Episode: bei Dauersperre (Modell-Gate) zaehlt die fehlende Bedingung nach "außerdem"
         var g = String(r.ende || (isDaten(r) ? 'keine HeishaMon-Daten' : r.grund) || ''), i = g.indexOf('; außerdem ');
         return short(r.dauer && i >= 0 ? g.slice(i + 11) : g);
@@ -173,7 +177,7 @@ var ENGVIEW = (function (E) {
         takt.push({k: 'Überheizt ab ' + E.UEB.atC + ' °C', v: E.de(ub.el, 2) + ' kWh', vc: ub.el > 0.05 ? 'warn' : '', s: ub.minAlle ? E.de(ub.min, 0) + ' von ' + E.de(ub.minAlle, 0) + ' min' : 'kein Lauf ab ' + E.UEB.atC + ' °C',
                    title: 'Laufenergie (Strom) bei Außentemperatur ≥ ' + E.UEB.atC + ' °C, während ALLE Räume über ihrer Bandmitte lagen, letzte ' + E.UEB.tage + ' Tage: ' + E.de(ub.el, 2) + ' kWh Strom (' + E.korrTxt(kw) + ', roh ' + E.de(ub.elRoh, 2) + ' kWh), ' + E.de(ub.th, 1) + ' kWh Wärme, ' + ub.min + ' min; ' +
                           'Laufenergie ab ' + E.UEB.atC + ' °C insgesamt ' + E.de(ub.elAlle, 2) + ' kWh in ' + ub.minAlle + ' min' + (ub.minOhne ? ' (davon ' + ub.minOhne + ' min ohne Raumwerte)' : '') + '. Nur diese Energie wäre mit einer niedrigeren Heizgrenze eingespart, ohne dass ein Raum unter seine Bandmitte fällt (echtes Überheizpotenzial; der Heizgrenze-Hinweis ist stillgelegt)'});
-        var hl = E.hochlaufSumme(S || {}), hz0 = ((cfg.rules || E.defaults().rules).quiet_strecken || {}).hzHoch;        // Hochlauf nach dem Start: nur Kennzahl (Nutzer vorlaeufig 13.10.)
+        var hl = E.hochlaufSumme(S || {}), hz0 = ((cfg.rules || E.defaults().rules).quiet_strecken || {}).hzTakt;        // Hochlauf nach dem Start: nur Kennzahl (Nutzer vorlaeufig 13.10.)
         takt.push({k: 'Hochlauf nach Start', v: (hl.Comfort[0] + hl.Efficiency[0]) + ' min', s: 'C ' + hl.Comfort[0] + ' min · E ' + hl.Efficiency[0] + ' min · ' + (hl.Comfort[1] + hl.Efficiency[1]) + ' Starts',
                    title: 'Minuten mit mindestens ' + hz0 + ' Hz in den ersten ' + E.HL.min + ' Laufminuten, ' + E.HL.tage + ' Tage: Comfort ' + hl.Comfort[0] + ' min bei ' + hl.Comfort[1] + ' Starts, Efficiency ' + hl.Efficiency[0] + ' min bei ' + hl.Efficiency[1] + ' Starts. Der Hochlauf nach dem Start wird nicht gedeckelt, nur gemessen (Nutzer vorläufig, 13.10.). ' +
                           'Befund 07.–13.10. (ersetzt die gestrichene Messaufgabe Comfort/Efficiency): Comfort fährt nach dem Start sofort auf 30–35 Hz, Efficiency bleibt bei 16–17 Hz und geht erst ab Laufminute 39–46 zeitweise auf 21–26 Hz; ein Wechsel im Lauf hebt die Pumpe in ≤ 1 min von 1750 auf 2850–2900 U/min'});
@@ -204,7 +208,32 @@ var ENGVIEW = (function (E) {
             lern.push({k: 'Lern-Gate heute', v: '–', chip: 'keine Daten', c: 'mute'}, {k: 'Bedarfsmodell Drift', v: '–', chip: 'keine Daten', c: 'mute'});
         }
         lern.push(wz(LG && LG.auf, 'Wirkzeit Raum ↑'), wz(LG && LG.ab, 'Wirkzeit Raum ↓'), kb);
-        return {takt: takt, ml: ml, mlLeer: laedt ? 'lädt' : 'sammelt', cop: laedt ? null : copMatrix(TK, tc, now, kw), lern: lern};
+        return {takt: takt, ml: ml, mlLeer: laedt ? 'lädt' : 'sammelt', cop: laedt ? null : copMatrix(TK, tc, now, kw), lern: lern, raum: raumKacheln(S, now, cfg)};
+    }
+    // Raeume und Waechter (14.10.2026): Raumlage des Raumeinflusses v3, Waermeverteilung, Kurvenform, Vergleich Phase 2, Startschwelle, Mindestfrequenz, Stoerung, Dornroeschenschlaf
+    function raumKacheln(S, now, cfg) {
+        S = S || {}; var R3 = S.raum3 || {}, LA = R3.lage || null, H = S.hw || {}, out = [], c = (cfg.rules || E.defaults().rules).raum_offset || E.defaults().rules.raum_offset;
+        var dirT = LA && have(LA.dir) ? (LA.dir > 0 ? 'Bedarf +1 K' : (LA.dir < 0 ? 'Überschuss −1 K' : 'im Band')) : '–';
+        out.push({k: 'Raumlage (v3)', v: dirT, vc: LA && LA.dir ? 'warn' : (LA && LA.dir === 0 ? 'ok' : ''), s: LA && have(LA.reserve) ? 'Reserve ' + E.de(LA.reserve, 1) + ' K · Mitte ' + E.sg(LA.mitte, 1) + ' K' : '',
+                  title: (LA ? LA.code : 'noch keine Raumlage') + ' · Entscheidung direkt aus den Räumen (Band, geglätteter Wert, Verlauf, Lüften); Haltezeit ' + c.stabilMin + ' min'});
+        var hv = H.verteilung || {};
+        out.push({k: 'Wärmeverteilung', v: hv.an ? 'Hinweis' : 'ok', vc: hv.an ? 'warn' : 'ok', s: (hv.n || 0) + (hv.n === 1 ? ' Episode' : ' Episoden') + (hv.seit ? ' · zuletzt ' + dm(hv.seit) : ''),
+                  title: hv.an ? hv.txt : 'Ein Raum über Maximum und einer unter Minimum, 30 min am Stück: Hinweis „hydraulischer Abgleich/Thermostatventile“ statt Verschiebung (Regel-Review RE-8)' + (hv.txt ? ' · zuletzt: ' + hv.txt : '')});
+        var KF = E.kurvenform(S, cfg), kb = KF.baender.map(function (x) { return x.band + ' ' + E.de((have(x.abw) ? x.abw : x.ueber) * 100, 0) + ' %'; });
+        out.push({k: 'Kurvenform', v: KF.hinweis ? 'senken?' : (KF.baender.length ? 'passt' : '–'), vc: KF.hinweis ? 'warn' : '', s: kb.length ? 'Überschuss/−1 K ' + kb.join(' · ') : 'sammelt',
+                  title: (KF.hinweis || 'kein Hinweis') + (KF.info ? ' · ' + KF.info : '') + ' · je Außenband (7 Tage, nur mit allen Räumen): ' + KF.baender.map(function (x) { return x.band + ' °C: ' + x.min + ' min, Überschuss ' + E.de(x.ueber * 100, 0) + ' %, Überschuss oder −1 K ' + E.de((x.abw || 0) * 100, 0) + ' %, Bedarf ' + E.de(x.bedarf * 100, 0) + ' %, Reserve Ø ' + E.de(x.reserve, 1) + ' K, Mitte Ø ' + E.sg(x.mitte, 1) + ' K'; }).join('; ') + (KF.sig ? ' · Heizkurve ' + KF.sig + ' seit ' + dm(KF.seit) : '')});
+        var P2 = E.p2Summe(S);
+        out.push({k: 'Phase 2 (Vergleich)', v: have(P2.anteil) ? E.de(P2.anteil * 100, 0) + ' % gleich' : '–', s: P2.min ? P2.min + ' min · anders ' + P2.anders + ' · nur v3 ' + P2.nurV3 : 'keine Daten',
+                  title: 'Raumvorschlag der Phase 2 nur noch als Vergleich: Minuten, in denen seine Richtung mit der Raumlage v3 übereinstimmt (7 Tage); „nur v3“: v3 will ändern, Phase 2 nicht; „anders“: Phase 2 will ändern, v3 nicht oder in Gegenrichtung'});
+        var SM = E.startModell(S, now);
+        out.push({k: 'Startschwelle', v: SM.modell === 'rl' ? 'RL −3 K' : 'Soll −3,25 K', s: 'Verzug ~' + E.de(SM.verzug, 0) + ' min · ' + SM.n + ' Pausen',
+                  title: 'Start, sobald der Vorlauf die Schwelle erreicht, plus Verzug. Soll-Modell: Vorlauf ≤ Soll −3,25 K (Fehler ' + (have(SM.maeSoll) ? E.de(SM.maeSoll, 1) + ' min' : '–') + '); Forum-Modell: Vorlauf < Rücklauf beim Abschalten −3 K (Fehler ' + (have(SM.maeRl) ? E.de(SM.maeRl, 1) + ' min' : '–') + '). Quelle: ' + SM.quelle + '. Messung 07.–13.10.: Soll-Modell 1,8 min, RL-Regel 24,6 min Fehler (14 Pausen)'});
+        var mt = E.MINHZ.filter(function (x) { return x.atBis < 100; }).map(function (x) { return '≤ ' + x.atBis + ' °C ' + x.hz + ' Hz'; }), mlern = Object.keys((S.takt && S.takt.hzB) || {}).length;
+        out.push({k: 'Mindestfrequenz', v: '16 Hz', s: mt.join(' · '), title: 'Mindestfrequenz je Außentemperatur (Fühlerwert der WP): Tabelle aus dem Forum 189605 (L5: ab −4 °C 25 Hz, ab −10 °C 35 Hz, auch mit Flüstermodus), gelernte Werte haben Vorrang (' + mlern + ' Bänder mit Daten). Wirkt auf Quiet-Deckel, Kälte-Vorsorge, Effizienz-Deckel und Mindestleistung'});
+        var hs = H.stoerung || {}, hd = H.dornroeschen || {};
+        out.push({k: 'Störung (TOP44)', v: hs.an ? 'Fehler' : 'keine', vc: hs.an ? 'bad' : 'ok', s: hs.n ? hs.n + ' × seit Start' : '', title: hs.an ? hs.txt : 'HeishaMon Error: bei einem Fehlercode (z. B. H23) Alarm, keine Vorschläge, keine Übernahme' + (hs.txt ? ' · zuletzt: ' + hs.txt : '')});
+        out.push({k: 'Dornröschenschlaf', v: hd.an ? 'Hinweis' : 'ruhig', vc: hd.an ? 'warn' : 'ok', s: (hd.n || 0) + ' Hinweise' + (hd.seit ? ' · zuletzt ' + dm(hd.seit) : ''), title: hd.an ? hd.txt : 'Verdichter steht ≥ ' + E.HW.dornPauseMin + ' min in der Pause, obwohl die Startschwelle seit ≥ ' + E.HW.dornUeberMin + ' min erreicht ist: nur Hinweis (Sollsprung +2/+3 K von Hand startet sofort)' + (hd.txt ? ' · zuletzt: ' + hd.txt : '')});
+        return out;
     }
 
     // ---------------------------------------------------------------- alle Karten
@@ -274,7 +303,7 @@ var ENGVIEW = (function (E) {
         var score = {now: now, t0: t0, series: series, tiles: tiles, sv: sv};
         return {card: card, rules: {rules: rules}, score: score, mess: messBuild(S, now, cfg, o.plan || null), log: {rows: logRows(o.V || {}, now, 12)}};
     }
-    return {track: track, build: build, logRows: logRows, copMatrix: copMatrix, messBuild: messBuild, zielTxt: zielTxt, knopfOf: knopfOf, COL: COL, CHIP: CHIP};
+    return {track: track, build: build, logRows: logRows, copMatrix: copMatrix, messBuild: messBuild, raumKacheln: raumKacheln, zielTxt: zielTxt, knopfOf: knopfOf, COL: COL, CHIP: CHIP};
 })(typeof ENGINE !== 'undefined' ? ENGINE : require('./engine_core.js'));
 if (typeof module !== 'undefined' && module.exports) { module.exports = ENGVIEW; }
 // == ENGINE-VIEW-ENDE ==
