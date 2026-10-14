@@ -5,7 +5,7 @@
  * spec = {t0, t1, marks: [{t, label}], panels: [{h, unit, min, max, zero, rmin, rmax, bands: [{a, b, c}], series: [
  *          {n, c, d: [[t, v], ...], k: 'line'|'step'|'area'|'bar', w, dash, r: true (rechte Achse), dg: Nachkommastellen, u: Einheit, fill, bw (Balkenbreite in ms), bc: [[t, Farbe]]}]}]} */
 (function (root) {
-    var VER = 4;
+    var VER = 5;                                                                                    // 5: UI-Optik 14.10. (Achsen 12 px, Kontrast >= 4,5:1)
     if (root.optChart && root.optChart.v === VER) { return; }
     var C = {v: VER};
     var MONTHS = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
@@ -37,7 +37,7 @@
     C.svg = function (spec, W) {
         W = Math.max(360, Math.round(W || 800));
         var hasR = spec.panels.some(function (p) { return p.series.some(function (s) { return s.r; }); });
-        var L = 52, R = hasR ? 52 : 14, GAP = 16, BOT = 24, TOP = 8, x0 = L, x1 = W - R, t0 = spec.t0, t1 = spec.t1;
+        var L = 52, R = hasR ? 52 : 14, GAP = 26, BOT = 26, TOP = 18, x0 = L, x1 = W - R, t0 = spec.t0, t1 = spec.t1;
         var X = function (t) { return x0 + (t - t0) / (t1 - t0) * (x1 - x0); };
         var out = [], y = TOP, geo = {x0: x0, x1: x1, t0: t0, t1: t1, W: W, panels: []}, ticks = timeTicks(t0, t1);
         spec.panels.forEach(function (pn, pi) {
@@ -48,13 +48,13 @@
             var rr = rs.length ? range(rs, pn.rmin, pn.rmax, pn.rzero) : null, rt = rr ? nice(rr[0], rr[1], 4) : null;
             var rlo = rr ? (pn.rmin !== undefined && pn.rmin !== null ? pn.rmin : rt[0]) : 0, rhi = rr ? (pn.rmax !== undefined && pn.rmax !== null ? pn.rmax : rt[1]) : 1;
             var YL = function (v) { return bot - (v - lo) / (hi - lo) * h; }, YR = function (v) { return bot - (v - rlo) / (rhi - rlo) * h; };
-            out.push('<rect x="' + x0 + '" y="' + top + '" width="' + (x1 - x0) + '" height="' + h + '" fill="#fafafa" stroke="#e0e0e0"/>');
+            out.push('<rect x="' + x0 + '" y="' + top + '" width="' + (x1 - x0) + '" height="' + h + '" fill="#fbfcfc" stroke="#e0e6e9"/>');
             (pn.bands || []).forEach(function (b) { var ya = YL(Math.min(hi, b.b)), yb = YL(Math.max(lo, b.a)); if (yb > ya) { out.push('<rect x="' + x0 + '" y="' + ya.toFixed(1) + '" width="' + (x1 - x0) + '" height="' + (yb - ya).toFixed(1) + '" fill="' + (b.c || 'rgba(46,125,50,.10)') + '"/>'); } });
-            for (var v = lt[0]; v <= lt[1] + 1e-9; v += lt[2]) { if (v < lo - 1e-9 || v > hi + 1e-9) { continue; } var yy = YL(v).toFixed(1); out.push('<line x1="' + x0 + '" x2="' + x1 + '" y1="' + yy + '" y2="' + yy + '" stroke="#eee"/><text x="' + (x0 - 6) + '" y="' + (+yy + 4) + '" text-anchor="end" font-size="11" fill="#757575">' + fmt(v, lt[2] < 1 ? 1 : 0) + '</text>'); }
-            if (rt) { for (var vr = rt[0]; vr <= rt[1] + 1e-9; vr += rt[2]) { if (vr < rlo - 1e-9 || vr > rhi + 1e-9) { continue; } out.push('<text x="' + (x1 + 6) + '" y="' + (YR(vr) + 4).toFixed(1) + '" font-size="11" fill="#757575">' + fmt(vr, rt[2] < 1 ? 1 : 0) + '</text>'); } }
+            for (var v = lt[0]; v <= lt[1] + 1e-9; v += lt[2]) { if (v < lo - 1e-9 || v > hi + 1e-9) { continue; } var yy = YL(v).toFixed(1); out.push('<line x1="' + x0 + '" x2="' + x1 + '" y1="' + yy + '" y2="' + yy + '" stroke="#eee"/><text x="' + (x0 - 6) + '" y="' + (+yy + 4) + '" text-anchor="end" font-size="12" fill="#546e7a">' + fmt(v, lt[2] < 1 ? 1 : 0) + '</text>'); }
+            if (rt) { for (var vr = rt[0]; vr <= rt[1] + 1e-9; vr += rt[2]) { if (vr < rlo - 1e-9 || vr > rhi + 1e-9) { continue; } out.push('<text x="' + (x1 + 6) + '" y="' + (YR(vr) + 4).toFixed(1) + '" font-size="12" fill="#546e7a">' + fmt(vr, rt[2] < 1 ? 1 : 0) + '</text>'); } }
             ticks.forEach(function (t) { var xx = X(t).toFixed(1); out.push('<line x1="' + xx + '" x2="' + xx + '" y1="' + top + '" y2="' + bot + '" stroke="#eee"/>'); });
-            if (pn.unit) { out.push('<text x="' + (x0 - 6) + '" y="' + (top - 1) + '" text-anchor="end" font-size="10" fill="#9e9e9e">' + esc(pn.unit) + '</text>'); }
-            if (pn.runit && rt) { out.push('<text x="' + (x1 + 6) + '" y="' + (top - 1) + '" font-size="10" fill="#9e9e9e">' + esc(pn.runit) + '</text>'); }
+            if (pn.unit) { out.push('<text x="' + (x0 - 6) + '" y="' + (top - 7) + '" text-anchor="end" font-size="11" fill="#546e7a">' + esc(pn.unit) + '</text>'); }
+            if (pn.runit && rt) { out.push('<text x="' + (x1 + 6) + '" y="' + (top - 7) + '" font-size="11" fill="#546e7a">' + esc(pn.runit) + '</text>'); }
             pn.series.forEach(function (s) {
                 var YS = s.r ? YR : YL, base = s.r ? Math.max(rlo, Math.min(rhi, 0)) : Math.max(lo, Math.min(hi, 0)), pts = s.d.filter(function (q) { return q[0] >= t0 - 1 && q[0] <= t1 + 1; });
                 var stroke = s.c || '#1976d2', k = s.k || 'line';
@@ -84,7 +84,7 @@
             y = bot + GAP;
         });
         var H = y - GAP + BOT;
-        ticks.forEach(function (t) { var d = new Date(t), lab = (d.getHours() === 0) ? p2(d.getDate()) + '. ' + MONTHS[d.getMonth()] : hhmm(t); out.push('<text x="' + X(t).toFixed(1) + '" y="' + (H - 7) + '" text-anchor="middle" font-size="11" fill="' + (d.getHours() === 0 ? '#424242' : '#757575') + '"' + (d.getHours() === 0 ? ' font-weight="bold"' : '') + '>' + lab + '</text>'); });
+        ticks.forEach(function (t) { var d = new Date(t), lab = (d.getHours() === 0) ? p2(d.getDate()) + '. ' + MONTHS[d.getMonth()] : hhmm(t); out.push('<text x="' + X(t).toFixed(1) + '" y="' + (H - 7) + '" text-anchor="middle" font-size="12" fill="' + (d.getHours() === 0 ? '#263238' : '#546e7a') + '"' + (d.getHours() === 0 ? ' font-weight="bold"' : '') + '>' + lab + '</text>'); });
         (spec.marks || []).forEach(function (m) { if (m.t < t0 || m.t > t1) { return; } var xx = X(m.t).toFixed(1); out.push('<line x1="' + xx + '" x2="' + xx + '" y1="' + TOP + '" y2="' + (H - BOT) + '" stroke="' + (m.c || '#546e7a') + '" stroke-dasharray="4 3"/>' + (m.label ? '<text x="' + (+xx + 4) + '" y="' + (TOP + 10) + '" font-size="10" fill="' + (m.c || '#546e7a') + '">' + esc(m.label) + '</text>' : '')); });
         geo.H = H;
         return {svg: '<svg xmlns="http://www.w3.org/2000/svg" width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" style="display:block;font-family:inherit">' + out.join('') + '<line class="optch-x" x1="0" x2="0" y1="' + TOP + '" y2="' + (H - BOT) + '" stroke="#37474f" stroke-width="1" visibility="hidden"/></svg>', geo: geo};
@@ -104,13 +104,13 @@
     C.legend = function (spec) {
         var items = [];
         spec.panels.forEach(function (pn) { pn.series.forEach(function (s) { items.push('<span' + (s.t ? ' title="' + esc(s.t) + '"' : '') + ' style="display:inline-block;margin:0 14px 2px 0;white-space:nowrap"><span style="display:inline-block;width:' + (s.k === 'bar' || s.k === 'area' ? 10 : 16) + 'px;height:' + (s.k === 'bar' || s.k === 'area' ? 10 : 3) + 'px;background:' + (s.c || '#1976d2') + ';margin-right:5px;vertical-align:middle;opacity:' + (s.k === 'area' ? 0.6 : 1) + '"></span>' + esc(s.n) + '</span>'); }); });
-        return '<div style="font-size:12px;color:#546e7a;padding:2px 0 6px 52px">' + items.join('') + '</div>';
+        return '<div style="font-size:13px;color:#455a64;padding:2px 0 8px 52px;line-height:1.5">' + items.join('') + '</div>';
     };
     C.mount = function (el, spec) {
         try {
             if (!el) { return; }
             var W = el.clientWidth || (el.parentElement && el.parentElement.clientWidth) || 800, r = C.svg(spec, W);
-            el.style.position = 'relative'; el.innerHTML = C.legend(spec) + r.svg + '<div class="optch-tip" style="position:absolute;display:none;pointer-events:none;background:rgba(38,50,56,.94);color:#fff;font-size:12px;padding:6px 8px;border-radius:4px;white-space:nowrap;z-index:5"></div>';
+            el.style.position = 'relative'; el.innerHTML = C.legend(spec) + r.svg + '<div class="optch-tip" style="position:absolute;display:none;pointer-events:none;background:rgba(38,50,56,.95);color:#fff;font-size:13px;padding:6px 10px;border-radius:4px;white-space:nowrap;z-index:5"></div>';
             var svg = el.querySelector('svg'), tip = el.querySelector('.optch-tip'), cross = el.querySelector('.optch-x'), g = r.geo;
             svg.addEventListener('mousemove', function (ev) {
                 var b = svg.getBoundingClientRect(), mx = (ev.clientX - b.left) * (g.W / b.width);

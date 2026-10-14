@@ -25,6 +25,8 @@ var ENGVIEW = (function (E) {
         var g = String(r.ende || (isDaten(r) ? 'keine HeishaMon-Daten' : r.grund) || ''), i = g.indexOf('; außerdem ');
         return short(r.dauer && i >= 0 ? g.slice(i + 11) : g);
     }
+    // Regelname fuer Episoden: aktive Regel (kurz), sonst stillgelegte Regel aus ENGINE.STILLGELEGT (Name ohne Klammerzusatz), nie die interne ID (UI-Optik 14.10.)
+    function regelName(id) { var R = E.RULE[id], X = (E.STILLGELEGT || []).filter(function (x) { return x.id === id; })[0]; return R ? (R.kurz || R.kachel || id) : (X ? X.kurz || ohneKlammern(X.name) : id); }
     function ohneKlammern(t) { return String(t || '').replace(/\s*\([^()]*\)/g, '').replace(/\s+([,;.])/g, '$1').trim(); }   // Kernaussage; der volle Text steht im Tooltip
 
     // ---------------------------------------------------------------- Episoden
@@ -62,7 +64,7 @@ var ENGVIEW = (function (E) {
                 return [t, CLS[s[0]] || 'mute'];
             });
             var prop = ep.st.filter(function (s) { return s[3]; })[0];
-            return {t: dm(ep.t0) + ' ' + hm(ep.t0) + (ep.t1 > ep.t0 ? '–' + hm(ep.t1) : ''), dauer: Math.round((ep.t1 - ep.t0) / MIN), n: R.kurz || ep.id, c: COL[ep.id] || '#607d8b',
+            return {t: dm(ep.t0) + ' ' + hm(ep.t0) + (ep.t1 > ep.t0 ? '–' + hm(ep.t1) : ''), dauer: Math.round((ep.t1 - ep.t0) / MIN), n: regelName(ep.id), c: COL[ep.id] || '#607d8b',
                     steps: steps, was: prop ? prop[3] : '', ende: open ? 'läuft' : (ep.end || ''), offen: open};
         });
     }
@@ -72,7 +74,7 @@ var ENGVIEW = (function (E) {
         all.forEach(function (ep) { ep.st.forEach(function (s) { if ((s[0] === 'vorschlag' || s[0] === 'hinweis') && (!bs || s[1] > bs[1])) { best = ep; bs = s; } }); });
         if (!best) { return null; }
         var R = E.RULE[best.id] || {}, open = !best.end && V.open && V.open[best.id] === best;
-        return {name: R.kurz || best.id, c: COL[best.id] || '#607d8b', was: bs[3] || '', t: dm(bs[1]) + ' ' + hm(bs[1]) + (best.t1 > bs[1] ? '–' + hm(best.t1) : ''), ende: open ? 'läuft' : (best.end || '')};
+        return {name: regelName(best.id), c: COL[best.id] || '#607d8b', was: bs[3] || '', t: dm(bs[1]) + ' ' + hm(bs[1]) + (best.t1 > bs[1] ? '–' + hm(best.t1) : ''), ende: open ? 'läuft' : (best.end || '')};
     }
     function zaehle24h(V, now) {                                                    // Vorschlaege und Hinweise, die in den letzten 24 h begannen
         var all = ((V && V.ep) || []).concat(Object.keys((V && V.open) || {}).map(function (k) { return V.open[k]; })), n = {vorschlag: 0, hinweis: 0};

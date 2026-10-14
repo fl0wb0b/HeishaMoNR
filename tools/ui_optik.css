@@ -1,0 +1,44 @@
+/* Gemeinsame Gestaltung der Optimierer-Seiten (UI-Optik 14.10.2026). Der Generator (tools/optimizer_phase1.py) setzt diesen Stil vor jede Vorlage opt_t_*;
+   die Karten der Seite "Optimierer" (tools/eng_ui.js) nutzen dieselben Werte. Nur Darstellung.
+   Farben (Kontrast auf Weiss): Text #263238, Nebentext #546e7a (5,4:1), Tabellenkopf #455a64 (7,2:1), Akzent = Blau der Kernseiten #0094ce (Linien),
+   #00729f (Text, 5,4:1); Zustaende ok #2e7d32 (5,1:1), warn #b45309 (4,6:1 auf #fff4e5), Fehler #c62828 (5,6:1).
+   Schrift: Grundschrift 14 px (Kernseiten 16 px), Nebentext >= 12 px, Kennzahlen 20 px, tabellarische Ziffern, Zahlen rechtsbuendig, Tabellen mit Zebra. */
+.optfit{font-size:14px;line-height:1.45;color:#263238;font-variant-numeric:tabular-nums}
+.optfit .warn{color:#c62828}.optfit .ok{color:#2e7d32}.optfit .mute{color:#546e7a}
+/* Tabellen (Quiet-Statistik, Stundenuebersicht, Raeume) */
+.optfit table{width:100%;border-collapse:collapse;font-size:13.5px}
+.optfit th{text-align:left;font-weight:600;color:#455a64;font-size:12.5px;line-height:1.25;padding:5px 6px;border-bottom:2px solid #cfd8dc;vertical-align:bottom}
+.optfit td{padding:5px 6px;border-bottom:1px solid #eceff1;vertical-align:middle}
+.optfit tr:nth-child(even)>td{background:#f7f9fa}
+.optr td.n,.optr th.n,.optq th:nth-child(n+3),.optq td:nth-child(n+3){text-align:right;white-space:nowrap}
+.optq td{white-space:nowrap}.optq td:first-child{font-weight:500}.optq tr.leer>td{color:#546e7a}
+.optpt th,.optpt td{text-align:right;white-space:nowrap}.optpt table{font-size:13px}.optpt td{padding:2px 6px}.optpt th:first-child,.optpt td:first-child{text-align:left;font-weight:500}
+/* Statuskarten (Daten & Guete): Bezeichnung/Wert-Paare in zwei Spalten */
+.optkv{column-count:2;column-gap:32px}
+.optkv .kv{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:4px 2px;border-bottom:1px solid #eceff1;break-inside:avoid;page-break-inside:avoid}
+.optkv .l{color:#546e7a;flex:0 1 auto;min-width:0}.optkv .v{text-align:right;font-weight:600;flex:0 1 auto;min-width:0;overflow-wrap:anywhere}
+/* Letzte Ereignisse (Quiet-Waechter) */
+.optev{margin-top:12px;font-size:13.5px}.optev .evh{color:#00729f;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;padding:2px 2px 6px}
+.optev .ev{display:grid;grid-template-columns:96px 180px minmax(0,1fr);column-gap:12px;padding:4px 2px;border-top:1px solid #eceff1}
+.optev .t{color:#546e7a;white-space:nowrap}.optev .n{font-weight:600}.optev .x{color:#455a64;overflow-wrap:anywhere}
+/* Waermefahrplan: Kennzahl-Kacheln, Details */
+.optp .kpi{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:2px 0 12px}
+.optp .tile{border:1px solid #e0e6e9;border-radius:8px;padding:8px 10px;background:#f7f9fa;min-width:0}
+.optp .tile .k{font-size:12px;color:#546e7a;line-height:1.3}
+.optp .tile .v{font-size:20px;font-weight:600;color:#263238;white-space:nowrap;line-height:1.35}
+.optp .tile .s{font-size:12.5px;color:#546e7a;min-height:17px;line-height:1.35}
+.optp .sec,.optr .sec{margin:12px 0 6px;font-size:12px;color:#00729f;font-weight:600;text-transform:uppercase;letter-spacing:.06em}
+.optp .sum,.optr .sum{display:grid;gap:4px 16px;margin:2px 0 10px}
+.optp .sum{grid-template-columns:max-content minmax(0,1fr)}
+.optp .sum .k,.optr .k{color:#546e7a}.optp .sum .v{font-weight:600}
+/* Raeume und Komfortbaender */
+.optr .sum{grid-template-columns:max-content minmax(0,1fr) max-content minmax(0,1fr)}.optr .sum .wide{grid-column:2 / span 3}
+.optr .warn,.optr .ok{font-weight:600}
+.optr td:first-child{font-weight:500}.optr td:nth-child(5){white-space:nowrap}
+.optr .role{display:block;font-size:12px;color:#c62828;line-height:1.2}
+.optr input[type=number]{width:52px;padding:2px 4px;font:inherit;font-size:13.5px;text-align:right;border:1px solid #b0bec5;border-radius:4px;background:#fff;color:inherit}
+.optr input[type=number]:focus{outline:none;border-color:#0094ce;box-shadow:0 0 0 2px rgba(0,148,206,.2)}
+.optr input[type=checkbox]{width:16px;height:16px;vertical-align:middle;margin:0;accent-color:#007bb0}
+/* Diagramm-Karte ohne Daten: kompakte Zeile statt einer leeren Flaeche */
+.optch-leer{border:1px dashed #b0bec5;border-radius:8px;padding:10px 12px;color:#546e7a;font-size:13px}
+@media (max-width:700px){ui-card-panel:has(.optr),.nr-dashboard-cardpanel:has(.optr),.nr-dashboard-cardcontainer:has(.optr),md-card.nr-dashboard-template:has(.optr){width:100% !important;min-width:0 !important;max-width:100% !important}}

@@ -60,12 +60,12 @@ function coldScenario() {                                                       
 }
 function staticCard(kind, P, w) {                                                  // wie optEngUi.mount, aber ohne DOM: Diagramm direkt als SVG (Breite des Karteninhalts)
     let h = UI.html(kind, P);
-    if (kind === 'score' && P.series && P.series.length) { const spec = UI.chartSpec(P); h = h.replace('<div id="oe_chart" style="margin-bottom:8px"></div>', '<div id="oe_chart" style="margin-bottom:8px">' + CH.legend(spec) + CH.svg(spec, w || 880).svg + '</div>'); }
+    if (kind === 'score' && P.series && P.series.length) { const spec = UI.chartSpec(P); h = h.replace('<div id="oe_chart" style="margin-bottom:10px"></div>', '<div id="oe_chart" style="margin-bottom:10px">' + CH.legend(spec) + CH.svg(spec, w || 880).svg + '</div>'); }
     return h;
 }
 // Gruppen der Seite in Generator-Reihenfolge: [Art, Titel, Starthoehe in Einheiten] (Starthoehen wie ENG_GROUPS in tools/optimizer_phase1.py)
 const GROUPS = [['card', 'Aktueller Vorschlag', 4], ['rules', 'Regeln', 3], ['score', 'Punkte', 9], ['mess', 'Messwerte & Lernen', 10], ['log', 'Entscheidungen', 12]];
-const PAD = 8;                                                                    // Innenabstand der Karte links/rechts (Annahme; das Dashboard setzt die Karte auf die Gruppenbreite)
+const PAD = 6;                                                                    // Innenabstand der Karte links/rechts (Dashboard: md-card padding 3px 6px, live vermessen 14.10.)
 // Prueft im Browser: Masonry wie das Dashboard, Einpassen wie FIT_JS, dann Ueberlauf. Ergebnis in window.__pruef und in der Kopfzeile.
 const CHECK_JS = `(function () {
 var SX = 48, SY = 48, CX = 6, CY = 6, GX = 6, GY = 6, UNIT = SX + GX;
@@ -110,7 +110,7 @@ function run() {
                 if ((cs.textOverflow === 'ellipsis' || cs.overflowX === 'hidden' || cs.overflowX === 'clip') && e.scrollWidth > e.clientWidth + 1 && e.tagName !== 'svg') { res.fehler.push(k + ': abgeschnitten <' + e.tagName.toLowerCase() + ' class="' + e.className + '"> "' + (e.textContent || '').slice(0, 40) + '"'); }
                 if (q.right > r.right - ${PAD} + 1.5 && e.closest('.optfit')) { res.fehler.push(k + ': ragt rechts heraus <' + e.tagName.toLowerCase() + ' class="' + e.className + '"> um ' + Math.round(q.right - r.right + ${PAD}) + ' px'); }
             });
-            Array.prototype.forEach.call(c.querySelectorAll('.oe-kpi,.oe-tile,.oe-mlc,.oe-prop,.oe-leer'), function (bx) {          // nichts ragt aus seiner Kachel
+            Array.prototype.forEach.call(c.querySelectorAll('.oe-kpi,.oe-tile,.oe-mlc,.oe-prop,.oe-leer,.optp .tile'), function (bx) {          // nichts ragt aus seiner Kachel
                 var br = bx.getBoundingClientRect();
                 Array.prototype.forEach.call(bx.querySelectorAll('*'), function (e) { var q = e.getBoundingClientRect(); if ((q.width || q.height) && (q.right > br.right + 0.5 || q.left < br.left - 0.5)) { res.fehler.push(k + ': ragt aus der Kachel <' + e.tagName.toLowerCase() + ' class="' + e.className + '"> "' + (e.textContent || '').slice(0, 30) + '" um ' + Math.round(q.right - br.right) + ' px'); } });
             });
@@ -131,7 +131,7 @@ function page(snaps, opt) {
     const css = '<style>html{overflow-y:scroll}body{margin:0;background:#fafafa;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Oxygen-Sans,Ubuntu,Cantarell,"Helvetica Neue",sans-serif}' +
         '.tb{height:48px;background:#0094ce;color:#fff;font-size:20px;line-height:48px;padding:0 16px}.pr{font-size:12px;padding:4px 8px;font-family:monospace}.pr.ok{background:#e8f5e9;color:#1b5e20}.pr.f{background:#ffebee;color:#b71c1c}' +
         'h1{font-size:13px;color:#546e7a;margin:10px 0 4px;font-weight:600}.mas{position:relative;margin:0}' +
-        '.grp{position:absolute;width:' + gw + 'px;background:#fff}.grp>.ttl{padding:6px ' + PAD + 'px 2px;font-size:15px;color:#1bbfff;line-height:24px}.crd{box-sizing:border-box;width:' + gw + 'px;padding:0 ' + PAD + 'px;overflow-y:auto;margin-bottom:6px}</style>';
+        '.grp{position:absolute;width:' + gw + 'px;background:#fff}.grp>.ttl{padding:10px 0 12px 12px;font-size:19.2px;font-weight:500;color:#1bbfff;line-height:32px}.crd{box-sizing:border-box;width:' + gw + 'px;padding:0 ' + PAD + 'px;overflow-y:auto;margin-bottom:6px}</style>';
     return '<!doctype html><html lang="de"><head><meta charset="utf-8"><title>Optimierer Vorschau</title>' + css + UI.css + '</head><body><div id="pr" class="pr">Prüfung läuft …</div><div class="tb">Optimierer</div>' +
         Object.keys(snaps).map(k => '<h1>' + k + '</h1><div class="mas" data-s="' + k.charAt(0) + '">' + GROUPS.map(g => '<div class="grp" data-g="' + g[0] + '" data-w="' + W + '"><div class="ttl">' + g[1] + '</div>' +
             '<div class="crd" data-k="' + g[0] + '" data-u="' + g[2] + '"><div class="optfit">' + staticCard(g[0], snaps[k][g[0]], cw) + '</div></div></div>').join('') + '</div>').join('') +

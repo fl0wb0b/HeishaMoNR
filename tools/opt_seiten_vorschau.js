@@ -86,7 +86,15 @@ const PAGES = [['opt_ui_tab', 'Optimierung', 'optimierung', null], ['opt_eng_ui_
 // Karten der Entscheidungsmaschine: Nachrichten wie opt_engine sie schickt ({payload: V.card} usw.), aus dem Replay der Protokolle im Datenordner
 const ENG_KIND = {opt_t_eng_prop: 'card', opt_t_eng_rules: 'rules', opt_t_eng_score: 'score', opt_t_eng_mess: 'mess', opt_t_eng_log: 'log'};
 const SNAP = (dataDir && flows.some(n => ENG_KIND[n.id])) ? PRE.snapshots(dataDir) : null;
+// Optional: Karte "Entscheidungen" aus einem echten Zustand (OPT_ENG_STATE=<engine-state.json> von der NAS, nur gelesen), z. B. mit Episoden stillgelegter Regeln
+if (SNAP && process.env.OPT_ENG_STATE) {
+    const VW = require('./engine_view.js'), ST = JSON.parse(fs.readFileSync(process.env.OPT_ENG_STATE, 'utf8')), V = ST.V || {ep: [], open: {}};
+    const tEnd = Math.max.apply(null, (V.ep || []).map(e => e.t1).concat([0]));
+    Object.keys(SNAP).forEach(k => { SNAP[k].log = {rows: VW.logRows(V, tEnd, 12)}; });
+    console.log('Entscheidungen aus ' + process.env.OPT_ENG_STATE + ' (' + (V.ep || []).length + ' Episoden)');
+}
 const PAD = PRE.PAD;
+const TITEL_FARBE = process.env.OPT_TITEL_FARBE || '#1bbfff';                  // Gruppentitel wie das Dashboard (theme-light); mit tools/ui_optik_patch.py: #0083b8
 fs.mkdirSync(outDir, {recursive: true});
 const CHECK = PRE.CHECK_JS.replace("window.addEventListener('load', function () { setTimeout(run, 50); });", "window.addEventListener('load', function () { setTimeout(run, 500); });");
 PAGES.forEach(([tabId, title, file, snap]) => {
@@ -105,9 +113,9 @@ PAGES.forEach(([tabId, title, file, snap]) => {
         });
         body += '</div>';
     });
-    const css = '<style>html{overflow-y:scroll}body{margin:0;background:#fafafa;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Oxygen-Sans,Ubuntu,Cantarell,"Helvetica Neue",sans-serif;font-size:14px;color:rgba(0,0,0,.87)}' +
+    const css = '<style>html{overflow-y:scroll}body{margin:0;background:#fafafa;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Oxygen-Sans,Ubuntu,Cantarell,"Helvetica Neue",sans-serif;font-size:16px;color:rgba(0,0,0,.87)}' +
         '.tb{height:48px;background:#0094ce;color:#fff;font-size:20px;line-height:48px;padding:0 16px}.pr{font-size:12px;padding:4px 8px;font-family:monospace}.pr.ok{background:#e8f5e9;color:#1b5e20}.pr.f{background:#ffebee;color:#b71c1c}' +
-        '.mas{position:relative;margin:0}.grp{position:absolute;background:#fff}.grp>.ttl{padding:6px ' + PAD + 'px 2px;font-size:15px;color:#1bbfff;line-height:24px}' +
+        '.mas{position:relative;margin:0}.grp{position:absolute;background:#fff}.grp>.ttl{padding:10px 0 12px 12px;font-size:19.2px;font-weight:500;color:' + TITEL_FARBE + ';line-height:32px}' +
         '.crd{box-sizing:border-box;padding:0 ' + PAD + 'px;overflow-y:auto;margin-bottom:6px}</style>';
     const html = '<!doctype html><html lang="de"><head><meta charset="utf-8"><title>' + title + ' Vorschau</title>' + css + '</head><body><div id="pr" class="pr">Prüfung läuft …</div><div class="tb">' + title + '</div>' +
         '<div class="mas" data-s="' + file.charAt(0).toUpperCase() + '">' + body + '</div>' + blobs + '<script>' + RENDER_JS + '</script><script>' + CHECK + '</script></body></html>';

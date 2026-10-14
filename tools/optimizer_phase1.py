@@ -2532,11 +2532,7 @@ FIT_JS = """<script>
 </script>"""
 
 # Statuskarten (Seite "Daten & Güte", 17 breit, unveraendert eigene Seite): Bezeichnung/Wert-Paare in zwei Spalten (CSS-Spalten, von oben nach unten gelesen), lange Werte brechen in ihrer Spalte um
-TABLE = ('<style>.optkv{column-count:2;column-gap:28px}'
-         ' .optkv .kv{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:3px 2px;border-bottom:1px solid rgba(128,128,128,.18);break-inside:avoid;page-break-inside:avoid}'
-         ' .optkv .l{color:#666;flex:0 1 auto;min-width:0} .optkv .v{text-align:right;font-weight:bold;flex:0 1 auto;min-width:0;overflow-wrap:anywhere}'
-         ' .optkv .warn{color:#c62828} .optkv .ok{color:#2e7d32}</style>'
-         '<div class="optfit"><div class="optkv"><div class="kv" ng-repeat="r in msg.payload.rows track by $index" title="{{r[3]}}">'
+TABLE = ('<div class="optfit"><div class="optkv"><div class="kv" ng-repeat="r in msg.payload.rows track by $index" title="{{r[3]}}">'
          '<span class="l">{{r[0]}}</span><span class="v" ng-class="r[2]">{{r[1]}}</span></div></div></div>')
 
 
@@ -2553,10 +2549,7 @@ upsert(template("opt_t_wx", "opt_g_wx", 4, 200))
 upsert(template("opt_t_calc", "opt_g_calc", 3, 230))
 _qt = template("opt_t_quiet", "opt_g_quiet", 12, 290)
 # Quiet-Karte: Paare in zwei Spalten, darunter "Letzte Ereignisse" als einzeilige Liste (Zeit · Ereignis · Text)
-_qt["format"] = ('<style>.optev{margin-top:8px;font-size:13px}.optev .evh{color:#666;font-size:12px;padding:2px}'
-                 '.optev .ev{display:grid;grid-template-columns:84px 170px minmax(0,1fr);column-gap:10px;padding:2px;border-top:1px solid rgba(128,128,128,.18)}'
-                 '.optev .t{color:#666;white-space:nowrap}.optev .n{font-weight:bold}.optev .x{color:#666;overflow-wrap:anywhere}.optev .warn{color:#c62828}.optev .ok{color:#2e7d32}</style>'
-                 + TABLE.replace('</div></div></div>', '</div></div>'
+_qt["format"] = (TABLE.replace('</div></div></div>', '</div></div>'
                  '<div class="optev" ng-if="msg.payload.events && msg.payload.events.length"><div class="evh">Letzte Ereignisse</div>'
                  '<div class="ev" ng-repeat="e in msg.payload.events track by $index"><span class="t">{{e[0]}}</span>'
                  '<span class="n" ng-class="e[3]">{{e[1]}}</span><span class="x">{{e[2]}}</span></div></div></div>') + FIT_JS.replace("__ID__", "opt_t_quiet"))
@@ -2571,12 +2564,9 @@ QSTATS_COLS = ([0, 1, 2, 3, 4, 5, 6, 7, 8, 9], [0, 1, 10, 11, 12, 13, 14, 15, 16
 
 
 def qstats_tpl(cols):
-    return ('<style>.optq{width:100%;border-collapse:collapse;font-size:13px}'
-            '.optq th{text-align:left;font-weight:normal;color:#666;padding:3px 4px;border-bottom:1px solid #ccc;font-size:12px;line-height:1.2;vertical-align:bottom}'
-            '.optq td{padding:3px 4px;border-bottom:1px solid rgba(128,128,128,.18);white-space:nowrap}</style>'
-            '<div class="optfit"><table class="optq" title="Nur Minuten mit laufendem Verdichter, ohne Abtauen und Warmwasser; Zeilen nur für benutzte Stufen"><tr>'
+    return ('<div class="optfit"><table class="optq" title="Nur Minuten mit laufendem Verdichter, ohne Abtauen und Warmwasser; Zeilen nur für benutzte Stufen"><tr>'
             + ''.join('<th>' + QSTATS_HEAD[c] + '</th>' for c in cols) + '</tr>'
-            '<tr ng-repeat="r in msg.payload.stats track by $index"><td ng-repeat="c in [' + ','.join(str(c) for c in cols) + '] track by $index">{{r[c]}}</td></tr></table></div>')
+            '<tr ng-repeat="r in msg.payload.stats track by $index" ng-class="{leer: r[1] === \'keine Daten\'}"><td ng-repeat="c in [' + ','.join(str(c) for c in cols) + '] track by $index">{{r[c]}}</td></tr></table></div>')
 
 
 for _qid, _qg, _qn, _qc, _qy in (("opt_t_qstats", "opt_g_qstats", "Quiet-Statistik", QSTATS_COLS[0], 320), ("opt_t_qstats2", "opt_g_qstats2", "Quiet-Statistik Temperaturen", QSTATS_COLS[1], 360)):
@@ -2631,7 +2621,7 @@ def chart_card(cid, gid, name, units, y, body):
               "    var el = document.getElementById('optch_" + cid + "'), m = last;\n"
               "    if (!el || !m || !m.payload || !window.optChart) { return; }\n"
               "    var P = m.payload, H = 3600000, spec = null;\n"
-              "    if (!P.n || P.n < 2) { el.innerHTML = '<div style=\"padding:24px;color:#757575\">Noch keine Verlaufsdaten.</div>'; return; }\n"
+              "    if (!P.n || P.n < 2) { el.innerHTML = '<div class=\"optch-leer\">Noch keine Verlaufsdaten.</div>'; return; }\n"
               + body +
               "    if (spec) { window.optChart.mount(el, spec); }\n"
               "}\n"
@@ -2640,7 +2630,7 @@ def chart_card(cid, gid, name, units, y, body):
               "scope.$watch('msg', function (m) { last = m; setTimeout(draw, 40); });\n"
               "})(scope);</script>")
     return {"id": "opt_t_ch_" + cid, "type": "ui_template", "z": TAB, "group": gid, "name": name, "order": 1, "width": 0, "height": units,
-            "format": '<div class="optfit"><div id="optch_' + cid + '" style="min-height:120px"></div></div>' + script + FIT_JS.replace("__ID__", "opt_t_ch_" + cid),
+            "format": '<div class="optfit"><div id="optch_' + cid + '" style="min-height:40px"></div></div>' + script + FIT_JS.replace("__ID__", "opt_t_ch_" + cid),
             "storeOutMessages": True, "fwdInMessages": False, "resendOnRefresh": True, "templateScope": "local", "className": "", "x": 1260, "y": y, "wires": [[]]}
 
 
@@ -2675,34 +2665,14 @@ upsert(chart_card("at", "opt_g_ch_at", "Verlauf Außentemperatur", 6, 600, CH_AT
 upsert(fn("opt_hist", "Verlaufsdaten (nur lesen)", HIST_JS.replace("__COPKW__", COP_KW_JS), 3, [["opt_t_ch_wp"], ["opt_t_ch_rooms"], ["opt_t_ch_at"]], 440, 520, FS))
 upsert(inject("opt_i_hist", "alle 5 Minuten", 300, 20, ["opt_hist"], 140, 520))
 
-PLAN_TPL = """<style>
-.optp{font-size:14px;line-height:1.35}
-.optp .kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(112px,1fr));gap:6px;margin:2px 0 8px}
-.optp .tile{border:1px solid #e0e0e0;border-radius:5px;padding:5px 7px;background:#fafafa;min-width:0}
-.optp .tile .k{font-size:10.5px;color:#757575;text-transform:uppercase;letter-spacing:.02em;line-height:1.25}
-.optp .tile .v{font-size:17px;font-weight:600;color:#263238;white-space:nowrap}
-.optp .tile .s{font-size:11.5px;color:#757575;min-height:15px}
-.optp .sec{margin:8px 0 4px;font-size:13px;color:#546e7a;font-weight:600}
-.optp .sum{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:2px 14px;margin:2px 0 6px}
-.optp .sum .k{color:#666}
-.optp .sum .v{font-weight:bold}
-.optp .warn{color:#c62828}
-.optp .ok{color:#2e7d32}
-</style>
-<div class="optp optfit">
+PLAN_TPL = """<div class="optp optfit">
 <div class="kpi"><div class="tile" ng-repeat="t in msg.payload.kpi track by $index" title="{{t.t}}"><div class="k">{{t.k}}</div><div class="v">{{t.v}}</div><div class="s">{{t.s}}</div></div></div>
 <div id="optch_plan" style="min-height:120px"></div>
 <div class="sec" style="cursor:pointer" ng-click="plOpen = !plOpen">Details und Modell {{plOpen ? '▾' : '▸'}}</div>
 <div class="sum" ng-if="plOpen"><span ng-repeat-start="r in msg.payload.rows track by $index" class="k">{{r[0]}}</span><span ng-repeat-end class="v" ng-class="r[2]" title="{{r[3]}}">{{r[1]}}</span></div>
 </div>"""
 # Stundenuebersicht als eigene Karte (dieselbe Nachricht wie die Plan-Karte)
-PLAN_TAB_TPL = """<style>
-.optpt table{width:100%;border-collapse:collapse;font-size:12.5px}
-.optpt th{text-align:right;font-weight:normal;color:#666;padding:3px 4px;border-bottom:1px solid #ccc;font-size:11.5px;line-height:1.2;vertical-align:bottom}
-.optpt td{padding:2px 4px;border-bottom:1px solid rgba(128,128,128,.18);text-align:right;white-space:nowrap}
-.optpt th:first-child,.optpt td:first-child{text-align:left}
-</style>
-<div class="optpt optfit"><table>
+PLAN_TAB_TPL = """<div class="optpt optfit"><table>
 <tr><th>Ab</th><th>Außen °C</th><th>Wärme kWh</th><th title="{{msg.payload.korr}}">COP</th><th title="{{msg.payload.korr}}">Strom kWh</th><th>Feuchte · Taupunkt</th><th>PV W</th><th>Abtaurisiko</th><th>Vertrauen</th></tr>
 <tr ng-repeat="r in msg.payload.plan track by $index"><td>{{r.z}}</td><td>{{r.at}}</td><td>{{r.b}}</td><td>{{r.cop}}</td><td>{{r.e}}</td><td>{{r.h}}</td><td>{{r.pv}}</td><td>{{r.d}}</td><td>{{r.v}}</td></tr>
 </table></div>"""
@@ -2745,26 +2715,7 @@ def room_input(field):
 
 # room card: summary, one table with situation and settings per room (inputs write back through scope.send -> opt_set), proposal for the heating curve.
 # Kompakt (13.10.): Lage und Einstellungen in einer Tabelle, Zusammenfassung und Vorschlag als zweispaltige Paare; die Erklaerungen stehen als Tooltip (title), nicht als Hinweiszeilen.
-ROOMS_TPL = """<style>
-.optr{font-size:14px;line-height:1.35}
-.optr .sum{display:grid;grid-template-columns:max-content minmax(0,1fr) max-content minmax(0,1fr);gap:2px 14px;margin:2px 0 8px}
-.optr .sum .wide{grid-column:2 / span 3}
-.optr .k{color:#666}
-.optr .warn{color:#c62828;font-weight:bold}
-.optr .ok{color:#2e7d32;font-weight:bold}
-.optr .mute{color:#999}
-.optr .sec{margin:8px 0 2px;color:#666;font-size:13px}
-.optr table{width:100%;border-collapse:collapse}
-.optr th{text-align:left;font-weight:normal;color:#666;font-size:12px;padding:3px 4px;border-bottom:1px solid #ccc;line-height:1.2;vertical-align:bottom}
-.optr td{padding:3px 4px;border-bottom:1px solid rgba(128,128,128,.18);vertical-align:middle}
-.optr .n{text-align:right;white-space:nowrap}
-.optr .role{display:block;font-size:11px;color:#c62828;line-height:1.1}
-.optr input[type=number]{width:52px;padding:1px 3px;font:inherit;text-align:right;border:1px solid #bbb;border-radius:3px;background:transparent;color:inherit}
-.optr input[type=checkbox]{width:16px;height:16px;vertical-align:middle;margin:0}
-/* on narrow screens the card would be wider than the screen: fit it, the table scrolls inside */
-@media (max-width:700px){ui-card-panel:has(.optr),.nr-dashboard-cardpanel:has(.optr),.nr-dashboard-cardcontainer:has(.optr),md-card.nr-dashboard-template:has(.optr){width:100% !important;min-width:0 !important;max-width:100% !important}}
-</style>
-<div class="optr optfit" ng-if="d">
+ROOMS_TPL = """<div class="optr optfit" ng-if="d">
 <div class="sum">
 <span class="k">Raum unter Minimum</span><span ng-class="d.sum.heatCls">{{d.sum.heat}}</span>
 <span class="k">Raum über Maximum</span><span ng-class="d.sum.overCls">{{d.sum.over}}</span>
@@ -3221,6 +3172,12 @@ form = B.get("e35b7df78bc6f722")
 if form and not any(o["value"] == "Optimierung" for o in form["options"]):
     form["options"].append({"label": "OPTIMIERUNG", "value": "Optimierung", "type": "checkbox", "required": False, "rows": None})
     form["formValue"]["Optimierung"] = False
+
+# UI-Optik (14.10.2026): ein gemeinsamer Stil fuer alle Vorlagen der Optimierer-Seiten (tools/ui_optik.css), vor jede Vorlage gesetzt; nur Darstellung
+UI_OPTIK_CSS = "<style>" + re.sub(r"/\*[\s\S]*?\*/", "", open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui_optik.css"), encoding="utf-8").read()).replace("\n", "") + "</style>"
+for _n in flows:
+    if _n["type"] == "ui_template" and _n["id"].startswith("opt_t_") and not _n["format"].startswith(UI_OPTIK_CSS):
+        _n["format"] = UI_OPTIK_CSS + _n["format"]
 
 json.dump(flows, open(path, "w", encoding="utf-8"), indent=4, ensure_ascii=False)
 print("ok")
