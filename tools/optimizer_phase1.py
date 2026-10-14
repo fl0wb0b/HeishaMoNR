@@ -3070,7 +3070,8 @@ function pick(a, b) { return a !== null ? a : b; }
 var mq = G('MQTT') || {};
 var plant = {q: pick(hpv('Quiet_Mode_Level'), num(G('TOP18_Quiet_Mode_Level'))), shift: pick(hpv('Z1_Heat_Request_Temp'), num(G('TOP27_Z1_Heat_Request_Temp'))), hpAge: hpTs ? (now - hpTs) / MIN : null,
              block: mq.block_active === 1 ? 1 : 0, heatMode: num(G('TOP76_Heating_Mode')), z1Sensor: num(G('TOP111_Z1_Sensor_Settings')),
-             err: (HP.Error && HP.Error.v !== undefined && HP.Error.v !== null) ? String(HP.Error.v) : null};      // Fehlercode (TOP44): bei einer Stoerung (z. B. H23) keine Uebernahme und kein Rueckweg
+             err: (HP.Error && HP.Error.v !== undefined && HP.Error.v !== null) ? String(HP.Error.v) : null,       // Fehlercode (TOP44): bei einer Stoerung (z. B. H23) keine Uebernahme und kein Rueckweg
+             hc: hpv('Heating_Control')};                                                                         // Heizregelung 0 Comfort / 1 Efficiency (Ruecklesen SetHeatingControl, 14.10.2026)
 var eng = global.get('OPT_engine') || {};
 var ctx = {now: now, enabled: AC.enabled, knoten: KNOTEN, rules: AC.rules, eng: eng, plant: plant, cfg: ENGINE.mergeCfg(Object.assign({}, ((global.get('OPT_cfg') || {}).engine) || {}, {cop: (global.get('OPT_cfg') || {}).cop || {}})), endReason: eng.ende || {}, halten: eng.halten || {}};
 var t = String(msg.topic || ''), r;

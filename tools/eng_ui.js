@@ -3,7 +3,7 @@
  *   optEngUi.html(kind, P)              -> HTML einer Karte (kind: 'card' | 'rules' | 'score' | 'mess' | 'log'), P = Nutzlast aus ENGVIEW.build
  *   optEngUi.mount(el, kind, P, scope)  -> zeichnet in ein Element, Knoepfe schicken nur Aktion + ID + Pruefsumme, Diagramm ueber optChart */
 (function (root) {
-    var VER = 6;                                                                  // 4: Vorschlag mit Befehl/Zielwert/Begruendung/Wirkung/Rueckweg offen, Karte "Messwerte & Lernen"; 5: Räume und Wächter (raumeinfluss-v3); 6: UI-Optik (Schrift, Kontrast, Platzhalter statt fast leerem Punkte-Diagramm)
+    var VER = 7;                                                                  // 4: Vorschlag mit Befehl/Zielwert/Begruendung/Wirkung/Rueckweg offen, Karte "Messwerte & Lernen"; 5: Räume und Wächter (raumeinfluss-v3); 6: UI-Optik (Schrift, Kontrast, Platzhalter statt fast leerem Punkte-Diagramm); 7: fünf Regelkacheln (Heizregelung)
     if (root.optEngUi && root.optEngUi.v === VER) { return; }
     var U = {v: VER};
     function esc(s) { return String(s === undefined || s === null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
@@ -31,7 +31,7 @@
         '.oe button.sec{background:#fff;color:#00729f}' +
         '.oe button[disabled]{background:#eceff1;border-color:#cfd8dc;color:#546e7a;cursor:not-allowed}' +
         '.oe-grund{font-size:13px;color:#546e7a}' +
-        '.oe-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}' +
+        '.oe-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}' +
         '.oe-tile{border:1px solid #e0e6e9;border-radius:8px;background:#f7f9fa;padding:10px 12px;min-width:0}' +
         '.oe-hd{display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:8px}' +
         '.oe-nm{font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +

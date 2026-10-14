@@ -707,6 +707,7 @@ var ENGINE = (function () {
                 if (d.hc === 0 && AH && AH.applied && AH.applied.rule === 'heizregelung' && AH.applied.w === 0) { return {inaktiv: 'Comfort (Heizregelung) steht; zurück auf Efficiency über den Rückweg'}; }   // kein zweiter Weg zurueck neben dem Rueckweg
                 var hand = H.hand && H.hand.w === d.hc && now - H.hand.t < c.handRuheMin * MIN ? H.hand : null;          // Wechsel von Hand auf den jetzigen Modus: 2 h Ruhe (ausser Notfall)
                 if (d.hc === 1) {
+                    if (!B.ja) { return {inaktiv: 'Efficiency ohne Bedarf'}; }                     // Normalzustand: kurz (Datensatzgroesse; Efficiency ist das Ziel)
                     var lm = H.lm, cap = H.cap || {}, zHz = d.q === 0 ? Q0_HZ : (have(cap.hz) ? cap.hz : null);
                     var cond = [
                         {k: 'lauf', kz: 'Verdichter läuft', t: 'Verdichter läuft', tn: 'Verdichter steht (' + zTxt(d.zustand) + ')', ok: d.running},
@@ -1863,7 +1864,8 @@ var ENGINE = (function () {
         if (d.unpl.length) { rec.abl.unpl = d.unpl; }                                          // unplausible Eingaenge dieser Minute (gelten als fehlend)
         var dq = have(d.q) ? deckelOf(d, d.q) : null;                                   // wirksamer Deckel der jetzigen Quiet-Stufe (Anzeige im Waechter statt eigener Annahme)
         if (d.raum && !d.raum.keine) { rec.abl.raum = d.raum.dir; }                              // Raumeinfluss v3: Lage (+1 Bedarf, -1 Ueberschuss, 0) im Datensatz
-        if (have(d.hc) && d.hcL) { rec.abl.hc = d.hcL.lage; if (d.hcL.deckMin > 0 && d.hc === 0) { rec.abl.hc_deck = Math.floor(d.hcL.deckMin); } }   // Heizregelung: Lage (+1 Comfort-Bedarf, -1 Efficiency moeglich, 0) und Minuten "Bedarf gedeckt" in Comfort
+        if (have(d.hc) && d.hcL && d.hcL.lage) { rec.abl.hc = d.hcL.lage; }                                   // Heizregelung: Lage +1 (Comfort-Bedarf in Efficiency) bzw. -1 (Comfort ohne Bedarf, Efficiency moeglich), nur wenn nicht 0
+        if (d.hc === 0 && d.hcL && d.hcL.deckMin > 0) { rec.abl.hc_deck = Math.floor(d.hcL.deckMin); }          // in Comfort: Minuten "Bedarf gedeckt"
         return {S: S, d: d, res: res, prop: prop, rec: rec, ev: ev, scores: sc, ende: ende, halten: halten, locks: locks, hc: hcInfo,
                 deckel: dq ? {q: d.q, hz: dq.hz, quelle: dq.quelle} : null, hinweise: hinweisListe(S), stoerung: d.err ? {code: d.err, seit: (S.hw && S.hw.stoerung && S.hw.stoerung.seit) || now} : null};
     }

@@ -7,7 +7,7 @@
 var ENGVIEW = (function (E) {
     var MIN = 60000;
     var STAGE = {wartet: 1, gesperrt: 2, abgelaufen: 3, vorschlag: 3, hinweis: 3};
-    var COL = {quiet_freigabe: '#1976d2', quiet_strecken: '#00897b', raum_offset: '#ef6c00', heizgrenze_hinweis: '#8e24aa', vorausschau: '#6d4c41'};   // heizgrenze_hinweis: stillgelegt (alte Episoden behalten ihre Farbe)
+    var COL = {quiet_freigabe: '#1976d2', quiet_strecken: '#00897b', raum_offset: '#ef6c00', heizgrenze_hinweis: '#8e24aa', vorausschau: '#6d4c41', heizregelung: '#c2185b'};   // heizgrenze_hinweis: stillgelegt (alte Episoden behalten ihre Farbe)
     var CHIP = {vorschlag: 'Vorschlag', hinweis: 'Hinweis', wartet: 'wartet', gesperrt: 'gesperrt', bereit: 'prüft', inaktiv: 'ruht', abgelaufen: 'abgelaufen'};
     var CLS = {vorschlag: 'act', hinweis: 'act', wartet: 'warn', gesperrt: 'warn', bereit: 'mute', inaktiv: 'mute', abgelaufen: 'mute'};
     var LK = {}; E.LOCKS.forEach(function (l) { LK[l.id] = l.kurz; });
@@ -108,6 +108,7 @@ var ENGVIEW = (function (E) {
         if (name === 'SetQuietMode') { return 'Quiet ' + v; }
         if (name === 'SetZ1HeatRequestTemperature') { return 'Verschiebung ' + E.sg(v, 0) + ' K'; }
         if (name === 'SetHeatingOffOutdoorTemp') { return 'Heizgrenze ' + E.de(v, 0) + ' °C'; }
+        if (name === 'SetHeatingControl') { return v === 0 ? 'Comfort' : (v === 1 ? 'Efficiency' : 'Heizregelung ' + v); }
         return name + ' ' + v;
     }
     // Der Knopf zeigt, was die Pruefkette des Servers (ENGINE.applyRequest) ablehnen wuerde; entscheidend bleibt der Server.
@@ -125,8 +126,9 @@ var ENGVIEW = (function (E) {
         if (heute >= X.proTag) { return zu('gesperrt: Tageslimit ' + heute + '/' + X.proTag + ' Befehle'); }
         return {ok: true, text: fort ? 'Fortsetzen' : 'Übernehmen', grund: (fort ? 'Fortsetzung, Rückweg auf ' + a0.von + ' · ' : 'frei · ') + 'heute ' + heute + '/' + X.proTag + ' Befehle'};
     }
+    function vonTxt(a) { return a.name === 'SetHeatingControl' ? zielTxt(a.name, a.von) : a.von; }       // Ausgangswert in der Statuszeile (Heizregelung als Wort)
     function akOf(AP) {                                                                 // Uebernahmen je Groesse (OPT_apply.ak; aeltere Zustaende: nur aktiv)
-        var o = {}; if (AP.ak && typeof AP.ak === 'object') { ['quiet', 'shift'].forEach(function (g) { if (AP.ak[g]) { o[g] = AP.ak[g]; } }); }
+        var o = {}; if (AP.ak && typeof AP.ak === 'object') { ['quiet', 'shift', 'hc'].forEach(function (g) { if (AP.ak[g]) { o[g] = AP.ak[g]; } }); }
         else if (AP.aktiv) { o[AP.aktiv.name ? E.gOfCmd(AP.aktiv.name) : (AP.aktiv.groesse || 'quiet')] = AP.aktiv; }
         return o;
     }
@@ -251,7 +253,7 @@ var ENGVIEW = (function (E) {
         else if (A.z === 'pause' || A.z === 'heizgrenze') { st.push({t: (A.z === 'pause' ? 'Pause' : 'Heizgrenze-Aus') + ' · Quiet ' + (have(A.q) ? A.q : '–'), c: 'mute'}); }
         if (AP.pending) { st.push({t: 'Befehl ' + hm(AP.pending.ts) + ' gesendet · wartet auf Bestätigung', c: 'warn'}); }
         var akL = akOf(AP);
-        ['quiet', 'shift'].forEach(function (g) { var a = akL[g]; if (a && !(AP.pending && (AP.pending.g || E.gOfCmd(AP.pending.name)) === g)) { st.push({t: 'Übernommen ' + hm(a.ts) + ': ' + zielTxt(a.name, a.value) + (a.bis ? ' · zurück auf ' + a.von + ' um ' + hm(a.bis) : ' · zurück auf ' + a.von), c: a.rueckFehl ? 'bad' : (a.bestaetigt ? 'ok' : 'warn')}); } });
+        ['quiet', 'shift', 'hc'].forEach(function (g) { var a = akL[g]; if (a && !(AP.pending && (AP.pending.g || E.gOfCmd(AP.pending.name)) === g)) { st.push({t: 'Übernommen ' + hm(a.ts) + ': ' + zielTxt(a.name, a.value) + (a.einmal ? ' · Normalzustand' : (a.bis ? ' · zurück auf ' + vonTxt(a) + ' um ' + hm(a.bis) : ' · zurück auf ' + vonTxt(a))), c: a.rueckFehl ? 'bad' : (a.bestaetigt ? 'ok' : 'warn')}); } });
         if (!en) { st.push({t: 'Übernahme gesperrt', c: 'lock'}); }
         else if (!knoten) { st.push({t: 'Übernahme gesperrt: Sendeknoten deaktiviert', c: 'lock'}); }
         else { st.push({t: rel.length ? 'Übernahme frei: ' + rel.map(function (x) { return (E.RULE[x] && E.RULE[x].kachel) || x; }).join(', ') + ' · heute ' + heute + '/' + E.APPLY.proTag : 'Übernahme frei: keine Regel', c: rel.length ? 'ok' : 'mute'}); }
@@ -263,7 +265,7 @@ var ENGVIEW = (function (E) {
             card.prop = {id: p.id, sum: p.sum, rule: p.rule, name: R.kurz || p.rule, c: COL[p.rule] || '#1976d2', hinweis: hinweis, was: p.was, warum: p.warum,
                          befehl: p.cmd.name + ' = ' + p.cmd.value, ziel: zielTxt(p.cmd.name, p.cmd.value) + (have(p.von) ? ' (jetzt ' + von + ')' : ''),
                          seit: hm(p.ts), bis: hm(p.bis), erwartung: ohneKlammern(p.erwartung), erwartungLang: p.erwartung,
-                         rueck: hinweis ? 'von Hand (Saisoneinstellung)' : (have(maxD) ? 'automatisch zurück auf ' + von + ', spätestens nach ' + E.de(maxD / 60, 0) + ' h' : 'kein automatischer · „Zurücksetzen“ stellt ' + von + ' wieder her'),
+                         rueck: hinweis ? 'von Hand (Saisoneinstellung)' : (p.einmal ? 'keiner: ' + zielTxt(p.cmd.name, p.cmd.value) + ' ist der Normalzustand' : (have(maxD) ? 'automatisch zurück auf ' + von + ', spätestens nach ' + E.de(maxD / 60, 0) + ' h' : 'kein automatischer · „Zurücksetzen“ stellt ' + von + ' wieder her')),
                          rueckweg: p.rueckweg};
             card.knopf = knopfOf(p, AP, en, knoten, rel, now);
         } else {
