@@ -386,13 +386,13 @@ var ENGINE = (function () {
         {
             id: 'quiet_strecken', ver: 4, kachel: 'Deckel/Laufzeit', kurz: 'Deckel/Laufzeit', name: 'Effizienz-Deckel und Laufzeit (Quiet höher oder Heizkurve +1 K)', art: 'befehl', groesse: 'quiet', richtung: 'weniger_leistung', prio: 2,
             basis: 'quiet_strecken|v4', basisKurve: 'quiet_strecken|v4|kurve',
-            zweck: 'Zwei Hebel, gewählt nach Lage. Quiet höher (Effizienz-Deckel): läuft der Verdichter ohne Bedarf mit 22 Hz oder mehr (vor allem in den ersten 3 h eines Laufs bei Mildwetter), deckelt die niedrigste Stufe, die laut Messdaten unter 22 Hz hält; das spart Strom (Quiet 0, gleiches Außenband, ab Laufminute 15: COP bei 22–27 Hz 3–8 %, ab 28 Hz 10–14 % unter 16–17 Hz) und verlängert den Lauf, mit oder ohne Takt. Quiet senkt am Minimum außerdem den Lüfter (−60…−110 U/min, −10…−16 W; ein COP-Unterschied ist dort nicht messbar). Heizkurve +1 K (Laufzeit): läuft der Verdichter schon unter 22 Hz und ist Takt belegt, hilft Quiet nicht; +1 K hebt Abschalt- und Startschwelle (längere Läufe, kürzere Pausen) und kostet Strom, deshalb nur, wenn der geschätzte Nutzen (vermiedene Starts) die Kosten übersteigt. Beide Hebel nie gleichzeitig aus einem Vorschlag.',
+            zweck: 'Zwei Hebel, gewählt nach Lage. Quiet höher (Effizienz-Deckel): läuft der Verdichter ohne Bedarf mit 22 Hz oder mehr (vor allem in den ersten 3 h eines Laufs bei Mildwetter), deckelt die niedrigste Stufe, die laut Messdaten unter 22 Hz hält; das spart Strom laut TOP16 (Quiet 0, gleiches Außenband, ab Laufminute 15: COP bei 22–27 Hz 3–8 %, ab 28 Hz 10–14 % unter 16–17 Hz; mit der COP-Korrektur +80 W seit 14.10. nur noch 22–27 Hz −1…+5 %, ab 28 Hz −3 %, also im Rauschen) und verlängert den Lauf, mit oder ohne Takt. Quiet senkt am Minimum außerdem den Lüfter (−60…−110 U/min, −10…−16 W; ein COP-Unterschied ist dort nicht messbar). Heizkurve +1 K (Laufzeit): läuft der Verdichter schon unter 22 Hz und ist Takt belegt, hilft Quiet nicht; +1 K hebt Abschalt- und Startschwelle (längere Läufe, kürzere Pausen) und kostet Strom, deshalb nur, wenn der geschätzte Nutzen (vermiedene Starts) die Kosten übersteigt. Beide Hebel nie gleichzeitig aus einem Vorschlag.',
             eingaenge: ['Quiet-Stufe', 'Heizregelung', 'Verdichterfrequenz', 'Rücklauf-Rückstand', 'Räume (Bedarf, Verlauf, Luft im Band)', 'Außentemperatur', 'letzte Läufe (Dauer, Stopp-Art), Pausen, Starts', 'Daten je Heizregelung × Quiet × Außenband (Takt-Messung: Minuten, COP, gehaltener Deckel)', 'Verschiebung der Anlage (TOP27) und Eigentümer (Arbitrierung)'],
             sperren: ['anlauf', 'daten', 'mqtt_sperre', 'abtauen', 'warmwasser', 'sanftanlauf', 'laufbeginn', 'heizgrenze_aus', 'regler', 'vorrang', 'gegenrichtung', 'abstand', 'tageslimit', 'abkuehlzeit', 'takt', 'heizstab'],
             befehl: {name: 'SetQuietMode', topic: 'panasonic_heat_pump/commands/SetQuietMode'},
             hebel: {quiet: {name: 'SetQuietMode', topic: 'panasonic_heat_pump/commands/SetQuietMode'}, shift: {name: 'SetZ1HeatRequestTemperature', topic: 'panasonic_heat_pump/commands/SetZ1HeatRequestTemperature'}},
             schwellen: [
-                {key: 'hzHoch', std: 22, einheit: 'Hz', herkunft: 'Messung 07.–13.10. (Quiet 0, gleiches Außenband, ab Laufminute 15): COP bei 22–27 Hz 3–8 %, ab 28 Hz 10–14 % unter 16–17 Hz, bei 18–21 Hz 1–5 % (im Rauschen); Quiet 0 lag in 14–25 % der Laufminuten über 20 Hz (unter 3 °C nie). Eine Zielstufe deckelt, wenn ihr Deckel (Messung oder gelernt) darunter liegt'},
+                {key: 'hzHoch', std: 22, einheit: 'Hz', herkunft: 'Messung 07.–13.10. (Quiet 0, gleiches Außenband, ab Laufminute 15, Strom TOP16 roh): COP bei 22–27 Hz 3–8 %, ab 28 Hz 10–14 % unter 16–17 Hz, bei 18–21 Hz 1–5 % (im Rauschen); mit der COP-Korrektur (+80 W im Lauf, Forum 189605) 22–27 Hz −1…+5 %, ab 28 Hz −3 %, 18–21 Hz −4…+2 % (14.10.: der COP-Vorteil der niedrigen Frequenz ist damit nicht mehr belegt, Nutzerentscheidung offen); Quiet 0 lag in 14–25 % der Laufminuten über 20 Hz (unter 3 °C nie). Eine Zielstufe deckelt, wenn ihr Deckel (Messung oder gelernt) darunter liegt'},
                 {key: 'laufMin', std: 15, einheit: 'min', herkunft: 'Startroutine (siehe Quiet-Freigabe)'},
                 {key: 'rlRueckMaxK', std: 1.0, einheit: 'K', herkunft: 'kein Bedarf: Rücklauf höchstens 1 K unter Soll (ANNAHME, vgl. Quiet-Freigabe 1,5 K)'},
                 {key: 'komfortK', std: 0.3, einheit: 'K', herkunft: 'Komfort sicher: jeder Raum mit Wert (bis 6 h alt) mindestens 0,3 K über Minimum (wie notK); ANNAHME'},
@@ -694,7 +694,7 @@ var ENGINE = (function () {
         return {ok: true, txt: 'alle Räume mindestens ' + de(c.komfortK, 1) + ' K über Minimum'};
     }
     function defaults() {
-        var c = {locks: JSON.parse(JSON.stringify(LOCK_CFG)), rules: {}, takt: taktCfg(null)};
+        var c = {locks: JSON.parse(JSON.stringify(LOCK_CFG)), rules: {}, takt: taktCfg(null), cop: {pelKorrW: COP_KORR.pelKorrW}};
         RULES.forEach(function (r) { var o = {}; r.schwellen.forEach(function (s) { o[s.key] = s.std; }); c.rules[r.id] = o; });
         return c;
     }
@@ -704,6 +704,7 @@ var ENGINE = (function () {
             if (over.locks) { Object.keys(c.locks).forEach(function (k) { if (have(num(over.locks[k]))) { c.locks[k] = num(over.locks[k]); } }); }
             if (over.rules) { Object.keys(c.rules).forEach(function (id) { var o = over.rules[id]; if (o) { Object.keys(c.rules[id]).forEach(function (k) { if (have(num(o[k]))) { c.rules[id][k] = num(o[k]); } }); } }); }
             if (over.takt) { c.takt = taktCfg(over.takt); }
+            if (over.cop) { c.cop.pelKorrW = copKw(over); }                                                 // COP-Korrektur (ausserhalb 0..200 W: Standard)
             if ([1, 2, 3, 4].indexOf(num(over.sv)) >= 0) { c.sv = num(over.sv); }                         // Bewertungsregeln v1 ... v4 nachrechnen (nur Replay/Tests)
         }
         return c;
@@ -1019,6 +1020,17 @@ var ENGINE = (function () {
         {key: 'kurzAnteilWarn', std: 0.25, einheit: 'Anteil', herkunft: 'Anzeige „Takt“ ab mehr als 25 % kurzen Läufen bei mindestens 4 Läufen (Richtwert HeatPump Hero; dort „kurz“ = unter 10 min, bei uns unter 60 min)'}
     ];
     var TAKT = {binK: 2, quantil: 0.1, binMax: 300, maxAgeMin: 5, fensterH: 24};
+    // COP-Korrektur (14.10.2026, Forum 189605 Frage 10 / TODO F10-a): der interne Stromwert der Leisha (TOP16 Heat_Energy_Consumption) untertreibt im Lauf.
+    // Belege (im Original geprueft): L5 70-90 W unter Shelly je nach Last (Beitrag 4545989); L5 bei 16/17 Hz 2 kW Waerme / 390 W Shelly (4597230), unsere Anlage
+    // zeigt dort 341-363 W; L7 Jahresstrom -14,6 % gegen Shelly bei nur -2,7 % Abweichung der Waerme (4145844) -> der Fehler liegt auf der Stromseite
+    // (Pumpe, Luefter, Elektronik fehlen). pelKorrW = 80 W ist eine ANNAHME im Bereich 40-90 W, addiert NUR bei laufendem Verdichter (im Stillstand meldet
+    // TOP16 15-34 W, der Wert bleibt roh). Gespeichert wird immer der Rohwert (S.takt.copT, S.ueb); die Korrektur kommt erst beim Lesen dazu (je gezaehlte
+    // Laufminute pelKorrW/60 Wh). So ist jede Summe mit jeder Konstante neu rechenbar und nichts wird doppelt korrigiert. cfg.cop.pelKorrW (0..200 W).
+    var COP_KORR = {pelKorrW: 80, minW: 0, maxW: 200, ver: 1};
+    function copKw(cfg) { var v = (cfg && cfg.cop) ? num(cfg.cop.pelKorrW) : null; return (have(v) && v >= COP_KORR.minW && v <= COP_KORR.maxW) ? v : COP_KORR.pelKorrW; }
+    function kwOf(kw) { return (have(kw) && kw >= COP_KORR.minW && kw <= COP_KORR.maxW) ? kw : COP_KORR.pelKorrW; }        // fehlt kw: Standard (korrigiert); 0 = roh
+    function pelKorr(pel, laeuft, kw) { return (have(pel) && laeuft) ? pel + kwOf(kw) : pel; }                              // eine Minute: Rohwert + Korrektur nur im Lauf
+    function korrTxt(kw) { return 'intern +' + de(kwOf(kw), 0) + ' W korrigiert'; }
     // Beobachtete Heizgrenze (Idee st03psn/heat-pump-hero advisor.py _record_heating_limit, MIT): Aussentemperatur beim Ende jedes Laufs >= 30 min, Mittel der letzten 7 Tage.
     // Nur Kennzahl (Gegenprobe zur Regel "Heizgrenze"); Auswahlverzerrung: nur lange Laeufe zaehlen.
     var HG = {laufMin: 30, tage: 7};
@@ -1093,15 +1105,18 @@ var ENGINE = (function () {
                 letztePause: T.pausen.length ? T.pausen[T.pausen.length - 1][2] : null, mittelLaufMin: rn.length ? Math.round(rn.reduce(function (a, r) { return a + r[1]; }, 0) / rn.length) : null,
                 takt: st.length > c.startsTagWarn || (rn.length >= 4 && ka > c.kurzAnteilWarn)};
     }
-    function copSumme(T, c, now) {                                                  // {Schluessel "Modus|Quiet|Band": [Wh el, Wh th, Minuten, Summe Hz, hoechste Hz, gehaltene Hz (Deckel)]} ueber die letzten copTage Tage
-        c = taktCfg(c);
+    // {Schluessel "Modus|Quiet|Band": [Wh el korrigiert, Wh th, Minuten, Summe Hz, hoechste Hz, gehaltene Hz (Deckel), Wh el roh]} ueber die letzten copTage Tage.
+    // copT speichert den Rohwert (TOP16); jede Minute dort ist eine stabile Laufminute (Verdichter laeuft), deshalb kommt je Minute kw/60 Wh dazu (COP_KORR).
+    // kw fehlt: cfg-Standard (80 W); kw = 0: Rohwerte (Vergleich, Tests).
+    function copSumme(T, c, now, kw) {
+        c = taktCfg(c); kw = kwOf(kw);
         var out = {}, D = (T && T.copT) || {}, ks = Object.keys(D).sort(), von = have(now) ? ymd(now - (c.copTage - 1) * 24 * 60 * MIN) : '';
-        ks.forEach(function (dk) { if (dk < von) { return; } Object.keys(D[dk]).forEach(function (k) { var a = D[dk][k], o = out[k] = out[k] || [0, 0, 0, 0, null, null]; o[0] += a[0]; o[1] += a[1]; o[2] += a[2]; o[3] += a[3] || 0; if (have(a[4])) { o[4] = o[4] === null ? a[4] : Math.max(o[4], a[4]); } if (have(a[5])) { o[5] = o[5] === null ? a[5] : Math.max(o[5], a[5]); } }); });
+        ks.forEach(function (dk) { if (dk < von) { return; } Object.keys(D[dk]).forEach(function (k) { var a = D[dk][k], o = out[k] = out[k] || [0, 0, 0, 0, null, null, 0]; o[0] += a[0] + a[2] * kw / 60; o[6] += a[0]; o[1] += a[1]; o[2] += a[2]; o[3] += a[3] || 0; if (have(a[4])) { o[4] = o[4] === null ? a[4] : Math.max(o[4], a[4]); } if (have(a[5])) { o[5] = o[5] === null ? a[5] : Math.max(o[5], a[5]); } }); });
         return out;
     }
-    function copTabelle(T, c, now) {                                               // [[Modus, Quiet, Band, COP, Minuten]] ab copMinMin Minuten je Kombination (Nutzerentscheidung 13.10.2026)
+    function copTabelle(T, c, now, kw) {                                           // [[Modus, Quiet, Band, COP, Minuten]] ab copMinMin Minuten je Kombination (Nutzerentscheidung 13.10.2026); COP korrigiert (kw wie copSumme)
         c = taktCfg(c);
-        var S = copSumme(T, c, now);
+        var S = copSumme(T, c, now, kw);
         return Object.keys(S).map(function (k) { var a = S[k], p = k.split('|'); return [p[0], p[1], p[2], a[0] > 0 ? r2(a[1] / a[0]) : null, a[2]]; })
             .filter(function (r) { return r[4] >= c.copMinMin && r[3] !== null; })
             .sort(function (a, b) { var ia = BAENDER.map(function (x) { return x[2]; }).indexOf(a[2]), ib = BAENDER.map(function (x) { return x[2]; }).indexOf(b[2]); return ia - ib || (a[0] < b[0] ? -1 : (a[0] > b[0] ? 1 : (a[1] < b[1] ? -1 : (a[1] > b[1] ? 1 : 0)))); });
@@ -1241,10 +1256,11 @@ var ENGINE = (function () {
         else if (act.every(function (r) { return r.t > (r.min + r.max) / 2; })) { x[0] += d.pel / 60; x[1] += (have(d.pth) && d.pth > 0 ? d.pth : 0) / 60; x[2]++; }
         Object.keys(U).sort().slice(0, -UEB.tage).forEach(function (k) { delete U[k]; });
     }
-    function uebSumme(S, now) {                                                      // Summe der letzten UEB.tage Kalendertage (kWh, Minuten)
-        var o = {el: 0, th: 0, min: 0, elAlle: 0, minAlle: 0, minOhne: 0, tage: 0}, U = (S && S.ueb) || {}, von = have(now) ? ymd(now - (UEB.tage - 1) * 24 * 60 * MIN) : '';
-        Object.keys(U).forEach(function (k) { if (k < von) { return; } var x = U[k]; o.el += x[0] / 1000; o.th += x[1] / 1000; o.min += x[2]; o.elAlle += x[3] / 1000; o.minAlle += x[4]; o.minOhne += x[5]; o.tage++; });
-        ['el', 'th', 'elAlle'].forEach(function (k) { o[k] = Math.round(o[k] * 1000) / 1000; });
+    function uebSumme(S, now, kw) {                                                  // Summe der letzten UEB.tage Kalendertage (kWh, Minuten); Strom korrigiert (Laufminuten x kw, COP_KORR), el*Roh = TOP16
+        kw = kwOf(kw);
+        var o = {el: 0, th: 0, min: 0, elAlle: 0, minAlle: 0, minOhne: 0, tage: 0, elRoh: 0, elAlleRoh: 0, kw: kw}, U = (S && S.ueb) || {}, von = have(now) ? ymd(now - (UEB.tage - 1) * 24 * 60 * MIN) : '';
+        Object.keys(U).forEach(function (k) { if (k < von) { return; } var x = U[k]; o.el += (x[0] + x[2] * kw / 60) / 1000; o.elRoh += x[0] / 1000; o.th += x[1] / 1000; o.min += x[2]; o.elAlle += (x[3] + x[4] * kw / 60) / 1000; o.elAlleRoh += x[3] / 1000; o.minAlle += x[4]; o.minOhne += x[5]; o.tage++; });
+        ['el', 'th', 'elAlle', 'elRoh', 'elAlleRoh'].forEach(function (k) { o[k] = Math.round(o[k] * 1000) / 1000; });
         return o;
     }
 
@@ -1300,7 +1316,7 @@ var ENGINE = (function () {
         track(S, d, inp, cfg);
         if (!(S.takt && S.takt.nl && S.takt.nl.laeuft)) { S.takt = taktStep(S.takt, inp, cfg.takt); }     // waehrend des Nachladens fuehrt die Datei, nicht die Live-Eingabe
         d.takt = taktKennzahlen(S.takt, now, cfg.takt);
-        d.tc = cfg.takt; d.copSum = copSumme(S.takt, cfg.takt, now);                     // Daten je Heizregelung x Quiet x Band: Zielstufen und Deckel der Quiet-Regeln
+        d.copKw = copKw(cfg); d.tc = cfg.takt; d.copSum = copSumme(S.takt, cfg.takt, now, d.copKw);   // Daten je Heizregelung x Quiet x Band (COP korrigiert): Zielstufen und Deckel der Quiet-Regeln
         lagStep(S, d, now); kbStep(S, d, now);                                          // Wirkzeit und Heizkurven-Bias (nur Auswertung)
         tgUpdate(S, d); d.vsBase = tagesgang(S, now); d.vsDk = bedarfK(d.vs, cfg.rules.vorausschau, d.vsBase);
         d.bedQ = bedarfQ(S, d, cfg); if (d.bedQ.ja && d.fresh) { S.bedT = now; } d.bedT = S.bedT;   // Bedarf der Quiet-Stufe (Freigabe; Ausschluss fuer den Deckel)
@@ -2080,7 +2096,7 @@ var ENGINE = (function () {
     }
 
     return {VER: VER, SCORE_VER: SCORE_VER, RULES: RULES, RULE: RULE, LOCKS: LOCKS, LOCK_CFG: LOCK_CFG, SCORE: SCORE, WHITELIST: WHITELIST, APPLY: APPLY,
-            brier: brier, hPunkte: hPunkte, vorschau: vorschau, bedarfK: bedarfK, VS_LIM: VS_LIM, PLAUS: PLAUS, tagesgang: tagesgang, defaults: defaults, mergeCfg: mergeCfg, newState: newState, fixState: fixState, step: step, report: report, STILLGELEGT: STILLGELEGT, UEB: UEB, uebStep: uebStep, uebSumme: uebSumme, HCW: HCW, hcHinweis: hcHinweis, TAKT: TAKT, TAKT_SCHWELLEN: TAKT_SCHWELLEN, taktCfg: taktCfg, taktNew: taktNew, taktStep: taktStep, taktKennzahlen: taktKennzahlen, mindestLeistung: mindestLeistung, copSumme: copSumme, copTabelle: copTabelle, bandOf: bandOf, modusOf: modusOf, nlNeu: nlNeu, nlZeilen: nlZeilen, nlEnde: nlEnde, HG: HG, heizgrenzeBeob: heizgrenzeBeob, LAG: LAG, lagMessen: lagMessen, lagStep: lagStep, KB: KB, kbTag: kbTag, kbStep: kbStep, snapshot: snapshot, unsnap: unsnap,
+            brier: brier, hPunkte: hPunkte, vorschau: vorschau, bedarfK: bedarfK, VS_LIM: VS_LIM, PLAUS: PLAUS, tagesgang: tagesgang, defaults: defaults, mergeCfg: mergeCfg, newState: newState, fixState: fixState, step: step, report: report, STILLGELEGT: STILLGELEGT, UEB: UEB, uebStep: uebStep, uebSumme: uebSumme, HCW: HCW, hcHinweis: hcHinweis, TAKT: TAKT, TAKT_SCHWELLEN: TAKT_SCHWELLEN, taktCfg: taktCfg, taktNew: taktNew, taktStep: taktStep, taktKennzahlen: taktKennzahlen, mindestLeistung: mindestLeistung, copSumme: copSumme, copTabelle: copTabelle, COP_KORR: COP_KORR, copKw: copKw, pelKorr: pelKorr, korrTxt: korrTxt, bandOf: bandOf, modusOf: modusOf, nlNeu: nlNeu, nlZeilen: nlZeilen, nlEnde: nlEnde, HG: HG, heizgrenzeBeob: heizgrenzeBeob, LAG: LAG, lagMessen: lagMessen, lagStep: lagStep, KB: KB, kbTag: kbTag, kbStep: kbStep, snapshot: snapshot, unsnap: unsnap,
             checksum: checksum, newApply: newApply, applyRequest: applyRequest, applyTick: applyTick, fortsetzung: fortsetzung, gOfCmd: gOfCmd, iso: iso, ymd: ymd, zielDeckel: zielDeckel, zielFrei: zielFrei, deckelOf: deckelOf, deckelTab: deckelTab, DECKEL: DECKEL,
             bedarfQ: bedarfQ, raumTrend: raumTrend, komfortSicher: komfortSicher, nutzenKurve: nutzenKurve, kindOf: kindOf, kaltQ: kaltQ, zielKalt: zielKalt, nachtMin: nachtMin, HL: HL, hochlaufSumme: hochlaufSumme,
             hhmm: hhmm, isoWeek: isoWeek, de: de, sg: sg};

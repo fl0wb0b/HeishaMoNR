@@ -130,7 +130,7 @@
                                     : '<div class="oe-row">' + chip(P.mlLeer || 'sammelt', 'mute') + '</div>';
         return '<div class="oe-sec">Takt und Leistung</div>' + kpis(P.takt) +
                '<div class="oe-sec">Mindestleistung je Außenband</div>' + ml +
-               '<div class="oe-sec">COP je Modus und Quiet · 30 Tage</div>' + cop(P.cop) +
+               '<div class="oe-sec"' + tt(P.cop && P.cop.title) + '>COP je Modus und Quiet · 30 Tage</div>' + cop(P.cop) +
                '<div class="oe-sec">Lernen</div>' + kpis(P.lern);
     }
     // ---------------------------------------------------------------- Karte 5: Entscheidungen (Episoden)

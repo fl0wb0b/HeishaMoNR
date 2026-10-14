@@ -126,8 +126,9 @@ var ENGVIEW = (function (E) {
     }
 
     // ---------------------------------------------------------------- Karte "Messwerte & Lernen"
-    function copMatrix(TK, tc, now) {                                                 // Zeilen = Aussenband, Spalten = vorhandene Kombinationen Modus x Quiet ("?" zaehlt nicht)
-        var S = E.copSumme(TK, tc, now), bands = [], cols = {}, rows = {}, x0;
+    function copMatrix(TK, tc, now, kw) {                                             // Zeilen = Aussenband, Spalten = vorhandene Kombinationen Modus x Quiet ("?" zaehlt nicht); COP mit Stromkorrektur (kw, E.COP_KORR)
+        kw = E.copKw({cop: {pelKorrW: kw}});
+        var S = E.copSumme(TK, tc, now, kw), bands = [], cols = {}, rows = {}, x0;
         for (x0 = -40; x0 <= 45; x0++) { if (bands.indexOf(E.bandOf(x0)) < 0) { bands.push(E.bandOf(x0)); } }       // Reihenfolge der Baender aus dem Kern (kalt -> warm)
         Object.keys(S).forEach(function (k) {
             var p = k.split('|'); if (p.length !== 3 || (p[0] !== 'Comfort' && p[0] !== 'Efficiency') || !/^[0-3]$/.test(p[1])) { return; }
@@ -140,20 +141,21 @@ var ENGVIEW = (function (E) {
         var zeilen = bands.filter(function (b) { return rows[b]; }).map(function (b) {
             var zellen = sp.map(function (k) {
                 var a = rows[b][k]; if (!a) { return null; }
-                var cop = a[0] > 0 ? Math.round(a[1] / a[0] * 100) / 100 : null, x = k.split('|');
+                var cop = a[0] > 0 ? Math.round(a[1] / a[0] * 100) / 100 : null, roh = a[6] > 0 ? a[1] / a[6] : null, x = k.split('|');
                 return {cop: cop, v: have(cop) ? E.de(cop, 2) : '–', h: E.de(a[2] / 60, 1) + ' h', grau: a[2] < tc.copMinMin || !have(cop), best: false,
                         title: x[0] + ' Quiet ' + x[1] + ' · ' + b + ' °C: COP ' + (have(cop) ? E.de(cop, 2) : '–') + ' aus ' + Math.round(a[2]) + ' stabilen Minuten (mindestens ' + tc.copMinMin + ')' +
-                               (a[3] ? ' · Ø ' + E.de(a[3] / a[2], 0) + ' Hz' : '') + (have(a[4]) ? ' · max ' + E.de(a[4], 0) + ' Hz' : '') + (have(a[5]) ? ' · gehalten ' + E.de(a[5], 0) + ' Hz' : '') + ' · ' + E.de(a[0] / 1000, 1) + ' kWh el / ' + E.de(a[1] / 1000, 1) + ' kWh th'};
+                               (a[3] ? ' · Ø ' + E.de(a[3] / a[2], 0) + ' Hz' : '') + (have(a[4]) ? ' · max ' + E.de(a[4], 0) + ' Hz' : '') + (have(a[5]) ? ' · gehalten ' + E.de(a[5], 0) + ' Hz' : '') + ' · ' + E.de(a[0] / 1000, 1) + ' kWh el / ' + E.de(a[1] / 1000, 1) + ' kWh th · Strom ' + E.korrTxt(kw) + ' (roh COP ' + E.de(roh, 2) + ')'};
             });
             var ok = zellen.filter(function (z) { return z && !z.grau; });
             if (ok.length >= 2) { var mx = Math.max.apply(null, ok.map(function (z) { return z.cop; })); ok.forEach(function (z) { z.best = z.cop === mx; }); }   // bester Wert nur, wenn es etwas zu vergleichen gibt
             return {band: b + ' °C', zellen: zellen};
         });
-        return {spalten: sp.map(function (k) { var x = k.split('|'); return x[0] + ' Q' + x[1]; }), zeilen: zeilen, minMin: tc.copMinMin};
+        return {spalten: sp.map(function (k) { var x = k.split('|'); return x[0] + ' Q' + x[1]; }), zeilen: zeilen, minMin: tc.copMinMin, kw: kw,
+                title: 'COP = Wärme ÷ Strom, Strom ' + E.korrTxt(kw) + ': TOP16 untertreibt im Lauf (Pumpe, Lüfter, Elektronik fehlen; Forum 189605, L5 70–90 W unter Shelly); nur Laufminuten, im Stillstand roh'};
     }
     function messBuild(S, now, cfg, plan) {
         var tc = cfg.takt || E.taktCfg(null), TK = S.takt || {}, nl = TK.nl || null, laedt = !!(nl && nl.laeuft);
-        var tk = E.taktKennzahlen(TK, now, tc), hgB = E.heizgrenzeBeob(TK, now), ub = E.uebSumme(S || {}, now), takt;
+        var kw = E.copKw(cfg), tk = E.taktKennzahlen(TK, now, tc), hgB = E.heizgrenzeBeob(TK, now), ub = E.uebSumme(S || {}, now, kw), takt;
         if (laedt) {
             var nlT = 'liest quiet-*.csv: ' + (nl.zeilen || 0) + ' Zeilen' + (nl.von ? ' ab ' + dm(nl.von) : '');
             takt = [{k: 'Takt', v: '–', chip: 'lädt', c: 'mute', title: nlT}, {k: 'Läufe 24 h', v: '–', title: nlT}, {k: 'Pausen 24 h', v: '–', title: nlT}];
@@ -167,7 +169,7 @@ var ENGVIEW = (function (E) {
                    title: 'Außentemperatur am Ende von Läufen ≥ ' + E.HG.laufMin + ' min, Mittel der letzten ' + E.HG.tage + ' Tage'});
         // Ueberheizpotenzial bei milder Witterung (ersetzt den stillgelegten Heizgrenze-Hinweis, Review-Paket 13.10.2026)
         takt.push({k: 'Überheizt ab ' + E.UEB.atC + ' °C', v: E.de(ub.el, 2) + ' kWh', vc: ub.el > 0.05 ? 'warn' : '', s: ub.minAlle ? E.de(ub.min, 0) + ' von ' + E.de(ub.minAlle, 0) + ' min' : 'kein Lauf ab ' + E.UEB.atC + ' °C',
-                   title: 'Laufenergie (Strom) bei Außentemperatur ≥ ' + E.UEB.atC + ' °C, während ALLE Räume über ihrer Bandmitte lagen, letzte ' + E.UEB.tage + ' Tage: ' + E.de(ub.el, 2) + ' kWh Strom, ' + E.de(ub.th, 1) + ' kWh Wärme, ' + ub.min + ' min; ' +
+                   title: 'Laufenergie (Strom) bei Außentemperatur ≥ ' + E.UEB.atC + ' °C, während ALLE Räume über ihrer Bandmitte lagen, letzte ' + E.UEB.tage + ' Tage: ' + E.de(ub.el, 2) + ' kWh Strom (' + E.korrTxt(kw) + ', roh ' + E.de(ub.elRoh, 2) + ' kWh), ' + E.de(ub.th, 1) + ' kWh Wärme, ' + ub.min + ' min; ' +
                           'Laufenergie ab ' + E.UEB.atC + ' °C insgesamt ' + E.de(ub.elAlle, 2) + ' kWh in ' + ub.minAlle + ' min' + (ub.minOhne ? ' (davon ' + ub.minOhne + ' min ohne Raumwerte)' : '') + '. Nur diese Energie wäre mit einer niedrigeren Heizgrenze eingespart, ohne dass ein Raum unter seine Bandmitte fällt (echtes Überheizpotenzial; der Heizgrenze-Hinweis ist stillgelegt)'});
         var hl = E.hochlaufSumme(S || {}), hz0 = ((cfg.rules || E.defaults().rules).quiet_strecken || {}).hzHoch;        // Hochlauf nach dem Start: nur Kennzahl (Nutzer vorlaeufig 13.10.)
         takt.push({k: 'Hochlauf nach Start', v: (hl.Comfort[0] + hl.Efficiency[0]) + ' min', s: 'C ' + hl.Comfort[0] + ' min · E ' + hl.Efficiency[0] + ' min · ' + (hl.Comfort[1] + hl.Efficiency[1]) + ' Starts',
@@ -200,7 +202,7 @@ var ENGVIEW = (function (E) {
             lern.push({k: 'Lern-Gate heute', v: '–', chip: 'keine Daten', c: 'mute'}, {k: 'Bedarfsmodell Drift', v: '–', chip: 'keine Daten', c: 'mute'});
         }
         lern.push(wz(LG && LG.auf, 'Wirkzeit Raum ↑'), wz(LG && LG.ab, 'Wirkzeit Raum ↓'), kb);
-        return {takt: takt, ml: ml, mlLeer: laedt ? 'lädt' : 'sammelt', cop: laedt ? null : copMatrix(TK, tc, now), lern: lern};
+        return {takt: takt, ml: ml, mlLeer: laedt ? 'lädt' : 'sammelt', cop: laedt ? null : copMatrix(TK, tc, now, kw), lern: lern};
     }
 
     // ---------------------------------------------------------------- alle Karten

@@ -103,7 +103,7 @@
     };
     C.legend = function (spec) {
         var items = [];
-        spec.panels.forEach(function (pn) { pn.series.forEach(function (s) { items.push('<span style="display:inline-block;margin:0 14px 2px 0;white-space:nowrap"><span style="display:inline-block;width:' + (s.k === 'bar' || s.k === 'area' ? 10 : 16) + 'px;height:' + (s.k === 'bar' || s.k === 'area' ? 10 : 3) + 'px;background:' + (s.c || '#1976d2') + ';margin-right:5px;vertical-align:middle;opacity:' + (s.k === 'area' ? 0.6 : 1) + '"></span>' + esc(s.n) + '</span>'); }); });
+        spec.panels.forEach(function (pn) { pn.series.forEach(function (s) { items.push('<span' + (s.t ? ' title="' + esc(s.t) + '"' : '') + ' style="display:inline-block;margin:0 14px 2px 0;white-space:nowrap"><span style="display:inline-block;width:' + (s.k === 'bar' || s.k === 'area' ? 10 : 16) + 'px;height:' + (s.k === 'bar' || s.k === 'area' ? 10 : 3) + 'px;background:' + (s.c || '#1976d2') + ';margin-right:5px;vertical-align:middle;opacity:' + (s.k === 'area' ? 0.6 : 1) + '"></span>' + esc(s.n) + '</span>'); }); });
         return '<div style="font-size:12px;color:#546e7a;padding:2px 0 6px 52px">' + items.join('') + '</div>';
     };
     C.mount = function (el, spec) {
