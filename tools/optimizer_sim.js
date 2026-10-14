@@ -2011,10 +2011,36 @@ check('ohne Kinderzimmer-Werte (frischer Start): vier Spalten leer, Karte zeigt 
         kOhne({ts: EN0.ts, dk: null, age: 10, maxMin: 120}) && kOhne({ts: T - 30 * 60000 + 60000, dk: 0.6, age: 100, maxMin: 120}) && kOhne({ts: T - 6 * 60000, dk: 0.6, age: 10, maxMin: 120}) && kOhne(null), '');
   const LIVEM = Object.assign({}, LIVE, {Z1_Heat_Curve_Target_High_Temp: 37, Z1_Heat_Curve_Outside_Low_Temp: -13, Z1_Heat_Curve_Target_Low_Temp: 29, Z1_Heat_Curve_Outside_High_Temp: 11,
     Main_Schedule_State: 0, Holiday_Mode_State: 0, Operating_Mode_State: 0, Z1_Heat_Request_Temp: 1});
+  // Raeume wie live (OPT_cfg.rooms, OPT_rooms; Wohnzimmer meldet seit 9,3 h nichts) und Kurzfassung der Maschine (OPT_engine_ue) fuer die Modulkacheln Raeume/Optimierer
+  const ROOMS = [{id: 'ki_oben', name: 'Kinderzimmer oben', active: true, min: 22, max: 23.5}, {id: 'ki_unten', name: 'Kinderzimmer unten', active: true, min: 20, max: 22},
+    {id: 'schlaf', name: 'Schlafzimmer', active: true, min: 20, max: 22}, {id: 'wohn', name: 'Wohnzimmer', active: true, min: 20, max: 23.5}, {id: 'bad', name: 'Bad', active: false, min: 21, max: 24}];
+  const RST = {ki_oben: {ema: 23.95, ts: T - 11 * 60000}, ki_unten: {ema: 19.62, ts: T - 3 * 60000}, schlaf: {ema: 21.02, ts: T - 6 * 60000}, wohn: {ema: 23.2, ts: T - 560 * 60000}};
+  const EUE = {ts: T - 40000, rules: [['Quiet-Freigabe', 'prüft', 'mute'], ['Deckel/Laufzeit', 'prüft', 'mute'], ['Raumeinfluss', 'ruht', 'mute'], ['Vorausschau', 'gesperrt', 'warn'], ['Heizregelung', 'ruht', 'mute']],
+    prop: false, letzter: {name: 'Heizregelung', t: '13.10. 15:21–15:31', ende: 'übernommen: Efficiency steht', was: 'Heizregelung Comfort → Efficiency'}, frei: false, freiTxt: 'gesperrt', heute: 0, proTag: 6, punkte: 52.7};
   gstore.OPT_engine = EN0; gstore.OPT_weather = WX0; gstore.OPT_hp = hpOf(Object.assign({}, LIVEM, {Z1_Heat_Request_Temp: 0}));      // vollstaendigste Nachricht (auch fuer die Vorschau, OPT_UI_DUMP)
+  gstore.OPT_cfg = {cop: {pelKorrW: 80}, rooms: ROOMS}; gstore.OPT_rooms = RST; gstore.OPT_engine_ue = EUE;
   const PR = run('opt_schema', {}).payload;
   check('Lambda Kopfzeile: opt_schema liest OPT_engine.vs (mit dessen ts) und OPT_weather.temp/ts, schreibt nichts', PR.kopf.mat === 11.4 && PR.kopf.owm === 7.4 && PR.kopf.von === 2 && PR.kopf.bis === 5, JSON.stringify(PR.kopf));
-  delete gstore.OPT_engine; delete gstore.OPT_weather;
+  const MR = SCH.modul(PR).replace(/\u00a0/g, ' '), tiles = (MR.match(/<div class="omod-t">[^<]*</g) || []).map(x => x.slice(20, -1));
+  check('Lambda Module (Nacharbeit): vier Kacheln in der Reihenfolge Wärmepumpe, Heizkreis Zone 1, Räume, Optimierer; zwei Spalten, ab 1600 px vier gleich breite',
+        tiles.join() === 'Wärmepumpe,Heizkreis Zone 1,Räume,Optimierer' && SCH.CSS.includes('.omod{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}@media (min-width:1600px){.omod{grid-template-columns:repeat(4,minmax(0,1fr))}}'), tiles.join());
+  const rz = h => (h.match(/<div class="omod-rz"><span class="n">[^<]*<\/span><span class="v[^"]*">[^<]*<\/span><span class="b">[^<]*<\/span><span class="omod-ch omod-\w+"[^>]*>[^<]*</g) || [])
+    .map(x => x.replace(/^.*?"n">([^<]*)<.*?">([^<]*)<\/span><span class="b">([^<]*)<.*omod-(\w+)"[^>]*>([^<]*)<$/, '$1|$2|$3|$5:$4'));
+  check('Lambda Räume: aktive Räume aus OPT_cfg.rooms mit Ist (ema), Band, Zustand: im Band / unter Minimum / Fühler still (> 2 h, Tooltip 9,3 h); inaktive weggelassen; eine Spalte bis 6 Räume',
+        rz(MR).join(' ; ') === 'Kinderzimmer oben|24 °C|22–23,5 °C|über Maximum:warn ; Kinderzimmer unten|19,6 °C|20–22 °C|unter Minimum:warn ; Schlafzimmer|21 °C|20–22 °C|im Band:ok ; Wohnzimmer|23,2 °C|20–23,5 °C|Fühler still:bad' &&
+        MR.includes('title="letzte Meldung vor 9,3 h"') && !MR.includes('Bad') && MR.includes('<div class="omod-rm">'), rz(MR).join(' ; '));
+  const R7 = SCH.daten(hpOf(LIVE), Object.assign({}, X, {raeume: {cfg: [1, 2, 3, 4, 5, 6, 7].map(i => ({id: 'r' + i, name: 'Raum ' + i, min: 20, max: 22})), st: {}}}), 80, T);
+  check('Lambda Räume: mehr als 6 Räume in zwei Spalten; ohne Meldung "keine Daten"; ohne Räume "keine Räume eingerichtet"', SCH.modul(R7).includes('<div class="omod-rm zwei">') && R7.raeume.every(r => r.st === 'fehlt') && SCH.modul(R7).includes('>keine Daten<') && SCH.modul(SCH.daten(hpOf(LIVE), X, 80, T)).includes('keine Räume eingerichtet'), '');
+  const og = h => (h.match(/<div class="omod-rg">[\s\S]*?<\/div><dl/) || [''])[0];
+  check('Lambda Optimierer: Regeln mit Zustand aus OPT_engine_ue (5 Zeilen, Chips wie die Karte "Regeln"), letzter Vorschlag mit Zeit und Ergebnis, Übernahme gesperrt · Befehle heute 0/6, Punkte +52,7',
+        (og(MR).match(/class="omod-rz"/g) || []).length === 5 && og(MR).includes('<span class="n">Vorausschau</span><span class="omod-ch omod-warn">gesperrt</span>') &&
+        MR.includes('<dd>Heizregelung · 13.10. 15:21–15:31 · übernommen: Efficiency steht</dd>') && MR.includes('<dt>Übernahme</dt><dd>gesperrt · Befehle heute 0/6</dd>') && MR.includes('<dd>+52,7</dd>'), og(MR).slice(0, 200));
+  const POa = SCH.daten(hpOf(LIVE), Object.assign({}, X, {opt: Object.assign({}, EUE, {ts: T - 6 * 60000})}), 80, T), POn = SCH.daten(hpOf(LIVE), X, 80, T);
+  check('Lambda Optimierer: Kurzfassung älter als 5 min → "Entscheidungsmaschine ohne aktuelle Daten", fehlt → "noch ohne Daten"', POa.opt === null && SCH.modul(POa).includes('Entscheidungsmaschine ohne aktuelle Daten') && SCH.modul(POn).includes('Entscheidungsmaschine noch ohne Daten'), '');
+  const enf = N('opt_engine') && N('opt_engine').func;
+  check('Lambda Optimierer: opt_engine legt ENGVIEW.build(...).kurz als OPT_engine_ue ab; opt_schema liest OPT_engine_ue, OPT_rooms und OPT_cfg.rooms (nur lesen)',
+        /global\.set\('OPT_engine_ue', V\.kurz\)/.test(enf) && /opt: global\.get\('OPT_engine_ue'\)/.test(f.func) && /raeume: \{cfg: cfg\.rooms, st: global\.get\('OPT_rooms'\)/.test(f.func), '');
+  delete gstore.OPT_engine; delete gstore.OPT_weather; delete gstore.OPT_rooms; delete gstore.OPT_engine_ue;
   const en = N('opt_engine');
   check('Lambda Kopfzeile: opt_engine legt vs {dk = d.vsDk, age der Vorhersage, prognoseMaxMin, vonH, bisH} in OPT_engine ab (nur Anzeige)',
         en && /vs: \{dk: o\.d\.vsDk, age: inp\.vs \? inp\.vs\.age : null, maxMin: cfg\.rules\.vorausschau\.prognoseMaxMin, von: cfg\.rules\.vorausschau\.vonH, bis: cfg\.rules\.vorausschau\.bisH\}/.test(en.func), '');
@@ -2029,7 +2055,7 @@ check('ohne Kinderzimmer-Werte (frischer Start): vier Spalten leer, Karte zeigt 
   check('Lambda Module: Kachel Wärmepumpe (Soll 29 °C, VL/RL 30,3/28 °C, Abgabe thermisch 2,23 kW, Aufnahme elektrisch 0,40 kW, COP 5,58, 10.026 h · 3.952 Starts, 4 Starts heute; Chips Heizen/Quiet 1/Efficiency) und Heizkreis Zone 1 (Kurve 37 °C bei −13 °C … 29 °C bei +11 °C, +1 K, Heizgrenze 12 °C, Nur Heizen; Anforderung, Zeitplan aus, Ferien aus); kein Warmwasser',
         M.includes('<div class="omod-t">Wärmepumpe</div>') && M.includes('<div class="omod-t">Heizkreis Zone 1</div>') && M.includes('<dt>Soll-Vorlauf</dt><dd>29 °C</dd>') && M.includes('<dd>30,3 °C / 28 °C</dd>') &&
         /Abgabe thermisch<\/dt><dd>2,23 kW<\/dd>/.test(M) && /Aufnahme elektrisch<\/dt><dd>0,40 kW<\/dd>/.test(M) && M.includes('<dd>5,58</dd>') && M.includes('<dd>10.026 h · 3.952 Starts</dd>') && M.includes('<dt>Starts heute</dt><dd>4</dd>') &&
-        M.includes('<dd>37 °C bei −13 °C … 29 °C bei +11 °C</dd>') && M.includes('<dd>+1 K</dd>') && M.includes('<dd>12 °C</dd>') && M.includes('<dd>Nur Heizen</dd>') &&
+        M.includes('<dd><span class="nw">37 °C bei −13 °C …</span> <span class="nw">29 °C bei +11 °C</span></dd>') && M.includes('<dd>+1 K</dd>') && M.includes('<dd>12 °C</dd>') && M.includes('<dd>Nur Heizen</dd>') &&
         chips(M).join() === 'Heizen:ok,Quiet 1:act,Efficiency:mute,Anforderung:ok,Zeitplan aus:mute,Ferien aus:mute' && !/Warmwasser|Speicher/.test(M), chips(M).join());
   const zm = o => chips(SCH.modul(SCH.daten(hpOf(Object.assign({}, LIVEM, o)), X, 80, T)));
   check('Lambda Module: Anforderung aus dem Schema-Zustand: Pause → Pause/Standby, Heizgrenze → Heizgrenze/Standby, Abtauen → Abtauen/Anforderung, Aus, Störung H23, Heizstab an; Verschiebung 0 = "keine"; Comfort',

@@ -3,15 +3,15 @@
  * opt_t_schema (Seite "Optimierer") und opt_t_schema_ue (Seite "Übersicht"); geprueft in tools/optimizer_sim.js, statisch gerendert in tools/opt_seiten_vorschau.js.
  *   OPTSCHEMA.daten(HP, X, korrW, now) -> Nutzlast: HP = global OPT_hp ({Name: {v, ts}}, Namen ohne TOP-Praefix), X = {freq, rt, rtLast, starts, vs, owm} (HeishaMoNR-
  *                                         Globale compressor_frequency, compressor_runtime, compressor_last_runtime, Starts_Today; vs = OPT_engine.vs mit ts,
- *                                         owm = {t, ts} aus OPT_weather), korrW = OPT_cfg.cop.pelKorrW
- *   OPTSCHEMA.modul(P) / modulMount(el, P) -> Modulkacheln "Wärmepumpe" und "Heizkreis Zone 1" (Vorlage opt_t_module, Übersicht) aus derselben Nutzlast
+ *                                         owm = {t, ts} aus OPT_weather, raeume = {cfg: OPT_cfg.rooms, st: OPT_rooms}, opt = OPT_engine_ue), korrW = OPT_cfg.cop.pelKorrW
+ *   OPTSCHEMA.modul(P) / modulMount(el, P) -> Modulkacheln "Wärmepumpe", "Heizkreis Zone 1", "Räume", "Optimierer" (Vorlage opt_t_module, Übersicht) aus derselben Nutzlast
  *   OPTSCHEMA.html(P, opt)               -> HTML: SVG-Schema + Kennzahlen-Leiste; opt.phase = Sekunden (Fliess-Animation laeuft ueber das Neuzeichnen hinweg weiter)
  *   OPTSCHEMA.mount(el, P)               -> zeichnet in ein Element (nur wenn sich etwas geaendert hat)
  * Nur Anzeige: liest Werte, schreibt nichts. Fehlende Werte (HeishaMon -128/-127/-78/-200, aelter als 15 min, Einstellungen aelter als 24 h) zeigen "–".
  * Farben und Schrift wie tools/ui_optik.css (Text #263238, Nebentext #546e7a, Kennzahlen 20 px, Grundschrift 14 px; Textfarben >= 4,5:1, Linien >= 3:1).
  * Fuellfarben stehen als style="fill:…" (die Seiten-CSS des Dashboards ueberschreibt das SVG-Attribut fill). */
 var OPTSCHEMA = (function () {
-    var VER = 2, MIN = 60000, FEHLT = [-128, -127, -78, -200];
+    var VER = 2, RAUM_STILL_MIN = 120, MIN = 60000, FEHLT = [-128, -127, -78, -200];
     var C = {txt: '#263238', mute: '#546e7a', box: '#b0bec5', vl: '#d32f2f', vlT: '#c62828', rl: '#1976d2', rlT: '#1565c0', luft: '#0097a7', luftT: '#00727f',
              heiss: '#d84315', fl: '#e65100', kalt: '#0288d1', saug: '#00897b', grau: '#78909c', rot: '#c62828', ok: '#2e7d32', warn: '#b45309', dunkel: '#455a64'};
 
@@ -61,9 +61,17 @@ var OPTSCHEMA = (function () {
         }
         var ow = X.owm || null, owm = (ow && num(ow.t) !== null && typeof ow.ts === 'number' && now - ow.ts <= 120 * MIN) ? num(ow.t) : null;
         var kopf = {at: at, mat: mat, dk: dk, von: vs ? num(vs.von) : null, bis: vs ? num(vs.bis) : null, owm: owm};
+        // Raeume (Modulkachel): aktive Raeume aus OPT_cfg.rooms, Ist = geglaettete Temperatur (ema, wie die Maschine), Fuehler still ab 120 min ohne Meldung
+        var RC = X.raeume && Array.isArray(X.raeume.cfg) ? X.raeume.cfg : [], RS = (X.raeume && X.raeume.st) || {};
+        var raeume = RC.filter(function (rc) { return rc && rc.active !== false; }).map(function (rc) {
+            var r = RS[rc.id] || {}, tr = num(r.ema), alt = typeof r.ts === 'number' ? Math.max(0, (now - r.ts) / MIN) : null, mi = num(rc.min), ma = num(rc.max);
+            var st = (tr === null || alt === null) ? 'fehlt' : (alt > RAUM_STILL_MIN ? 'still' : (mi !== null && tr < mi ? 'kalt' : (ma !== null && tr > ma ? 'warm' : 'band')));
+            return {n: String(rc.name || rc.id), t: tr === null ? null : Math.round(tr * 10) / 10, min: mi, max: ma, alt: alt === null ? null : Math.round(alt), st: st};
+        });
+        var O = X.opt, opt = (O && typeof O.ts === 'number' && now - O.ts <= 5 * MIN && Array.isArray(O.rules)) ? O : null;          // Kurzfassung der Maschine (OPT_engine_ue), hoechstens 5 min alt
         var kv = [s('Z1_Heat_Curve_Target_High_Temp'), s('Z1_Heat_Curve_Outside_Low_Temp'), s('Z1_Heat_Curve_Target_Low_Temp'), s('Z1_Heat_Curve_Outside_High_Temp')];
         return {v: VER, ts: now, alter: alter, veraltet: alter === null || alter > 5, lauf: lauf, pumpe: pumpe, luefter: fan !== null && fan > 0, zustand: z, fehler: fehler,
-                heizstab: {an: hsAn, frei: hsFrei, h: s('Room_Heater_Operations_Hours')}, kopf: kopf,
+                heizstab: {an: hsAn, frei: hsFrei, h: s('Room_Heater_Operations_Hours')}, kopf: kopf, raeume: raeume, opt: opt, optAlt: !opt && !!O,
                 hk: {kurve: kv.every(function (x) { return x !== null; }) ? {vlKalt: kv[0], atKalt: kv[1], vlWarm: kv[2], atWarm: kv[3]} : null,
                      plan: s('Main_Schedule_State'), ferien: s('Holiday_Mode_State'), ba: s('Operating_Mode_State')},
                 w: {at: at, rohrA: v('Outside_Pipe_Temp'), evaAus: v('Eva_Outlet_Temp'), hz: hz, strom: v('Compressor_Current'), fan: fan,
@@ -252,14 +260,32 @@ var OPTSCHEMA = (function () {
         ], [chip(zw[0] + (z === 'stoerung' && P.fehler ? ' ' + esc(P.fehler) : ''), zw[1]), chip('Quiet ' + f(W.quiet, 0), ok(W.quiet) && W.quiet > 0 ? 'act' : 'mute', 'Quiet_Mode_Level 0–3'),
             chip(W.hc === 1 ? 'Efficiency' : (W.hc === 0 ? 'Comfort' : 'Heizregelung –'), 'mute', 'Heating_Control')].concat(hs.an ? [chip('Heizstab an', 'bad')] : []));
         var hk = kachelM('Heizkreis Zone 1', [
-            zeile('Heizkurve', K ? t(K.vlKalt) + ' bei ' + tA(K.atKalt) + ' … ' + t(K.vlWarm) + ' bei ' + tA(K.atWarm) : '–', 'Z1_Heat_Curve_*'),
+            zeile('Heizkurve', K ? '<span class="nw">' + t(K.vlKalt) + ' bei ' + tA(K.atKalt) + ' …</span> <span class="nw">' + t(K.vlWarm) + ' bei ' + tA(K.atWarm) + '</span>' : '–', 'Z1_Heat_Curve_*'),
             zeile('Verschiebung', W.shift === 0 ? 'keine' : sg(W.shift, 'K'), 'Z1_Heat_Request_Temp'),
             zeile('Heizgrenze', t(W.grenze), 'Heating_Off_Outdoor_Temp'),
             zeile('Betriebsart', ok(H.ba) && BETRIEBSART[H.ba] ? BETRIEBSART[H.ba] : '–', 'Operating_Mode_State')
         ], [chip(zh[0], zh[1]), chip('Zeitplan ' + (H.plan === 1 ? 'an' : (H.plan === 0 ? 'aus' : '–')), H.plan === 1 ? 'act' : 'mute', 'Main_Schedule_State'),
             chip('Ferien ' + (H.ferien === 1 ? 'an' : (H.ferien === 0 ? 'aus' : '–')), H.ferien === 1 ? 'warn' : 'mute', 'Holiday_Mode_State')]);
+        // Raeume: je Raum Name, Ist, Band, Zustand (mehr als 6 Raeume: zwei Spalten)
+        var RZ = {band: ['im Band', 'ok'], kalt: ['unter Minimum', 'warn'], warm: ['über Maximum', 'warn'], still: ['Fühler still', 'bad'], fehlt: ['keine Daten', 'mute']};
+        var rl = P.raeume || [];
+        var rm = '<div class="omod-k"><div class="omod-t">Räume</div>' + (rl.length ? '<div class="omod-rm' + (rl.length > 6 ? ' zwei' : '') + '">' + rl.map(function (r) {
+            var z = RZ[r.st] || RZ.fehlt, tip = r.st === 'still' ? 'letzte Meldung vor ' + (r.alt >= 120 ? dez(r.alt / 60, 1) + ' h' : r.alt + ' min') : (ok(r.alt) ? 'Meldung vor ' + r.alt + ' min' : '');
+            return '<div class="omod-rz"><span class="n">' + esc(r.n) + '</span><span class="v' + (r.st === 'still' ? ' alt' : '') + '">' + t(r.t) + '</span><span class="b">' + (ok(r.min) && ok(r.max) ? dez(r.min, r.min % 1 ? 1 : 0) + '–' + t(r.max) : '–') + '</span>' + chip(z[0], z[1], tip) + '</div>';
+        }).join('') + '</div>' : '<div class="omod-leer">keine Räume eingerichtet</div>') + '</div>';
+        // Optimierer: Regeln mit Zustand (wie Karte "Regeln"), letzter Vorschlag, Uebernahme, Punkte (OPT_engine_ue)
+        var O = P.opt, op;
+        if (!O) { op = '<div class="omod-k"><div class="omod-t">Optimierer</div><div class="omod-leer">' + (P.optAlt ? 'Entscheidungsmaschine ohne aktuelle Daten' : 'Entscheidungsmaschine noch ohne Daten') + '</div></div>'; }
+        else {
+            var lv = O.letzter;
+            op = '<div class="omod-k"><div class="omod-t">Optimierer</div><div class="omod-rg">' + O.rules.map(function (r) { return '<div class="omod-rz"><span class="n">' + esc(r[0]) + '</span>' + chip(esc(r[1]), r[2]) + '</div>'; }).join('') + '</div>' +
+                 '<dl class="omod-l omod-l2">' +
+                 zeile(O.prop ? 'Vorschlag' : 'Letzter Vorschlag', lv ? esc(lv.name) + ' · ' + esc(lv.t) + (lv.ende ? ' · ' + esc(lv.ende) : '') : 'keiner', lv && lv.was ? lv.was : '') +
+                 zeile('Übernahme', esc(O.freiTxt) + ' · Befehle heute ' + O.heute + '/' + O.proTag) +
+                 zeile('Punkte', ok(O.punkte) ? (O.punkte > 0 ? '+' : '') + dez(O.punkte, 1) : '–', 'Summe der Bewertung aller Regeln') + '</dl></div>';
+        }
         var stand = P.veraltet ? '<div class="osch-alt">Keine aktuellen Werte' + (ok(P.alter) ? ' (letzter vor ' + Math.round(P.alter) + ' min)' : '') + '</div>' : '';
-        return stand + '<div class="omod">' + wp + hk + '</div>';
+        return stand + '<div class="omod">' + wp + hk + rm + op + '</div>';
     }
     function modulMount(el, P) {
         if (!el) { return; }
@@ -287,7 +313,7 @@ var OPTSCHEMA = (function () {
         '.osch-kopf{flex:1 1 100%;display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 10px;color:#546e7a;font-size:14px}' +
         '.osch-kopf b{font-size:20px;font-weight:600;line-height:1.3}.osch-kopf .at{color:#00727f}.osch-kopf .mat{color:#263238}.osch-kopf .arr{font-size:20px;color:#263238}' +
         '.osch-kopf .s{font-size:12.5px}.osch-kopf .owm{margin-left:10px;font-size:12.5px}' +
-        '.omod{display:grid;grid-template-columns:repeat(2,minmax(0,640px));gap:12px}' +
+        '.omod{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}@media (min-width:1600px){.omod{grid-template-columns:repeat(4,minmax(0,1fr))}}' +
         '.omod-k{border:1px solid #e0e6e9;border-radius:8px;background:#f7f9fa;padding:10px 12px;min-width:0}' +
         '.omod-t{font-size:16px;font-weight:600;color:#263238;line-height:1.3;margin:0 0 8px;padding-left:8px;border-left:4px solid #0094ce}' +
         '.omod-b{display:flex;gap:12px;align-items:flex-start}' +
@@ -297,7 +323,13 @@ var OPTSCHEMA = (function () {
         '.omod-ch{display:inline-block;padding:2px 10px;border-radius:12px;font-size:12.5px;line-height:19px;font-weight:500;white-space:nowrap;background:#eceff1;color:#455a64}' +
         '.omod-r .omod-ch:first-child{font-size:14px;font-weight:600;padding:3px 12px}' +
         '.omod-ok{background:#e6f4ea;color:#1b5e20}.omod-warn{background:#fff3e0;color:#8a4b00}.omod-bad{background:#fdecea;color:#b71c1c}' +
-        '.omod-kalt{background:#e0f7fa;color:#00626d}.omod-act{background:#007bb0;color:#fff}.omod-mute{background:#eceff1;color:#455a64}';
+        '.omod-kalt{background:#e0f7fa;color:#00626d}.omod-act{background:#007bb0;color:#fff}.omod-mute{background:#eceff1;color:#455a64}' +
+        '.omod-rm,.omod-rg{display:grid;grid-template-columns:minmax(0,1fr);gap:0 24px}.omod-rm.zwei{grid-template-columns:repeat(2,minmax(0,1fr))}' +
+        '.omod-rz{display:flex;align-items:center;gap:10px;padding:3px 0;border-bottom:1px solid #e6ebee;min-width:0}.omod-rz:last-child{border-bottom:0}' +
+        '.omod-rz .n{flex:1 1 auto;min-width:0;color:#263238;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
+        '.omod-rz .v{flex:0 0 auto;font-weight:600;white-space:nowrap}.omod-rz .v.alt{color:#546e7a;font-weight:400}' +
+        '.omod-rz .b{flex:0 0 auto;color:#546e7a;font-size:12.5px;white-space:nowrap}.omod-rz .omod-ch{flex:0 0 auto}' +
+        '.omod .nw{white-space:nowrap}.omod-l2{margin-top:8px;padding-top:6px;border-top:1px solid #dfe5e8}.omod-leer{color:#546e7a;font-size:13px}';
     var S = {v: VER, daten: daten, html: html, svg: svg, mount: mount, modul: modul, modulMount: modulMount, CSS: CSS, fmt: {f: f, t: t, sg: sg}};
     if (typeof window !== 'undefined') { window.optSchema = S; }
     return S;

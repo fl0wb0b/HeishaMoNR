@@ -303,7 +303,13 @@ var ENGVIEW = (function (E) {
                     reife: r.art === 'befehl' ? {n: ok, m: r.kriterien.length, reif: r.reif} : null, krit: r.kriterien.map(function (k) { return [k.kurz, k.ok ? 1 : 0, k.text]; })};
         });
         var score = {now: now, t0: t0, series: series, tiles: tiles, sv: sv};
-        return {card: card, rules: {rules: rules}, score: score, mess: messBuild(S, now, cfg, o.plan || null), log: {rows: logRows(o.V || {}, now, 12)}};
+        // Kurzfassung fuer die Modulkachel "Optimierer" auf der Uebersicht (UI-Lambda 14.10.2026, nur Anzeige; die Huelle legt sie als OPT_engine_ue ab)
+        var pk = 0, pn = 0; rep.forEach(function (r) { if (!r.ohnePunkte && have(r.punkte)) { pk += r.punkte; pn++; } });
+        var lv = card.prop ? {name: card.prop.name, t: 'seit ' + card.prop.seit, ende: 'offen', was: card.prop.was} : letzterVorschlag(o.V || {});
+        var kurz = {ts: now, rules: rules.map(function (r) { return [r.name, r.chip, r.cls]; }), prop: !!card.prop, letzter: lv ? {name: lv.name, t: lv.t, ende: lv.ende, was: lv.was} : null,
+                    frei: en && knoten && rel.length > 0, freiTxt: !en ? 'gesperrt' : (!knoten ? 'gesperrt (Sendeknoten)' : (rel.length ? 'frei' : 'frei, keine Regel')), heute: heute, proTag: E.APPLY.proTag,
+                    punkte: pn ? Math.round(pk * 10) / 10 : null};
+        return {card: card, rules: {rules: rules}, score: score, mess: messBuild(S, now, cfg, o.plan || null), log: {rows: logRows(o.V || {}, now, 12)}, kurz: kurz};
     }
     return {track: track, build: build, logRows: logRows, copMatrix: copMatrix, messBuild: messBuild, raumKacheln: raumKacheln, zielTxt: zielTxt, knopfOf: knopfOf, COL: COL, CHIP: CHIP};
 })(typeof ENGINE !== 'undefined' ? ENGINE : require('./engine_core.js'));
