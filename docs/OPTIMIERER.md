@@ -708,6 +708,7 @@ Der Beobachter schreibt nie an Anlage, NAS oder MQTT. Einen MQTT-Befundkanal zur
 | 13.10. spät (Branch `quiet-freigabe-v2`, zweiter Review-Durchgang, Abschnitt 17.9) | `optimizer_sim` **639 OK**; `engine_sim` **246 OK** ohne Flow-Datei, **302 OK** mit Flow-Datei, **320 OK** mit Flow-Datei und `replay_data_1310`, **315 OK** mit `replay_data` (neu: Abschnitt (f) mit den Szenarien des Reviews für B1–B7, R1–R6 und die vorläufigen Vorgaben); `kern_chain_sim` **19 OK** (neu R5b: gehärtete Ausnahme); `takt_sim` **26 OK**; Vorschau 30 Seiten/Breiten: 0 Fehler; Generator gegen Live (2b3943e): `opt_engine`, `opt_apply` (nur `func`), 0 neu, 0 entfernt |
 | 13.10. abends (Branch `quiet-freigabe-v2`, nach dem Merge von `tabs-zusammen`) | `optimizer_sim` **639 OK**; `engine_sim` **227 OK** ohne Flow-Datei, **283 OK** mit Flow-Datei, **300 OK** mit Flow-Datei und `replay_data_1310` (07.–13.10.), **296 OK** mit `replay_data` (07.–12.10.); die Replay-Prüfungen hängen jetzt am Datensatz (07.–10.10. / ab 07.–12.10. / 07.–13.10.). Neu u. a.: Abschnitt (e) Quiet-Freigabe v2 (19 Prüfungen), 8-Tage-Fake-Uhr Quiet (Shadow und Übernahme), Effizienz-Deckel 8 Tage mild, Hebel +1 K, Replay 07.–13.10. `takt_sim` **26 OK** mit `replay_data`; mit `replay_data_1310` 1 datenabhängiger FAIL („48-h-Fenster“), gleich auf 2b3943e. `kern_chain_sim` **15 OK**. Vorschau `opt_seiten_vorschau.js` + `ui_vorschau_pruefen.js` (4 Seiten) und `engine_ui_preview.js` (A–E) bei 1024/1920/2560: 0 Fehler. Generator gegen Live (2b3943e, dieselbe Flow-Datei): 2 `opt_*` geändert (`opt_engine`, `opt_apply`, nur `func`), 0 neu, 0 entfernt |
 | 13.10. Nacht (Branch `review-paket`, Abschnitt 18; Flow-Datei mit `--uebernahme-knoten-aktiv`, Sims mit `UEBERNAHME_KNOTEN_AKTIV=1`) | `optimizer_sim` **544 OK** (Tests der gestrichenen Empfehlung, des Kontrolltests, der Eskalationsaktionen und der Plan-Verteilung entfernt, neue für Vorschau, gemessenen COP, Heizregelungs-Hinweis aus der Maschine); `engine_sim` **249 OK** ohne Flow-Datei, **323 OK** mit Flow-Datei und `replay_data_1310`, **317 OK** mit `replay_data`; `takt_sim` 25 OK + 1 bekannter datensatzabhängiger FAIL („48-h-Fenster“, wie vorher) mit `replay_data_1310`, 26 OK mit `replay_data`; `kern_chain_sim` 19 OK; Beobachter-Test OK; statische Vorschau Optimierung/Optimierer/Daten & Güte/Maschine bei 1024/1920/2560 px: 15 × OK |
+| 14.10. (Branch `cop-korrektur`, Abschnitt 19; Flow-Datei mit `--uebernahme-knoten-aktiv`, Sims mit `UEBERNAHME_KNOTEN_AKTIV=1`) | `optimizer_sim` **554 OK** (vorher 544; angepasst: angehängte Spalten, korrigierte Kennfeld-/Plan-Werte, PLAN_VER 12; neu: Korrektur nur im Lauf, Konstante über config.json änderbar und begrenzt, Tooltips, Slot einer älteren Version ohne Korrektur-Spalten, Kennfeld-Rohsummen unverändert); `engine_sim` **254 OK** ohne Flow-Datei, **328 OK** mit Flow-Datei und `replay_data_1310`, **322 OK** mit `replay_data` (neu: 5 Kernprüfungen); `takt_sim` 25 OK + 1 bekannter datensatzabhängiger FAIL („48-h-Fenster“) mit `replay_data_1310`, 26 OK mit `replay_data`; `kern_chain_sim` **19 OK**; Vorschau `opt_seiten_vorschau.js` + `ui_vorschau_pruefen.js` (4 Seiten × 1024/1920/2560): 12 × OK |
 | `node tools/takt_analyse.js <Datenordner>` | Läufe mit Stopp-Art, Frequenz, Rücklauf-Rückstand, Vorlauf-Anstieg; Treffsicherheit der Vorhersage „Abschaltgrenze in ≤ 45 min“ |
 
 Angepasste Sicherheitsprüfungen in `optimizer_sim.js` sind gezielt: Es ist **genau** `opt_apply_mqtt` erlaubt. Eine neue Prüfung verlangt:
@@ -1108,7 +1109,7 @@ Umsetzung der Punkte 1–5 des Regel-Reviews (REVIEW.md, TODO „Regel-Review 13
 
 **Entscheidung: reine Vorschau, keine Verschiebung.** Eine COP-/Wetter-Verschiebung ist bei dieser Anlage nicht robust (Messung 08.–12.10., Minutenprotokoll ohne Abtauen/Warmwasser):
 - **Kein Tarif:** Netzbezug 0,05–0,25 kWh/Tag (10.10. im Boost 1,83), Einspeisung 1,6–66 kWh/Tag. Die Grenzkosten sind flach (Einspeisevergütung ~6–7 ct); die angenommenen 21/31 ct trafen nicht zu.
-- **COP gemessen** (energiegewichtet): < 4 °C **5,13** · 4–8 °C **5,57** · 8–11 °C **6,01** · ≥ 11 °C **6,72**. Das alte Modell (45 % Carnot) lag 5–17 % zu tief (4,25 / 4,61 / 5,46 / 6,36).
+- **COP gemessen** (energiegewichtet, Strom TOP16 roh): < 4 °C **5,13** · 4–8 °C **5,57** · 8–11 °C **6,01** · ≥ 11 °C **6,72**. Seit 14.10. rechnet der Optimierer mit der COP-Korrektur (+80 W im Lauf, Abschnitt 19): 4,30 · 4,62 · 4,92 · 5,51. Das alte Modell (45 % Carnot) lag 5–17 % zu tief (4,25 / 4,61 / 5,46 / 6,36).
 - **Gewinn einer Verschiebung:** bestes gegen schlechtestes 3-h-Fenster je Tag COP 6,64 gegen 5,49 → **0,032 kWh Strom je verschobener kWh Wärme**. Der Mehrverlust des wärmeren Hauses kostet **0,011–0,055** (UA 0,15–0,22 kW/K, Speicher 3–10 kWh/K, 10 h) → netto −0,024…+0,020 je kWh. Mit dem Hebel ±1 K (0,6–2,2 kWh/Tag) sind das **−1,2…+0,4 % des Tagesstroms** (5,59 kWh) bzw. −0,42…+0,15 ct/Tag.
 - **Komfort:** Im warmen Fenster hatten die Räume −0,84…+0,08 K Luft bis zum Maximum, Vorziehen hätte das Band verlassen.
 
@@ -1153,3 +1154,53 @@ Nur `opt_*`, nichts entfernt, nichts neu: `opt_engine`, `opt_apply` (bettet den 
 - Bonsai-Befund „> 20 Hz trotz Quiet ≥ 1“ beruht auf der alten Annahme „Quiet-Deckel = Minimum“; gemessen deckeln Q2 bei 17/21 Hz und Q1 bei 21 Hz – der Befund sollte an die Deckel-Tabelle der Maschine angepasst werden.
 - Vorausschau −1 K: im Lauf sperrt meist die Takt-Gefahr (Vorlauf über Soll); ob sie je vorschlägt, zeigt erst ein Winter mit offenem Gate.
 - Heizregelungs-Hinweis: Schwellen (Heizstab-Grenze + 2 K, 10/3/10 min) sind Annahmen; mit Frostdaten prüfen.
+
+## 19. COP-Korrektur (14.10.2026, Branch `cop-korrektur`)
+
+Auftrag des Nutzers: „den COP so anpassen, dass er passt, aus den Erkenntnissen des Forums“ (Forum 189605, `forum189605/BERICHT_LEISHA.md`, Frage 10, TODO F10-a).
+
+**Befund.** Der interne Stromwert der Leisha (`TOP16 Heat_Energy_Consumption`) untertreibt im Lauf, die Wärmeseite stimmt weitgehend:
+- L5: 70–90 W unter einem Shelly, je nach Last (Beitrag 4545989).
+- L5 bei 16/17 Hz: 2 kW Wärme bei 390 W laut Shelly (4597230). Unsere Anlage zeigt dort 341–363 W.
+- L7: Jahresstrom −14,6 % gegen Shelly, Wärme nur −2,7 % gegen WMZ (4145844). Der Fehler liegt also auf der Stromseite (Pumpe, Lüfter, Elektronik fehlen).
+
+**Konstante.** `cfg.cop.pelKorrW` = **80 W** (ANNAHME im belegten Bereich 40–90 W). Sie wird **nur bei laufendem Verdichter** addiert, im Stillstand bleibt TOP16 roh (15–34 W). Eine Quelle: `OPT_cfg.cop` (Standard im Generator `COP`, überschreibbar in `config.json` mit `{"cop": {"pelKorrW": 40}}`, gültig 0–200 W, sonst Standard). Die Maschine bekommt denselben Wert über `ENGINE.mergeCfg` (`cfg.cop`); `0` heißt roh.
+
+**Prinzip: gespeichert wird roh, korrigiert wird beim Lesen.** Alle Zähler, die nur Laufminuten enthalten (Takt-Messung `S.takt.copT`, Kennzahl `S.ueb`, Kennfeld des Quiet-Wächters `qs.kf`/`kfE`), behalten TOP16. Beim Lesen kommt je gezählte Laufminute `pelKorrW/60` Wh dazu. Damit sind alle gespeicherten Werte mit jeder Konstante neu rechenbar, es gibt keine Mischung aus roh und korrigiert, und nichts wird doppelt korrigiert. Ein Neuladen der Takt-Messung ist nicht nötig.
+
+| Stelle | Was sich ändert |
+|---|---|
+| Kern `copSumme`/`copTabelle` | Strom korrigiert (Feld 0), Rohsumme in Feld 6; `d.copSum` des Hauptschritts mit `cfg.cop` → Zielstufe der Quiet-Freigabe (COP-Vergleich, `copTol`), Veto von Deckel/Laufzeit, Texte „COP x,xx“ |
+| Kern `uebSumme` (Kennzahl „Überheizt ab 11 °C“) | `el`/`elAlle` korrigiert, `elRoh`/`elAlleRoh` roh |
+| Wirkungsprüfung (+60 W, +350…+650 W, −100 W) | **unverändert**: es sind Differenzen zwischen zwei Lauf-Minuten, die Korrektur fällt heraus |
+| Karte „Messwerte & Lernen“ | COP-Matrix korrigiert; Tooltip je Zelle mit rohem COP, Tooltip der Überschrift „intern +80 W korrigiert“; „Überheizt“ mit Roh-kWh im Tooltip |
+| `opt_quiet` | Zeilen „Leistung elektrisch“ und „COP“ korrigiert (Tooltip mit TOP16 und rohem COP); Kennfeld-Tabelle: Ø P el. + 80 W, Ø COP = Ø Wärme ÷ (Ø Strom + 80) aus den Rohsummen; `quiet-*.csv` hinten `leistung_el_korr_w, cop_momentan_korr, cop_korr_w` (Rohspalten bleiben, Nachladen liest weiter `leistung_el_w`) |
+| `opt_plan` (PLAN_VER 12) | Kennfeld-COP je Band und η (Carnot-Anteil) korrigiert → COP und Strom je Slot; `plan-actuals` hinten `ist_strom_korr_kwh, ist_strom_heizen_korr_kwh, ist_cop_korr, ist_cop_korr_w` (Slot von einer älteren Version: leer); `plan-eval` hinten `prog_cop_korr_w` (Konstante des Schnappschusses, leer = vor Version 12, roh) und dieselben vier Ist-Spalten; Schnappschuss-`meta.cop_korr_w`; Tooltips an Kacheln, Details und Stundenkopf |
+| `opt_eval` (Karte „Wärmepumpe“, Seite Daten & Güte) | „Leistung · COP“ korrigiert, Tooltip mit TOP16 und dem Kern-COP; `optimizer-v2-*.csv` hinten `leistung_korr_w, cop_korr, cop_korr_w` |
+| `opt_hist` (Verlauf Wärmepumpe) | Stromkurve aus `leistung_w` + 80 W, wenn der Verdichter lief (für jede Zeile gleich gerechnet), Tooltip an der Legende (`ui_chart.js`: optionales `t` je Reihe) |
+| `energy-*.csv` | enthält keinen TOP16-Wert (nur PV/Netz/Batterie/Preise) – nichts zu ändern; die Strom-Tagessummen der Wärmepumpe stehen in `plan-actuals` |
+| `defrost-*.csv` (`strom_kwh`) | bleibt roh: beim Abtauen steht der Lüfter, die fehlende Leistung ist dort unbekannt |
+
+**Nicht geändert (Kern, Nutzerentscheidung):** Der COP-Pfad zu Venus/VRM rechnet im HeishaMoNR-Kern: `COP_calculated` (Tab „WP Control“, `f4e55b938e645737`: Wärme aus Durchfluss × ΔT ÷ `TOP16_Heat_Energy_Consumption` roh) → `COP_HEAT` → Link → „nur COP_HEAT“ (Tab „WP Dash“) → `mqtt out panasonic/cop` → Venus → VRM. Er nutzt denselben Rohwert und zeigt deshalb weiter ~20 % zu viel. Auch die Kern-Anzeigen (Gauge, Balken, `COP_HEAT_24m`) bleiben roh.
+
+**Neue COP-Bänder** (Replay `replay_data_1310`, 07.–13.10., Laufminuten ohne Abtauen/Warmwasser, energiegewichtet):
+
+| Außen | Ø TOP16 | COP roh | COP korrigiert | Faktor |
+|---|---|---|---|---|
+| < 4 °C | 409 W | 5,13 | **4,30** | 0,84 |
+| 4–8 °C | 390 W | 5,57 | **4,62** | 0,83 |
+| 8–11 °C | 343 W | 6,07 | **4,92** | 0,81 |
+| ≥ 11 °C | 336 W | 6,82 | **5,51** | 0,81 |
+
+Vergleich Forum (L5): COP ≈ 6,0 bei 11 °C, 4,34 bei 1 °C, JAZ 4,43, Monatswerte um 0 °C 4,3–4,7. Unten passt es jetzt (4,30 ohne Abtauverluste), bei ≥ 11 °C liegen wir mit 5,51 rund 8 % unter dem Forumswert (dort andere Anlage, VL und Messung; ggf. ist 80 W bei Mildwetter etwas hoch). Eine Shelly-Messung würde die Konstante festlegen.
+
+**Regeln im Replay (07.–13.10., 8650 Minuten, alter Kern 6ddbbcc gegen neuen Kern mit 80 W und mit 0 W, Takt-Messung leer und testweise mit der ganzen Woche vorbefüllt):** 0 abweichende Minuten bei Status, Grund, Vorschlag (Regel, Befehl, Prüfsumme) und Ende/halten, 12 = 12 Vorschläge, Punktebuch identisch. Mit 0 W rechnet der neue Kern wie der alte.
+- COP-Matrix (vorbefüllt) korrigiert: Efficiency Q0/Q3 bei 11…15 °C 5,70/5,34 (roh 6,89/6,76), 7…11 °C 4,89/4,96, 3…7 °C 4,27/4,63, −1…3 °C 4,13/4,50 (Q2 4,29).
+- **Veto-Abstand schrumpft:** Bei 11…15 °C liegt Quiet 3 jetzt 6,3 % unter Quiet 0 (roh 1,9 %); das Veto greift ab 10 %. Die Korrektur trifft niedrige Leistung stärker (80 W sind bei 300 W mehr als bei 500 W).
+- **Grundlage des Effizienz-Deckels:** Die Messung „COP bei 22–27 Hz 3–8 % unter 16–17 Hz“ (Schwelle `hzHoch`, Quiet 0, ab Laufminute 15) gilt nur mit TOP16 roh. Korrigiert: 22–27 Hz −1…+5 %, ab 28 Hz −3 %, 18–21 Hz −4…+2 %, also im Rauschen (Pth ±10 %). Logik und Schwellen sind unverändert (Auftrag); Zweck- und Herkunftstext nennen jetzt beide Zahlen. Ob der Effizienz-Deckel (Quiet höher bei ≥ 22 Hz) noch Strom spart, ist damit eine offene Nutzerentscheidung; sein zweiter Nutzen (längere Läufe) bleibt.
+
+**Zusatz (Beobachter, Nutzer 14.10.):** `quiet-*.csv` hat hinten zusätzlich `rohr_aussen` = `Outside_Pipe_Temp` aus `OPT_hp` (Pseudo-Abtauungen erkennen). Keine Logik dazu.
+
+**Geänderte Knoten** (Generator gegen den von 6ddbbcc, beide mit `--uebernahme-knoten-aktiv`, dieselbe Flow-Datei): nur `opt_*`, 25 geändert (nur `func`/`format`), 0 neu, 0 entfernt: `opt_defaults`, `opt_quiet`, `opt_plan`, `opt_eval`, `opt_hist`, `opt_engine`, `opt_apply` (Kern), Statuskarten `opt_t_opt/wx/calc/quiet/en/fq/wp` (Tooltip-Feld), `opt_t_qstats`, `opt_t_plan`, `opt_t_plan_tab`, Diagrammkarten `opt_t_ch_wp/rooms/at` und Maschinenkarten `opt_t_eng_prop/rules/score/mess/log` (eingebettetes `ui_chart.js`/`eng_ui.js`). `opt_apply_mqtt` bleibt aktiv. Deploy später: `GEN_ARGS=--uebernahme-knoten-aktiv ./deploy_opt.sh …`.
+
+**Offene Entscheidungen:** (1) Kern-COP für Venus/VRM ebenfalls korrigieren? (2) Effizienz-Deckel ohne belegten COP-Vorteil behalten? (3) Konstante mit einer Shelly-Messung festlegen (dann `config.json`).
