@@ -1785,7 +1785,11 @@ if (flowsFile) {
             lr.in.vs && lr.in.vs.gate === 0 && lr.in.vs.at[0] === 11 && lr.in.vs.at.length === 7 && !('pv' in lr.in.vs) && !('wind' in lr.in.vs) && lr.r[3].id === 'vorausschau' && lr.r[3].sperren[0] === 'modell' && tv.chip === 'gesperrt' && tv.line.l === 'Modell-Gate' && tv.line.v === '1 / 10 Tage' && gstore.OPT_engine.halten !== undefined, JSON.stringify(lr.in.vs) + ' | ' + JSON.stringify(tv.line));
       const ev = gstore.OPT_engine.vs;      // UI-Lambda 14.10.2026: Kopfzeile des Anlagenschemas liest vsDk aus OPT_engine
       check('Huelle UI-Lambda: OPT_engine.vs traegt vsDk (gleich dem Datensatz abl.vs_dk), das Alter der Vorhersage, prognoseMaxMin 120 und das Fenster 2–5 h (nur Anzeige)',
-            ev && (ev.dk === undefined ? null : ev.dk) === (lr.abl.vs_dk === undefined ? null : lr.abl.vs_dk) && ev.age === lr.in.vs.age && ev.maxMin === 120 && ev.von === 2 && ev.bis === 5, JSON.stringify(ev) + ' | ' + lr.abl.vs_dk); }
+            ev && (ev.dk === undefined ? null : ev.dk) === (lr.abl.vs_dk === undefined ? null : lr.abl.vs_dk) && ev.age === lr.in.vs.age && ev.maxMin === 120 && ev.von === 2 && ev.bis === 5, JSON.stringify(ev) + ' | ' + lr.abl.vs_dk);
+      const ue = gstore.OPT_engine_ue, rk = R.eng[24][1].payload.rules;      // UI-Lambda Nacharbeit: Kurzfassung fuer die Modulkachel "Optimierer" der Uebersicht
+      check('Huelle UI-Lambda: OPT_engine_ue = Kurzfassung der Karten (5 Regeln mit Name/Chip/Klasse wie die Karte "Regeln", letzter Vorschlag, Übernahme gesperrt · heute n/6, Punkte), frisch',
+            ue && ue.ts === NOW && ue.rules.length === rk.length && ue.rules.length === 5 && ue.rules.every(r => r.length === 3 && typeof r[0] === 'string' && typeof r[1] === 'string') && ue.freiTxt === 'gesperrt' && ue.frei === false && ue.proTag === 6 && typeof ue.heute === 'number' && 'punkte' in ue && 'letzter' in ue,
+            JSON.stringify(ue).slice(0, 300)); }
     { const keepP = gstore.OPT_plan; gstore.OPT_plan = {ts: NOW, model: {n: 12, minDays: 10, gate: true, why: [], aktiv: true, bs: 0.3, bw: 0.02, ua: 0.21, tbal: 15}}; NOW += 60000; runN('opt_engine', {topic: '', payload: NOW});
       const lv = JSON.parse(files[decFile].trim().split('\n').pop()).in.vs; gstore.OPT_plan = keepP;
       check('Huelle Vorausschau: erst mit aktivem Modell (coefActivate) stehen PV-Prognose und Wind in der Eingabe', lv.gate === 1 && lv.aktiv === 1 && lv.pv.length === 7 && lv.pv[2] === 3000 && lv.wind.length === 7 && lv.bs === 0.3, JSON.stringify(lv)); }

@@ -3046,6 +3046,7 @@ flow.set('eng', ST);
 if (!ST.last) { return null; }
 // ---------- Anzeige (Karten-Daten aus ENGVIEW.build, gezeichnet in den Vorlagen mit optEngUi); Lernstand des Waermefahrplans aus OPT_plan (nur lesen)
 var V = ENGVIEW.build({now: now, last: ST.last, S: ST.S, V: ST.V, AP: global.get('OPT_apply') || {}, enabled: global.get('OPT_apply_enabled') === true, cfg: cfg, plan: G('OPT_plan') || null});
+global.set('OPT_engine_ue', V.kurz);                                              // UI-Lambda: Kurzfassung fuer die Modulkachel "Optimierer" (Übersicht), nur Anzeige
 return [{payload: V.card}, {payload: V.rules}, {payload: V.score}, {payload: V.log}, files.length ? files : null, {payload: V.mess}];
 """
 
@@ -3199,7 +3200,8 @@ var cfg = global.get('OPT_cfg') || {};
 __COPKW__
 var EN = global.get('OPT_engine') || {}, WX = global.get('OPT_weather') || {};                     // Kopfzeile: Vorausschau der Maschine (vsDk) und OWM, nur lesen
 var P = OPTSCHEMA.daten(G('OPT_hp') || {}, {freq: G('compressor_frequency'), rt: G('compressor_runtime'), rtLast: G('compressor_last_runtime'), starts: G('Starts_Today'),
-                                           vs: (EN.vs && typeof EN.ts === 'number') ? Object.assign({ts: EN.ts}, EN.vs) : null, owm: {t: WX.temp, ts: WX.ts}}, COP_KW, Date.now());
+                                           vs: (EN.vs && typeof EN.ts === 'number') ? Object.assign({ts: EN.ts}, EN.vs) : null, owm: {t: WX.temp, ts: WX.ts},
+                                           raeume: {cfg: cfg.rooms, st: global.get('OPT_rooms') || {}}, opt: global.get('OPT_engine_ue') || null}, COP_KW, Date.now());   // Modulkacheln Räume, Optimierer
 return {payload: P};
 """
 
@@ -3226,9 +3228,10 @@ if UE_TAB in B and B[UE_TAB]["type"] == "ui_tab":
     upsert({"id": "opt_g_schema_ue", "type": "ui_group", "name": "ANLAGENSCHEMA", "tab": UE_TAB, "order": 0.5, "disp": True, "width": 24, "collapse": False, "className": ""})
     upsert(eng_template("opt_t_schema_ue", "opt_g_schema_ue", "Anlagenschema (Übersicht)", 12, schema_format("opt_t_schema_ue", "opt_g_schema_ue", True), 2460))
     _schema_out.append("opt_t_schema_ue")
-    # UI-Lambda (14.10.2026): Modulkacheln "Wärmepumpe" und "Heizkreis Zone 1" direkt unter dem Anlagenschema (0,6 < Kern-Gruppen ab 1), volle Breite wie das Schema
+    # UI-Lambda (14.10.2026): Modulkacheln "Wärmepumpe", "Heizkreis Zone 1", "Räume", "Optimierer" direkt unter dem Anlagenschema (0,6 < Kern-Gruppen ab 1), volle Breite
+    # wie das Schema; 2 x 2 Kacheln, ab 1600 px Fensterbreite 4 nebeneinander (gleich breit)
     upsert({"id": "opt_g_module", "type": "ui_group", "name": "MODULÜBERSICHT", "tab": UE_TAB, "order": 0.6, "disp": True, "width": 24, "collapse": False, "className": ""})
-    upsert(eng_template("opt_t_module", "opt_g_module", "Modulkacheln (Übersicht)", 5, schema_format("opt_t_module", "opt_g_module", True, "modul"), 2500))
+    upsert(eng_template("opt_t_module", "opt_g_module", "Modulkacheln (Übersicht)", 6, schema_format("opt_t_module", "opt_g_module", True, "modul"), 2500))
     _schema_out.append("opt_t_module")
 else:
     print("Hinweis: Seite Übersicht (" + UE_TAB + ") fehlt, Anlagenschema nur auf der Seite Optimierer")
