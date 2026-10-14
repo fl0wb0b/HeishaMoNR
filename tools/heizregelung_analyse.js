@@ -43,6 +43,7 @@ for (let i = 0; i < I.length; i++) {
     if (!(x.hz > 0) && run && prev && prev.hz > 0) { run.ende = x.t; run.thermo = prev.vl !== null && prev.soll !== null && prev.vl - prev.soll >= 2.75; run = null; }
     prev = x;
 }
+const p2 = x => String(x).padStart(2, '0'), dmt = t => { const d = new Date(t); return p2(d.getDate()) + '.' + p2(d.getMonth() + 1) + '. ' + p2(d.getHours()) + ':' + p2(d.getMinutes()); };
 const f = (v, d) => v === null || v === undefined || !isFinite(v) ? '–' : v.toFixed(d === undefined ? 2 : d);
 console.log('== (1) COP je Heizregelung x Aussenband x Laufphase (energiegewichtet; roh / +' + KW + ' W), Minuten, mittlere Frequenz');
 for (const b of ['<4', '4-8', '8-11', '>=11']) {
@@ -62,12 +63,12 @@ for (const b of ['<4', '4-8', '8-11', '>=11']) {
 console.log('\n== (3) Starts: Heizregelung beim Start, Aussen, Quiet, max Hz 2-15/2-30 min, min bis Soll -1 K, Laufdauer, Stopp ueber Vorlauf');
 const S = {C: [], E: []};
 runs.forEach(r => {
-    const d = new Date(r.t0), ts = d.toISOString().slice(5, 10) + ' ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+    const ts = dmt(r.t0);
     console.log(ts, mode(r.hc0), 'AT', f(r.at, 0), 'Q' + r.q0, 'hz15', r.hz15, 'hz30', r.hz30, 'soll-1K nach', r.reach === null ? '–' : Math.round(r.reach), 'min, Lauf', Math.round(r.min), 'min', r.thermo ? 'Thermo-Stopp' : (r.ende ? 'Stopp' : 'laeuft/Luecke'), r.hcSet.size > 1 ? '(Wechsel im Lauf)' : '');
     if ((r.hc0 === 0 || r.hc0 === 1) && r.ende && r.hcSet.size === 1) { S[mode(r.hc0)].push(r); }
 });
 ['C', 'E'].forEach(m => { const L = S[m]; if (!L.length) { return; } const md = a => { a = a.slice().sort((x, y) => x - y); return a[Math.floor(a.length / 2)]; };
     console.log(m, 'abgeschlossene Laeufe ohne Wechsel:', L.length, 'Median Lauf', md(L.map(r => r.min)).toFixed(0), 'min, Median hz15', md(L.map(r => r.hz15)), 'Median bis Soll -1 K', md(L.filter(r => r.reach !== null).map(r => r.reach)), 'min, Thermo-Stopps', L.filter(r => r.thermo).length); });
 console.log('\n== (4) Wechsel der Heizregelung');
-wechsel.forEach(w => { const d = new Date(w.t); console.log(d.toISOString().slice(5, 10), String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'), w.von + '->' + w.zu, w.lauf ? 'im Lauf' : 'in der Pause', 'AT', f(w.at, 0),
+wechsel.forEach(w => { console.log(dmt(w.t), w.von + '->' + w.zu, w.lauf ? 'im Lauf' : 'in der Pause', 'AT', f(w.at, 0),
     '| vorher Hz', f(w.vor.hz, 1), 'Pumpe', f(w.vor.pump, 0), 'Flow', f(w.vor.flow, 1), 'Pel', f(w.vor.pel, 0), '| nachher 1-5 min Hz', f(w.nach.hz, 1), 'Pumpe', f(w.nach.pump, 0), 'Flow', f(w.nach.flow, 1), 'Pel', f(w.nach.pel, 0), '| 6-15 min Hz', f(w.nach15.hz, 1), 'Pel', f(w.nach15.pel, 0)); });

@@ -23,7 +23,7 @@ const PLAN_BSP = {model: {n: 4, minDays: 10, gate: false, why: ['weniger als 10 
 function snapshots(dataDir) {
     const { replay } = require('./engine_replay.js');
     const V = {ep: [], open: {}}, out = {};
-    const tA = new Date(2026, 9, 10, 8, 38).getTime(), tF = new Date(2026, 9, 13, 13, 44).getTime();   // F: Heizregelung schlaegt Efficiency vor (Comfort von Hand seit 07:06)
+    const tA = new Date(2026, 9, 10, 8, 38).getTime(), tF = new Date(2026, 9, 13, 13, 52).getTime();   // F: Heizregelung schlaegt Efficiency vor (Comfort von Hand seit 07:06)
     let last = null;
     const R = replay(dataDir, {keepRecs: false, onStep: (o, inp) => {
         VW.track(V, o.res, o.S.rules, inp.t);
@@ -145,7 +145,7 @@ if (require.main === module) {
     const outFile = process.argv[3] || path.join(__dirname, '..', '..', 'engine_work', 'optimierer_vorschau.html');
     const S = snapshots(dataDir);
     const snaps = {'A · 10.10. 08:38 (Replay, Quiet-Freigabe, Übernahme gesperrt)': S.A, 'B · Replay-Ende 12.10. (kein Vorschlag)': S.B, 'C · wie B, Hauptschalter AN, Übernahme aktiv': S.C, 'D · 5 Tage kälter werdend (Spielzeug-Anlage, Klicks)': coldScenario(), 'E · wie A, Hauptschalter AN, Sendeknoten aktiv, Regel frei': S.E};
-    if (S.F) { snaps['F · 13.10. 13:44 (Replay, Heizregelung Comfort → Efficiency, Regel frei)'] = S.F; }
+    if (S.F) { snaps['F · 13.10. 13:52 (Replay, Heizregelung Comfort → Efficiency in der Pause, Regel frei)'] = S.F; }
     fs.mkdirSync(path.dirname(outFile), {recursive: true});
     fs.writeFileSync(outFile, page(snaps));
     Object.keys(snaps).forEach(k => { const one = {}; one[k] = snaps[k]; fs.writeFileSync(outFile.replace(/\.html$/, '_' + k.charAt(0) + '.html'), page(one)); });   // je Schnappschuss eine Seite (Bildschirmfoto)

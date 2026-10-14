@@ -1490,31 +1490,31 @@ console.log('--- (h) Heizregelung: Komfortbedarf, Abtau-Rueckstand, Heizstab-Nae
     // ---- h4 Klick Comfort, Bedarf gedeckt -> Rueckweg auf Efficiency (kein Wechsel "von Hand"), danach keine neue Comfort-Stellung binnen 60 min
     { const K = hcKlick({t0: T0, q0: 0, hc0: 1}), kl = [];
       for (let i = 0; i < 150; i++) {
-          const C = K.pl.hc === 0, gedeckt = C && kl.length && i - kl[0].i >= 15;
-          const o = K.tick(lauf(i, gedeckt ? {vl: 33.5, rl: 30, hz: 17, rooms: RH()} : (C ? {vl: 32, rl: 29.5, hz: 30} : {})));
+          const C = K.pl.hc === 0, gedeckt = C && kl.length && i - kl[0].i >= 15, pause = i >= 100;
+          const o = K.tick(lauf(i, pause ? {hz: 0, rt: 0, vl: 33, rl: 32, rooms: RH()} : (gedeckt ? {vl: 33.5, rl: 30, hz: 17, rooms: RH()} : (C ? {vl: 32, rl: 29.5, hz: 30} : {}))));
           if (o.prop && o.prop.rule === 'heizregelung' && !kl.some(k => k.id === o.prop.id)) { const r = K.klick(o.prop); kl.push({i: i, id: o.prop.id, was: o.prop.was, ok: r.send.length === 1, txt: r.toast && r.toast.text}); }
       }
       const s = K.sends.map(z => E.iso(z.t).slice(11, 16) + ' ' + z.cmd + '=' + z.v + ' (' + z.grund.slice(0, 40) + ')');
-      check('h4 Klick-Uebernahme: Comfort per Klick (SetHeatingControl = 0, Ruecklesen ueber Heating_Control bestaetigt), Bedarf 15 min gedeckt -> genau ein Rueckweg SetHeatingControl = 1 ("Bedarf seit 15 min gedeckt"); der Rueckweg gilt nicht als Wechsel von Hand; danach keine weitere Stellung (Mindestabstand), Uebernahme beendet',
-            kl.length === 1 && kl[0].ok && K.sends.length === 2 && K.sends[0].v === '0' && K.sends[1].v === '1' && K.sends[1].src === 'Optimierer (Rückweg)' && /Bedarf seit 15 min gedeckt/.test(K.sends[1].grund) && !K.A.ak.hc && !K.S.hcHandT && K.pl.hc === 1,
+      check('h4 Klick-Uebernahme: Comfort per Klick (SetHeatingControl = 0, Ruecklesen ueber Heating_Control bestaetigt), Bedarf 15 min gedeckt, zurueck erst in der Pause (Minute 100; im Lauf haelt Comfort: Pumpensprung) -> genau ein Rueckweg SetHeatingControl = 1 ("Bedarf seit 15 min gedeckt"); der Rueckweg gilt nicht als Wechsel von Hand; Uebernahme beendet',
+            kl.length === 1 && kl[0].ok && K.sends.length === 2 && K.sends[0].v === '0' && K.sends[1].v === '1' && K.sends[1].t === T0 + 100 * MIN && K.sends[1].src === 'Optimierer (Rückweg)' && /Bedarf seit 15 min gedeckt/.test(K.sends[1].grund) && !K.A.ak.hc && !K.S.hcHandT && K.pl.hc === 1,
             s.join(' | ') + ' · hand ' + K.S.hcHandT); }
     // ---- h5 Comfort von Hand ohne Bedarf -> Vorschlag Efficiency erst nach 2 h (Wechsel von Hand), nur wenn Comfort hochfahren kann (Quiet 0); Klick: Normalzustand, die Uebernahme endet mit der Bestaetigung
     { const K = hcKlick({t0: T0, q0: 0, hc0: 1}), kl = []; let tProp = null;
       for (let i = 0; i < 200; i++) {
           if (i === 20) { K.pl.hc = 0; }                                             // Nutzer stellt Comfort am Schalter
-          const o = K.tick(lauf(i, {rt: 100 + i, vl: 33.5, rl: 30, rooms: RH()}));
+          const o = K.tick(lauf(i, i < 130 ? {rt: 100 + i, vl: 33.5, rl: 30, rooms: RH()} : {hz: 0, rt: 0, vl: 32, rl: 31, rooms: RH()}));
           if (o.prop && o.prop.rule === 'heizregelung' && !kl.length) { tProp = i; const r = K.klick(o.prop); kl.push({p: o.prop, ok: r.send.length === 1, txt: r.toast && r.toast.text, A: JSON.parse(JSON.stringify(K.A))}); }
       }
       const KQ = hcKlick({t0: T0, q0: 3, hc0: 1}); let nQ = 0;
       for (let i = 0; i < 200; i++) { if (i === 20) { KQ.pl.hc = 0; } const o = KQ.tick(lauf(i, {rt: 100 + i, vl: 33.5, rl: 30, rooms: RH(), q: 3})); if (hr(o).neu) { nQ++; } }
-      check('h5 Comfort von Hand (Minute 20), kein Bedarf, Quiet 0: Vorschlag Comfort -> Efficiency erst nach 2 h Ruhe (Minute 140), Rueckweg-Text "keiner: Efficiency ist der Normalzustand"; Klick sendet 1, nach der Bestaetigung ist keine Uebernahme offen; unter Quiet 3 (Comfort faehrt ohnehin nicht hoch) kein Vorschlag',
+      check('h5 Comfort von Hand (Minute 20), kein Bedarf, Quiet 0, Pause ab Minute 130: Vorschlag Comfort -> Efficiency erst nach 2 h Ruhe (Minute 140, in der Pause), Rueckweg-Text "keiner: Efficiency ist der Normalzustand"; Klick sendet 1, nach der Bestaetigung ist keine Uebernahme offen; unter Quiet 3 (Comfort faehrt ohnehin nicht hoch) kein Vorschlag',
             tProp === 140 && kl[0].ok && kl[0].p.einmal === true && /Normalzustand/.test(kl[0].p.rueckweg) && kl[0].A.ak.hc && kl[0].A.ak.hc.einmal && !kl[0].A.ak.hc.bis && !K.A.ak.hc && K.pl.hc === 1 && K.sends.length === 1 && nQ === 0 && /Comfort fährt ohnehin nicht hoch/.test(hr(KQ.out).grund),
             'Vorschlag Minute ' + tProp + ' · ' + (kl[0] ? kl[0].txt : '') + ' · Quiet 3: ' + hr(KQ.out).grund); }
     // ---- h5c COP-Veto gegen Efficiency (Daten je Modus x Quiet x Band, wie Deckel/Laufzeit): Comfort Quiet 0 bei 3…7 °C 12 % besser (Stand 14.10. aehnlich: 4,80 gegen 4,27) -> kein Vorschlag nach Efficiency
     { const seed = (cC, cE) => { const S0 = E.newState(T0 - MIN); S0.takt.nl = {laeuft: false}; S0.takt.copT[E.ymd(T0)] = {'Comfort|0|3…7': [1000, cC, 120, 120 * 17, 17], 'Efficiency|0|3…7': [1000, cE, 120, 120 * 17, 17]}; return S0; };
-      const run = S0 => runSeq(60, i => lauf(i, {hc: 0, rt: 100 + i, vl: 33.5, rl: 30, rooms: RH()}), S0);
+      const run = S0 => runSeq(60, i => lauf(i, {hc: 0, hz: 0, rt: 0, vl: 33.5, rl: 30, rooms: RH()}), S0);
       const RV = run(seed(4800, 4270)), RN = run(seed(4800, 4700)), gV = hr(RV.outs[59]).grund;
-      check('h5c COP-Veto: Comfort von Hand ohne Bedarf, Daten Comfort/Efficiency Quiet 0 bei 3…7 °C je 120 min, Efficiency mehr als 10 % schlechter (korrigiert 3,68 gegen 4,14 aus der Saat, dazu die laufenden Comfort-Minuten) -> kein Vorschlag nach Efficiency (Grund nennt beide COP); bei 2 % Unterschied Vorschlag',
+      check('h5c COP-Veto: Comfort von Hand ohne Bedarf, Daten Comfort/Efficiency Quiet 0 bei 3…7 °C je 120 min, Efficiency mehr als 10 % schlechter (korrigiert 3,68 gegen 4,14) -> kein Vorschlag nach Efficiency (Pause; Grund nennt beide COP); bei 2 % Unterschied Vorschlag',
             !propOf(RV).length && /COP Efficiency 3,68 statt 4,[0-9][0-9] \(Comfort, Quiet 0, 3…7 °C\)/.test(gV) && propOf(RN).length === 1 && RV.outs[59].rec.abl.hc === undefined, gV); }
     // ---- h6 Zusammenspiel mit der Quiet-Freigabe: Quiet 3 deckelt -> zuerst Quiet-Freigabe (Klick 3 -> 0), Efficiency bleibt traege -> Comfort als Notfall nach 10 min (Mindestabstand), noch in der Anlaufphase; waehrend Comfort der Regel steht kein Effizienz-Deckel
     { const K = hcKlick({t0: T0, q0: 3, hc0: 1}), kl = []; let deckelVs = 0;
@@ -1545,18 +1545,18 @@ console.log('--- (h) Heizregelung: Komfortbedarf, Abtau-Rueckstand, Heizstab-Nae
     // ---- h8 Bewertung: Comfort-Fall (Efficiency bleibt traege) und Efficiency-Fall (Comfort faehrt ohne Bedarf hoch); Wirkung eines Wechsels im Lauf
     { const R = runSeq(70, i => lauf(i)), sc = [].concat.apply([], R.outs.map(o => o.scores)), a = sc.find(s0 => s0.regel === 'heizregelung' && s0.typ === 'ausloeser');
       check('h8 Bewertung Comfort-Vorschlag ohne Klick: Efficiency blieb 30 min bei 17 Hz mit Rueckstand -> Treffer (Horizonte 15/30 min, Basisrate "heizregelung|v1")', a && a.ergebnis === 'treffer' && a.horizonte.length === 2 && a.horizonte.every(h => h.o === 1) && a.horizonte.every(h => h.b === 0.5), a ? a.text : JSON.stringify(sc.map(s0 => s0.typ + ' ' + s0.regel))); }
-    { const R = runSeq(400, i => { const z = i % 200, run = z >= 60; return lauf(i, {hc: i < 5 ? 1 : 0, rt: run ? z - 60 : 0, hz: run ? (z - 60 < 8 ? 32 : 17) : 0, vl: run ? 32.5 : 31, rl: 30, rooms: RH()}); });
+    { const R = runSeq(500, i => { const z = i % 200, run = z >= 60; return lauf(i, {hc: i < 5 ? 1 : 0, rt: run ? z - 60 : 0, hz: run ? (z - 60 < 8 ? 32 : 17) : 0, vl: run ? 32.5 : 31, rl: 30, rooms: RH()}); });
       const sc = [].concat.apply([], R.outs.map(o => o.scores)), a = sc.find(s0 => s0.regel === 'heizregelung' && s0.typ === 'ausloeser'), P = propOf(R);
-      check('h8b Bewertung Efficiency-Vorschlag (Comfort von Hand, Quiet 0, kein Bedarf; jeder Start in Comfort mit 32 Hz): Fall "Ohne Efficiency faehrt der Verdichter in Comfort ohne Bedarf hoch" -> Treffer; Datensatz abl.hc = -1 in Comfort ohne Bedarf',
-            P.length >= 1 && a && a.ergebnis === 'treffer' && R.outs[P[0].i].rec.abl.hc === -1, a ? a.text : 'Vorschlaege ' + P.length + ', ' + hr(R.outs[399]).grund); }
+      check('h8b Bewertung Efficiency-Vorschlag (Comfort von Hand, Quiet 0, kein Bedarf; jeder Start in Comfort mit 32 Hz): Fall "Ohne Efficiency faehrt der Verdichter in Comfort ohne Bedarf hoch" -> Treffer (Vorschlag in der Pause, der naechste Start in Comfort faehrt auf 32 Hz); Datensatz abl.hc = -1 in Comfort ohne Bedarf',
+            P.length >= 1 && a && a.ergebnis === 'treffer' && R.outs[P[0].i].rec.abl.hc === -1, a ? a.text : 'Vorschlaege ' + P.length + ', ' + hr(R.outs[499]).grund); }
     { const R = runSeq(40, i => lauf(i, i < 25 ? {} : {hc: 0, hz: i < 27 ? 17 : 31, pel: i < 27 ? 300 : 620})), sc = [].concat.apply([], R.outs.map(o => o.scores)), w = sc.find(s0 => s0.regel === 'heizregelung' && s0.typ === 'wirkung');
       check('h8c Wirkung: Efficiency -> Comfort im Lauf mit Rueckstand (17 -> 31 Hz) -> Wirkungsprognose "+6 Hz binnen 5 min" und "+100 W" getroffen (Wechsel von Hand: Wirkungsfall der Regel)', w && w.teile[0].ergebnis === 'getroffen' && w.teile[1].ergebnis === 'getroffen' && w.punkte === 20, w ? w.text : 'keine Wirkung'); }
     // ---- h9 Versionswechsel/Einspielen: alter Zustand ohne Heizregelung (kein S.arbH, keine Regel im Zustand) -> ergaenzt, kein Fehler, keine Gegenrichtung aus dem Nichts; Comfort im alten Zustand gilt nicht als "von Hand"
     { const Rold = runSeq(30, i => lauf(i, {hc: 0, rooms: RH()})), So = JSON.parse(JSON.stringify(Rold.S));
       delete So.arbH; delete So.rules.heizregelung; delete So.hc; delete So.hcChg; delete So.hcHandT; delete So.hcDeckSince; Object.keys(So.sc.tot).filter(k => /^heizregelung/.test(k)).forEach(k => delete So.sc.tot[k]);
-      let err = null, R2 = null; try { R2 = runSeq(200, i => lauf(30 + i, {hc: 0, rt: 200 + i, vl: 33.5, rl: 30, rooms: RH()}), So); } catch (e) { err = e; }
+      let err = null, R2 = null; try { R2 = runSeq(200, i => lauf(30 + i, {hc: 0, hz: 0, rt: 0, vl: 33.5, rl: 30, rooms: RH()}), So); } catch (e) { err = e; }
       const P = R2 ? propOf(R2) : [];
-      check('h9 Einspielen auf einen Zustand ohne Heizregelung (Comfort steht schon): Zustand wird ergaenzt (S.arbH, Regel rv 1), kein Fehler; Comfort vor dem Einspielen gilt nicht als Wechsel von Hand -> Efficiency-Vorschlag, sobald der Bedarf 15 min gedeckt ist und der Mindestabstand passt',
+      check('h9 Einspielen auf einen Zustand ohne Heizregelung (Comfort steht schon): Zustand wird ergaenzt (S.arbH, Regel rv 1), kein Fehler; Comfort vor dem Einspielen gilt nicht als Wechsel von Hand -> Efficiency-Vorschlag (Pause), sobald der Bedarf 15 min gedeckt ist und der Mindestabstand passt',
             err === null && R2.S.arbH && R2.S.rules.heizregelung && R2.S.rules.heizregelung.rv === 1 && !R2.S.hcHandT && P.length >= 1 && P[0].i <= 20, err ? err.stack : (P.length ? P[0].i + ' min' : hr(R2.outs[199]).grund)); }
     // ---- h10 8 Tage Fake-Uhr mit Frost (Tage 3-5: -8 ± 4 °C, Abtauen alle 150 Laufminuten, Heizstab ab 0 °C nach 15 min bei Vorlauf < Soll -3 K), Anlagenmodell mit Efficiency-Traegheit und Comfort-Hochlauf
     function hcFrost(klick) {
