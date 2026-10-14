@@ -679,7 +679,7 @@ var ENGINE = (function () {
                 {key: 'heizstabVorlaufMin', std: 5, einheit: 'min', herkunft: 'wie Quiet-Freigabe: bei Heizstab-Nähe endet die Startphase Heater_Delay_Time − 5 min − Haltezeit (hier Laufminute 7), der Vorschlag kommt 5 min vor der Heizstab-Freigabe; ANNAHME'},
                 {key: 'haltHeizstabMin', std: 3, einheit: 'min', herkunft: 'Heizstab-Nähe: kurze Haltezeit (wie Quiet-Freigabe); ANNAHME'},
                 {key: 'traegeMin', std: 45, einheit: 'min', herkunft: 'Efficiency träge: Comfort nur bis Laufminute 45 – Efficiency hielt nach dem Start 16–17 Hz und ging erst ab Laufminute 39–46 zeitweise auf 21–26 Hz (5 von 7 längeren Läufen, 07.–13.10.); danach regelt sie bei Rückstand selbst hoch (Boost 10.10. Laufminute 68, Efficiency: Quiet 3 → 0, 29 Hz nach 1 min, 34 Hz nach 2 min). Ausnahmen: Abtau-Rückstand und Heizstab-Nähe; ANNAHME'},
-                {key: 'traegeHz', std: 21, einheit: 'Hz', herkunft: 'Efficiency träge = Verdichter höchstens 21 Hz: 21 von 21 Efficiency-Starts 08.–14.10. mit 16–17 Hz bis Laufminute 15, zeitweise 21–26 Hz; Comfort-Starts sofort 30–35 Hz (12.10. 21:32: 35 Hz bei 6 °C, 13.10. 11:58: 31 Hz bei 13 °C)'},
+                {key: 'traegeHz', std: 21, einheit: 'Hz', herkunft: 'Efficiency träge = Verdichter höchstens 21 Hz (bei Frost höchstens Mindestfrequenz + 1 Hz, 25/35 Hz ab −4/−10 °C, Forum 189605 F1-a): 21 von 21 Efficiency-Starts 08.–14.10. mit 16–17 Hz bis Laufminute 15, zeitweise 21–26 Hz; Comfort-Starts sofort 30–35 Hz (12.10. 21:32: 35 Hz bei 6 °C, 13.10. 11:58: 31 Hz bei 13 °C)'},
                 {key: 'mehrHz', std: 3, einheit: 'Hz', herkunft: 'Quiet-Deckel lässt den Hochlauf zu: Quiet 0 oder Deckel der Stufe mindestens 3 Hz über der jetzigen Frequenz (wie Quiet-Freigabe); sonst bindet der Deckel auch Comfort (13.10. 21:00 Comfort/Quiet 3: 17 Hz; 16:29 Comfort/Quiet 2: 21 Hz) → zuerst die Quiet-Freigabe'},
                 {key: 'vlRueckK', std: 1.5, einheit: 'K', herkunft: 'Vorlauf mindestens 1,5 K unter Soll (wie Quiet-Freigabe): ohne Rückstand ändert Comfort die Frequenz nicht (12.10. 18:28 und 13.10. 07:07 Efficiency → Comfort bei 16 Hz am Soll: 16,6 → 16,6 Hz); ANNAHME'},
                 {key: 'rlRueckK', std: 1.5, einheit: 'K', herkunft: 'Rücklauf mindestens 1,5 K unter Soll-Rücklauf (wie Quiet-Freigabe: ohne Rücklauf-Rückstand regelt der Verdichter nicht hoch); ANNAHME'},
@@ -713,8 +713,8 @@ var ENGINE = (function () {
                         {k: 'lauf', kz: 'Verdichter läuft', t: 'Verdichter läuft', tn: 'Verdichter steht (' + zTxt(d.zustand) + ')', ok: d.running},
                         {k: 'laufMin', kz: 'Laufzeit', t: 'Lauf seit mindestens ' + lm + ' min', tn: 'Startphase: Lauf erst ' + de(d.runMin, 0) + ' von ' + lm + ' min', ok: d.runMin >= lm, ist: r2(d.runMin), soll: lm, op: '>=', u: 'min', dyn: true},
                         {k: 'bedarf', kz: 'Bedarf', t: B.ja ? 'Bedarf: ' + B.txt : 'Bedarf (Raum unter Minimum oder auf dem Weg dorthin, Heizstab-Nähe, Abtau-Rückstand, Boost von Hand)', tn: 'kein Bedarf: ' + (B.keinTxt || '–'), ok: !!B.ja},
-                        {k: 'traege', kz: 'Efficiency träge', t: 'Efficiency träge: Verdichter höchstens ' + c.traegeHz + ' Hz ' + (B.abtau ? 'nach dem Abtauen' : (B.heizstab ? 'bei Heizstab-Nähe' : 'bis Laufminute ' + c.traegeMin)),
-                         tn: !have(d.hz) || d.hz > c.traegeHz ? 'Verdichter bei ' + de(d.hz, 0) + ' Hz (Efficiency regelt schon hoch)' : 'Laufminute ' + de(d.runMin, 0) + ': Efficiency regelt ab Laufminute ' + c.traegeMin + ' selbst hoch', ok: !!H.traege},
+                        {k: 'traege', kz: 'Efficiency träge', t: 'Efficiency träge: Verdichter höchstens ' + H.traegeHz + ' Hz ' + (B.abtau ? 'nach dem Abtauen' : (B.heizstab ? 'bei Heizstab-Nähe' : 'bis Laufminute ' + c.traegeMin)),
+                         tn: !have(d.hz) || d.hz > H.traegeHz ? 'Verdichter bei ' + de(d.hz, 0) + ' Hz (Efficiency regelt schon hoch)' : 'Laufminute ' + de(d.runMin, 0) + ': Efficiency regelt ab Laufminute ' + c.traegeMin + ' selbst hoch', ok: !!H.traege},
                         {k: 'deckel', kz: 'Quiet-Deckel', t: d.q === 0 ? 'Quiet 0: kein Deckel' : 'Quiet ' + d.q + ' lässt bis ' + de(cap.hz, 0) + ' Hz zu', tn: 'Quiet ' + d.q + ' deckelt bei ' + de(cap.hz, 0) + ' Hz: zuerst die Quiet-Freigabe', ok: !!H.capOk},
                         {k: 'vlRueck', kz: 'Vorlauf-Rückstand', t: 'Vorlauf mindestens ' + de(c.vlRueckK, 1) + ' K unter Soll', tn: 'Vorlauf ' + rueckTxt(d.vlRueck) + ' (Schwelle ' + de(c.vlRueckK, 1) + ' K darunter)', ok: have(d.vlRueck) && d.vlRueck >= c.vlRueckK, ist: r2(d.vlRueck), it: rueckTxt(d.vlRueck), soll: c.vlRueckK, op: '>=', u: 'K', dyn: true},
                         {k: 'rlRueck', kz: 'Rücklauf-Rückstand', t: 'Rücklauf mindestens ' + de(c.rlRueckK, 1) + ' K unter Soll-Rücklauf', tn: 'Rücklauf ' + rueckTxt(d.rlRueck) + ' (Schwelle ' + de(c.rlRueckK, 1) + ' K darunter)', ok: have(d.rlRueck) && d.rlRueck >= c.rlRueckK, ist: r2(d.rlRueck), it: rueckTxt(d.rlRueck), soll: c.rlRueckK, op: '>=', u: 'K', dyn: true}
@@ -729,13 +729,13 @@ var ENGINE = (function () {
                 // Comfort ohne Regel (von Hand oder vor dem Einspielen): Efficiency, sobald der Bedarf gedeckt ist (Ziel Efficiency)
                 var gk = H.atNah === null ? 'Heizstab-Grenze unbekannt (Heater_On_Outdoor_Temp fehlt)' : 'Außen ' + de(d.at, 0) + ' °C: Heizstab-Nähe (Efficiency erst ab Heater_On_Outdoor_Temp + ' + de(H.grenzeK, 0) + ' K)';
                 var cond2 = [
-                    {k: 'gedeckt', kz: 'Bedarf gedeckt', t: 'Bedarf seit mindestens ' + c.rueckMin + ' min gedeckt', tn: B.ja ? 'Bedarf: ' + B.txt : (H.deck ? 'Bedarf erst seit ' + de(H.deckMin, 0) + ' von ' + c.rueckMin + ' min gedeckt' : 'Bedarf nicht gedeckt'),
-                     ok: H.deckMin >= c.rueckMin, ist: Math.floor(H.deckMin), soll: c.rueckMin, op: '>=', u: 'min', dyn: !!H.deck},
                     {k: 'komfort', kz: 'Komfort sicher', t: 'alle Räume mindestens ' + de(c.komfortK, 1) + ' K über Minimum, auch in 2 h beim jetzigen Gefälle über Minimum', tn: H.ks && !H.ks.ok ? H.ks.txt : (H.resPRaum || 'ein Raum') + ' fällt: in 2 h ' + de(H.resP, 1) + ' K zum Minimum', ok: !!(H.ks && H.ks.ok && H.trendOk)},
                     {k: 'hochlauf', kz: 'Quiet lässt Hochlauf zu', t: d.q === 0 ? 'Quiet 0: Comfort fährt beim Start hoch (Kosten)' : 'Quiet ' + d.q + ' lässt bis ' + de((H.cap || {}).hz, 0) + ' Hz zu (Comfort fährt hoch)', tn: 'Quiet ' + d.q + ' deckelt bei ' + de((H.cap || {}).hz, 0) + ' Hz: Comfort fährt ohnehin nicht hoch, Efficiency brächte nichts', ok: !!H.hochOk},
                     {k: 'heizstab', kz: 'kein Heizstab-Risiko', t: 'kein Heizstab-Risiko (Außen ' + de(d.at, 0) + ' °C)', tn: gk, ok: H.atNah === false},
                     {k: 'abtau', kz: 'nicht nach Abtauen', t: 'kein Abtauen in den letzten ' + c.abtauNachMin + ' min', tn: d.defrost ? 'Abtauen läuft' : 'Abtauen bis ' + hhmm(H.abtauEnde) + ' (Comfort holt den Rückstand auf)', ok: !H.abtauNach},
-                    {k: 'ruecklauf', kz: 'Rücklauf', t: 'Rücklauf höchstens ' + de(c.rueckRlK, 1) + ' K unter Soll (oder Pause)', tn: 'Rücklauf ' + rueckTxt(d.rlRueck), ok: !!H.rlOk}
+                    {k: 'ruecklauf', kz: 'Rücklauf', t: 'Rücklauf höchstens ' + de(c.rueckRlK, 1) + ' K unter Soll (oder Pause)', tn: 'Rücklauf ' + rueckTxt(d.rlRueck), ok: !!H.rlOk},
+                    {k: 'gedeckt', kz: 'Bedarf gedeckt', t: 'Bedarf seit mindestens ' + c.rueckMin + ' min gedeckt', tn: B.ja ? 'Bedarf: ' + B.txt : (H.deck ? 'Bedarf erst seit ' + de(H.deckMin, 0) + ' von ' + c.rueckMin + ' min gedeckt' : 'Bedarf nicht gedeckt'),
+                     ok: H.deckMin >= c.rueckMin, ist: Math.floor(H.deckMin), soll: c.rueckMin, op: '>=', u: 'min', dyn: !!H.deck}
                 ];
                 if (hand) { cond2.push({k: 'hand', kz: 'Wechsel von Hand', t: 'kein Wechsel von Hand auf Comfort in den letzten ' + c.handRuheMin + ' min', tn: 'Comfort von Hand um ' + hhmm(hand.t) + ': Efficiency frühestens ' + hhmm(hand.t + c.handRuheMin * MIN), ok: false}); }
                 return {cond: cond2, halt: 0, wert: 1, von: 0, dir: 'weniger_leistung', groesse: 'hc', einmal: true,
@@ -898,7 +898,9 @@ var ENGINE = (function () {
         o.cap = have(d.q) ? deckelOf(d, d.q) : {hz: null};
         o.capOk = d.q === 0 || (have(o.cap.hz) && have(d.hz) && o.cap.hz >= d.hz + c.mehrHz);
         o.hochOk = d.q === 0 || (have(o.cap.hz) && o.cap.hz >= c.hochHz);                     // Comfort kann ueberhaupt hochfahren (sonst kostet Comfort nichts: kein Effizienz-Gewinn durch Efficiency)
-        o.traege = !!(d.running && have(d.hz) && d.hz <= c.traegeHz && (d.runMin < c.traegeMin || B.abtau || B.heizstab));
+        var mh = have(d.at) ? minHzAt(d, d.at).hz : null;                                        // Frost: Efficiency haelt dann die Mindestfrequenz (25/35 Hz, Forum F1-a)
+        o.traegeHz = have(mh) ? Math.max(c.traegeHz, mh + 1) : c.traegeHz;
+        o.traege = !!(d.running && have(d.hz) && d.hz <= o.traegeHz && (d.runMin < c.traegeMin || B.abtau || B.heizstab));
         o.rueck = have(d.vlRueck) && d.vlRueck >= c.vlRueckK && have(d.rlRueck) && d.rlRueck >= c.rlRueckK;
         o.lage = (d.hc === 1 && B.ja && o.traege && o.capOk && o.rueck && d.runMin >= o.lm) ? 1 : ((d.hc === 0 && o.deckMin >= c.rueckMin && o.hochOk) ? -1 : 0);
         o.hand = S.hcHandT ? {t: S.hcHandT, w: S.hcHandW} : null;
@@ -1307,7 +1309,8 @@ var ENGINE = (function () {
                 var gap = nf ? L.notfallMin : L.gapMin;
                 if (chg && now - chg < gap * MIN) { add(id, 'letzte Änderung ' + hhmm(chg) + ', noch ' + Math.ceil((chg + gap * MIN - now) / MIN) + ' min' + (nf ? ' (Notfall)' : ''), chg + gap * MIN); }
             }
-            if (id === 'tageslimit' && rs.n >= c.proTag && !rs.prop && !nf) { add(id, rs.n + ' von ' + c.proTag + (R.art === 'befehl' ? ' übernommen' : '')); }
+            // Tageslimit: ein Notfall ist ausgenommen; bei der Heizregelung nur die Heizstab-Naehe (ein Raum-Notfall nicht: sonst Comfort bei jedem Start, Pendeln)
+            if (id === 'tageslimit' && rs.n >= c.proTag && !rs.prop && (!nf || (g === 'hc' && !(e && e.heizstab)))) { add(id, rs.n + ' von ' + c.proTag + (R.art === 'befehl' ? ' übernommen' : '')); }
             if (id === 'abkuehlzeit' && rs.cool > now && !rs.prop) {                     // Notfall: nach notfallMin, aber nicht nach einem nur abgelaufenen Vorschlag (sonst alle 40 min derselbe, nachts klickt niemand)
                 var coolEnd = (nf && !(rs.coolAb && rs.coolNf)) ? Math.min(rs.cool, rs.cool - (c.pauseMin - L.notfallMin) * MIN) : rs.cool; if (coolEnd > now) { add(id, 'bis ' + hhmm(coolEnd), coolEnd); }
             }
@@ -1894,7 +1897,7 @@ var ENGINE = (function () {
         if (!d.fresh) { return null; }
         if (kind === 'deckel_frei') { if (!d.running) { return null; } var cap = have(ctx.cap) ? ctx.cap + 1 : 20; return (have(d.hz) && d.hz <= cap && have(d.rlRueck) && d.rlRueck >= 1.0) ? 1 : 0; }   // v1: fest 20 Hz
         if (kind === 'hz_hoch') { return (d.running && have(d.hz) && d.hz >= (have(ctx.hzS) ? ctx.hzS : 22)) ? 1 : 0; }      // Schwelle des Falls (v4: 22 Hz)
-        if (kind === 'hc_traege') { if (!d.running) { return null; } return (have(d.hz) && d.hz <= c.traegeHz && have(d.vlRueck) && d.vlRueck >= 1.0) ? 1 : 0; }   // Efficiency bleibt traege mit Rueckstand
+        if (kind === 'hc_traege') { if (!d.running) { return null; } return (have(d.hz) && d.hz <= (d.hcL ? d.hcL.traegeHz : c.traegeHz) && have(d.vlRueck) && d.vlRueck >= 1.0) ? 1 : 0; }   // Efficiency bleibt traege mit Rueckstand
         if (kind === 'raum3') {
             var L3 = d.raum; if (!L3 || L3.keine) { return null; }
             if (ctx.dir === 'soll_hoch') {
