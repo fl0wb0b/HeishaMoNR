@@ -319,7 +319,7 @@ Tabellen aus dem Regelwerk, erzeugt mit `node tools/engine_doc.js`. Die Sim prü
 | `rlMinC` | 28 | °C | Rücklauf mindestens 28 °C für −1 K unter abtauAtC (RE-6); ANNAHME |
 | `wirkStdMin` | 120 | min | Wirkzeit Raum, solange die Messung (Wirkzeit-Messung, Sollsprung → halbe Raumreaktion, ≥ 3 Ereignisse) fehlt: frühester Rückweg „Bedarf gedeckt“ nach +1 K (Regel-Review RE-10); ANNAHME |
 | `kfMinMin` | 180 | min | Kennzahl Kurvenform: Hinweis je Außenband erst ab 3 h Daten mit allen Räumen (7 Tage); ANNAHME |
-| `kfAnteil` | 0,5 | Anteil | Kennzahl Kurvenform: Hinweis „Heizkurve kaltseitig senken“, wenn das Haus in einem Band unter 8 °C in mindestens der Hälfte der Zeit Überschuss hat (Regel-Review RE-7, 5.2: bei < 4 °C Kinderzimmer unten 90 % über Maximum); ANNAHME |
+| `kfAnteil` | 0,5 | Anteil | Kennzahl Kurvenform: Hinweis „Heizkurve kaltseitig senken“, wenn das Haus in einem Band unter 8 °C in mindestens der Hälfte der Zeit Überschuss hat oder −1 K steht (Regel-Review RE-7: dauerhaft gehaltenes −1 K ist eine Kurvenkorrektur; 5.2: bei < 4 °C Kinderzimmer unten 90 % über Maximum); ANNAHME |
 | `minVlC` | 29 | °C | Nutzervorgabe 08.10. (bestätigt 13.10.): Soll-Vorlauf nie unter 29 °C (Heizkörper); bei Außen ≥ ~11 °C liegt die Kurve schon dort, −1 K ist dann nicht möglich (Grenze, kein „verpasst“, RE-4) |
 | `proTag` | 4 | Vorschläge | Opus: höchstens 6 Schreibbefehle/Tag (gezählt werden übernommene Vorschläge) |
 | `gueltigMin` | 120 | min | ANNAHME |

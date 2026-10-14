@@ -559,7 +559,7 @@ var ENGINE = (function () {
                 {key: 'rlMinC', std: 28, einheit: '°C', herkunft: 'Rücklauf mindestens 28 °C für −1 K unter abtauAtC (RE-6); ANNAHME'},
                 {key: 'wirkStdMin', std: 120, einheit: 'min', herkunft: 'Wirkzeit Raum, solange die Messung (Wirkzeit-Messung, Sollsprung → halbe Raumreaktion, ≥ 3 Ereignisse) fehlt: frühester Rückweg „Bedarf gedeckt“ nach +1 K (Regel-Review RE-10); ANNAHME'},
                 {key: 'kfMinMin', std: 180, einheit: 'min', herkunft: 'Kennzahl Kurvenform: Hinweis je Außenband erst ab 3 h Daten mit allen Räumen (7 Tage); ANNAHME'},
-                {key: 'kfAnteil', std: 0.5, einheit: 'Anteil', herkunft: 'Kennzahl Kurvenform: Hinweis „Heizkurve kaltseitig senken“, wenn das Haus in einem Band unter 8 °C in mindestens der Hälfte der Zeit Überschuss hat (Regel-Review RE-7, 5.2: bei < 4 °C Kinderzimmer unten 90 % über Maximum); ANNAHME'},
+                {key: 'kfAnteil', std: 0.5, einheit: 'Anteil', herkunft: 'Kennzahl Kurvenform: Hinweis „Heizkurve kaltseitig senken“, wenn das Haus in einem Band unter 8 °C in mindestens der Hälfte der Zeit Überschuss hat oder −1 K steht (Regel-Review RE-7: dauerhaft gehaltenes −1 K ist eine Kurvenkorrektur; 5.2: bei < 4 °C Kinderzimmer unten 90 % über Maximum); ANNAHME'},
                 {key: 'minVlC', std: 29, einheit: '°C', herkunft: 'Nutzervorgabe 08.10. (bestätigt 13.10.): Soll-Vorlauf nie unter 29 °C (Heizkörper); bei Außen ≥ ~11 °C liegt die Kurve schon dort, −1 K ist dann nicht möglich (Grenze, kein „verpasst“, RE-4)'},
                 {key: 'proTag', std: 4, einheit: 'Vorschläge', herkunft: 'Opus: höchstens 6 Schreibbefehle/Tag (gezählt werden übernommene Vorschläge)'},
                 {key: 'gueltigMin', std: 120, einheit: 'min', herkunft: 'ANNAHME'},
@@ -892,22 +892,23 @@ var ENGINE = (function () {
         var sig = Array.isArray(inp.kurve) ? inp.kurve.join('/') : '', K = S.kf = (S.kf && typeof S.kf === 'object' && S.kf.tage) ? S.kf : {sig: sig, seit: d.now, tage: {}};
         if (sig && K.sig !== sig) { S.kf = K = {sig: sig, seit: d.now, tage: {}, vorher: K.sig || ''}; }
         var L = d.raum; if (!L || L.keine || !L.alle || !have(d.at)) { return; }
-        var dk = ymd(d.now), T = K.tage[dk] = K.tage[dk] || {}, b = kfBand(d.at), a = T[b] = T[b] || [0, 0, 0, 0, 0, 0];
+        var dk = ymd(d.now), T = K.tage[dk] = K.tage[dk] || {}, b = kfBand(d.at), a = T[b] = T[b] || [0, 0, 0, 0, 0, 0, 0];
         a[0]++; a[1] += L.reserve; a[2] += L.mitte; if (L.dir < 0) { a[3]++; } if (L.dir > 0) { a[4]++; } if (have(d.shift) && d.shift < 0) { a[5]++; }
+        if (L.dir < 0 || (have(d.shift) && d.shift < 0)) { a[6] = (a[6] || 0) + 1; }                       // Ueberschuss ODER -1 K steht: dauerhafte Abweichung (RE-7)
         Object.keys(K.tage).sort().slice(0, -KF.tage).forEach(function (k) { delete K.tage[k]; });
     }
     function kurvenform(S, cfg) {
         var c = cfg.rules.raum_offset, K = S.kf || {tage: {}}, o = {baender: [], hinweis: null, sig: K.sig || '', seit: K.seit || 0};
         KF.baender.forEach(function (bd) {
-            var s = [0, 0, 0, 0, 0, 0], tg = 0; Object.keys(K.tage || {}).forEach(function (k) { var a = K.tage[k][bd[2]]; if (a) { tg++; for (var i = 0; i < 6; i++) { s[i] += a[i]; } } });
+            var s = [0, 0, 0, 0, 0, 0, 0], tg = 0; Object.keys(K.tage || {}).forEach(function (k) { var a = K.tage[k][bd[2]]; if (a) { tg++; for (var i = 0; i < 7; i++) { s[i] += a[i] || 0; } } });
             if (!s[0]) { return; }
-            o.baender.push({band: bd[2], min: s[0], tage: tg, reserve: r2(s[1] / s[0]), mitte: r2(s[2] / s[0]), ueber: r2(s[3] / s[0]), bedarf: r2(s[4] / s[0]), minus: s[5]});
+            o.baender.push({band: bd[2], min: s[0], tage: tg, reserve: r2(s[1] / s[0]), mitte: r2(s[2] / s[0]), ueber: r2(s[3] / s[0]), bedarf: r2(s[4] / s[0]), minus: s[5], abw: r2(s[6] / s[0])});
         });
         var h = [];
         o.baender.forEach(function (x) {
             if (x.min < c.kfMinMin) { return; }
-            if (x.ueber >= c.kfAnteil && KF.kalt.indexOf(x.band) >= 0) { h.push('Heizkurve kaltseitig senken: bei ' + x.band + ' °C in ' + de(x.ueber * 100, 0) + ' % der Zeit Überschuss (Ø ' + sg(x.mitte, 1) + ' K zur Bandmitte, knappster Raum Ø ' + de(x.reserve, 1) + ' K über Minimum) – Kaltpunkt um 1 K senken (von Hand), statt täglich −1 K zu verschieben'); }
-            else if (x.ueber >= c.kfAnteil) { o.info = (o.info ? o.info + ' · ' : '') + 'bei ' + x.band + ' °C in ' + de(x.ueber * 100, 0) + ' % der Zeit Überschuss; die Kurve liegt dort an der Untergrenze ' + c.minVlC + ' °C (nicht über die Kurve senkbar, RE-4)'; }
+            if (x.abw >= c.kfAnteil && KF.kalt.indexOf(x.band) >= 0) { h.push('Heizkurve kaltseitig senken: bei ' + x.band + ' °C in ' + de(x.abw * 100, 0) + ' % der Zeit Überschuss oder −1 K (Überschuss ' + de(x.ueber * 100, 0) + ' %, Ø ' + sg(x.mitte, 1) + ' K zur Bandmitte, knappster Raum Ø ' + de(x.reserve, 1) + ' K über Minimum) – Kaltpunkt um 1 K senken (von Hand), statt täglich −1 K zu verschieben'); }
+            else if (x.abw >= c.kfAnteil) { o.info = (o.info ? o.info + ' · ' : '') + 'bei ' + x.band + ' °C in ' + de(x.ueber * 100, 0) + ' % der Zeit Überschuss; die Kurve liegt dort an der Untergrenze ' + c.minVlC + ' °C (nicht über die Kurve senkbar, RE-4)'; }
             if (x.bedarf >= 0.3) { h.push('bei ' + x.band + ' °C in ' + de(x.bedarf * 100, 0) + ' % der Zeit ein Raum unter Minimum: Kurve dort zu niedrig oder Verteilung prüfen'); }
         });
         o.hinweis = h.length ? h.join(' · ') : null;
