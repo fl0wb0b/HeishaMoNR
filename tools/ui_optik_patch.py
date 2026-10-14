@@ -6,6 +6,8 @@ Aenderungen (Whitelist, jede mit erwartetem Altwert; alles andere bricht ab):
      Gruppentitel im Blau der Kopfzeile, dunkel genug fuer Text (#007bb0, 4,7:1 auf Weiss statt #1bbfff mit 2,1:1); sonst nichts.
   2. Effizienz > Historische Daten (ui_table 59bc0c78b8b9ea90): Monat linksbuendig, Zahlen rechtsbuendig (vorher alles zentriert).
   3. Uebersicht: englischer Tooltip der Vorlauf-Standardtemperatur (ui_numeric 8329aedf9204b75d) auf Deutsch.
+  4. (UI-Lambda 14.10.2026) Auswertung: Gruppe "Degree days information" (ui_group 87be08e6a82ef6a0) heisst "Gradtage". Auf einem Export, auf dem 1.-3.
+     schon gelten, aendert --apply nur diesen Namen (die anderen zaehlen als "schon neu"); die Sicherung enthaelt dann nur ihn, --revert nimmt nur ihn zurueck.
   Optional (--monate-filtern, NICHT Standard, aendert eine Funktion): "Generate table (dashboard)" (e79ba8ec58a2bbc4) laesst Monate ohne Daten
      (COP und Waerme 0 oder leer) weg. Ueber die ui_table-Optionen geht das nicht (der Knoten hat nur Spalten, keine Filter).
 Keine opt_*-Knoten, keine Verdrahtung, kein MQTT, nichts geloescht.
@@ -51,6 +53,7 @@ _NEU_TIP = ("Standard-Vorlauftemperatur, wenn alle Funktionen aus sind. Heizmodu
 AENDERUNGEN = [
     ("Effizienz", "59bc0c78b8b9ea90", "ui_table", "columns", "ganz", _ALT_SPALTEN, _NEU_SPALTEN, "Monat links, Zahlen rechts"),
     ("Übersicht", "8329aedf9204b75d", "ui_numeric", "tooltip", "ganz", _ALT_TIP, _NEU_TIP, "Tooltip auf Deutsch"),
+    ("Auswertung", "87be08e6a82ef6a0", "ui_group", "name", "ganz", "Degree days information", "Gradtage", "Gruppenname auf Deutsch"),
 ]
 _FILTER_ALT = "rows.sort((a, b) => yyyymmNum(b.date) - yyyymmNum(a.date));\n"
 _FILTER_NEU = (_FILTER_ALT + "\n// UI-Optik 14.10.2026 (tools/ui_optik_patch.py --monate-filtern): Monate ohne Daten (COP und Waerme 0 oder leer) nicht anzeigen\n"

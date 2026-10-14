@@ -2,7 +2,7 @@
 """Pruefungen fuer tools/ui_optik_patch.py auf einem Live-Export (nur lesen, schreibt nur in ein temporaeres Verzeichnis).
 
 Usage: python3 tools/ui_optik_test.py <flows_live.json>
-  1. Probelauf: 2 Werte + Kopf-Knoten, Whitelist, keine opt_*-Knoten, Verdrahtung gleich
+  1. Probelauf: 3 Werte + Kopf-Knoten (auf einem schon gepatchten Export nur der Gruppenname "Gradtage"), Whitelist, keine opt_*-Knoten, Verdrahtung gleich
   2. Anwenden -> erneut anwenden aendert nichts -> Rueckbau byte-gleich (mit und ohne --monate-filtern)
   3. Abweichender Ausgangswert und verbotene Aenderungen werden abgelehnt
   4. Monatsfilter (optional) im vm: Monate mit 0/leer fallen weg, Reihenfolge bleibt; ohne Schalter bleibt die Funktion unveraendert
@@ -49,8 +49,14 @@ raw0 = open(src, encoding="utf-8").read()
 ch, kopf, schon = P.plan(flows)
 neu = P.anwenden(flows, ch, kopf)
 ids = P.whitelist(flows, neu, {(c[1], c[2]) for c in ch})
-check("Probelauf: 2 Werte (Tabellenspalten, Tooltip) + Kopf-Knoten, sonst nichts", len(ch) == 2 and kopf and ids == sorted(["59bc0c78b8b9ea90", "8329aedf9204b75d", P.KOPF_ID]), ids)
+GT = "87be08e6a82ef6a0"
+if P.KOPF_ID not in {n["id"] for n in flows}:
+    check("Probelauf (ungepatchter Export): 3 Werte (Tabellenspalten, Tooltip, Gruppenname) + Kopf-Knoten, sonst nichts", len(ch) == 3 and kopf and schon == 0 and ids == sorted(["59bc0c78b8b9ea90", "8329aedf9204b75d", GT, P.KOPF_ID]), ids)
+else:
+    check("Probelauf (Export mit UI-Optik B): nur der Gruppenname, Tabellenspalten/Tooltip/Kopf-Knoten schon neu", len(ch) == 1 and not kopf and schon == 2 and ids == [GT], ids)
 A, B = {n["id"]: n for n in flows}, {n["id"]: n for n in neu}
+check("Gradtage: Gruppe 87be08e6a82ef6a0 heisst 'Gradtage' (vorher 'Degree days information'), sonst ist die Gruppe gleich (Tab Auswertung, Reihenfolge, Breite, disp)",
+      A[GT]["name"] == "Degree days information" and B[GT]["name"] == "Gradtage" and {k: v for k, v in A[GT].items() if k != "name"} == {k: v for k, v in B[GT].items() if k != "name"} and B[GT]["tab"] == "5b5fabb85470bd21", B[GT])
 check("keine opt_*-Knoten, Verdrahtung gleich, nichts geloescht", not [i for i in ids if i.startswith("opt_")] and all(A[i].get("wires") == B[i].get("wires") for i in A) and set(A) <= set(B), "")
 check("Kopf-Knoten: ui_template global (<head>), ohne Gruppe/Verdrahtung, nur ein CSS-Satz fuer Gruppentitel", B[P.KOPF_ID]["templateScope"] == "global" and B[P.KOPF_ID]["group"] == "" and B[P.KOPF_ID]["wires"] == [[]] and B[P.KOPF_ID]["format"].count("{") == 1 and "p.nr-dashboard-cardtitle{color:#007bb0}" in B[P.KOPF_ID]["format"], "")
 check("Tabelle: nur 'align' geaendert (left/right/right), Felder und Titel gleich", [c["align"] for c in B["59bc0c78b8b9ea90"]["columns"]] == ["left", "right", "right"] and [{k: v for k, v in c.items() if k != "align"} for c in A["59bc0c78b8b9ea90"]["columns"]] == [{k: v for k, v in c.items() if k != "align"} for c in B["59bc0c78b8b9ea90"]["columns"]], "")
