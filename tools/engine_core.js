@@ -770,7 +770,7 @@ var ENGINE = (function () {
         d.roomBelow.forEach(function (r) { if (S.qfRooms.indexOf(r.id) < 0) { S.qfRooms.push(r.id); } });
         if (B.trend && S.qfRooms.indexOf(B.trend.r.id) < 0) { S.qfRooms.push(B.trend.r.id); }
         var K = d.kaltQ || {}, von0 = fa ? (have(fa.von0) ? fa.von0 : fa.von) : null, capV = have(von0) ? deckelOf(kaltD(d, have(K.at) ? K.at : d.at), von0).hz : null;
-        var kalt = !!(K.halten && fa && have(capV) && capV <= c1.hartHz);
+        var kalt = !!(K.halten && fa && have(capV) && hartCap(d, have(K.at) ? K.at : d.at, capV, c1));   // hart auch, wenn die Stufe nur die Mindestfrequenz haelt (Frost)
         var deck = !B.ja && !kalt && d.fresh && (!have(d.rlRueck) || d.rlRueck <= c1.rueckRlK) && komfortSicher(d, {komfortK: d.notK}).ok;
         S.qfDeckSince = deck ? (S.qfDeckSince || now) : 0;
         var hoch = d.roomAbove.filter(function (r) { return S.qfRooms.indexOf(r.id) >= 0; })[0] || null;
@@ -959,7 +959,7 @@ var ENGINE = (function () {
                  arb: {owner: null, soll: null, von: null, start: 0, applied: null, last: null}, rules: {}, sc: newScore(), takt: taktNew(),
                  arbQ: {owner: null, soll: null, von: null, start: 0, applied: null, last: null},          // Quiet-Arbitrierung (seit Quiet-Freigabe v2 / Deckel/Laufzeit v4)
                  rtr: {}, bedT: 0, qfDeckSince: 0, lastPause: null, lz: null};                               // Raumverlauf, letzter Quiet-Bedarf, Rueckweg der Freigabe, letzte Pause, Messaufgabe +1 K
-        RULES.forEach(function (r) { S.rules[r.id] = {since: 0, failSince: 0, prop: null, cool: 0, n: 0, day: '', korrV: null, korrSince: 0, last: null, hebel: null}; });
+        RULES.forEach(function (r) { S.rules[r.id] = {since: 0, failSince: 0, prop: null, cool: 0, n: 0, day: '', korrV: null, korrSince: 0, last: null, hebel: null, rv: r.ver}; });
         return S;
     }
     function newScore() { return {cases: [], cands: [], eff: [], gt: {}, base: {}, tot: {}, hist: [], week: {}, lastSlot: {}}; }
@@ -967,7 +967,7 @@ var ENGINE = (function () {
         var F = newState(now);
         if (!S || typeof S !== 'object' || S.mv !== VER || !S.rules || !S.sc) { return F; }
         Object.keys(F).forEach(function (k) { if (S[k] === undefined) { S[k] = F[k]; } });
-        RULES.forEach(function (r) { if (!S.rules[r.id]) { S.rules[r.id] = F.rules[r.id]; } Object.keys(F.rules[r.id]).forEach(function (k) { if (S.rules[r.id][k] === undefined) { S.rules[r.id][k] = F.rules[r.id][k]; } }); });
+        RULES.forEach(function (r) { if (!S.rules[r.id]) { S.rules[r.id] = F.rules[r.id]; } Object.keys(F.rules[r.id]).forEach(function (k) { if (S.rules[r.id][k] === undefined) { S.rules[r.id][k] = k === 'rv' ? 0 : F.rules[r.id][k]; } }); });   // rv fehlt (Zustand vor 14.10.): Version unbekannt
         Object.keys(F.sc).forEach(function (k) { if (S.sc[k] === undefined) { S.sc[k] = F.sc[k]; } });
         // Review-Paket 13.10.2026: stillgelegte Regeln aus dem laufenden Zustand nehmen (Summen bleiben), Messaufgabe Comfort/Efficiency gestrichen
         STILLGELEGT.forEach(function (x) { delete S.rules[x.id]; if (S.sc.gt) { delete S.sc.gt[x.id]; } });
@@ -977,6 +977,7 @@ var ENGINE = (function () {
         // endet (er kann nicht mehr geklickt werden, die Arbitrierung gibt die Groesse frei); uebernommene Werte (S.arb/arbQ.applied, OPT_apply) bleiben und laufen ueber den
         // Rueckweg der neuen Version zurueck; offene Faelle und Summen der alten Version bleiben unter ihrem Schluessel (regel|vN|s5).
         RULES.forEach(function (R) {
+            var rs0 = S.rules[R.id]; if (rs0 && rs0.rv !== R.ver) { rs0.korrV = null; rs0.korrSince = 0; rs0.since = 0; rs0.failSince = 0; rs0.rv = R.ver; }   // Haltezeiten der alten Version gelten nicht (v2: Raumvorschlag, v3: Raumlage)
             var rs = S.rules[R.id], p = rs && rs.prop; if (!p || !have(p.ver) || p.ver === R.ver) { return; }
             [S.arb, S.arbQ].forEach(function (A) { if (A && A.owner === R.id) { A.owner = null; A.soll = null; A.von = null; A.start = 0; } });
             S.verWechsel = (Array.isArray(S.verWechsel) ? S.verWechsel : []).concat([{t: now, rule: R.id, von: p.ver, zu: R.ver, prop: p.id}]).slice(-20);

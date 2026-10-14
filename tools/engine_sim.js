@@ -1280,9 +1280,10 @@ console.log('--- (g) Raumeinfluss v3, Mindestfrequenz, Startschwelle, Abtau-Ruec
       S0.rules.raum_offset.prop = {id: 'raum_offset@2026-10-12T05:00', rule: 'raum_offset', ver: 2, art: 'befehl', ts: T0 - 60 * MIN, bis: T0 + 60 * MIN, cmd: {name: 'SetZ1HeatRequestTemperature', topic: 'panasonic_heat_pump/commands/SetZ1HeatRequestTemperature', value: -1}, von: 0, dir: 'soll_runter', was: 'v2'};
       S0.arb.owner = 'raum_offset'; S0.arb.soll = -1; S0.arb.von = 0;
       S0.sc.tot['raum_offset|v2|s5'] = {rule: 'raum_offset', ver: 2, sv: 5, since: T0 - 3 * 86400000, punkte: -23.49, faelle: 9, bewertet: 7, treffer: 6, fehlalarm: 1, neutral: 2, bs: 0, bsRef: 0, schaden: 0, verpasst: 0, verpasstSperre: 1, wirkN: 0, wirkP: 0, kalib: 0, trefferNeutral: 4, skillN: 4};
+      S0.rules.raum_offset.korrV = 1; S0.rules.raum_offset.korrSince = T0 - 300 * MIN; delete S0.rules.raum_offset.rv;      // Zustand vor 14.10.: Haltezeit des Phase-2-Vorschlags (+1 seit 5 h), ohne Versionsfeld
       const R = runSeq(3, i => inp(T0 + i * MIN, {rooms: RG()}), S0);
-      check('Versionswechsel v2 -> v3: ein laufender, nicht uebernommener v2-Vorschlag endet beim Laden (nicht mehr klickbar, Arbitrierung frei, Eintrag in S.verWechsel), die v2-Summen bleiben unter "raum_offset|v2|s5", v3 zaehlt unter "raum_offset|v3|s5"',
-            !R.S.rules.raum_offset.prop && R.S.arb.owner === null && R.S.verWechsel && R.S.verWechsel[0].rule === 'raum_offset' && R.S.verWechsel[0].von === 2 && R.S.verWechsel[0].zu === 3 && R.S.sc.tot['raum_offset|v2|s5'].punkte === -23.49 && !!R.S.sc.tot['raum_offset|v3|s5'] && E.report(R.S).find(r => r.regel === 'raum_offset').v === 3,
+      check('Versionswechsel v2 -> v3: ein laufender, nicht uebernommener v2-Vorschlag endet beim Laden (nicht mehr klickbar, Arbitrierung frei, Eintrag in S.verWechsel), die Haltezeit des Phase-2-Vorschlags gilt nicht weiter (beginnt mit der Raumlage neu), die v2-Summen bleiben unter "raum_offset|v2|s5", v3 zaehlt unter "raum_offset|v3|s5"',
+            !R.S.rules.raum_offset.prop && R.S.arb.owner === null && R.S.verWechsel && R.S.verWechsel[0].rule === 'raum_offset' && R.S.verWechsel[0].von === 2 && R.S.verWechsel[0].zu === 3 && R.S.rules.raum_offset.rv === 3 && R.S.rules.raum_offset.korrV === 0 && R.S.rules.raum_offset.korrSince === T0 && R.S.sc.tot['raum_offset|v2|s5'].punkte === -23.49 && !!R.S.sc.tot['raum_offset|v3|s5'] && E.report(R.S).find(r => r.regel === 'raum_offset').v === 3,
             JSON.stringify(R.S.verWechsel)); 
       // laufende Uebernahme +1 K (noch mit v2 per Klick uebernommen): der v3-Rueckweg greift (ohne gespeicherte Bedarfsraeume zaehlen alle Raeume), applyTick schickt 0
       const S1 = E.newState(T0 - MIN); S1.shift = 1; S1.arb.applied = {rule: 'raum_offset', w: 1, von: 0, ts: T0 - MIN};
@@ -1385,8 +1386,8 @@ function frostSim(opts) {
         const minHz = atI <= -10 ? 35 : (atI <= -4 ? 25 : 16), cap = P.q === 0 ? 50 : (P.q === 3 ? 17 : 21), vl = Math.round((P.tw + (P.on ? 1.2 : 0)) * 4) / 4, rl = Math.round((P.tw - (P.on ? 1.2 : 0)) * 4) / 4;
         let hz = 0; if (P.on) { hz = P.defrost > 0 ? 55 : Math.max(minHz, Math.min(cap, vl < soll - 1 ? 30 : minHz)); }
         if (P.on && P.defrost === 0 && at < 3 && P.rt > 0 && P.rt % 150 === 0) { P.defrost = 8; }
-        const pth = !P.on ? 0 : (P.defrost > 0 ? -1500 : 110 * hz), loss = P.room.map((r, k) => 0.06 * (P.tw - r) - [0.045, 0.05, 0.05, 0.04][k] * (r - at) + 0.12);
-        const qrad = P.room.reduce((a, r) => a + 0.06 * (P.tw - r), 0);
+        const pth = !P.on ? 0 : (P.defrost > 0 ? -1500 : 140 * hz), loss = P.room.map((r, k) => 0.08 * (P.tw - r) - [0.035, 0.04, 0.04, 0.03][k] * (r - at) + 0.12);   // Spielzeug-Physik: 16 Hz ~2,2 kW, 25 Hz 3,5 kW, 35 Hz 4,9 kW
+        const qrad = P.room.reduce((a, r) => a + 0.08 * (P.tw - r), 0);
         P.tw += ((pth / 1000) - qrad) / 0.4 / 60; P.room = P.room.map((r, k) => r + loss[k] / 8 * 4 / 60);
         if (P.defrost > 0) { P.defrost--; }
         if (P.on) { P.rt++; if (vl >= soll + 3) { P.over++; } else { P.over = 0; } if (P.over >= 3) { P.on = false; P.rt = 0; P.over = 0; } }
@@ -1422,8 +1423,10 @@ function RG4(r) { return [
     check('8 Tage Fake-Uhr mit Frost (Tage 3-5: -12…-4 °C, Mindestfrequenz 25/35 Hz, Abtauen alle 150 Laufminuten; Nutzer stellt am Frost-Tag Quiet 3), jeder Vorschlag per Klick: kein Fehler, nie ein Sprung > 1 K, hoechstens 6 Uebernahmen je Tag (Uebernahme-Limit; Rueckwege extra), keine zwei Verschiebungs-Befehle binnen 60 min; die Mindestfrequenz erscheint in Deckel/Schwelle; Takt-Messung zaehlt die Starts',
           F.errors === 0 && F.sprung === 0 && Object.keys(perDay).every(d => perDay[d] <= 6) && rev.length === 0 && F.frostGrund > 0 && tk.starts24h >= 0 && F.starts > 0,
           'Befehle ' + F.sends.length + ' (' + JSON.stringify(perDay) + '), Verschiebung ' + raumS.map(s0 => E.iso(new Date(2026, 11, 7).getTime() + s0[0] * MIN).slice(5, 16) + ' ' + s0[2] + ' ' + String(s0[3]).slice(0, 30)).join(' | ') + ' · Frost-Gruende ' + F.frostGrund + ' · Abtau-Bedarf ' + F.abtauBedarf + ' min · Starts ' + F.starts + ' · Mindestleistung ' + JSON.stringify(mlF.map(x => [x[0], x[4], x[3]])));
-    check('... Frost: Kaelte-Vorsorge bzw. Freigabe aus Quiet 3 (harter Deckel: bei <= -4 °C nur die Mindestfrequenz) kommt vor; ein Abtau-Rueckstand zaehlt als Bedarf; Wechsel von Hand und per Klick ohne Ping-Pong',
-          F.props.some(p => p.rule === 'quiet_freigabe') && F.abtauBedarf > 0, F.props.filter(p => p.rule === 'quiet_freigabe').slice(0, 6).map(p => E.iso(new Date(2026, 11, 7).getTime() + p.i * MIN).slice(5, 16) + ' ' + p.was).join(' | '));
+    const qS = F.sends.filter(s0 => s0[1] === 'SetQuietMode'), frostQ3 = qS.filter(s0 => s0[0] >= 3 * 1440 + 600 && s0[0] < 6 * 1440 && s0[2] === 3);
+    check('... Frost: Kaelte-Vorsorge aus Quiet 3 (harter Deckel: bei <= -4 °C haelt jede Stufe nur die Mindestfrequenz) auf Quiet 0 und haelt bis zur Milderung (kein Rueckweg auf 3 im Frost, kein Ping-Pong; vorher ging der Rueckweg alle 2 h hin und her); ein Abtau-Rueckstand zaehlt als Bedarf; im Frost Ueberschuss durch die Mindestfrequenz -> -1 K',
+          F.props.some(p => p.rule === 'quiet_freigabe' && /Kälte-Vorsorge/.test(p.was)) && frostQ3.length === 0 && qS.length <= 3 && F.abtauBedarf > 0 && raumS.some(s0 => s0[0] >= 3 * 1440 && s0[0] < 6 * 1440 && s0[2] === -1),
+          qS.map(s0 => E.iso(new Date(2026, 11, 7).getTime() + s0[0] * MIN).slice(5, 16) + ' Q' + s0[2] + ' ' + String(s0[3]).slice(0, 30)).join(' | ') + ' · Abtau-Bedarf ' + F.abtauBedarf + ' min');
 }
 
 // ================================================================== Replay der echten Daten (07.-10.10., 07.-12.10. oder 07.-13.10.; datensatzabhaengige Pruefungen je Zeitraum)
