@@ -60,15 +60,15 @@ var ENGINE = (function () {
         {id: 'laufbeginn', kurz: 'Laufbeginn', text: 'Verdichter läuft erst kurz', herkunft: 'Start-Pumpenspitze 2900 U/min für 11–16 min bei jedem Start; Quiet wirkt erst nach 1–2 min'},
         {id: 'heizgrenze_aus', kurz: 'Heizgrenze-Aus', text: 'Heizgrenze-Aus (Pumpe steht)', herkunft: 'Heizgrenze 12 °C mit Hysterese: aus ab 15 °C, ein ab 12 °C, Pumpe 0, Vorlauf ohne Aussage'},
         {id: 'regler', kurz: 'anderer Regler', text: 'Ein anderer Regler stellt dieselbe Größe', herkunft: 'HeishaMoNR-Quiet-Logik/Scheduler/Solar/WP-Zeitplan bzw. Raumregelung/Nachtabsenkung/Sanftanlauf; Verschiebung nur im Heizkurvenmodus mit Wasserfühler und ohne Handeingriff am Soll'},
-        {id: 'abstand', kurz: 'Mindestabstand', text: 'Mindestabstand zur letzten Änderung', herkunft: 'Wächter: 60 min Abstand; Opus: höchstens 1 Wechsel pro Stunde; seit 13.10. über Quiet und Verschiebung gemeinsam (Regel-Review 3.4: sonst ist keine Wirkung zuzuordnen und Freigabe und +1 K heizen doppelt). Ein Quiet-Notfall (Heizstab-Nähe, Raum ≥ notK unter Minimum) überbrückt ihn nach notfallMin (10 min; Regel-Review B4)'},
+        {id: 'abstand', kurz: 'Mindestabstand', text: 'Mindestabstand zur letzten Änderung', herkunft: 'Wächter: 60 min Abstand; Opus: höchstens 1 Wechsel pro Stunde; seit 13.10. über Quiet und Verschiebung gemeinsam (Regel-Review 3.4: sonst ist keine Wirkung zuzuordnen und Freigabe und +1 K heizen doppelt), seit 14.10. auch über die Heizregelung (Comfort/Efficiency ändert die Leistung beim Start und nach dem Abtauen). Ein Notfall der Quiet-Stufe oder der Heizregelung (Heizstab-Nähe, Raum ≥ notK unter Minimum) überbrückt ihn nach notfallMin (10 min; Regel-Review B4)'},
         {id: 'tageslimit', kurz: 'Tageslimit', text: 'Tageslimit der Regel erreicht', herkunft: 'Schreibbudget (Opus: höchstens 6 Wechsel/Tag), EEPROM-Verschleiß unbekannt. Seit 13.10. zählen bei Befehlsregeln nur übernommene Vorschläge (Regel-Review R5: Vorschläge in der Nacht ohne Klick verbrauchten sonst das Kontingent für den Tag; die Übernahme begrenzt ohnehin auf 6 Befehle am Tag); ein Quiet-Notfall ist ausgenommen'},
         {id: 'abkuehlzeit', kurz: 'Wartezeit', text: 'Wartezeit nach dem letzten Vorschlag', herkunft: 'kein Flattern: ein abgelaufener oder zurückgezogener Vorschlag kommt erst nach einer Pause wieder; ein Quiet-Notfall nach notfallMin (10 min), außer der vorige Notfall-Vorschlag ist nur abgelaufen (nachts klickt niemand, sonst käme derselbe Vorschlag alle 40 min)'},
         {id: 'takt', kurz: 'Takt-Gefahr', text: 'Takt-Gefahr: Vorlauf über Soll', herkunft: 'Anlage schaltet bei Vorlauf ≥ Soll +3,25 K nach ~3 min ab (6 Stopps 07.–10.10.); Sperre ab Soll +1 K für Maßnahmen, die den Vorlauf näher an diese Grenze bringen (mehr Leistung, −1 K). −1 K im Lauf also nur bei Vorlauf ≤ Soll: danach höchstens +1 K über dem neuen Soll, im ungünstigsten Fall (natürlicher Sollsprung −1 K an der Rundungsgrenze der Kurve, Regel-Review RE-2) +2 K; gemessen 07.–13.10.: nach einem Sollsprung −1 K kein Stopp bis +2,25 K (18 von 18), Stopp ab +2,5 K nach 11–14 min, ab +3,25 K nach 3 min'},
         {id: 'abtausprung', kurz: 'Abtauwetter', text: 'Frequenzsprung bei Abtauwetter', herkunft: 'Pseudo-Abtauungen: läuft der Verdichter lange niedrig und dreht dann hoch, reißt das Abtaukriterium ohne Vereisung (Forum 189605: L5 4540566, L7 4230252 und 4581423; Sprung > +30 % als Gefahr 4868882, Vermutung). Darum im Bereich −5…+4 °C (Fühlerwert der WP, Forum F6-a) nach mindestens 60 min mit höchstens 20 Hz keine Maßnahme, die den Verdichter um 8 Hz oder mehr anhebt; Heizstab-Nähe ist ausgenommen'},
         {id: 'heizstab', kurz: 'Heizstab-Nähe', text: 'Heizstab-Nähe', herkunft: 'Heizstab ab Außentemperatur < Heater_On_Outdoor_Temp (0 °C) bei Vorlauf < Soll −3 K nach 15 min; ein +1-K-Schritt vergrößert den Rückstand sofort um 1 K'},
         {id: 'modell', kurz: 'Modell-Gate', text: 'Gebäudemodell noch nicht freigegeben', herkunft: 'Wärmefahrplan: Gate des Gebäudemodells (≥ 10 Tage, Fehler ≥ 10 % kleiner als der bisherige Schätzer, plausible Koeffizienten); vorher ist eine Bedarfsvorhersage nicht belegt'},
-        {id: 'vorrang', kurz: 'andere Regel', text: 'Die Stellgröße gehört einer anderen Regel', herkunft: 'Arbitrierung je Stellgröße (Heizkurven-Verschiebung: Raumeinfluss, Vorausschau, +1 K von „Deckel/Laufzeit“; Quiet: Quiet-Freigabe, Deckel/Laufzeit): je Zeit hat genau eine Regel die Größe (laufender Vorschlag oder übernommener Wert); keine zweite Regel schlägt daneben oder dagegen vor. Quiet: eine übernommene Stufe weicht nur einem Notfall (Raum ≥ notK unter Minimum oder Heizstab-Nähe), frühestens notfallMin (10 min) nach der Übernahme (Regel-Review B4; vorher 60 min)'},
-        {id: 'gegenrichtung', kurz: 'Gegenrichtung', text: 'Gegenrichtung zur letzten Änderung', herkunft: 'Kein Hin und Her: Gegenrichtung frühestens shiftHaltMin bzw. quietHaltMin (60 min) nach dem Ende der letzten Änderung derselben Größe und nur mit Notfall (Verschiebung: Raum ≥ notK 0,3 K außerhalb des Bandes; Quiet: Raum ≥ notK unter Minimum oder Heizstab-Nähe, dort schon nach notfallMin 10 min), ohne Notfall erst nach gegenMin bzw. quietGegenMin (240 min); ANNAHME'}
+        {id: 'vorrang', kurz: 'andere Regel', text: 'Die Stellgröße gehört einer anderen Regel', herkunft: 'Arbitrierung je Stellgröße (Heizkurven-Verschiebung: Raumeinfluss, Vorausschau, +1 K von „Deckel/Laufzeit“; Quiet: Quiet-Freigabe, Deckel/Laufzeit): je Zeit hat genau eine Regel die Größe (laufender Vorschlag oder übernommener Wert); keine zweite Regel schlägt daneben oder dagegen vor. Quiet: eine übernommene Stufe weicht nur einem Notfall (Raum ≥ notK unter Minimum oder Heizstab-Nähe), frühestens notfallMin (10 min) nach der Übernahme (Regel-Review B4; vorher 60 min). Leistung (seit 14.10., Heizregelung): eine Leistungsänderung zur Zeit – läuft ein Quiet-Vorschlag, wartet Comfort (zuerst Quiet: der Quiet-Deckel bindet auch Comfort, 13.10. 21:00 Comfort/Quiet 3: 17 Hz); läuft ein Heizregelungs-Vorschlag oder steht Comfort der Regel, schlägt der Effizienz-Deckel nicht vor'},
+        {id: 'gegenrichtung', kurz: 'Gegenrichtung', text: 'Gegenrichtung zur letzten Änderung', herkunft: 'Kein Hin und Her: Gegenrichtung frühestens shiftHaltMin bzw. quietHaltMin (60 min) nach dem Ende der letzten Änderung derselben Größe und nur mit Notfall (Verschiebung: Raum ≥ notK 0,3 K außerhalb des Bandes; Quiet: Raum ≥ notK unter Minimum oder Heizstab-Nähe, dort schon nach notfallMin 10 min), ohne Notfall erst nach gegenMin bzw. quietGegenMin (240 min); Heizregelung wie Quiet (hcHaltMin 60, hcGegenMin 240 min, Notfall nach 10 min); ANNAHME'}
     ];
     var LOCK_TEXT = {}; LOCKS.forEach(function (l) { LOCK_TEXT[l.id] = l.text; });
 
@@ -168,9 +168,11 @@ var ENGINE = (function () {
     // Arbitrierung je Stellgroesse. Gemeinsamer Zustand S.arb (Heizkurven-Verschiebung "shift": Raumeinfluss, Vorausschau, +1 K von "Deckel/Laufzeit")
     // und S.arbQ (Quiet-Stufe "quiet": Quiet-Freigabe, Deckel/Laufzeit; seit 13.10.2026, Quiet-Freigabe v2 / Deckel/Laufzeit v4):
     //   owner/soll/von/start  laufender Vorschlag (genau einer)   applied  von der Anlage uebernommener Wert einer Regel   last  letzte beendete Aenderung
-    function arbOf(S, g) { return g === 'quiet' ? S.arbQ : S.arb; }
-    function curOf(d, g) { return g === 'quiet' ? d.q : d.shift; }
-    function ownedBy(d, A, g, self) { var ap = A && A.applied, cur = curOf(d, g); return (ap && ap.rule !== self && have(cur) && cur === ap.w && (g === 'quiet' || cur !== 0)) ? ap.rule : null; }
+    // seit 14.10.2026 auch S.arbH (Heizregelung "hc": 0 = Comfort, 1 = Efficiency; Regel "Heizregelung")
+    function arbOf(S, g) { return g === 'quiet' ? S.arbQ : (g === 'hc' ? S.arbH : S.arb); }
+    function curOf(d, g) { return g === 'quiet' ? d.q : (g === 'hc' ? d.hc : d.shift); }
+    function hcTxt(w) { return w === 0 ? 'Comfort' : (w === 1 ? 'Efficiency' : 'Heizregelung ' + w); }
+    function ownedBy(d, A, g, self) { var ap = A && A.applied, cur = curOf(d, g); return (ap && ap.rule !== self && have(cur) && cur === ap.w && (g !== 'shift' || cur !== 0)) ? ap.rule : null; }
     function shiftOwnedBy(d, self) { return ownedBy(d, d.arb, 'shift', self); }
     function komfortNot(d, dir) {                                                    // Komfort-Notfall: ein gueltiger Raum >= notK ausserhalb des Bandes in der Richtung, die die Massnahme behebt, keiner auf der anderen Seite
         var v = d.rooms.filter(function (r) { return r.active && r.valid && have(r.min) && have(r.max); });
@@ -179,21 +181,21 @@ var ENGINE = (function () {
     }
     function sgnOf(x) { return x > 0 ? 1 : (x < 0 ? -1 : 0); }
     function arbEnd(A, d, g) { return (A.applied && A.last && A.applied.rule === A.last.rule && curOf(d, g || 'shift') === A.applied.w) ? d.now : (A.last ? A.last.end : 0); }   // steht der Wert noch, laeuft die Aenderung noch
-    function wTxt(g, w) { return g === 'quiet' ? 'Quiet ' + w : 'Verschiebung ' + sg(w, 0) + ' K'; }
+    function wTxt(g, w) { return g === 'quiet' ? 'Quiet ' + w : (g === 'hc' ? hcTxt(w) : 'Verschiebung ' + sg(w, 0) + ' K'); }
     function arbLocks(R, e, d, S, cfg, add) {
-        var g = (e && e.groesse) || R.groesse, A = arbOf(S, g), L = cfg.locks, now = d.now, q = g === 'quiet';
+        var g = (e && e.groesse) || R.groesse, A = arbOf(S, g), L = cfg.locks, now = d.now, q = g === 'quiet', st = q || g === 'hc';   // st: Stufen-Groesse (Quiet, Heizregelung) mit Notfall
         if (!e || !have(e.wert) || !have(e.von) || !A) { return; }
-        var dir = sgnOf(e.wert - e.von), halt = q ? (e.hart ? L.notfallMin : L.quietHaltMin) : L.shiftHaltMin, gegen = q ? L.quietGegenMin : L.gegenMin;   // Quiet-Notfall: 10 statt 60 min (Regel-Review B4)
+        var dir = sgnOf(e.wert - e.von), halt = st ? (e.hart ? L.notfallMin : (q ? L.quietHaltMin : L.hcHaltMin)) : L.shiftHaltMin, gegen = q ? L.quietGegenMin : (st ? L.hcGegenMin : L.gegenMin);   // Notfall: 10 statt 60 min (Regel-Review B4)
         if (R.sperren.indexOf('vorrang') >= 0) {
             var ob = ownedBy(d, A, g, R.id);
             if (A.owner && A.owner !== R.id) { add('vorrang', (A.soll === e.wert ? (q ? 'dieselbe Stufe ' : 'dieselbe Verschiebung ') + (q ? A.soll : sg(A.soll, 0) + ' K') + ' schlägt schon „' : wTxt(g, A.soll) + ' vorgeschlagen von „') + RULE[A.owner].kurz + (A.soll === e.wert ? '“ vor' : '“')); }
-            else if (ob && !(q && e.hart && now - A.applied.ts >= halt * MIN)) { add('vorrang', wTxt(g, curOf(d, g)) + ' gehört „' + RULE[ob].kurz + '“' + (q ? ' (Notfall frühestens ' + halt + ' min nach der Übernahme)' : ''), q && e.hart ? A.applied.ts + halt * MIN : null); }
+            else if (ob && !(st && e.hart && now - A.applied.ts >= halt * MIN)) { add('vorrang', wTxt(g, curOf(d, g)) + ' gehört „' + RULE[ob].kurz + '“' + (st ? ' (Notfall frühestens ' + halt + ' min nach der Übernahme)' : ''), st && e.hart ? A.applied.ts + halt * MIN : null); }
         }
         if (R.sperren.indexOf('gegenrichtung') >= 0 && A.last && dir !== 0 && A.last.dir === -dir) {
-            var ls = A.last, end = arbEnd(A, d, g), el = now - end, h0 = (q && ls.lapse) ? ls.start : end;   // Zuordnung ohne Aenderung beendet: Mindesthaltezeit ab der Uebernahme, Wartezeit ab dem Ende
+            var ls = A.last, end = arbEnd(A, d, g), el = now - end, h0 = (st && ls.lapse) ? ls.start : end;   // Zuordnung ohne Aenderung beendet: Mindesthaltezeit ab der Uebernahme, Wartezeit ab dem Ende
             var was = 'letzte Änderung ' + wTxt(g, ls.w) + ' („' + RULE[ls.rule].kurz + '“) bis ' + hhmm(end);
             if (now - h0 < halt * MIN) { add('gegenrichtung', was + ', Mindesthaltezeit ' + halt + ' min', h0 + halt * MIN); }
-            else if (el < gegen * MIN && !e.hart) { add('gegenrichtung', was + ', ohne ' + (q ? 'Notfall' : 'Komfort-Notfall') + ' erst nach ' + gegen + ' min', end + gegen * MIN); }
+            else if (el < gegen * MIN && !e.hart) { add('gegenrichtung', was + ', ohne ' + (st ? 'Notfall' : 'Komfort-Notfall') + ' erst nach ' + gegen + ' min', end + gegen * MIN); }
         }
     }
 
@@ -664,6 +666,84 @@ var ENGINE = (function () {
                 if (gv) { e.vorab = gv; }
                 return e;
             }
+        },
+        {
+            id: 'heizregelung', ver: 1, kachel: 'Heizregelung', kurz: 'Heizregelung', name: 'Heizregelung (Comfort/Efficiency)', art: 'befehl', groesse: 'hc', richtung: 'mehr_leistung', prio: 4,
+            basis: 'heizregelung|v1', basisMinus: 'heizregelung|v1|eff',
+            zweck: 'Stellt die Heizregelung (SetHeatingControl 0 = Comfort, 1 = Efficiency). Ziel ist Efficiency, solange alle Räume mit Reserve im Band liegen, kein Heizstab-Risiko besteht und kein Abtau-Rückstand aufzuholen ist. Der Unterschied liegt nur in den trägen Phasen (Messung 07.–14.10.): Comfort fährt nach dem Start sofort 30–35 Hz, Efficiency bleibt bei 16–17 Hz und geht erst ab Laufminute 39–46 zeitweise auf 21–26 Hz; nach dem Abtauen hält Efficiency ~20 min niedrig (Forum 189605: L5 4582615, L7 4095732), Comfort fährt hoch. Bei 16–17 Hz mitten im Lauf ändert ein Wechsel die Frequenz nicht (12.10. 18:28, 13.10. 07:07), nur die Pumpe (Comfort→Efficiency 1750 → 2850–2900 U/min, kein Stopp). Comfort kostet beim Hochlauf COP (ab 28 Hz korrigiert −3 %, roh −5…−15 % gegen 16–17 Hz). Deshalb Comfort nur bei echtem Komfortbedarf (wie Quiet-Freigabe v3: Raum unter Minimum oder auf dem Weg dorthin, Heizstab-Nähe, Abtau-Rückstand, Boost von Hand), solange Efficiency träge ist (Anlaufphase bis Laufminute 45, nach dem Abtauen, Heizstab-Nähe), Vorlauf und Rücklauf Rückstand haben und der Quiet-Deckel den Hochlauf zulässt – bindet der Deckel, zuerst die Quiet-Freigabe (eine Leistungsänderung zur Zeit). Zurück nach Efficiency, wenn der Bedarf 15 min gedeckt ist (Hysterese), spätestens nach 4 h. Steht Comfort ohne Regel (von Hand), schlägt sie Efficiency vor, sobald der Bedarf 15 min gedeckt ist und der Wechsel von Hand mindestens 2 h zurückliegt. Kein Wechsel in der Startphase; Sperre „Frequenzsprung bei Abtauwetter“ (Pseudo-Abtauung nach langem Niedriglauf).',
+            eingaenge: ['Heizregelung (Heating_Control) und Wechsel von Hand', 'Verdichterfrequenz, Laufzeit, Lauf/Pause', 'Soll-/Ist-Vorlauf, Rücklauf und Ziel-Spreizung', 'Bedarf wie Quiet-Freigabe v3 (Räume, Verlauf, Heizstab-Nähe, Abtau-Rückstand, Boost)', 'Quiet-Stufe und Deckel je Stufe', 'Heizstab (Heater_On_Outdoor_Temp, Heater_Start_Delta, Heater_Delay_Time)', 'Abtauen (Ende)', 'Räume (Reserve über Minimum)'],
+            sperren: ['anlauf', 'daten', 'stoerung', 'mqtt_sperre', 'abtauen', 'warmwasser', 'laufbeginn', 'vorrang', 'gegenrichtung', 'abstand', 'tageslimit', 'abkuehlzeit', 'takt', 'abtausprung'],
+            befehl: {name: 'SetHeatingControl', topic: 'panasonic_heat_pump/commands/SetHeatingControl'},
+            schwellen: [
+                {key: 'laufMin', std: 15, einheit: 'min', herkunft: 'kein Wechsel in der Startphase (Auftrag 14.10.): Pumpenspitze der Startroutine 11–16 min nach jedem Start (Messung 07.–13.10.); Comfort davor brächte nichts, was nicht schon ein Start in Comfort brächte'},
+                {key: 'heizstabVorlaufMin', std: 5, einheit: 'min', herkunft: 'wie Quiet-Freigabe: bei Heizstab-Nähe endet die Startphase Heater_Delay_Time − 5 min − Haltezeit (hier Laufminute 7), der Vorschlag kommt 5 min vor der Heizstab-Freigabe; ANNAHME'},
+                {key: 'haltHeizstabMin', std: 3, einheit: 'min', herkunft: 'Heizstab-Nähe: kurze Haltezeit (wie Quiet-Freigabe); ANNAHME'},
+                {key: 'traegeMin', std: 45, einheit: 'min', herkunft: 'Efficiency träge: Comfort nur bis Laufminute 45 – Efficiency hielt nach dem Start 16–17 Hz und ging erst ab Laufminute 39–46 zeitweise auf 21–26 Hz (5 von 7 längeren Läufen, 07.–13.10.); danach regelt sie bei Rückstand selbst hoch (Boost 10.10. Laufminute 68, Efficiency: Quiet 3 → 0, 29 Hz nach 1 min, 34 Hz nach 2 min). Ausnahmen: Abtau-Rückstand und Heizstab-Nähe; ANNAHME'},
+                {key: 'traegeHz', std: 21, einheit: 'Hz', herkunft: 'Efficiency träge = Verdichter höchstens 21 Hz: 21 von 21 Efficiency-Starts 08.–14.10. mit 16–17 Hz bis Laufminute 15, zeitweise 21–26 Hz; Comfort-Starts sofort 30–35 Hz (12.10. 21:32: 35 Hz bei 6 °C, 13.10. 11:58: 31 Hz bei 13 °C)'},
+                {key: 'mehrHz', std: 3, einheit: 'Hz', herkunft: 'Quiet-Deckel lässt den Hochlauf zu: Quiet 0 oder Deckel der Stufe mindestens 3 Hz über der jetzigen Frequenz (wie Quiet-Freigabe); sonst bindet der Deckel auch Comfort (13.10. 21:00 Comfort/Quiet 3: 17 Hz; 16:29 Comfort/Quiet 2: 21 Hz) → zuerst die Quiet-Freigabe'},
+                {key: 'vlRueckK', std: 1.5, einheit: 'K', herkunft: 'Vorlauf mindestens 1,5 K unter Soll (wie Quiet-Freigabe): ohne Rückstand ändert Comfort die Frequenz nicht (12.10. 18:28 und 13.10. 07:07 Efficiency → Comfort bei 16 Hz am Soll: 16,6 → 16,6 Hz); ANNAHME'},
+                {key: 'rlRueckK', std: 1.5, einheit: 'K', herkunft: 'Rücklauf mindestens 1,5 K unter Soll-Rücklauf (wie Quiet-Freigabe: ohne Rücklauf-Rückstand regelt der Verdichter nicht hoch); ANNAHME'},
+                {key: 'hochHz', std: 28, einheit: 'Hz', herkunft: 'Bewertung des Wegs nach Efficiency: „Comfort fährt ohne Bedarf hoch“ = Verdichter mindestens 28 Hz ab Laufminute 2 (ab 28 Hz COP gegen 16–17 Hz korrigiert −3 %, roh −5…−15 %; Deckel/Laufzeit v5)'},
+                {key: 'rueckMin', std: 15, einheit: 'min', herkunft: 'Bedarf gedeckt (Rückweg bzw. Vorschlag Efficiency): 15 min am Stück kein Bedarf, alle Räume ≥ Minimum + komfortK, Rücklauf höchstens rueckRlK unter Soll, kein Heizstab-Risiko, nicht nach dem Abtauen (Hysterese wie der Rückweg der Quiet-Freigabe; Auftrag); ANNAHME'},
+                {key: 'rueckRlK', std: 0.5, einheit: 'K', herkunft: 'Bedarf gedeckt: Rücklauf höchstens 0,5 K unter Soll (wie Quiet-Freigabe); ANNAHME'},
+                {key: 'komfortK', std: 0.3, einheit: 'K', herkunft: 'Efficiency nur mit Reserve: alle Räume (Wert bis 6 h alt) mindestens 0,3 K über Minimum (wie notK); ANNAHME'},
+                {key: 'heizstabHystK', std: 1, einheit: 'K', herkunft: 'kein Heizstab-Risiko: Außen mindestens Heater_On_Outdoor_Temp + heaterMarginK (2 K) + 1 K, solange Comfort steht (Hysterese wie der Heizregelungs-Hinweis; die alte Warnung flackerte bei 4,0 °C, 74 Ereignisse in 6 Tagen); ANNAHME, keine Frostdaten'},
+                {key: 'abtauNachMin', std: 30, einheit: 'min', herkunft: 'nach dem Abtauen 30 min kein Wechsel nach Efficiency: Comfort holt den Abtau-Rückstand auf (Abtau-Rückstand als Bedarf wie Quiet-Freigabe v3: 30 min, Vorlauf ≥ 3 K unter Soll; Forum 189605 4582615, 4095732, 4096011); ANNAHME, ohne eigene Abtau-Daten'},
+                {key: 'handRuheMin', std: 120, einheit: 'min', herkunft: 'nach einem Wechsel von Hand (Heizregelung-Schalter) 2 h kein Vorschlag zurück, außer Notfall (Heizstab-Nähe, Raum ≥ 0,3 K unter Minimum): der Nutzer schaltete 08.–13.10. siebenmal selbst (08.10. 10:02, 12.10. 18:26 und 22:00, 13.10. 07:06, 15:29, 15:40, 22:43); kein Pendeln gegen den Nutzer; ANNAHME'},
+                {key: 'haltMin', std: 10, einheit: 'min', herkunft: 'wie Quiet-Freigabe: Bedingungen 10 min am Stück (Comfort-Richtung; die Efficiency-Richtung hat ihre 15 min in „Bedarf gedeckt“)'},
+                {key: 'proTag', std: 3, einheit: 'Vorschläge', herkunft: 'höchstens 3 übernommene Wechsel je Tag (ein Comfort-Fenster mit Rückweg sind 2 Befehle; die Übernahme begrenzt ohnehin auf 6 Befehle am Tag); ANNAHME'},
+                {key: 'gueltigMin', std: 30, einheit: 'min', herkunft: 'wie Quiet-Freigabe; ANNAHME'},
+                {key: 'pauseMin', std: 60, einheit: 'min', herkunft: 'wie Mindestabstand; ANNAHME'},
+                {key: 'maxDauerMin', std: 240, einheit: 'min', herkunft: 'Comfort-Rückweg spätestens nach 4 h (wie Quiet-Freigabe), aber nicht, solange Bedarf, Heizstab-Nähe oder Abtau-Nachlauf besteht (dann hält Comfort); ANNAHME'}
+            ],
+            erwartung: 'Comfort: Verdichter mindestens +6 Hz binnen 5 min, elektrische Leistung +100 W oder mehr (Comfort-Starts 30–35 Hz bei 764–815 W gegen Efficiency 16–17 Hz bei ~400 W, 4–8 °C, 07.–14.10.; ein Wechsel im Lauf mit Rückstand ist nicht gemessen), Pumpe bleibt ΔT-geregelt (~1750 U/min, 13,6 l/min); COP ab 28 Hz korrigiert −3 % (roh −5…−15 %) gegen 16–17 Hz. Efficiency: der nächste Start bleibt bis Laufminute 15 bei höchstens 21 Hz (21 von 21 Efficiency-Starts mit 16–17 Hz); im Lauf springt die Pumpe in ≤ 1 min auf 2850–2900 U/min (08.10. 10:03, 12.10. 22:01; nicht 13.10. 22:45), kein Stopp durch den Wechsel',
+            rueckweg: 'Comfort: automatisch zurück auf Efficiency, sobald der Bedarf 15 min am Stück gedeckt ist (alle Räume ≥ Minimum + 0,3 K, Rücklauf höchstens 0,5 K unter Soll, kein Heizstab-Risiko, nicht binnen 30 min nach dem Abtauen); spätestens nach 4 h, solange weder Bedarf noch Heizstab-Nähe noch Abtau-Nachlauf besteht; höchstens 3 Sendeversuche. Efficiency: kein Rückweg (Normalzustand; die Übernahme endet mit der Bestätigung).',
+            prognose: {p: 0.7, h: [15, 30], text: 'Ohne Comfort bleibt Efficiency träge: Verdichter höchstens 21 Hz und Vorlauf mindestens 1 K unter Soll'},
+            prognoseMinus: {p: 0.6, h: [120, 240], text: 'Ohne Efficiency fährt der Verdichter in Comfort ohne Bedarf hoch (mindestens 28 Hz ab Laufminute 2)'},
+            kalibriert: ['2026-10-08 10:03', '2026-10-12 22:01', '2026-10-13 15:31', '2026-10-13 22:45'],
+            eval: function (d, c) {
+                if (!have(d.hc) || (d.hc !== 0 && d.hc !== 1)) { return {inaktiv: 'Heizregelung unbekannt'}; }
+                var H = d.hcL || {}, B = d.bedQ || {}, AH = d.arbH, now = d.now;
+                if (d.hc === 0 && AH && AH.applied && AH.applied.rule === 'heizregelung' && AH.applied.w === 0) { return {inaktiv: 'Comfort (Heizregelung) steht; zurück auf Efficiency über den Rückweg'}; }   // kein zweiter Weg zurueck neben dem Rueckweg
+                var hand = H.hand && H.hand.w === d.hc && now - H.hand.t < c.handRuheMin * MIN ? H.hand : null;          // Wechsel von Hand auf den jetzigen Modus: 2 h Ruhe (ausser Notfall)
+                if (d.hc === 1) {
+                    var lm = H.lm, cap = H.cap || {}, zHz = d.q === 0 ? Q0_HZ : (have(cap.hz) ? cap.hz : null);
+                    var cond = [
+                        {k: 'lauf', kz: 'Verdichter läuft', t: 'Verdichter läuft', tn: 'Verdichter steht (' + zTxt(d.zustand) + ')', ok: d.running},
+                        {k: 'laufMin', kz: 'Laufzeit', t: 'Lauf seit mindestens ' + lm + ' min', tn: 'Startphase: Lauf erst ' + de(d.runMin, 0) + ' von ' + lm + ' min', ok: d.runMin >= lm, ist: r2(d.runMin), soll: lm, op: '>=', u: 'min', dyn: true},
+                        {k: 'bedarf', kz: 'Bedarf', t: B.ja ? 'Bedarf: ' + B.txt : 'Bedarf (Raum unter Minimum oder auf dem Weg dorthin, Heizstab-Nähe, Abtau-Rückstand, Boost von Hand)', tn: 'kein Bedarf: ' + (B.keinTxt || '–'), ok: !!B.ja},
+                        {k: 'traege', kz: 'Efficiency träge', t: 'Efficiency träge: Verdichter höchstens ' + c.traegeHz + ' Hz ' + (B.abtau ? 'nach dem Abtauen' : (B.heizstab ? 'bei Heizstab-Nähe' : 'bis Laufminute ' + c.traegeMin)),
+                         tn: !have(d.hz) || d.hz > c.traegeHz ? 'Verdichter bei ' + de(d.hz, 0) + ' Hz (Efficiency regelt schon hoch)' : 'Laufminute ' + de(d.runMin, 0) + ': Efficiency regelt ab Laufminute ' + c.traegeMin + ' selbst hoch', ok: !!H.traege},
+                        {k: 'deckel', kz: 'Quiet-Deckel', t: d.q === 0 ? 'Quiet 0: kein Deckel' : 'Quiet ' + d.q + ' lässt bis ' + de(cap.hz, 0) + ' Hz zu', tn: 'Quiet ' + d.q + ' deckelt bei ' + de(cap.hz, 0) + ' Hz: zuerst die Quiet-Freigabe', ok: !!H.capOk},
+                        {k: 'vlRueck', kz: 'Vorlauf-Rückstand', t: 'Vorlauf mindestens ' + de(c.vlRueckK, 1) + ' K unter Soll', tn: 'Vorlauf ' + rueckTxt(d.vlRueck) + ' (Schwelle ' + de(c.vlRueckK, 1) + ' K darunter)', ok: have(d.vlRueck) && d.vlRueck >= c.vlRueckK, ist: r2(d.vlRueck), it: rueckTxt(d.vlRueck), soll: c.vlRueckK, op: '>=', u: 'K', dyn: true},
+                        {k: 'rlRueck', kz: 'Rücklauf-Rückstand', t: 'Rücklauf mindestens ' + de(c.rlRueckK, 1) + ' K unter Soll-Rücklauf', tn: 'Rücklauf ' + rueckTxt(d.rlRueck) + ' (Schwelle ' + de(c.rlRueckK, 1) + ' K darunter)', ok: have(d.rlRueck) && d.rlRueck >= c.rlRueckK, ist: r2(d.rlRueck), it: rueckTxt(d.rlRueck), soll: c.rlRueckK, op: '>=', u: 'K', dyn: true}
+                    ];
+                    if (hand) { cond.push({k: 'hand', kz: 'Wechsel von Hand', t: 'kein Wechsel von Hand auf Efficiency in den letzten ' + c.handRuheMin + ' min (oder Notfall)', tn: 'Efficiency von Hand um ' + hhmm(hand.t) + ': Comfort frühestens ' + hhmm(hand.t + c.handRuheMin * MIN) + ' (außer Notfall)', ok: !!B.notfall}); }
+                    return {cond: cond, halt: B.heizstab ? c.haltHeizstabMin : c.haltMin, wert: 0, von: 1, dir: 'mehr_leistung', groesse: 'hc', hart: !!B.notfall, startMin: lm, heizstab: !!B.heizstab, maxDauerMin: c.maxDauerMin,
+                            sprungHz: have(zHz) && have(d.hz) ? zHz - d.hz : null,                    // Sperre "Frequenzsprung bei Abtauwetter": Comfort faehrt auf 30-35 Hz (unter Quiet 1/2 bis zum Deckel)
+                            erwartung: 'Comfort fährt sofort hoch: Verdichter mindestens ' + de(have(d.hz) ? d.hz + 6 : null, 0) + ' Hz binnen 5 min (bis ' + (d.q === 0 ? '30–35 Hz' : de(cap.hz, 0) + ' Hz, Deckel Quiet ' + d.q) + '), elektrische Leistung +100 W oder mehr; Vorlauf holt den Rückstand in Minuten auf statt nach Laufminute 39–46 (Comfort-Starts 12.10. 21:32 und 13.10. 11:58: 31–35 Hz, Soll −1 K nach 2–6 min; Wechsel im Lauf mit Rückstand nicht gemessen); Pumpe bleibt ΔT-geregelt; COP ab 28 Hz korrigiert −3 % gegen 16–17 Hz',
+                            was: 'Heizregelung Efficiency → Comfort',
+                            warum: 'Efficiency hält ' + de(d.hz, 0) + ' Hz bei Vorlauf ' + de(d.vlRueck, 1) + ' K und Rücklauf ' + de(d.rlRueck, 1) + ' K unter Soll, Lauf ' + de(d.runMin, 0) + ' min, ' + (d.q === 0 ? 'Quiet 0' : 'Quiet ' + d.q + ' bis ' + de(cap.hz, 0) + ' Hz') + '; Bedarf: ' + B.txt};
+                }
+                // Comfort ohne Regel (von Hand oder vor dem Einspielen): Efficiency, sobald der Bedarf gedeckt ist (Ziel Efficiency)
+                var gk = H.atNah === null ? 'Heizstab-Grenze unbekannt (Heater_On_Outdoor_Temp fehlt)' : 'Außen ' + de(d.at, 0) + ' °C: Heizstab-Nähe (Efficiency erst ab Heater_On_Outdoor_Temp + ' + de(H.grenzeK, 0) + ' K)';
+                var cond2 = [
+                    {k: 'gedeckt', kz: 'Bedarf gedeckt', t: 'Bedarf seit mindestens ' + c.rueckMin + ' min gedeckt', tn: B.ja ? 'Bedarf: ' + B.txt : (H.deck ? 'Bedarf erst seit ' + de(H.deckMin, 0) + ' von ' + c.rueckMin + ' min gedeckt' : 'Bedarf nicht gedeckt'),
+                     ok: H.deckMin >= c.rueckMin, ist: Math.floor(H.deckMin), soll: c.rueckMin, op: '>=', u: 'min', dyn: !!H.deck},
+                    {k: 'komfort', kz: 'Komfort sicher', t: 'alle Räume mindestens ' + de(c.komfortK, 1) + ' K über Minimum, auch in 2 h beim jetzigen Gefälle über Minimum', tn: H.ks && !H.ks.ok ? H.ks.txt : (H.resPRaum || 'ein Raum') + ' fällt: in 2 h ' + de(H.resP, 1) + ' K zum Minimum', ok: !!(H.ks && H.ks.ok && H.trendOk)},
+                    {k: 'hochlauf', kz: 'Quiet lässt Hochlauf zu', t: d.q === 0 ? 'Quiet 0: Comfort fährt beim Start hoch (Kosten)' : 'Quiet ' + d.q + ' lässt bis ' + de((H.cap || {}).hz, 0) + ' Hz zu (Comfort fährt hoch)', tn: 'Quiet ' + d.q + ' deckelt bei ' + de((H.cap || {}).hz, 0) + ' Hz: Comfort fährt ohnehin nicht hoch, Efficiency brächte nichts', ok: !!H.hochOk},
+                    {k: 'heizstab', kz: 'kein Heizstab-Risiko', t: 'kein Heizstab-Risiko (Außen ' + de(d.at, 0) + ' °C)', tn: gk, ok: H.atNah === false},
+                    {k: 'abtau', kz: 'nicht nach Abtauen', t: 'kein Abtauen in den letzten ' + c.abtauNachMin + ' min', tn: d.defrost ? 'Abtauen läuft' : 'Abtauen bis ' + hhmm(H.abtauEnde) + ' (Comfort holt den Rückstand auf)', ok: !H.abtauNach},
+                    {k: 'ruecklauf', kz: 'Rücklauf', t: 'Rücklauf höchstens ' + de(c.rueckRlK, 1) + ' K unter Soll (oder Pause)', tn: 'Rücklauf ' + rueckTxt(d.rlRueck), ok: !!H.rlOk}
+                ];
+                if (hand) { cond2.push({k: 'hand', kz: 'Wechsel von Hand', t: 'kein Wechsel von Hand auf Comfort in den letzten ' + c.handRuheMin + ' min', tn: 'Comfort von Hand um ' + hhmm(hand.t) + ': Efficiency frühestens ' + hhmm(hand.t + c.handRuheMin * MIN), ok: false}); }
+                return {cond: cond2, halt: 0, wert: 1, von: 0, dir: 'weniger_leistung', groesse: 'hc', einmal: true,
+                        erwartung: d.running ? 'Pumpe springt in ≤ 1 min auf 2850–2900 U/min (08.10. 10:03, 12.10. 22:01), kein Stopp durch den Wechsel; die Frequenz bleibt (am Minimum 16–17 Hz); der nächste Start bleibt bis Laufminute 15 bei höchstens 21 Hz statt 30–35 Hz'
+                                             : 'der nächste Start bleibt bis Laufminute 15 bei höchstens 21 Hz statt 30–35 Hz (21 von 21 Efficiency-Starts mit 16–17 Hz); im Lauf hebt Efficiency den Durchfluss (15,1 statt 13,6 l/min bei 8–11 °C)',
+                        rueckweg: 'kein Rückweg: Efficiency ist der Normalzustand (die Übernahme endet mit der Bestätigung); Comfort schlägt die Regel bei Bedarf wieder vor',
+                        was: 'Heizregelung Comfort → Efficiency',
+                        warum: 'Comfort ohne Bedarf seit ' + de(H.deckMin, 0) + ' min (alle Räume mindestens ' + de(c.komfortK, 1) + ' K über Minimum, ' + (d.running ? 'Rücklauf ' + rueckTxt(d.rlRueck) : 'Pause') + ', Außen ' + de(d.at, 0) + ' °C ohne Heizstab-Risiko)' + (H.hand && H.hand.w === 0 ? '; Comfort von Hand um ' + hhmm(H.hand.t) : '')};
+            }
         }
     ];
     var RULE = {}; RULES.forEach(function (r) { RULE[r.id] = r; });
@@ -687,7 +767,7 @@ var ENGINE = (function () {
         // ab v2: eigene Sperren/Wartezeiten der Regel entschuldigen "verpasst" (0 Punkte, als "waehrend Sperre" gezaehlt), aber nur mit den
         // dokumentierten Standardwerten (eine verlaengerte Sperre zaehlt nur bis zum Standard) und nur ohne harten Schaden im Fenster.
         verpasstSperre: {eigene: ['abstand', 'tageslimit', 'abkuehlzeit', 'haltezeit', 'stabil'], gegenregel: ['vorrang', 'gegenrichtung'], komfortK: 1.0,
-                         schaden: {quiet_freigabe: ['komfort'], quiet_strecken: ['takt', 'ueberschwingen'], raum_offset: ['komfort']}},   // Vorausschau: "komfort" galt nur dem Zweig +1 K (bis v1)
+                         schaden: {quiet_freigabe: ['komfort'], quiet_strecken: ['takt', 'ueberschwingen'], raum_offset: ['komfort'], heizregelung: ['komfort', 'heizstab']}},   // Vorausschau: "komfort" galt nur dem Zweig +1 K (bis v1)
         raumAlterMax: 360,         // Bewertung (nicht Entscheidung): ein Raumwert bis 6 h alt zaehlt, weil die Shelly H&T Gen3 nur bei Aenderung >= 0,5 K melden
         lueftungK: 1.0,            // Raum faellt >= 1 K in <= 60 min: Lueftung (Eingriff), danach keine Gegenfaktik fuer Raum-Prognosen (nach dem Replay ergaenzt: 09.10. Wohnzimmer -3,3 K)
         reife: {faelle: 10, tage: 14, skill: 0.2, wirkFaelle: 2, verpasst: 1},
@@ -699,6 +779,7 @@ var ENGINE = (function () {
     var LOCK_CFG = {hpMaxAgeMin: 5, afterDefrostMin: 10, afterDhwMin: 10, startLockMin: 15, gapMin: 60, taktK: 1.0, stopK: 3.25, heaterMarginK: 2, warmupMin: 10, pumpOnRpm: 1000, kurveTolK: 1.5,
                     shiftHaltMin: 60, gegenMin: 240, notK: 0.3,       // Verschiebungs-Arbitrierung (alle Regeln der Groesse "shift"): gemeinsame Mindesthaltezeit, Wartezeit Gegenrichtung, Komfort-Notfall
                     quietHaltMin: 60, quietGegenMin: 240,             // Quiet-Arbitrierung (Quiet-Freigabe, Deckel/Laufzeit), wie die Verschiebung (ANNAHME)
+                    hcHaltMin: 60, hcGegenMin: 240,                   // Heizregelung (Comfort/Efficiency, 14.10.2026): wie Quiet (ANNAHME)
                     notfallMin: 10,                                   // Quiet-Notfall (Heizstab-Naehe, Raum >= notK unter Minimum) ueberbrueckt Mindestabstand, Wartezeit, Vorrang und Gegenrichtung nach 10 min (Regel-Review B4; ANNAHME)
                     abtauAtMin: -5, abtauAtMax: 4, abtauNiedrigMin: 60, abtauNiedrigHz: 20, sprungHz: 8};   // Frequenzsprung bei Abtauwetter (Forum 189605 F6-a, 4540566/4230252/4581423; ANNAHME)
     function thermoK(cfg) { var c = cfg && cfg.rules && cfg.rules.quiet_strecken; return c && have(c.thermoStoppK) ? c.thermoStoppK : 2.75; }
@@ -791,6 +872,45 @@ var ENGINE = (function () {
         if (fehlt) { return {ok: false, txt: fehlt.name + ': kein Raumwert'}; }
         if (bad) { return {ok: false, txt: bad.name + ' nur ' + de(bad.t - bad.min, 1) + ' K über Minimum (Reserve ' + de(c.komfortK, 1) + ' K)'}; }
         return {ok: true, txt: 'alle Räume mindestens ' + de(c.komfortK, 1) + ' K über Minimum'};
+    }
+    // ------------------------------------------------------------------ Heizregelung (14.10.2026): Lage fuer Regel, Rueckweg und Datensatz
+    // Comfort-Bedarf: Bedarf wie Quiet-Freigabe v3 (bedQ) UND Efficiency traege (bis Laufminute traegeMin, nach dem Abtauen oder bei Heizstab-Naehe, hoechstens traegeHz)
+    // UND Rueckstand (Vorlauf/Ruecklauf) UND der Quiet-Deckel laesst den Hochlauf zu. Bedarf gedeckt (Efficiency): kein Bedarf, alle Raeume >= Minimum + komfortK,
+    // Ruecklauf hoechstens rueckRlK unter Soll (oder Pause), kein Heizstab-Risiko (Aussen >= Heater_On + heaterMarginK, solange Comfort steht + heizstabHystK), nicht
+    // binnen abtauNachMin nach dem Abtauen; seit wann (S.hcDeckSince). lage: +1 Comfort-Bedarf (in Efficiency), -1 Efficiency moeglich (in Comfort), 0 sonst.
+    function hcLage(S, d, cfg) {
+        var c = cfg.rules.heizregelung, B = d.bedQ || {}, now = d.now, o = {};
+        var grenze = have(d.htrOn) ? d.htrOn + cfg.locks.heaterMarginK : null;
+        o.grenzeK = cfg.locks.heaterMarginK + (d.hc === 0 ? c.heizstabHystK : 0);
+        S.hcAtNah = (have(grenze) && have(d.at)) ? (d.at < grenze + (d.hc === 0 ? c.heizstabHystK : 0)) : null;
+        o.atNah = S.hcAtNah;                                                                     // null = Heizstab-Grenze oder Aussentemperatur unbekannt
+        o.abtauEnde = S.defrostEnd || 0;
+        o.abtauNach = !!d.defrost || !!(S.defrostEnd && now - S.defrostEnd < c.abtauNachMin * MIN);
+        o.ks = komfortSicher(d, {komfortK: c.komfortK});
+        var L3 = d.raum; o.resP = (L3 && !L3.keine && have(L3.reserveP)) ? L3.reserveP : null; o.resPRaum = (L3 && L3.knappP) ? L3.knappP.r.name : '';   // knappster Raum in prognoseH h beim jetzigen Gefaelle (Raumeinfluss v3)
+        o.trendOk = !have(o.resP) || o.resP >= 0;
+        o.rlOk = !d.running || (have(d.rlRueck) && d.rlRueck <= c.rueckRlK);
+        o.deck = !!(d.fresh && !B.ja && o.ks.ok && o.trendOk && o.rlOk && o.atNah === false && !o.abtauNach);
+        if (d.fresh) { S.hcDeckSince = o.deck ? (S.hcDeckSince || now) : 0; }
+        o.deckMin = S.hcDeckSince ? (now - S.hcDeckSince) / MIN : 0;
+        o.lm = B.heizstab ? Math.max(3, d.htrDelay - c.heizstabVorlaufMin - c.haltHeizstabMin) : c.laufMin;
+        o.cap = have(d.q) ? deckelOf(d, d.q) : {hz: null};
+        o.capOk = d.q === 0 || (have(o.cap.hz) && have(d.hz) && o.cap.hz >= d.hz + c.mehrHz);
+        o.hochOk = d.q === 0 || (have(o.cap.hz) && o.cap.hz >= c.hochHz);                     // Comfort kann ueberhaupt hochfahren (sonst kostet Comfort nichts: kein Effizienz-Gewinn durch Efficiency)
+        o.traege = !!(d.running && have(d.hz) && d.hz <= c.traegeHz && (d.runMin < c.traegeMin || B.abtau || B.heizstab));
+        o.rueck = have(d.vlRueck) && d.vlRueck >= c.vlRueckK && have(d.rlRueck) && d.rlRueck >= c.rlRueckK;
+        o.lage = (d.hc === 1 && B.ja && o.traege && o.capOk && o.rueck && d.runMin >= o.lm) ? 1 : ((d.hc === 0 && o.deckMin >= c.rueckMin && o.hochOk) ? -1 : 0);
+        o.hand = S.hcHandT ? {t: S.hcHandT, w: S.hcHandW} : null;
+        return o;
+    }
+    // Rueckweg einer von der Regel uebernommenen Comfort-Stellung: Bedarf rueckMin gedeckt; "halten" (kein Ablauf), solange Bedarf, Heizstab-Naehe oder Abtau-Nachlauf besteht
+    function hcEnde(d, cfg, H) {
+        var c = cfg.rules.heizregelung, B = d.bedQ || {}, o = {ende: null, halten: null};
+        if (B.ja) { o.halten = 'Bedarf besteht weiter: ' + B.txt; }
+        else if (H.atNah) { o.halten = 'Heizstab-Nähe: Außen ' + de(d.at, 0) + ' °C (Comfort bis Heater_On_Outdoor_Temp + ' + de(H.grenzeK, 0) + ' K)'; }
+        else if (H.abtauNach) { o.halten = 'Abtauen' + (H.abtauEnde && !d.defrost ? ' bis ' + hhmm(H.abtauEnde) : '') + ' (Efficiency hielte danach ~20 min niedrig)'; }
+        else if (H.deckMin >= c.rueckMin) { o.ende = 'Bedarf seit ' + c.rueckMin + ' min gedeckt (alle Räume ≥ Minimum + ' + de(c.komfortK, 1) + ' K, Rücklauf höchstens ' + de(c.rueckRlK, 1) + ' K unter Soll, kein Heizstab-Risiko)'; }
+        return o;
     }
     // ------------------------------------------------------------------ Raumeinfluss v3 (14.10.2026): Lage der Raeume direkt aus Baendern, Wert (EMA), Verlauf und Lueften
     var RELAIS_RAUM = 'ki_oben';  // Kinderzimmer oben hat eine eigene Relaisregelung (Radiator, Tab Dashboard, Soll 23,0 °C): kalt zaehlt nur bei offenem Relais (kzRad 1 oder unbekannt), RE-8
@@ -958,7 +1078,9 @@ var ENGINE = (function () {
                  defrostEnd: 0, dhwEnd: 0, defrostWas: false, dhwWas: false, q: null, qChg: 0, shift: null, shiftChg: 0, soll: null, handWas: false, vlHist: [], needSince: 0, korr0Since: 0, vsEndSince: 0, atH: [],
                  arb: {owner: null, soll: null, von: null, start: 0, applied: null, last: null}, rules: {}, sc: newScore(), takt: taktNew(),
                  arbQ: {owner: null, soll: null, von: null, start: 0, applied: null, last: null},          // Quiet-Arbitrierung (seit Quiet-Freigabe v2 / Deckel/Laufzeit v4)
-                 rtr: {}, bedT: 0, qfDeckSince: 0, lastPause: null, lz: null};                               // Raumverlauf, letzter Quiet-Bedarf, Rueckweg der Freigabe, letzte Pause, Messaufgabe +1 K
+                 rtr: {}, bedT: 0, qfDeckSince: 0, lastPause: null, lz: null,                                 // Raumverlauf, letzter Quiet-Bedarf, Rueckweg der Freigabe, letzte Pause, Messaufgabe +1 K
+                 arbH: {owner: null, soll: null, von: null, start: 0, applied: null, last: null},          // Heizregelung (Comfort/Efficiency, 14.10.2026)
+                 hc: null, hcChg: 0, hcHandT: 0, hcHandW: null, hcDeckSince: 0, hcAtNah: null};             // letzter Wechsel, Wechsel von Hand, Bedarf gedeckt seit, Heizstab-Naehe (Hysterese)
         RULES.forEach(function (r) { S.rules[r.id] = {since: 0, failSince: 0, prop: null, cool: 0, n: 0, day: '', korrV: null, korrSince: 0, last: null, hebel: null, rv: r.ver}; });
         return S;
     }
@@ -979,7 +1101,7 @@ var ENGINE = (function () {
         RULES.forEach(function (R) {
             var rs0 = S.rules[R.id]; if (rs0 && rs0.rv !== R.ver) { rs0.korrV = null; rs0.korrSince = 0; rs0.since = 0; rs0.failSince = 0; rs0.rv = R.ver; }   // Haltezeiten der alten Version gelten nicht (v2: Raumvorschlag, v3: Raumlage)
             var rs = S.rules[R.id], p = rs && rs.prop; if (!p || !have(p.ver) || p.ver === R.ver) { return; }
-            [S.arb, S.arbQ].forEach(function (A) { if (A && A.owner === R.id) { A.owner = null; A.soll = null; A.von = null; A.start = 0; } });
+            [S.arb, S.arbQ, S.arbH].forEach(function (A) { if (A && A.owner === R.id) { A.owner = null; A.soll = null; A.von = null; A.start = 0; } });
             S.verWechsel = (Array.isArray(S.verWechsel) ? S.verWechsel : []).concat([{t: now, rule: R.id, von: p.ver, zu: R.ver, prop: p.id}]).slice(-20);
             rs.prop = null; rs.since = 0; rs.failSince = 0; rs.cool = 0; rs.hebel = null;
         });
@@ -994,7 +1116,7 @@ var ENGINE = (function () {
     function derive(S, inp, cfg) {
         var L = cfg.locks, now = inp.t;
         var d = {now: now, hz: plausV('hz', inp.hz), vl: plausV('vl', inp.vl), rl: plausV('rl', inp.rl), soll: plausV('soll', inp.soll), dT: num(inp.dT), at: plausV('at', inp.at), q: num(inp.q), shift: num(inp.shift),
-                 pump: num(inp.pump), pel: plausV('pel', inp.pel), heatOffAT: num(inp.heatOffAT), korr: inp.korr || null, notK: L.notK, arb: S.arb, arbQ: S.arbQ,
+                 pump: num(inp.pump), pel: plausV('pel', inp.pel), heatOffAT: num(inp.heatOffAT), korr: inp.korr || null, notK: L.notK, arb: S.arb, arbQ: S.arbQ, arbH: S.arbH,
                  vs: (inp.vs && typeof inp.vs === 'object' && Array.isArray(inp.vs.at)) ? inp.vs : null};
         d.fresh = have(num(inp.hpAge)) && num(inp.hpAge) <= L.hpMaxAgeMin && have(d.hz) && have(d.vl) && have(d.soll);
         d.running = have(d.hz) && d.hz > 0;
@@ -1089,6 +1211,17 @@ var ENGINE = (function () {
                 if (ap0 && ap0.rule === AQ.owner && ap0.w === d.qFrom && sgnOf(d.q - d.qFrom) === sgnOf(ap0.w - ap0.von)) { AQ.applied.von0 = have(ap0.von0) ? ap0.von0 : ap0.von; AQ.applied.ts0 = ap0.ts0 || ap0.ts; }
             }
         }
+        // Heizregelung (14.10.2026): Wechsel erkennen; uebernimmt die Anlage den laufenden Vorschlag der Regel "Heizregelung", gehoert der Modus ihr (applied).
+        // Jeder andere Wechsel ist "von Hand" (Schalter im Dashboard, Bediengeraet), ausser dem Rueckweg einer Uebernahme der Regel (zurueck auf ihren Ausgangswert).
+        d.hcChanged = false;
+        if (have(d.hc)) { if (have(S.hc) && S.hc !== d.hc) { S.hcChg = now; d.hcChanged = true; d.hcFrom = S.hc; } S.hc = d.hc; }
+        if (d.hcChanged) {
+            var AH = S.arbH, apH = AH.applied, lsH = AH.last;
+            var rueckH = !!((apH && apH.w === d.hcFrom && apH.von === d.hc) || (lsH && lsH.lapse && lsH.w === d.hcFrom && lsH.von === d.hc && now - lsH.end <= 60 * MIN));
+            if (AH.applied && AH.applied.w !== d.hc) { AH.last = {rule: AH.applied.rule, dir: sgnOf(AH.applied.w - AH.applied.von), w: AH.applied.w, von: AH.applied.von, start: AH.applied.ts, end: now}; AH.applied = null; }
+            if (AH.owner && d.hc === AH.soll) { AH.applied = {rule: AH.owner, w: d.hc, von: d.hcFrom, ts: now}; d.hcBy = AH.owner; }
+            else if (!rueckH) { S.hcHandT = now; S.hcHandW = d.hc; }
+        }
         if (have(d.soll)) { if (have(S.soll) && S.soll !== d.soll) { d.sollJump = d.soll - S.soll; if (!d.shiftChanged) { S.kurveChg = now; } } S.soll = d.soll; }   // natuerlicher Sollsprung (Kurve, AT ganzzahlig; RE-2)
         d.kurveChg = S.kurveChg || 0;
         // Handeingriff am Soll (Soll weicht von der Heizkurve ab, z. B. Boost): sein Ende zaehlt fuer den Mindestabstand wie eine Aenderung der Verschiebung
@@ -1124,10 +1257,23 @@ var ENGINE = (function () {
         var hdl = num(inp.htrDelay); d.htrDelay = have(hdl) && hdl > 0 && hdl <= 120 ? hdl : 15;   // Heater_Delay_Time (J: 15 min); ohne Meldung 15 min
     }
 
+    // Leistungs-Arbitrierung (14.10.2026, Regel "Heizregelung"): Quiet-Stufe und Heizregelung wirken beide auf die Leistung, aber verschieden: Quiet ist ein harter
+    // Deckel (auch fuer Comfort: 13.10. 21:00 Comfort/Quiet 3 hielt 17 Hz, 16:29 Comfort/Quiet 2 21 Hz), Efficiency nur eine traege Phase (Start bis Laufminute
+    // 39-46, ~20 min nach dem Abtauen). Darum: eine Leistungsaenderung zur Zeit, zuerst die Quiet-Stufe. Laeuft ein Quiet-Vorschlag, wartet Comfort; laeuft ein
+    // Heizregelungs-Vorschlag oder steht Comfort der Regel (Bedarf), schlaegt der Effizienz-Deckel (Quiet hoeher) nicht vor.
+    function leistLocks(R, e, d, S, add) {
+        var g = (e && e.groesse) || R.groesse;
+        if (R.id === 'heizregelung' && e && e.dir === 'mehr_leistung' && S.arbQ && S.arbQ.owner) { add('vorrang', 'Quiet-Vorschlag „' + RULE[S.arbQ.owner].kurz + '“ läuft: zuerst die Quiet-Stufe'); }
+        if (R.id === 'quiet_strecken' && g === 'quiet' && S.arbH) {
+            var H = S.arbH;
+            if (H.owner === 'heizregelung') { add('vorrang', '„Heizregelung“ schlägt ' + hcTxt(H.soll) + ' vor'); }
+            else if (H.applied && H.applied.rule === 'heizregelung' && H.applied.w === 0 && d.hc === 0) { add('vorrang', 'Comfort gehört „Heizregelung“ (Bedarf)'); }
+        }
+    }
     // ------------------------------------------------------------------ Sperren je Regel (Reihenfolge = Prioritaet des angezeigten Grundes)
     function locksFor(R, d, S, cfg, inp, dirNow, e) {
         var L = cfg.locks, c = cfg.rules[R.id], rs = S.rules[R.id], now = d.now, out = [], g = (e && e.groesse) || R.groesse, sl = (e && have(e.startMin)) ? e.startMin : L.startLockMin;
-        var nf = !!(e && e.hart) && g === 'quiet';                                       // Quiet-Notfall (Heizstab-Naehe, Raum >= notK unter Minimum): Abstand/Tageslimit/Wartezeit nach notfallMin
+        var nf = !!(e && e.hart) && (g === 'quiet' || g === 'hc');                     // Notfall der Quiet-Stufe/Heizregelung (Heizstab-Naehe, Raum >= notK unter Minimum): Abstand/Tageslimit/Wartezeit nach notfallMin
         function add(id, extra, until) { out.push({id: id, text: LOCK_TEXT[id] + (extra ? ' (' + extra + ')' : ''), bis: until || null}); }
         R.sperren.forEach(function (id) {
             if (id === 'anlauf' && now - S.born < L.warmupMin * MIN) { add(id, 'noch ' + Math.ceil((S.born + L.warmupMin * MIN - now) / MIN) + ' min', S.born + L.warmupMin * MIN); }
@@ -1144,6 +1290,7 @@ var ENGINE = (function () {
             if (id === 'heizgrenze_aus' && !d.running && d.zustand === 'heizgrenze') { add(id); }
             if (id === 'modell' && !(d.vs && d.vs.gate)) { add(id, d.vs ? (d.vs.n || 0) + ' von ' + (d.vs.minDays || 10) + ' Tagen' : 'keine Vorhersage'); }
             if (id === 'vorrang' || id === 'gegenrichtung') { if (id === 'vorrang' || R.sperren.indexOf('vorrang') < 0) { arbLocks(R, e, d, S, cfg, add); } }
+            if (id === 'vorrang') { leistLocks(R, e, d, S, add); }
             if (id === 'regler') {
                 if (g === 'quiet' && inp.otherQ) { add(id, inp.otherQ); }
                 if (g === 'shift') {
@@ -1154,8 +1301,8 @@ var ENGINE = (function () {
                     else if (d.hand) { add(id, 'Soll-Vorlauf ' + de(d.soll, 0) + ' °C weicht von der Heizkurve (' + de(sk, 1) + ' °C) ab: Handeingriff'); }
                 }
             }
-            if (id === 'abstand') {                                                        // seit 13.10. ueber beide Groessen (Regel-Review 3.4: Wirkung sonst nicht zuzuordnen, Effekte addieren sich)
-                var chg = (g === 'quiet' || g === 'shift') ? Math.max(S.qChg || 0, S.shiftChg || 0) : 0;
+            if (id === 'abstand') {                                                        // seit 13.10. ueber beide Groessen (Regel-Review 3.4: Wirkung sonst nicht zuzuordnen, Effekte addieren sich), seit 14.10. auch Heizregelung
+                var chg = (g === 'quiet' || g === 'shift' || g === 'hc') ? Math.max(S.qChg || 0, S.shiftChg || 0, S.hcChg || 0) : 0;
                 var gap = nf ? L.notfallMin : L.gapMin;
                 if (chg && now - chg < gap * MIN) { add(id, 'letzte Änderung ' + hhmm(chg) + ', noch ' + Math.ceil((chg + gap * MIN - now) / MIN) + ' min' + (nf ? ' (Notfall)' : ''), chg + gap * MIN); }
             }
@@ -1197,7 +1344,7 @@ var ENGINE = (function () {
         var res = {id: R.id, v: R.ver, st: '', grund: '', naechste: null, p: null, locks: [], groesse: R.groesse};
         function endProp(why) {
             if (!rs.prop) { return; }
-            [['shift', S.arb], ['quiet', S.arbQ]].forEach(function (x) {                  // Arbitrierung: Groesse freigeben, Richtung und Ende merken (Gegenrichtung)
+            [['shift', S.arb], ['quiet', S.arbQ], ['hc', S.arbH]].forEach(function (x) {  // Arbitrierung: Groesse freigeben, Richtung und Ende merken (Gegenrichtung)
                 var A = x[1]; if (!A || A.owner !== R.id || (rs.prop.groesse || R.groesse) !== x[0]) { return; }
                 A.last = {rule: R.id, dir: sgnOf(A.soll - A.von), w: A.soll, von: A.von, start: A.start, end: now};
                 A.owner = null; A.soll = null; A.von = null; A.start = 0;
@@ -1272,9 +1419,10 @@ var ENGINE = (function () {
             if (Array.isArray(e.bed)) { p.bed = e.bed; }                                                              // Raumeinfluss v3: Bedarfsraeume (Rueckweg nur ueber diese, Regel-Review B2)
             if (have(e.hzS)) { p.hzS = e.hzS; }                                                                      // Deckel/Laufzeit v5: Frequenzschwelle der Ausloesung (Bewertung)
             if (e.hart) { p.hart = true; }                                                                           // Notfall (Wartezeit danach nur fuer einen neuen Notfall verkuerzt)
+            if (e.einmal) { p.einmal = true; }                                                                       // Heizregelung -> Efficiency: Normalzustand, die Uebernahme endet mit der Bestaetigung (kein Rueckweg)
             p.sum = checksum(p);
             rs.prop = p; res.neu = true;
-            var A0 = arbOf(S, g); if (A0 && (g === 'shift' || g === 'quiet')) { A0.owner = R.id; A0.soll = e.wert; A0.von = e.von; A0.start = now; }      // Arbitrierung: diese Regel hat jetzt die Groesse
+            var A0 = arbOf(S, g); if (A0 && (g === 'shift' || g === 'quiet' || g === 'hc')) { A0.owner = R.id; A0.soll = e.wert; A0.von = e.von; A0.start = now; }      // Arbitrierung: diese Regel hat jetzt die Groesse
         }
         res.st = R.art === 'hinweis' ? 'hinweis' : 'vorschlag'; res.p = rs.prop.id; res.grund = rs.prop.warum;
         return res;
@@ -1616,6 +1764,7 @@ var ENGINE = (function () {
         tgUpdate(S, d); d.vsBase = tagesgang(S, now); d.vsDk = bedarfK(d.vs, cfg.rules.vorausschau, d.vsBase);
         d.bedQ = bedarfQ(S, d, cfg); if (d.bedQ.ja && d.fresh) { S.bedT = now; } d.bedT = S.bedT;   // Bedarf der Quiet-Stufe (Freigabe; Ausschluss fuer den Deckel)
         d.kaltQ = kaltQ(d, cfg.rules.quiet_freigabe);                                   // Kaelte-Vorsorge (Regel-Review B4)
+        d.hcL = hcLage(S, d, cfg); var HE = hcEnde(d, cfg, d.hcL);                     // Heizregelung: Lage, Rueckweg-Grund/halten (14.10.2026)
         hochlaufStep(S, d, cfg);                                                        // Kennzahl: Hochlauf nach dem Start (Comfort/Efficiency, nur Anzeige)
         uebStep(S, d);                                                                  // Kennzahl: Laufenergie bei AT >= 11 °C, alle Raeume ueber der Bandmitte (nur Anzeige)
         var hcInfo = hcHinweis(S, d, cfg);                                              // Heizregelung-Hinweis (Anzeige im Waechter und auf der Uebersicht, keine Regel)
@@ -1629,7 +1778,15 @@ var ENGINE = (function () {
                 AQ.last = {rule: ar, dir: sgnOf(AQ.applied.w - AQ.applied.von), w: AQ.applied.w, von: AQ.applied.von, start: AQ.applied.ts, end: now, lapse: true, grund: QE.ende[ar] || 'Frist abgelaufen'}; AQ.applied = null;
             }
         }
-        [['shift', S.arb], ['quiet', S.arbQ]].forEach(function (x) {                     // Arbitrierung nach dem Laden eines aelteren Zustands: laufenden Vorschlag als Eigentuemer eintragen
+        // Heizregelung: Comfort der Regel gehoert ihr nur, solange der Grund besteht (wie Quiet); Efficiency (Normalzustand) gehoert niemandem: die Zuordnung endet sofort
+        var AHh = S.arbH;
+        if (AHh.applied && d.hc === AHh.applied.w) {
+            var mxH = cfg.rules.heizregelung.maxDauerMin;
+            if (AHh.applied.w === 1 || (!HE.halten && (HE.ende || (have(mxH) && now - AHh.applied.ts >= mxH * MIN)))) {
+                AHh.last = {rule: AHh.applied.rule, dir: sgnOf(AHh.applied.w - AHh.applied.von), w: AHh.applied.w, von: AHh.applied.von, start: AHh.applied.ts, end: now, lapse: true, grund: AHh.applied.w === 1 ? 'Efficiency (Normalzustand)' : (HE.ende || 'Frist abgelaufen')}; AHh.applied = null;
+            }
+        }
+        [['shift', S.arb], ['quiet', S.arbQ], ['hc', S.arbH]].forEach(function (x) {     // Arbitrierung nach dem Laden eines aelteren Zustands: laufenden Vorschlag als Eigentuemer eintragen
             var A = x[1]; if (A.owner) { return; }
             RULES.forEach(function (R) { var p0 = S.rules[R.id].prop; if (p0 && (p0.groesse || R.groesse) === x[0] && !A.owner) { A.owner = R.id; A.soll = p0.cmd.value; A.von = p0.von; A.start = p0.ts; } });
         });
@@ -1678,6 +1835,7 @@ var ENGINE = (function () {
         // Raumeinfluss v3: Rueckweg aus der Raumlage (Hysterese; +1 K nur ueber die Bedarfsraeume, -1 K bei Bedarf oder verbrauchter Reserve), spaetestens nach 6 h (Frist der Uebernahme).
         // Gilt auch fuer eine noch mit v2 uebernommene Verschiebung (Versionswechsel): ohne gespeicherte Bedarfsraeume zaehlen alle Raeume.
         var rE = raumEnde(S, d, cfg); if (rE) { ende.raum_offset = rE; }
+        if (HE.ende) { ende.heizregelung = HE.ende; } if (HE.halten) { halten.heizregelung = HE.halten; }   // Heizregelung: Rueckweg der Comfort-Uebernahme
         // Vorausschau: Rueckweg sofort, wenn ein Raum das Band in Gegenrichtung verlaesst; sonst, wenn die Vorhersage 15 min am Stueck nicht mehr die halbe Schwelle zeigt
         var cv = cfg.rules.vorausschau, sh = have(d.shift) ? sgnOf(d.shift) : 0, dkv = d.vsDk;
         if (sh !== 0) {
@@ -1705,6 +1863,7 @@ var ENGINE = (function () {
         if (d.unpl.length) { rec.abl.unpl = d.unpl; }                                          // unplausible Eingaenge dieser Minute (gelten als fehlend)
         var dq = have(d.q) ? deckelOf(d, d.q) : null;                                   // wirksamer Deckel der jetzigen Quiet-Stufe (Anzeige im Waechter statt eigener Annahme)
         if (d.raum && !d.raum.keine) { rec.abl.raum = d.raum.dir; }                              // Raumeinfluss v3: Lage (+1 Bedarf, -1 Ueberschuss, 0) im Datensatz
+        if (have(d.hc) && d.hcL) { rec.abl.hc = d.hcL.lage; if (d.hcL.deckMin > 0 && d.hc === 0) { rec.abl.hc_deck = Math.floor(d.hcL.deckMin); } }   // Heizregelung: Lage (+1 Comfort-Bedarf, -1 Efficiency moeglich, 0) und Minuten "Bedarf gedeckt" in Comfort
         return {S: S, d: d, res: res, prop: prop, rec: rec, ev: ev, scores: sc, ende: ende, halten: halten, locks: locks, hc: hcInfo,
                 deckel: dq ? {q: d.q, hz: dq.hz, quelle: dq.quelle} : null, hinweise: hinweisListe(S), stoerung: d.err ? {code: d.err, seit: (S.hw && S.hw.stoerung && S.hw.stoerung.seit) || now} : null};
     }
@@ -1721,6 +1880,7 @@ var ENGINE = (function () {
         if (rule === 'quiet_freigabe') { return 'deckel_frei'; }
         if (rule === 'quiet_strecken') { return (ver || 1) >= 4 && hebel !== 'shift' ? 'hz_hoch' : 'lauf_ende'; }
         if (rule === 'raum_offset' && (ver || 1) >= 3) { return 'raum3'; }              // v3: Problem aus der Raumlage (Bedarfsraeume bzw. Ueberschuss)
+        if (rule === 'heizregelung') { return hebel === 'minus' ? 'hc_hoch' : 'hc_traege'; }   // Heizregelung: Comfort (Efficiency bleibt traege) bzw. Efficiency (Comfort faehrt ohne Bedarf hoch)
         return rule;
     }
     function tKind(T) { return T.kind || kindOf(T.rule, null, 3); }
@@ -1732,6 +1892,7 @@ var ENGINE = (function () {
         if (!d.fresh) { return null; }
         if (kind === 'deckel_frei') { if (!d.running) { return null; } var cap = have(ctx.cap) ? ctx.cap + 1 : 20; return (have(d.hz) && d.hz <= cap && have(d.rlRueck) && d.rlRueck >= 1.0) ? 1 : 0; }   // v1: fest 20 Hz
         if (kind === 'hz_hoch') { return (d.running && have(d.hz) && d.hz >= (have(ctx.hzS) ? ctx.hzS : 22)) ? 1 : 0; }      // Schwelle des Falls (v4: 22 Hz)
+        if (kind === 'hc_traege') { if (!d.running) { return null; } return (have(d.hz) && d.hz <= c.traegeHz && have(d.vlRueck) && d.vlRueck >= 1.0) ? 1 : 0; }   // Efficiency bleibt traege mit Rueckstand
         if (kind === 'raum3') {
             var L3 = d.raum; if (!L3 || L3.keine) { return null; }
             if (ctx.dir === 'soll_hoch') {
@@ -1758,9 +1919,10 @@ var ENGINE = (function () {
     function trackerUpdate(T, d, cfg) {
         var now = d.now, H = (T.H || Math.max.apply(null, RULE[T.rule].prognose.h)) * MIN, kind = tKind(T);
         if (now - T.t0 > H || T.cut) { return; }
-        if (now > T.t0 && (d.qChanged || d.shiftChanged || Math.abs(d.sollJump) >= 2)) { T.cut = now; T.cutWhy = d.qChanged ? 'Quiet geändert' + (d.qBy ? ' (Vorschlag „' + RULE[d.qBy].kurz + '“ übernommen)' : '') : (d.shiftChanged ? 'Verschiebung geändert' + (d.shiftBy ? ' (Vorschlag „' + RULE[d.shiftBy].kurz + '“ übernommen)' : '') : 'Soll von Hand geändert'); return; }   // Eingriff von aussen: ab hier keine Gegenfaktik mehr
-        if (roomRule(T.rule) && JSON.stringify(bandsOf(d)) !== JSON.stringify(T.ctx.bands)) { T.cut = now; T.cutWhy = 'Komfortband geändert'; return; }   // Komfortband geaendert = Eingriff
-        if (roomRule(T.rule)) {                // Lueftungsverdacht: Raum faellt >= 1 K in <= 60 min (Heizung kann das nicht) = Eingriff von aussen
+        if (now > T.t0 && (d.qChanged || d.shiftChanged || d.hcChanged || Math.abs(d.sollJump) >= 2)) { T.cut = now; T.cutWhy = d.qChanged ? 'Quiet geändert' + (d.qBy ? ' (Vorschlag „' + RULE[d.qBy].kurz + '“ übernommen)' : '') : (d.shiftChanged ? 'Verschiebung geändert' + (d.shiftBy ? ' (Vorschlag „' + RULE[d.shiftBy].kurz + '“ übernommen)' : '') : (d.hcChanged ? 'Heizregelung geändert' + (d.hcBy ? ' (Vorschlag „' + RULE[d.hcBy].kurz + '“ übernommen)' : '') : 'Soll von Hand geändert')); return; }   // Eingriff von aussen: ab hier keine Gegenfaktik mehr (seit 14.10. auch die Heizregelung)
+        var rk = roomRule(T.rule) || T.rule === 'heizregelung';                          // Heizregelung (14.10.2026): Komfort zaehlt (Schaden zu kalt/zu warm), Lueften und Bandwechsel sind Eingriffe
+        if (rk && JSON.stringify(bandsOf(d)) !== JSON.stringify(T.ctx.bands)) { T.cut = now; T.cutWhy = 'Komfortband geändert'; return; }   // Komfortband geaendert = Eingriff
+        if (rk) {                              // Lueftungsverdacht: Raum faellt >= 1 K in <= 60 min (Heizung kann das nicht) = Eingriff von aussen
             T.rh = T.rh || {};
             var vent = null;
             d.rooms.forEach(function (r) {
@@ -1774,6 +1936,7 @@ var ENGINE = (function () {
             if (vent && now > T.t0) { T.cut = now; T.cutWhy = 'Lüftungsverdacht (' + vent + ')'; return; }
         }
         if (kind === 'lauf_ende') { if (!T.stop && T.wasRun && !d.running && d.fresh) { T.stop = now; } if (d.running) { T.wasRun = true; } return; }
+        if (kind === 'hc_hoch') { if (!T.hit && d.fresh && d.running && d.hc === 0 && d.runMin >= 2 && have(d.hz) && d.hz >= (have(T.ctx.hzS) ? T.ctx.hzS : 28)) { T.hit = now; T.hitHz = d.hz; } return; }   // Comfort faehrt hoch (Ereignis)
         var pr = problemNow(T, d, cfg);
         if (pr !== null) { T.ser.push([now - T.t0, pr]); }
         if (kind === 'deckel_frei' && T.wasRun && !d.running && d.fresh && !T.stop) { T.stop = now; T.stopVlStop = have(d.vlRueck) && d.vlRueck <= -2; }
@@ -1788,6 +1951,11 @@ var ENGINE = (function () {
             if (T.cut && T.cut < T.t0 + H) { return {o: null, why: 'Eingriff'}; }
             return {o: 0, why: 'Lauf lief länger als ' + h + ' min'};
         }
+        if (kind === 'hc_hoch') {
+            if (T.hit && T.hit - T.t0 <= H) { return {o: 1, why: 'Comfort fuhr nach ' + mins(T.hit - T.t0) + ' min auf ' + de(T.hitHz, 0) + ' Hz'}; }
+            if (T.cut && T.cut < T.t0 + H) { return {o: null, why: 'Eingriff nach ' + mins(T.cut - T.t0) + ' min: ' + (T.cutWhy || '')}; }
+            return {o: 0, why: 'kein Hochlauf in Comfort binnen ' + h + ' min'};
+        }
         var ser = T.ser.filter(function (p) { return p[0] <= H; });
         if (kind === 'deckel_frei' && T.stop && T.stop - T.t0 <= H && T.stopVlStop) { return {o: 0, why: 'Verdichter holte auf und schaltete ab'}; }
         if (T.rule === 'raum_offset' || T.rule === 'vorausschau') {                  // Raum: letzter gueltiger Wert in den letzten 30 min vor dem Horizont
@@ -1798,7 +1966,7 @@ var ENGINE = (function () {
             if (kind === 'raum3' && T.ctx && T.ctx.dir === 'soll_runter') { return {o: lastP[lastP.length - 1][1], why: lastP[lastP.length - 1][1] ? 'Haus weiter überheizt' : 'nicht mehr überheizt'}; }
             return {o: lastP[lastP.length - 1][1], why: lastP[lastP.length - 1][1] ? 'Raum weiter außerhalb des Bandes' : 'Raum wieder im Band'};
         }
-        if (ser.length < SCORE.teilMin * h * ((kind === 'deckel_frei' || kind === 'hz_hoch') ? 0.5 : 0.3)) { return {o: null, why: 'zu wenige gültige Minuten (' + ser.length + ')'}; }
+        if (ser.length < SCORE.teilMin * h * ((kind === 'deckel_frei' || kind === 'hz_hoch' || kind === 'hc_traege') ? 0.5 : 0.3)) { return {o: null, why: 'zu wenige gültige Minuten (' + ser.length + ')'}; }
         var f = ser.reduce(function (a, p) { return a + p[1]; }, 0) / ser.length;
         if (f >= SCORE.trefferAnteil) { return {o: 1, why: 'Problem in ' + Math.round(f * 100) + ' % der Minuten'}; }
         if (f <= 1 - SCORE.trefferAnteil) { return {o: 0, why: 'Problem nur in ' + Math.round(f * 100) + ' % der Minuten'}; }
@@ -1828,6 +1996,11 @@ var ENGINE = (function () {
             var L3 = d.raum; if (!L3 || L3.keine) { return null; }
             if (hebel === 'minus') { return L3.dir < 0 ? {dir: 'soll_runter', lead: L3.ueberL[0] ? L3.ueberL[0].r.id : (L3.warmst ? L3.warmst.r.id : '')} : null; }
             return L3.dir > 0 ? {dir: 'soll_hoch', lead: L3.kaltL[0].r.id, bed: L3.kaltL.map(function (y) { return y.r.id; })} : null;
+        }
+        if (rule === 'heizregelung') {                                               // Vergleichslage: Comfort-Bedarf bzw. Comfort ohne Bedarf (ohne Haltezeit, ohne Wechsel von Hand)
+            var Hc = d.hcL; if (!Hc || !have(d.hc)) { return null; }
+            if (hebel === 'minus') { return (d.hc === 0 && Hc.deck) ? {dir: 'weniger_leistung', hzS: c.hochHz} : null; }
+            return (d.hc === 1 && d.running && d.runMin >= Hc.lm && d.bedQ && d.bedQ.ja && Hc.traege && Hc.capOk && Hc.rueck) ? {dir: 'mehr_leistung'} : null;
         }
         if (rule === 'vorausschau') {                                                // Vergleichslage (v2): Vorhersage zeigt mindestens die halbe Schwelle Milderung, alle Raeume gueltig im Band (unabhaengig vom Gate)
             var dk = d.vsDk, act = d.rooms.filter(function (x) { return x.active; });
@@ -1866,10 +2039,10 @@ var ENGINE = (function () {
         // 1) neue Faelle aus neuen Vorschlaegen/Hinweisen
         res.forEach(function (r) {
             if (!r.neu) { return; }
-            var R = RULE[r.id], p = S.rules[r.id].prop, hb = p.hebel || null, vt = hb || (p.dir === 'soll_runter' && R.prognoseMinus ? 'minus' : null), prog = progOf(R, vt);
+            var R = RULE[r.id], p = S.rules[r.id].prop, hb = p.hebel || null, vt = hb || (R.prognoseMinus && (p.dir === 'soll_runter' || p.dir === 'weniger_leistung') ? 'minus' : null), prog = progOf(R, vt);
             var lead = p.lead || (d.roomBelow[0] ? d.roomBelow[0].name : ''), cap = r.id === 'quiet_freigabe' ? deckelOf(d, d.q).hz : null;
             sc.cases.push({id: p.id, rule: r.id, v: R.ver, sv: sv, t0: now, p: prog.p, h: prog.h.slice(), txt: prog.text, bk: bkOf(R, vt), dir: p.dir, done: [], hr: [], pts: 0,
-                           tr: newTracker(r.id, now, {lead: lead, dir: p.dir, kind: kindOf(r.id, hb, R.ver), H: Math.max.apply(null, prog.h), cap: cap, bed: p.bed || null, hzS: have(p.hzS) ? p.hzS : null}, d), dmg: r.locks.length ? ['sperre_verletzt'] : []});
+                           tr: newTracker(r.id, now, {lead: lead, dir: p.dir, kind: kindOf(r.id, r.id === 'heizregelung' ? vt : hb, R.ver), H: Math.max.apply(null, prog.h), cap: cap, bed: p.bed || null, hzS: have(p.hzS) ? p.hzS : (r.id === 'heizregelung' ? cfg.rules.heizregelung.hochHz : null)}, d), dmg: r.locks.length ? ['sperre_verletzt'] : []});
         });
         // 2) Faelle fortschreiben, Horizonte abschliessen
         sc.cases.forEach(function (C) {
@@ -1919,7 +2092,7 @@ var ENGINE = (function () {
                 var slot = roomRule(R.id) ? 60 : 15, sk = Math.floor(now / (slot * MIN)), bk = bkOf(R, hb), prog = progOf(R, hb);
                 if (sc.lastSlot[bk] === sk) { return; }
                 var cn = candidateNow(R.id, d, cfg, hb);
-                if (cn) { sc.lastSlot[bk] = sk; sc.cands.push({rule: R.id, bk: bk, t0: now, h: prog.h.slice(), done: [], tr: newTracker(R.id, now, {lead: cn.lead, dir: cn.dir, kind: kindOf(R.id, hb === 'minus' ? null : hb, R.ver), H: Math.max.apply(null, prog.h), cap: cn.cap, bed: cn.bed || null, hzS: have(cn.hzS) ? cn.hzS : null}, d)}); }
+                if (cn) { sc.lastSlot[bk] = sk; sc.cands.push({rule: R.id, bk: bk, t0: now, h: prog.h.slice(), done: [], tr: newTracker(R.id, now, {lead: cn.lead, dir: cn.dir, kind: kindOf(R.id, R.id === 'heizregelung' ? hb : (hb === 'minus' ? null : hb), R.ver), H: Math.max.apply(null, prog.h), cap: cn.cap, bed: cn.bed || null, hzS: have(cn.hzS) ? cn.hzS : null}, d)}); }
             });
         });
         sc.cands.forEach(function (C) {
@@ -1983,12 +2156,41 @@ var ENGINE = (function () {
             var er = d.shiftBy && (sc.sv || SCORE_VER) >= 3 ? d.shiftBy : 'raum_offset';                // v3: die Regel, deren Vorschlag uebernommen wurde (sonst wie bisher Raumeinfluss)
             sc.eff.push({rule: er, t0: now, art: 'verschiebung', soll0: S._sollPrev, dshift: d.shift - d.shiftFrom, kal: isKal(er, now), m: {}, text: 'Verschiebung ' + sg(d.shiftFrom, 0) + ' → ' + sg(d.shift, 0) + ' K'});
         }
+        if (d.hcChanged && have(d.hcFrom) && d.fresh && RULE.heizregelung) {                           // Heizregelung (14.10.2026): jede Aenderung, von wem auch immer (Zuordnung wie Verschiebung)
+            var rh = d.hcBy || 'heizregelung', ch = cfg.rules.heizregelung;
+            if (d.hc === 0 && d.hcFrom === 1 && d.running && have(d.vlRueck) && d.vlRueck >= ch.vlRueckK) {
+                sc.eff.push({rule: rh, t0: now, art: 'comfort', hz0: have(S._hzPrev) ? S._hzPrev : d.hz, pel0: S._pelPrev, kal: isKal(rh, now), m: {}, text: 'Efficiency → Comfort bei ' + de(have(S._hzPrev) ? S._hzPrev : d.hz, 0) + ' Hz, Vorlauf ' + de(d.vlRueck, 1) + ' K unter Soll'});
+            }
+            if (d.hc === 1 && d.hcFrom === 0) { sc.eff.push({rule: rh, t0: now, art: 'efficiency', maxMin: 480, lauf0: d.running, kal: isKal(rh, now), m: {}, text: 'Comfort → Efficiency ' + (d.running ? 'im Lauf' : 'in der Pause')}); }
+        }
         if (d.fresh) { S._pelPrev = have(d.pel) ? d.pel : S._pelPrev; S._vlPrev = d.vl; S._hzPrev = d.hz; S._sollPrev = d.soll; }
     }
     function effectUpdate(E, d, sc, recs) {
         var now = d.now, dt = (now - E.t0) / MIN, m = E.m;
-        if (dt > 60) { closeEffect(E, [['Messung', 0, 'abgebrochen (Daten fehlten)']], sc, recs, now); return; }
+        if (dt > (E.maxMin || 60)) { closeEffect(E, [['Messung', 0, E.art === 'efficiency' ? 'kein Start binnen ' + E.maxMin + ' min' : 'abgebrochen (Daten fehlten)']], sc, recs, now); return; }
         if (!d.fresh) { return; }
+        if (E.art === 'efficiency') {                                                  // naechster Start in Efficiency bleibt bis Laufminute 15 bei hoechstens 21 Hz (21 von 21 Efficiency-Starts)
+            if (dt > 0 && d.hcChanged) { closeEffect(E, [['nächster Start in Efficiency höchstens 21 Hz bis Laufminute 15', 0, 'nicht messbar (Heizregelung wieder geändert)']], sc, recs, now); return; }
+            if (!d.running) { m.pause = true; return; }
+            if (!m.pause && E.lauf0) { return; }                                         // erst der naechste Start zaehlt
+            if (!m.pause && !E.lauf0) { m.pause = true; }
+            if (d.runMin >= 2 && d.runMin <= 15 && have(d.hz)) { m.hzMax = Math.max(m.hzMax || 0, d.hz); if (!have(m.q)) { m.q = d.q; } }
+            if (d.runMin > 15 && m.hzMax !== undefined) {
+                closeEffect(E, [['nächster Start in Efficiency höchstens 21 Hz bis Laufminute 15', m.q === 0 ? (m.hzMax <= 21 ? 1 : -1) : 0, m.q === 0 ? 'gemessen höchstens ' + de(m.hzMax, 0) + ' Hz' : 'nicht messbar (Quiet ' + m.q + ' deckelt ohnehin)']], sc, recs, now);
+            }
+            return;
+        }
+        if (E.art === 'comfort') {                                                     // Comfort faehrt bei Rueckstand sofort hoch (+6 Hz binnen 5 min, +100 W; Wechsel im Lauf mit Rueckstand nicht gemessen)
+            if (dt <= 5 && have(d.hz) && d.running && (m.hzMax === undefined || d.hz > m.hzMax)) { m.hzMax = d.hz; }
+            if (dt >= 2 && dt <= 5 && have(d.pel) && d.running) { m.pelS = (m.pelS || 0) + d.pel; m.pelN = (m.pelN || 0) + 1; }
+            if (!d.running && dt <= 5) { m.stop = true; }
+            if (dt >= 5 || m.stop) {
+                var dpc = (m.pelN && have(E.pel0)) ? m.pelS / m.pelN - E.pel0 : null, sHz = have(E.hz0) ? E.hz0 + 6 : null;
+                closeEffect(E, [['Verdichter mindestens ' + de(sHz, 0) + ' Hz binnen 5 min', m.hzMax !== undefined && have(sHz) ? (m.hzMax >= sHz ? 1 : -1) : 0, 'gemessen ' + de(m.hzMax, 0) + ' Hz'],
+                                ['Leistung +100 W oder mehr', have(dpc) ? (dpc >= 100 ? 1 : -1) : 0, 'gemessen ' + sg(dpc, 0) + ' W']], sc, recs, now);
+            }
+            return;
+        }
         if (E.art === 'freigabe' && have(E.ziel) && E.ziel > 0) {                      // v2, Ziel Quiet 1 oder 2: Frequenz ueber den alten Deckel (13.10. 16:36: 17 -> 20-21 Hz, +80-100 W)
             if (dt <= 10 && have(d.hz) && d.running && (m.hzMax === undefined || d.hz > m.hzMax)) { m.hzMax = d.hz; }
             if (dt >= 2 && dt <= 10 && have(d.pel) && d.running) { m.pelS = (m.pelS || 0) + d.pel; m.pelN = (m.pelN || 0) + 1; }
@@ -2040,7 +2242,7 @@ var ENGINE = (function () {
     //     (0 Punkte, getrennt gezaehlt). Ein harter Schaden im Fenster (SCORE.verpasstSperre.schaden) hebt die Entschuldigung auf: dann -20.
     var EXCUSE = ['anlauf', 'daten', 'stoerung', 'mqtt_sperre', 'abtauen', 'warmwasser', 'sanftanlauf', 'regler', 'heizstab', 'modell', 'abtausprung'];
     var OWN_TEXT = {abstand: 'Mindestabstand', tageslimit: 'Tageslimit', abkuehlzeit: 'Wartezeit', haltezeit: 'Haltezeit', stabil: 'Stabilitätszeit', vorrang: 'Verschiebung einer anderen Regel', gegenrichtung: 'Wartezeit Gegenrichtung'};
-    var MISS_DMG_TEXT = {komfort: 'Raum mehr als 1 K unter Minimum', takt: 'Verdichter stoppte', ueberschwingen: 'Vorlauf über der Abschaltgrenze (Soll +3,25 K)'};
+    var MISS_DMG_TEXT = {komfort: 'Raum mehr als 1 K unter Minimum', takt: 'Verdichter stoppte', ueberschwingen: 'Vorlauf über der Abschaltgrenze (Soll +3,25 K)', heizstab: 'Heizstab lief'};
     function stdOf(R, key) { var x = R.schwellen.filter(function (s) { return s.key === key; })[0]; return x ? x.std : null; }
     // Haelt die Regel in dieser Minute NUR eine eigene Sperre/Wartezeit zurueck? -> {ids: [...]} (mit Standardwerten gueltig), {ext: [...]} (nur wegen
     // verlaengerter Werte) oder null (andere Gruende: Bedingung fehlt, fremde Sperre, Vorschlag ...)
@@ -2051,11 +2253,11 @@ var ENGINE = (function () {
             if (!r.locks.every(function (l) { return own.indexOf(l) >= 0; })) { return null; }
             r.locks.forEach(function (l) {
                 var std = false;
-                if (l === 'abstand') { var chg = (gr === 'quiet' || gr === 'shift') ? Math.max(S.qChg || 0, S.shiftChg || 0) : 0; std = !!chg && now - chg < LOCK_CFG.gapMin * MIN; }
+                if (l === 'abstand') { var chg = (gr === 'quiet' || gr === 'shift' || gr === 'hc') ? Math.max(S.qChg || 0, S.shiftChg || 0, S.hcChg || 0) : 0; std = !!chg && now - chg < LOCK_CFG.gapMin * MIN; }
                 if (l === 'tageslimit') { std = rs.n >= stdOf(R, 'proTag'); }
                 if (l === 'abkuehlzeit') { std = rs.cool - (c.pauseMin - stdOf(R, 'pauseMin')) * MIN > now; }
                 if (l === 'vorrang') { std = true; }                                        // Eigentum einer anderen Regel: kein Zeitwert
-                if (l === 'gegenrichtung') { var Ag = arbOf(S, gr), qg = gr === 'quiet', e0 = Ag && Ag.last ? (r.hart && qg && Ag.last.lapse ? Ag.last.start : arbEnd(Ag, d, gr)) : 0; std = !!(Ag && Ag.last) && now - e0 < (r.hart ? (qg ? LOCK_CFG.notfallMin : LOCK_CFG.shiftHaltMin) : (qg ? LOCK_CFG.quietGegenMin : LOCK_CFG.gegenMin)) * MIN; }
+                if (l === 'gegenrichtung') { var Ag = arbOf(S, gr), qg = gr === 'quiet' || gr === 'hc', e0 = Ag && Ag.last ? (r.hart && qg && Ag.last.lapse ? Ag.last.start : arbEnd(Ag, d, gr)) : 0; std = !!(Ag && Ag.last) && now - e0 < (r.hart ? (qg ? LOCK_CFG.notfallMin : LOCK_CFG.shiftHaltMin) : (gr === 'quiet' ? LOCK_CFG.quietGegenMin : (gr === 'hc' ? LOCK_CFG.hcGegenMin : LOCK_CFG.gegenMin))) * MIN; }
                 (std ? ok : ext).push(l);
             });
             return ext.length ? {ext: ext} : {ids: ok};
@@ -2075,6 +2277,7 @@ var ENGINE = (function () {
         if (d.running) { G.wasRun = true; } else if (G.wasRun) { hit('takt'); }
         if (d.running && have(d.vl) && have(d.soll) && d.vl - d.soll >= cfg.locks.stopK) { hit('ueberschwingen'); }
         d.rooms.forEach(function (x) { if (roomScore(x) && x.t < x.min - SCORE.verpasstSperre.komfortK) { hit('komfort'); } });
+        if (d.heaterOn) { hit('heizstab'); }
     }
     function missedStep(S, sc, d, cfg, res, recs, sv) {
         var now = d.now;
@@ -2098,6 +2301,11 @@ var ENGINE = (function () {
                 var cold = Lm.filter(function (y) { return y.ok && !y.lueft && !y.relaisAus && y.r.t <= y.r.min - 0.5; }).map(function (y) { return y.r; });
                 var warm = Lm.filter(function (y) { return y.ok && y.r.t > y.r.max + 0.3; });
                 cond = d.fresh && cold.length > 0 && warm.length === 0; need = 180; lead = cold.length ? cold[0].name : '';
+            }
+            if (R.id === 'heizregelung') {                                               // Notfall in Efficiency (Heizstab-Naehe oder Raum >= notK unter Minimum), Efficiency traege mit Rueckstand, Quiet laesst zu: 20 min
+                var Hm = d.hcL || {};
+                cond = !!(d.fresh && d.hc === 1 && d.running && d.bedQ && d.bedQ.notfall && Hm.traege && Hm.capOk && Hm.rueck && d.runMin >= Hm.lm); need = 20;
+                lead = d.bedQ && d.bedQ.raum ? d.bedQ.raum.name : (d.bedQ && d.bedQ.heizstab ? 'Heizstab-Nähe' : '');
             }
             function bookMiss(extra) {
                 var T = tot(sc, R.id, R.ver, sv); T.verpasst++;
@@ -2243,7 +2451,8 @@ var ENGINE = (function () {
     // ------------------------------------------------------------------ Ein-Klick-Uebernahme (ausgeliefert, gesperrt). Nur der Klick sendet; der Rueckweg gehoert zum geklickten Vorschlag.
     var WHITELIST = {                                                                // erlaubte Befehle, Wertebereiche, Ruecklese-Wert; alles andere wird abgelehnt
         SetQuietMode: {topic: 'panasonic_heat_pump/commands/SetQuietMode', werte: [0, 1, 2, 3], ruecklese: 'q', text: 'Quiet-Stufe'},
-        SetZ1HeatRequestTemperature: {topic: 'panasonic_heat_pump/commands/SetZ1HeatRequestTemperature', werte: [-1, 0, 1], ruecklese: 'shift', text: 'Heizkurven-Verschiebung', heizkurve: true}
+        SetZ1HeatRequestTemperature: {topic: 'panasonic_heat_pump/commands/SetZ1HeatRequestTemperature', werte: [-1, 0, 1], ruecklese: 'shift', text: 'Heizkurven-Verschiebung', heizkurve: true},
+        SetHeatingControl: {topic: 'panasonic_heat_pump/commands/SetHeatingControl', werte: [0, 1], ruecklese: 'hc', text: 'Heizregelung (0 Comfort, 1 Efficiency)'}   // seit 14.10.2026 (Regel "Heizregelung")
     };
     // engMaxAlterMin/engAbbruchMin (Regel-Review B7): Rueckweg-Gruende und "halten" der Maschine gelten nur, wenn sie hoechstens 5 min alt sind (sonst gilt die Frist);
     // rechnet die Maschine 30 min nicht, geht jede bestaetigte Uebernahme auf ihren Ausgangswert zurueck (sicherer Abbruch: der Wert des Nutzers vor dem Klick)
@@ -2251,7 +2460,7 @@ var ENGINE = (function () {
     // Uebernahmen je Groesse (seit 13.10.2026, Regel-Review R6): A.ak = {quiet: …, shift: …}; Quiet und Verschiebung koennen nebeneinander uebernommen sein, wenn die
     // Arbitrierung der Maschine es zulaesst (Mindestabstand ueber beide Groessen). A.aktiv = die juengste (Anzeige, aeltere Leser, Kern-Guard bis zur Haertung).
     function newApply() { return {mv: VER, ak: {}, aktiv: null, pending: null, day: '', n: 0, lastSend: 0, verworfen: [], lastClick: null, alarm: null}; }
-    function gOfCmd(name) { var W = WHITELIST[name]; return W && W.ruecklese === 'q' ? 'quiet' : 'shift'; }
+    function gOfCmd(name) { var W = WHITELIST[name]; return W && W.ruecklese === 'q' ? 'quiet' : (W && W.ruecklese === 'hc' ? 'hc' : 'shift'); }
     function fixApply(A) {
         A = (A && A.mv === VER) ? A : newApply();
         if (!A.ak || typeof A.ak !== 'object') { A.ak = {}; }
@@ -2259,7 +2468,7 @@ var ENGINE = (function () {
         if (a0 && a0.name && WHITELIST[a0.name]) { var g0 = gOfCmd(a0.name); if (A.ak[g0] !== a0 && !(A.ak[g0] && A.ak[g0].id === a0.id)) { A.ak[g0] = a0; } }
         return A;
     }
-    function akList(A) { return ['quiet', 'shift'].map(function (g) { return A.ak[g]; }).filter(function (a) { return !!a; }); }
+    function akList(A) { return ['quiet', 'shift', 'hc'].map(function (g) { return A.ak[g]; }).filter(function (a) { return !!a; }); }
     function syncAktiv(A) { var L = akList(A).sort(function (x, y) { return y.ts - x.ts; }); A.aktiv = L.length ? L[0] : null; }
     // Fortsetzung einer Uebernahme (Regel-Review B1): dieselbe Regel und derselbe Befehl in derselben Richtung, die Anlage steht bestaetigt auf dem uebernommenen Wert,
     // kein Rueckweg offen. Dann ersetzt der neue Wert den alten, der Ausgangswert (Rueckweg) bleibt.
@@ -2322,16 +2531,17 @@ var ENGINE = (function () {
         if (A.pending) { return deny('Ein Befehl wartet noch auf die Bestätigung der Anlage. Nichts gesendet.', 'orange'); }
         // je Groesse eine Uebernahme (jede hat ihren Rueckweg); dieselbe Regel darf sie in derselben Richtung fortsetzen (Regel-Review B1, R6)
         var g = gOfCmd(p.cmd.name), a0 = A.ak[g], fort = fortsetzung(a0, p);
-        if (a0 && !fort) { return deny('Für ' + (g === 'quiet' ? 'die Quiet-Stufe' : 'die Verschiebung') + ' läuft schon eine Übernahme (' + (RULE[a0.rule] ? RULE[a0.rule].kurz : a0.rule) + ', ' + a0.von + ' → ' + a0.value + '); erst zurücksetzen oder den Rückweg abwarten. Nichts gesendet.', 'orange'); }
+        if (a0 && !fort) { return deny('Für ' + (g === 'quiet' ? 'die Quiet-Stufe' : (g === 'hc' ? 'die Heizregelung' : 'die Verschiebung')) + ' läuft schon eine Übernahme (' + (RULE[a0.rule] ? RULE[a0.rule].kurz : a0.rule) + ', ' + a0.von + ' → ' + a0.value + '); erst zurücksetzen oder den Rückweg abwarten. Nichts gesendet.', 'orange'); }
         if (A.lastSend && now - A.lastSend < APPLY.abstandMin * MIN) { return deny('Zu schnell: frühestens ' + hhmm(A.lastSend + APPLY.abstandMin * MIN) + '. Nichts gesendet.', 'orange'); }
         if (A.n >= APPLY.proTag) { return deny('Tageslimit von ' + APPLY.proTag + ' Befehlen erreicht. Nichts gesendet.'); }
         // ---- senden: genau der angezeigte Vorschlag
         var R = RULE[p.rule], cr = ctx.cfg && ctx.cfg.rules && ctx.cfg.rules[p.rule], maxD = have(num(p.maxDauerMin)) ? num(p.maxDauerMin) : (cr && have(num(cr.maxDauerMin)) ? num(cr.maxDauerMin) : null);
-        var until = maxD ? now + maxD * MIN : null;
+        var until = (maxD && !p.einmal) ? now + maxD * MIN : null;                     // Heizregelung -> Efficiency: Normalzustand, kein Rueckweg
         A.n++; A.lastSend = now; A.lastClick = {id: p.id, ts: now}; A.alarm = null;
         A.pending = {name: p.cmd.name, value: p.cmd.value, ts: now, versuche: 1, art: 'uebernahme', id: p.id, g: g, vorher: num(p.von)};
         A.ak[g] = {id: p.id, rule: p.rule, groesse: p.groesse || R.groesse, name: p.cmd.name, value: p.cmd.value, von: fort ? a0.von : p.von, ts: now, bis: until, bestaetigt: false,
                    start: fort ? (a0.start || a0.ts) : now, schritte: fort ? (a0.schritte || 1) + 1 : 1};
+        if (p.einmal) { A.ak[g].einmal = true; }
         out.send.push(cmdMsg(p.cmd.name, p.cmd.value, 'Optimierer (Klick)'));
         out.toast = {text: R.name + ': ' + p.was + (fort ? ' (Fortsetzung; Rückweg weiter auf ' + a0.von + ')' : '') + ' gesendet. Warte auf die Bestätigung der Anlage …', color: ''};
         var lg = {t: iso(now), aktion: 'uebernehmen', ergebnis: 'gesendet', id: p.id, sum: p.sum, regel: p.rule, v: p.ver, befehl: p.cmd.name, topic: p.cmd.topic, wert: p.cmd.value, von: A.ak[g].von, bis: until ? iso(until) : null};
@@ -2363,7 +2573,8 @@ var ENGINE = (function () {
             var gP = P.g || gOfCmd(P.name), aP = A.ak[gP], W = WHITELIST[P.name], ist = num(plant[W.ruecklese]);
             if (ist === P.value && fresh(plant)) {
                 A.pending = null;
-                if (P.art === 'uebernahme' && aP) { aP.bestaetigt = true; aP.bestTs = now; delete aP.unbestaetigt; out.toast = {text: W.text + ' steht jetzt auf ' + P.value + ' (von der Anlage bestätigt).', color: 'green'}; }
+                if (P.art === 'uebernahme' && aP && aP.einmal) { delete A.ak[gP]; out.toast = {text: W.text + ' steht jetzt auf ' + P.value + ' (von der Anlage bestätigt; Normalzustand, kein Rückweg).', color: 'green'}; }
+                else if (P.art === 'uebernahme' && aP) { aP.bestaetigt = true; aP.bestTs = now; delete aP.unbestaetigt; out.toast = {text: W.text + ' steht jetzt auf ' + P.value + ' (von der Anlage bestätigt).', color: 'green'}; }
                 if (P.art === 'rueckweg') { out.toast = {text: W.text + ' wieder auf ' + P.value + ' (bestätigt). Übernahme beendet.', color: 'green'}; delete A.ak[gP]; }
                 out.log.push({t: iso(now), aktion: 'bestaetigt', art: P.art, befehl: P.name, wert: P.value, nach_s: Math.round((now - P.ts) / 1000)});
             } else if (now - P.ts >= APPLY.rueckleseS * 1000 && !blocked) {
@@ -2430,7 +2641,8 @@ var ENGINE = (function () {
             bedarfQ: bedarfQ, raumTrend: raumTrend, komfortSicher: komfortSicher, nutzenKurve: nutzenKurve, kindOf: kindOf, kaltQ: kaltQ, zielKalt: zielKalt, nachtMin: nachtMin, HL: HL, hochlaufSumme: hochlaufSumme,
             hhmm: hhmm, isoWeek: isoWeek, de: de, sg: sg,
             raumLage: raumLage, raumVerlauf: raumVerlauf, raumEnde: raumEnde, kurvenform: kurvenform, KF: KF, p2Summe: p2Summe, startModell: startModell, START: START, MINHZ: MINHZ, minHzOf: minHzOf, minHzTab: minHzTab,
-            binKeyOf: binKeyOf, hzSchwelle: hzSchwelle, HW: HW, errCode: errCode, hinweisListe: hinweisListe, wirkzeit: wirkzeit, RELAIS_RAUM: RELAIS_RAUM, Q0_HZ: Q0_HZ};
+            binKeyOf: binKeyOf, hzSchwelle: hzSchwelle, HW: HW, errCode: errCode, hinweisListe: hinweisListe, wirkzeit: wirkzeit, RELAIS_RAUM: RELAIS_RAUM, Q0_HZ: Q0_HZ,
+            hcLage: hcLage, hcEnde: hcEnde, hcTxt: hcTxt};
 })();
 if (typeof module !== 'undefined' && module.exports) { module.exports = ENGINE; }
 // == ENGINE-CORE-ENDE ==
