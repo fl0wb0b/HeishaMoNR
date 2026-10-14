@@ -3,7 +3,7 @@
  *   optEngUi.html(kind, P)              -> HTML einer Karte (kind: 'card' | 'rules' | 'score' | 'mess' | 'log'), P = Nutzlast aus ENGVIEW.build
  *   optEngUi.mount(el, kind, P, scope)  -> zeichnet in ein Element, Knoepfe schicken nur Aktion + ID + Pruefsumme, Diagramm ueber optChart */
 (function (root) {
-    var VER = 5;                                                                  // 4: Vorschlag mit Befehl/Zielwert/Begruendung/Wirkung/Rueckweg offen, Karte "Messwerte & Lernen"; 5: UI-Optik (Schrift, Kontrast, Platzhalter statt fast leerem Punkte-Diagramm)
+    var VER = 6;                                                                  // 4: Vorschlag mit Befehl/Zielwert/Begruendung/Wirkung/Rueckweg offen, Karte "Messwerte & Lernen"; 5: Räume und Wächter (raumeinfluss-v3); 6: UI-Optik (Schrift, Kontrast, Platzhalter statt fast leerem Punkte-Diagramm)
     if (root.optEngUi && root.optEngUi.v === VER) { return; }
     var U = {v: VER};
     function esc(s) { return String(s === undefined || s === null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
