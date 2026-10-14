@@ -1829,8 +1829,8 @@ check('Dateien: Ist, Vergleich, Schnappschuesse und Zustand unter /data/optimize
   { const tabs = flowsAll.filter(n => n.type === 'ui_tab' && /^opt_ui_tab/.test(n.id)), grp = flowsAll.filter(n => n.type === 'ui_group' && /^opt_g_/.test(n.id)), onTab = id => grp.filter(g => g.tab === id);
     const byOrder = id => onTab(id).sort((a, b) => a.order - b.order).map(g => g.id).join(), hid = id => (flowsAll.find(n => n.id === id) || {}).hidden;
     check('Seiten (13.10. zusammengelegt): alle Karten der Optimierungs-Seiten 17 breit (zwei Spalten ab ~1840 px, eine bei 1024 ohne waagrechtes Scrollen; kein Mischen der Breiten = Masonry-Falle): Optimierung = 3 Diagramme + Raumkarte + Wärmefahrplan (Plan, Stundenübersicht), Optimierer = fünf Karten der Maschine + zwei Quiet-Statistik-Karten, Daten & Güte sieben Statuskarten; die Tabs Wärmefahrplan und Quiet-Messwerte leer und ausgeblendet',
-          byOrder('opt_ui_tab') === 'opt_g_ch_wp,opt_g_ch_rooms,opt_g_ch_at,opt_g_rooms,opt_g_plan,opt_g_plan_tab' && byOrder('opt_eng_ui_tab') === 'opt_g_eng_prop,opt_g_eng_rules,opt_g_eng_score,opt_g_eng_mess,opt_g_eng_log,opt_g_qstats,opt_g_qstats2' &&
-          onTab('opt_ui_tab_plan').length === 0 && onTab('opt_ui_tab_quiet').length === 0 && onTab('opt_ui_tab_data').length === 7 && grp.every(g => g.width === 17) && tabs.length === 4 &&
+          byOrder('opt_ui_tab') === 'opt_g_ch_wp,opt_g_ch_rooms,opt_g_ch_at,opt_g_rooms,opt_g_plan,opt_g_plan_tab' && byOrder('opt_eng_ui_tab') === 'opt_g_schema,opt_g_eng_prop,opt_g_eng_rules,opt_g_eng_score,opt_g_eng_mess,opt_g_eng_log,opt_g_qstats,opt_g_qstats2' &&
+          onTab('opt_ui_tab_plan').length === 0 && onTab('opt_ui_tab_quiet').length === 0 && onTab('opt_ui_tab_data').length === 7 && grp.every(g => g.width === 17 || g.id === 'opt_g_schema_ue') && tabs.length === 4 &&
           hid('opt_ui_tab_plan') === true && hid('opt_ui_tab_quiet') === true && hid('opt_ui_tab') === false && hid('opt_eng_ui_tab') === false && hid('opt_ui_tab_data') === false,
           byOrder('opt_ui_tab') + ' | ' + byOrder('opt_eng_ui_tab') + ' | ' + JSON.stringify(grp.filter(g => g.width !== 17).map(g => g.id + ':' + g.width)));
     { const q1 = NB('opt_t_qstats').format, q2 = NB('opt_t_qstats2').format, cols = f => (/c in \[([\d,]+)\]/.exec(f) || [0, ''])[1].split(',').map(Number), ths = f => (f.match(/<th>/g) || []).length, a = cols(q1), b = cols(q2);
@@ -1949,6 +1949,55 @@ check('ohne Kinderzimmer-Werte (frischer Start): vier Spalten leer, Karte zeigt 
   const nodes = JSON.parse(fs.readFileSync(flowsFile, 'utf8')), en = nodes.find(n => n.id === 'opt_engine'), ap = nodes.find(n => n.id === 'opt_apply');
   check('Huelle opt_engine: Eingaben err (OPT_hp.Error), pipeIn (Inside_Pipe_Temp) und kurve (Z1_Heat_Curve_*); OPT_engine mit hinweise und stoerung; opt_apply: plant.err aus OPT_hp.Error',
         en && /err: \(HP\.Error && HP\.Error\.v !== undefined/.test(en.func) && /pipeIn: hpv\('Inside_Pipe_Temp'\)/.test(en.func) && /kurve: \(cvLo !== null/.test(en.func) && /hinweise: o\.hinweise, stoerung: o\.stoerung/.test(en.func) && ap && /err: \(HP\.Error && HP\.Error\.v !== undefined/.test(ap.func), '');
+})();
+
+// 14.10.2026 (ui-schema): Anlagenschema der Leisha (tools/schema_ui.js) auf "Optimierer" und "Übersicht": opt_schema liest nur OPT_hp und HeishaMoNR-Globale,
+// zeigt die Aufnahme mit COP-Korrektur (+80 W im Lauf), fehlende Werte (-128/-78/-200, alt) als Strich, Fliessen nur bei laufendem Medium
+(() => {
+  const SCH = require(path.join(__dirname, 'schema_ui.js')), nodes = JSON.parse(fs.readFileSync(flowsFile, 'utf8')), N = id => nodes.find(n => n.id === id);
+  const keep = Object.assign({}, gstore), T = Date.UTC(2026, 9, 14, 7, 40, 0), nowKeep = NOW;
+  const LIVE = {Compressor_Freq: 17, Compressor_Current: 1.4, Fan1_Motor_Speed: 240, Pump_Speed: 1800, Pump_Duty: 82, Pump_Flow: 14.09, Main_Outlet_Temp: 30.25, Main_Inlet_Temp: 28,
+    Main_Target_Temp: 29, Main_Hex_Outlet_Temp: 31, Inside_Pipe_Temp: 29, Outside_Pipe_Temp: 8, Eva_Outlet_Temp: 9, Discharge_Temp: 32, High_Pressure: 10.4, Expansion_Valve: 73,
+    Outside_Temp: 12, Heat_Power_Production_Extra: 2228, Heat_Power_Consumption_Extra: 319, Quiet_Mode_Level: 1, Heating_Control: 1, Heatpump_State: 1, Defrosting_State: 0,
+    Room_Heater_State: 1, Internal_Heater_State: 0, Room_Heater_Operations_Hours: 76, Water_Pressure: 1.06, Heating_Off_Outdoor_Temp: 12, Z1_Heat_Request_Temp: 0,
+    Operations_Hours: 10026, Operations_Counter: 3952, Error: 'No error', DHW_Temp: -128, Buffer_Temp: -78, Heat_Power_Consumption: -200};
+  const hpOf = (o, ageMin) => { const r = {}; Object.keys(o).forEach(k => { r[k] = {v: o[k], ts: T - (ageMin || 0.3) * 60000}; }); return r; };
+  const X = {freq: 17, rt: 106, rtLast: 98, starts: 4};
+  Object.keys(gstore).forEach(k => delete gstore[k]);
+  Object.assign(gstore, {OPT_hp: hpOf(LIVE), OPT_cfg: {cop: {pelKorrW: 80}}, compressor_frequency: 17, compressor_runtime: 106, compressor_last_runtime: 98, Starts_Today: 4});
+  NOW = T;
+  const P = run('opt_schema', {}).payload; let H = SCH.html(P, {phase: 0}); const fl = h => (h.match(/class="osch-fl"/g) || []).length;
+  check('Schema: opt_schema liest OPT_hp; Aufnahme im Lauf korrigiert 319 + 80 = 399 W, COP = 2228 / 399, Spreizung 2,25 K, Zustand läuft, Laufzeit 106 min',
+        P.lauf === true && P.w.pelK === 399 && P.w.korr === 80 && Math.abs(P.w.cop - 2228 / 399) < 1e-9 && Math.abs(P.w.spreiz - 2.25) < 1e-9 && P.zustand.c === 'lauf' && P.w.laufMin === 106 && P.veraltet === false,
+        JSON.stringify({pelK: P.w.pelK, cop: P.w.cop, z: P.zustand}));
+  check('Schema: Karte zeigt "399 W (intern 319 +80)", COP 5,58, Abgabe 2,23 kW, VL 30,3 °C rot, RL 28 °C blau, 17 Hz, 1,4 A, Pumpe 1.800 U/min, 14,1 l/min, Hochdruck 10,4 bar, Betrieb 10.026 h',
+        (H = H.replace(/\u00a0/g, ' ')) && H.includes('>399 W<') && H.includes('(intern 319 +80)') && H.includes('>5,58<') && H.includes('>2,23 kW<') && /fill:#c62828[^>]*>30,3 °C</.test(H) && /fill:#1565c0[^>]*>28 °C</.test(H) &&
+        H.includes('>17 Hz<') && H.includes('>1,4 A<') && H.includes('>1.800 U/min<') && H.includes('>Duty 82<') && H.includes('>14,1 l/min<') && H.includes('Hochdruck 10,4 bar') && H.includes('>10.026 h<') && H.includes('Verschiebung ±0 K'), '');
+  check('Schema: im Lauf fliessen Luft (4 Abschnitte), Kaeltekreis (4) und Wasser (2), Verdichter und Luefter drehen; kein Warmwasser-/Pufferteil', fl(H) === 10 && (H.match(/osch-rot/g) || []).length === 2 && !/Warmwasser|Speicher|Puffer/.test(H), fl(H));
+  const P2 = SCH.daten(hpOf(Object.assign({}, LIVE, {Outside_Pipe_Temp: -128, Discharge_Temp: -78, Heat_Power_Production_Extra: -200})), X, 80, T), H2 = SCH.html(P2, {});
+  check('Schema: fehlende Werte (-128/-78/-200) zeigen einen Strich, kein Absturz', P2.w.rohrA === null && P2.w.heiss === null && P2.w.pth === null && H2.includes('Rohr –') && H2.includes('Heißgas –') && /Abgabe<\/div><div class="v">–</.test(H2), '');
+  const P3 = SCH.daten(hpOf(LIVE, 20), {}, 80, T), H3 = SCH.html(P3, {});
+  check('Schema: Werte aelter als 15 min gelten als fehlend, Hinweis "Keine aktuellen Werte (letzter vor 20 min)"', P3.veraltet === true && P3.w.vl === null && P3.w.betrH === 10026 && H3.includes('Keine aktuellen Werte (letzter vor 20 min)'), '');
+  const P4 = SCH.daten(hpOf(Object.assign({}, LIVE, {Compressor_Freq: 0, Fan1_Motor_Speed: 0, Pump_Speed: 1750, Heat_Power_Production_Extra: 0, Heat_Power_Consumption_Extra: 24})), {freq: 0, rtLast: 98}, 80, T), H4 = SCH.html(P4, {});
+  check('Schema: Pause (Verdichter aus, Pumpe läuft): Aufnahme roh 24 W ohne Korrektur, kein COP, nur das Wasser fliesst, Laufzeit = letzter Lauf 98 min',
+        P4.zustand.c === 'pause' && P4.w.pelK === 24 && P4.w.korr === 0 && P4.w.cop === null && fl(H4) === 2 && H4.includes('>98\u00a0min<') && H4.includes('letzter Lauf'), P4.zustand.c + ' ' + fl(H4));
+  const P5 = SCH.daten(hpOf(Object.assign({}, LIVE, {Compressor_Freq: 0, Fan1_Motor_Speed: 0, Pump_Speed: 0, Pump_Flow: 0})), {}, 80, T), H5 = SCH.html(P5, {});
+  check('Schema: Heizgrenze (Pumpe steht): nichts fliesst, Zustand Heizgrenze', P5.zustand.c === 'heizgrenze' && fl(H5) === 0 && H5.includes('>Heizgrenze<'), P5.zustand.c);
+  const P6 = SCH.daten(hpOf(Object.assign({}, LIVE, {Internal_Heater_State: 1})), X, 80, T), P7 = SCH.daten(hpOf(Object.assign({}, LIVE, {Error: 'H23'})), X, 80, T), P8 = SCH.daten(hpOf(Object.assign({}, LIVE, {Defrosting_State: 1})), X, 80, T);
+  const P9 = SCH.daten(hpOf(Object.assign({}, LIVE, {Room_Heater_State: 0})), X, 80, T);
+  check('Schema: Heizstab aktiv = rot "AN" und "+ Heizstab"; gesperrt (Room_Heater_State 0); Störung H23; Abtauen', SCH.html(P6, {}).includes('>AN<') && SCH.html(P6, {}).includes('läuft + Heizstab') &&
+        SCH.html(P9, {}).includes('>gesperrt<') && P7.zustand.c === 'stoerung' && SCH.html(P7, {}).includes('Fehler H23') && P8.zustand.c === 'abtauen', '');
+  check('Schema: Korrektur aus OPT_cfg (0..200 W), sonst 80 W', SCH.daten(hpOf(LIVE), X, 50, T).w.pelK === 369 && SCH.daten(hpOf(LIVE), X, 999, T).w.pelK === 399 && SCH.daten(hpOf(LIVE), X, undefined, T).w.pelK === 399, '');
+  const g1 = N('opt_g_schema'), g2 = N('opt_g_schema_ue'), t1 = N('opt_t_schema'), t2 = N('opt_t_schema_ue'), f = N('opt_schema'), i = N('opt_i_schema');
+  const ueOrders = nodes.filter(n => n.type === 'ui_group' && n.tab === 'a5be8588.b8fbc8' && n.id !== 'opt_g_schema_ue').map(n => n.order);
+  check('Schema: Gruppe "Anlagenschema" zuerst auf "Optimierer" (Reihenfolge 0,5, 17 breit) und "ANLAGENSCHEMA" zuerst auf der Übersicht (0,5 < Kern-Gruppen, nur per node-id volle Breite); je eine Karte',
+        g1 && g1.tab === 'opt_eng_ui_tab' && g1.order === 0.5 && g1.width === 17 && g2 && g2.tab === 'a5be8588.b8fbc8' && g2.order === 0.5 && ueOrders.length > 0 && ueOrders.every(o => o > 0.5) &&
+        t1.group === 'opt_g_schema' && t2.group === 'opt_g_schema_ue' && nodes.filter(n => n.group === 'opt_g_schema' || n.group === 'opt_g_schema_ue').length === 2 &&
+        t2.format.includes('ui-card-panel[node-id="opt_g_schema_ue"]{width:calc(100% - 12px)') && !t1.format.includes('width:calc(100% - 12px)') && [t1, t2].every(t => t.format.includes("var id = '" + t.id + "'") && t.format.includes("F.fns['" + t.id + "']") && t.format.includes('id="osch_' + t.id + '"')), ueOrders.join());
+  check('Schema: Sicherheit - opt_schema nur lesen (kein global/flow.set, keine Datei), Ausgang nur an die beiden Karten, Takt alle 10 s; die Karten schicken nichts',
+        f && !/global\.set|flow\.set|fs\./.test(f.func) && JSON.stringify(f.wires) === '[["opt_t_schema","opt_t_schema_ue"]]' && i.repeat === '10' && JSON.stringify(i.wires) === '[["opt_schema"]]' &&
+        [t1, t2].every(t => !/scope\.send/.test(t.format) && JSON.stringify(t.wires) === '[[]]'), '');
+  Object.keys(gstore).forEach(k => delete gstore[k]); Object.assign(gstore, keep); NOW = nowKeep;
 })();
 
 console.log('\nERGEBNIS:', assertFails === 0 ? 'alle Pruefungen bestanden' : assertFails + ' Pruefung(en) fehlgeschlagen');

@@ -73,7 +73,8 @@ function masonry(box) {
     var W = box.clientWidth, cols = Math.max(1, Math.floor((W + GX) / UNIT)), hts = [], gs = box.querySelectorAll(':scope > .grp'), i, x, y;
     for (i = 0; i < cols; i++) { hts.push(0); }
     Array.prototype.forEach.call(gs, function (g) {
-        var w = +g.getAttribute('data-w'), bx = 0, by = Infinity;
+        var voll = g.hasAttribute('data-voll'), w = voll ? cols : +g.getAttribute('data-w'), bx = 0, by = Infinity;   // data-voll: Gruppe per CSS auf volle Inhaltsbreite (Anlagenschema auf der Übersicht)
+        if (voll) { var vw = cols * UNIT - GX; g.style.width = vw + 'px'; Array.prototype.forEach.call(g.querySelectorAll('.crd'), function (c) { c.style.width = vw + 'px'; }); }
         for (x = 0; x + w <= Math.max(cols, w); x++) { y = 0; for (i = x; i < x + w; i++) { y = Math.max(y, hts[i] || 0); } if (y < by) { by = y; bx = x; } }
         g.style.left = (bx * UNIT) + 'px'; g.style.top = by + 'px';
         for (i = bx; i < bx + w; i++) { hts[i] = by + g.offsetHeight + GY; }
@@ -110,7 +111,7 @@ function run() {
                 if ((cs.textOverflow === 'ellipsis' || cs.overflowX === 'hidden' || cs.overflowX === 'clip') && e.scrollWidth > e.clientWidth + 1 && e.tagName !== 'svg') { res.fehler.push(k + ': abgeschnitten <' + e.tagName.toLowerCase() + ' class="' + e.className + '"> "' + (e.textContent || '').slice(0, 40) + '"'); }
                 if (q.right > r.right - ${PAD} + 1.5 && e.closest('.optfit')) { res.fehler.push(k + ': ragt rechts heraus <' + e.tagName.toLowerCase() + ' class="' + e.className + '"> um ' + Math.round(q.right - r.right + ${PAD}) + ' px'); }
             });
-            Array.prototype.forEach.call(c.querySelectorAll('.oe-kpi,.oe-tile,.oe-mlc,.oe-prop,.oe-leer,.optp .tile'), function (bx) {          // nichts ragt aus seiner Kachel
+            Array.prototype.forEach.call(c.querySelectorAll('.oe-kpi,.oe-tile,.oe-mlc,.oe-prop,.oe-leer,.optp .tile,.osch .tile'), function (bx) {          // nichts ragt aus seiner Kachel
                 var br = bx.getBoundingClientRect();
                 Array.prototype.forEach.call(bx.querySelectorAll('*'), function (e) { var q = e.getBoundingClientRect(); if ((q.width || q.height) && (q.right > br.right + 0.5 || q.left < br.left - 0.5)) { res.fehler.push(k + ': ragt aus der Kachel <' + e.tagName.toLowerCase() + ' class="' + e.className + '"> "' + (e.textContent || '').slice(0, 30) + '" um ' + Math.round(q.right - br.right) + ' px'); } });
             });

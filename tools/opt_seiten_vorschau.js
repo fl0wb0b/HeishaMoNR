@@ -1,4 +1,4 @@
-// Statische Vorschau der Seiten Optimierung (Verläufe, Räume, Wärmefahrplan), Optimierer (Entscheidungsmaschine, Quiet-Messwerte) und Daten & Güte (seit 13.10.
+// Statische Vorschau der Seiten Übersicht (Anlagenschema + Kern-Gruppen als Platzhalter in live gemessener Höhe), Optimierung (Verläufe, Räume, Wärmefahrplan), Optimierer (Entscheidungsmaschine, Quiet-Messwerte) und Daten & Güte (seit 13.10.
 // zusammengelegt): echte Vorlagen aus der Flow-Datei, Nachrichten aus der Simulation (OPT_UI_DUMP=<datei> node tools/optimizer_sim.js <flows.json>), Diagramm-Verläufe
 // aus dem echten 5-Minuten-Protokoll (opt_hist auf optimizer-v2-YYYY-MM.csv), Karten der Maschine aus dem Replay der echten Protokolle (tools/engine_ui_preview.js:
 // optimierer.html = Schnappschuss B ohne Vorschlag, optimierer_vorschlag.html = Schnappschuss A mit Vorschlag; ohne Datenordner bleiben diese Karten leer).
@@ -81,7 +81,7 @@ Array.prototype.forEach.call(document.querySelectorAll('.tplsrc'), function (h) 
 })();`;
 
 // Seiten: [Tab, Titel, Datei, Schnappschuss der Maschine]; leere (ausgeblendete) Tabs werden uebersprungen
-const PAGES = [['opt_ui_tab', 'Optimierung', 'optimierung', null], ['opt_eng_ui_tab', 'Optimierer', 'optimierer', 'B'], ['opt_eng_ui_tab', 'Optimierer', 'optimierer_vorschlag', 'A'],
+const PAGES = [['a5be8588.b8fbc8', 'Übersicht', 'uebersicht', null], ['opt_ui_tab', 'Optimierung', 'optimierung', null], ['opt_eng_ui_tab', 'Optimierer', 'optimierer', 'B'], ['opt_eng_ui_tab', 'Optimierer', 'optimierer_vorschlag', 'A'],
                ['opt_ui_tab_data', 'Daten & Güte', 'daten', null], ['opt_ui_tab_plan', 'Wärmefahrplan', 'waermefahrplan', null], ['opt_ui_tab_quiet', 'Quiet-Messwerte', 'quiet', null]];
 // Karten der Entscheidungsmaschine: Nachrichten wie opt_engine sie schickt ({payload: V.card} usw.), aus dem Replay der Protokolle im Datenordner
 const ENG_KIND = {opt_t_eng_prop: 'card', opt_t_eng_rules: 'rules', opt_t_eng_score: 'score', opt_t_eng_mess: 'mess', opt_t_eng_log: 'log'};
@@ -94,6 +94,8 @@ if (SNAP && process.env.OPT_ENG_STATE) {
     console.log('Entscheidungen aus ' + process.env.OPT_ENG_STATE + ' (' + (V.ep || []).length + ' Episoden)');
 }
 const PAD = PRE.PAD;
+// Kern-Gruppen (nicht opt_*) zeichnet die Vorschau nicht nach, sondern als Platzhalter in ihrer live gemessenen Hoehe (Titel + Inhalt, 1920 px, 14.10.2026)
+const KERN_H = {bf4af523ba16d457: 644, hc_grp: 212, '1179fa790d2d89ca': 590};
 const TITEL_FARBE = process.env.OPT_TITEL_FARBE || '#1bbfff';                  // Gruppentitel wie das Dashboard (theme-light); mit tools/ui_optik_patch.py: #0083b8
 fs.mkdirSync(outDir, {recursive: true});
 const CHECK = PRE.CHECK_JS.replace("window.addEventListener('load', function () { setTimeout(run, 50); });", "window.addEventListener('load', function () { setTimeout(run, 500); });");
@@ -105,7 +107,13 @@ PAGES.forEach(([tabId, title, file, snap]) => {
     groups.forEach(g => {
         const tpls = flows.filter(n => n.type === 'ui_template' && n.group === g.id).sort((a, b) => a.order - b.order);
         const W = +g.width, gw = W * 48 + (W - 1) * 6;
-        body += '<div class="grp" data-g="' + g.name + '" data-w="' + W + '" style="width:' + gw + 'px">' + (g.disp !== false ? '<div class="ttl">' + g.name + '</div>' : '');
+        if (!g.id.startsWith('opt_')) {
+            const h = KERN_H[g.id] || 300;
+            body += '<div class="grp kern" data-g="' + g.name + '" data-w="' + W + '" style="width:' + gw + 'px"><div class="ttl">' + g.name + '</div><div class="kph" style="height:' + (h - 54) + 'px">Kern-Gruppe (Platzhalter, Höhe live gemessen)</div></div>';
+            return;
+        }
+        const voll = tpls.some(t => t.format.includes('ui-card-panel[node-id="' + g.id + '"]{width:calc(100% - 12px)'));      // Gruppe nimmt per CSS die volle Inhaltsbreite
+        body += '<div class="grp" data-g="' + g.name + '" data-w="' + W + '"' + (voll ? ' data-voll="1"' : '') + ' style="width:' + gw + 'px">' + (g.disp !== false ? '<div class="ttl">' + g.name + '</div>' : '');
         tpls.forEach(t => {
             const id = 'src_' + t.id;
             blobs += '<script type="application/json" id="' + id + '">' + JSON.stringify({format: t.format, msg: MSG[t.id] || null}).replace(/</g, '\\u003c') + '</script>';
@@ -116,7 +124,7 @@ PAGES.forEach(([tabId, title, file, snap]) => {
     const css = '<style>html{overflow-y:scroll}body{margin:0;background:#fafafa;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Oxygen-Sans,Ubuntu,Cantarell,"Helvetica Neue",sans-serif;font-size:16px;color:rgba(0,0,0,.87)}' +
         '.tb{height:48px;background:#0094ce;color:#fff;font-size:20px;line-height:48px;padding:0 16px}.pr{font-size:12px;padding:4px 8px;font-family:monospace}.pr.ok{background:#e8f5e9;color:#1b5e20}.pr.f{background:#ffebee;color:#b71c1c}' +
         '.mas{position:relative;margin:0}.grp{position:absolute;background:#fff}.grp>.ttl{padding:10px 0 12px 12px;font-size:19.2px;font-weight:500;color:' + TITEL_FARBE + ';line-height:32px}' +
-        '.crd{box-sizing:border-box;padding:0 ' + PAD + 'px;overflow-y:auto;margin-bottom:6px}</style>';
+        '.crd{box-sizing:border-box;padding:0 ' + PAD + 'px;overflow-y:auto;margin-bottom:6px}.kph{box-sizing:border-box;margin:0 6px 6px;border:1px dashed #b0bec5;border-radius:6px;color:#546e7a;font-size:13px;padding:10px}</style>';
     const html = '<!doctype html><html lang="de"><head><meta charset="utf-8"><title>' + title + ' Vorschau</title>' + css + '</head><body><div id="pr" class="pr">Prüfung läuft …</div><div class="tb">' + title + '</div>' +
         '<div class="mas" data-s="' + file.charAt(0).toUpperCase() + '">' + body + '</div>' + blobs + '<script>' + RENDER_JS + '</script><script>' + CHECK + '</script></body></html>';
     const f = path.join(outDir, file + '.html');

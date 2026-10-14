@@ -3171,6 +3171,58 @@ if not APPLY_NODE_ACTIVE:
     _apply_out["d"] = True                      # deaktiviert: Node-RED legt den Knoten gar nicht an, nichts kann gesendet werden
 upsert(_apply_out)
 
+# ---------------------------------------------------------------- Anlagenschema (14.10.2026, Branch ui-schema): nur Anzeige, liest OPT_hp, schreibt nichts
+# Eine SVG-Karte der Leisha WH-WDG05LE5 (Monoblock R290, Zone 1 Heizkoerper, kein Warmwasser, kein Puffer, interner Heizstab, externer Aussenfuehler) mit
+# Live-Werten; Zeichnung und Daten als reine Funktionen in tools/schema_ui.js. Dieselbe Karte zweimal: Seite "Optimierer" oben links (17 breit wie alle Karten
+# dort) und Seite "Übersicht" (Kern-Tab a5be8588.b8fbc8) als erste Gruppe. Gruppen-Reihenfolge 0,5: vor allen anderen, ohne deren Reihenfolge anzufassen
+# (0 wuerde das Dashboard ans Ende sortieren). Auf der Übersicht stehen drei Kern-Gruppen (12 + 6 + 6 = 24 Einheiten, 1290 px). Eine feste Gruppenbreite
+# passt dort nicht: 24 Einheiten scrollen bei 1024 px waagrecht, und bei 1920/2560 bleibt rechts daneben Platz, in den die Masonry die 6 breiten
+# Kern-Gruppen zieht. Darum nimmt die Gruppe per CSS (nur ueber ihre node-id) die volle Inhaltsbreite: dann passt nichts daneben, die drei Kern-Gruppen
+# stehen darunter wie bisher (links beginnend statt mittig), und bei 1024 scrollt nichts. Das Schema waechst bis 1040 px, daneben die Kennzahlen.
+SCHEMA_JS = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "schema_ui.js"), encoding="utf-8").read()
+UE_TAB = "a5be8588.b8fbc8"                       # Kern-Seite "Übersicht" (#!/0)
+SCHEMA_CSS = "<style>" + "".join(re.findall(r"'([^']*)'", re.search(r"var CSS = ([\s\S]*?);\n", SCHEMA_JS).group(1))) + "</style>"      # Stil aus schema_ui.js (eine Quelle)
+SCHEMA_VOLL_CSS = ('<style>ui-card-panel[node-id="opt_g_schema_ue"]{width:calc(100% - 12px) !important}'
+                   'ui-card-panel[node-id="opt_g_schema_ue"] .nr-dashboard-cardpanel,ui-card-panel[node-id="opt_g_schema_ue"] .nr-dashboard-cardcontainer{width:100% !important}'
+                   'ui-card-panel[node-id="opt_g_schema_ue"] .nr-dashboard-cardtitle{width:auto !important}'
+                   'md-card[node-id="opt_t_schema_ue"]{width:100% !important;box-sizing:border-box !important}</style>')
+SCHEMA_FN_JS = r"""
+// Anlagenschema: Werte der Waermepumpe fuer die beiden Schema-Karten (Optimierer, Übersicht), alle 10 s. NUR LESEN, schreibt nichts.
+var G = function (k) { var v; try { v = global.get(k, 'file'); } catch (e) { v = undefined; } return v !== undefined ? v : global.get(k); };
+var cfg = global.get('OPT_cfg') || {};
+__COPKW__
+var P = OPTSCHEMA.daten(G('OPT_hp') || {}, {freq: G('compressor_frequency'), rt: G('compressor_runtime'), rtLast: G('compressor_last_runtime'), starts: G('Starts_Today')}, COP_KW, Date.now());
+return {payload: P};
+"""
+
+
+def schema_format(node_id, group_id, voll):
+    """Schema-Karte: zeichnet die Nutzlast mit optSchema.mount, passt sich danach sofort ein (FIT_JS dieser Karte); auf der Übersicht (voll) einmal die
+    Masonry neu anstossen, damit sie die volle Breite der Gruppe sieht."""
+    vollJs = ("if (first) { first = false; try { var p = document.querySelector('ui-card-panel[node-id=\"" + group_id + "\"]'), mas = p && angular.element(p.parentElement).controller('uiMasonry'); "
+              "if (mas) { setTimeout(function () { mas.refreshLayout(); }, 80); } } catch (e) { /* Layout bleibt */ } }\n") if voll else ""
+    return (SCHEMA_CSS + (SCHEMA_VOLL_CSS if voll else "") + '<div class="optfit"><div id="osch_' + node_id + '"></div></div>'
+            "<script>" + SCHEMA_JS + "</script><script>(function (scope) {\n"
+            "var last = null, first = true;\n"
+            "function draw() { var el = document.getElementById('osch_" + node_id + "'); if (!el || !last || !last.payload || !window.optSchema) { return; } window.optSchema.mount(el, last.payload);\n"
+            " var F = window.__optFit; if (F && F.fns && F.fns['" + node_id + "']) { setTimeout(F.fns['" + node_id + "'], 60); }\n" + vollJs + "}\n"
+            "scope.$watch('msg', function (m) { if (m) { last = m; setTimeout(draw, 40); } });\n"
+            "})(scope);</script>")
+
+
+upsert({"id": "opt_g_schema", "type": "ui_group", "name": "Anlagenschema", "tab": ENG_TAB, "order": 0.5, "disp": True, "width": ENG_W, "collapse": False, "className": ""})
+upsert(eng_template("opt_t_schema", "opt_g_schema", "Anlagenschema (Optimierer)", 13, schema_format("opt_t_schema", "opt_g_schema", False), 2420))
+_schema_out = ["opt_t_schema"]
+if UE_TAB in B and B[UE_TAB]["type"] == "ui_tab":
+    upsert({"id": "opt_g_schema_ue", "type": "ui_group", "name": "ANLAGENSCHEMA", "tab": UE_TAB, "order": 0.5, "disp": True, "width": 24, "collapse": False, "className": ""})
+    upsert(eng_template("opt_t_schema_ue", "opt_g_schema_ue", "Anlagenschema (Übersicht)", 12, schema_format("opt_t_schema_ue", "opt_g_schema_ue", True), 2460))
+    _schema_out.append("opt_t_schema_ue")
+else:
+    print("Hinweis: Seite Übersicht (" + UE_TAB + ") fehlt, Anlagenschema nur auf der Seite Optimierer")
+upsert(comment("opt_c_schema", "Anlagenschema (nur Anzeige): OPT_hp lesen → Karten auf Optimierer und Übersicht", 380, 2380))
+upsert(inject("opt_i_schema", "alle 10 s", 10, 20, ["opt_schema"], 140, 2440))
+upsert(fn("opt_schema", "Anlagenschema: Werte lesen (nur Anzeige)", SCHEMA_JS + SCHEMA_FN_JS.replace("__COPKW__", COP_KW_JS), 1, [_schema_out], 440, 2440))
+
 # the new page also belongs into the menu configuration (SYSTEM > menu), otherwise it can not be hidden/shown there
 form = B.get("e35b7df78bc6f722")
 if form and not any(o["value"] == "Optimierung" for o in form["options"]):
