@@ -689,6 +689,7 @@ var ENGINE = (function () {
                 {key: 'komfortK', std: 0.3, einheit: 'K', herkunft: 'Efficiency nur mit Reserve: alle Räume (Wert bis 6 h alt) mindestens 0,3 K über Minimum (wie notK); ANNAHME'},
                 {key: 'heizstabHystK', std: 1, einheit: 'K', herkunft: 'kein Heizstab-Risiko: Außen mindestens Heater_On_Outdoor_Temp + heaterMarginK (2 K) + 1 K, solange Comfort steht (Hysterese wie der Heizregelungs-Hinweis; die alte Warnung flackerte bei 4,0 °C, 74 Ereignisse in 6 Tagen); ANNAHME, keine Frostdaten'},
                 {key: 'abtauNachMin', std: 30, einheit: 'min', herkunft: 'nach dem Abtauen 30 min kein Wechsel nach Efficiency: Comfort holt den Abtau-Rückstand auf (Abtau-Rückstand als Bedarf wie Quiet-Freigabe v3: 30 min, Vorlauf ≥ 3 K unter Soll; Forum 189605 4582615, 4095732, 4096011); ANNAHME, ohne eigene Abtau-Daten'},
+                {key: 'copTol', std: 0.10, einheit: 'Anteil', herkunft: 'Veto gegen Efficiency: kein Vorschlag nach Efficiency, wenn ihr COP bei derselben Quiet-Stufe und im selben Außenband mehr als 10 % unter dem von Comfort liegt (nur wenn beide copMinMin Minuten haben, Nutzerentscheidung 13.10.2026; wie das COP-Veto von Deckel/Laufzeit). Stand 14.10.: Comfort Quiet 0 bei 3…11 °C 7–12 % über Efficiency (je 2,3 h, stabile Minuten ab Laufminute 15, korrigiert; nicht belastbar: Tageszeit, Durchfluss 13,6 gegen 15,1 l/min, Pth ±10 %)'},
                 {key: 'handRuheMin', std: 120, einheit: 'min', herkunft: 'nach einem Wechsel von Hand (Heizregelung-Schalter) 2 h kein Vorschlag zurück, außer Notfall (Heizstab-Nähe, Raum ≥ 0,3 K unter Minimum): der Nutzer schaltete 08.–13.10. siebenmal selbst (08.10. 10:02, 12.10. 18:26 und 22:00, 13.10. 07:06, 15:29, 15:40, 22:43); kein Pendeln gegen den Nutzer; ANNAHME'},
                 {key: 'haltMin', std: 10, einheit: 'min', herkunft: 'wie Quiet-Freigabe: Bedingungen 10 min am Stück (Comfort-Richtung; die Efficiency-Richtung hat ihre 15 min in „Bedarf gedeckt“)'},
                 {key: 'proTag', std: 3, einheit: 'Vorschläge', herkunft: 'höchstens 3 übernommene Wechsel je Tag (ein Comfort-Fenster mit Rückweg sind 2 Befehle; die Übernahme begrenzt ohnehin auf 6 Befehle am Tag); ANNAHME'},
@@ -732,6 +733,8 @@ var ENGINE = (function () {
                     {k: 'komfort', kz: 'Komfort sicher', t: 'alle Räume mindestens ' + de(c.komfortK, 1) + ' K über Minimum, auch in 2 h beim jetzigen Gefälle über Minimum', tn: H.ks && !H.ks.ok ? H.ks.txt : (H.resPRaum || 'ein Raum') + ' fällt: in 2 h ' + de(H.resP, 1) + ' K zum Minimum', ok: !!(H.ks && H.ks.ok && H.trendOk)},
                     {k: 'hochlauf', kz: 'Quiet lässt Hochlauf zu', t: d.q === 0 ? 'Quiet 0: Comfort fährt beim Start hoch (Kosten)' : 'Quiet ' + d.q + ' lässt bis ' + de((H.cap || {}).hz, 0) + ' Hz zu (Comfort fährt hoch)', tn: 'Quiet ' + d.q + ' deckelt bei ' + de((H.cap || {}).hz, 0) + ' Hz: Comfort fährt ohnehin nicht hoch, Efficiency brächte nichts', ok: !!H.hochOk},
                     {k: 'heizstab', kz: 'kein Heizstab-Risiko', t: 'kein Heizstab-Risiko (Außen ' + de(d.at, 0) + ' °C)', tn: gk, ok: H.atNah === false},
+                    {k: 'cop', kz: 'COP-Veto', t: 'Efficiency höchstens ' + de(c.copTol * 100, 0) + ' % COP unter Comfort' + (have(H.copC) && have(H.copE) ? ' (' + de(H.copE, 2) + ' gegen ' + de(H.copC, 2) + ')' : ' (zu wenig Daten je Modus, Veto ruht)'),
+                     tn: 'COP Efficiency ' + de(H.copE, 2) + ' statt ' + de(H.copC, 2) + ' (Comfort, Quiet ' + d.q + ', ' + H.copBand + ' °C): mehr als ' + de(c.copTol * 100, 0) + ' % schlechter', ok: !H.copVeto},
                     {k: 'abtau', kz: 'nicht nach Abtauen', t: 'kein Abtauen in den letzten ' + c.abtauNachMin + ' min', tn: d.defrost ? 'Abtauen läuft' : 'Abtauen bis ' + hhmm(H.abtauEnde) + ' (Comfort holt den Rückstand auf)', ok: !H.abtauNach},
                     {k: 'ruecklauf', kz: 'Rücklauf', t: 'Rücklauf höchstens ' + de(c.rueckRlK, 1) + ' K unter Soll (oder Pause)', tn: 'Rücklauf ' + rueckTxt(d.rlRueck), ok: !!H.rlOk},
                     {k: 'gedeckt', kz: 'Bedarf gedeckt', t: 'Bedarf seit mindestens ' + c.rueckMin + ' min gedeckt', tn: B.ja ? 'Bedarf: ' + B.txt : (H.deck ? 'Bedarf erst seit ' + de(H.deckMin, 0) + ' von ' + c.rueckMin + ' min gedeckt' : 'Bedarf nicht gedeckt'),
@@ -902,7 +905,12 @@ var ENGINE = (function () {
         o.traegeHz = have(mh) ? Math.max(c.traegeHz, mh + 1) : c.traegeHz;
         o.traege = !!(d.running && have(d.hz) && d.hz <= o.traegeHz && (d.runMin < c.traegeMin || B.abtau || B.heizstab));
         o.rueck = have(d.vlRueck) && d.vlRueck >= c.vlRueckK && have(d.rlRueck) && d.rlRueck >= c.rlRueckK;
-        o.lage = (d.hc === 1 && B.ja && o.traege && o.capOk && o.rueck && d.runMin >= o.lm) ? 1 : ((d.hc === 0 && o.deckMin >= c.rueckMin && o.hochOk) ? -1 : 0);
+        // COP-Veto gegen Efficiency (Daten je Heizregelung x Quiet x Aussenband, Takt-Messung): nur wenn beide Modi copMinMin Minuten haben
+        var band = have(d.at) ? bandOf(d.at) : null, tc = d.tc || taktCfg(null), kq = have(d.q) ? d.q : '?';
+        var aC = band && d.copSum ? d.copSum['Comfort|' + kq + '|' + band] : null, aE = band && d.copSum ? d.copSum['Efficiency|' + kq + '|' + band] : null;
+        o.copC = aC && aC[2] >= tc.copMinMin && aC[0] > 0 ? aC[1] / aC[0] : null; o.copE = aE && aE[2] >= tc.copMinMin && aE[0] > 0 ? aE[1] / aE[0] : null; o.copBand = band;
+        o.copVeto = have(o.copC) && have(o.copE) && o.copE < o.copC * (1 - c.copTol);
+        o.lage = (d.hc === 1 && B.ja && o.traege && o.capOk && o.rueck && d.runMin >= o.lm) ? 1 : ((d.hc === 0 && o.deckMin >= c.rueckMin && o.hochOk && !o.copVeto) ? -1 : 0);
         o.hand = S.hcHandT ? {t: S.hcHandT, w: S.hcHandW} : null;
         return o;
     }

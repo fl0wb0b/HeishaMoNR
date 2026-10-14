@@ -1510,6 +1510,12 @@ console.log('--- (h) Heizregelung: Komfortbedarf, Abtau-Rueckstand, Heizstab-Nae
       check('h5 Comfort von Hand (Minute 20), kein Bedarf, Quiet 0: Vorschlag Comfort -> Efficiency erst nach 2 h Ruhe (Minute 140), Rueckweg-Text "keiner: Efficiency ist der Normalzustand"; Klick sendet 1, nach der Bestaetigung ist keine Uebernahme offen; unter Quiet 3 (Comfort faehrt ohnehin nicht hoch) kein Vorschlag',
             tProp === 140 && kl[0].ok && kl[0].p.einmal === true && /Normalzustand/.test(kl[0].p.rueckweg) && kl[0].A.ak.hc && kl[0].A.ak.hc.einmal && !kl[0].A.ak.hc.bis && !K.A.ak.hc && K.pl.hc === 1 && K.sends.length === 1 && nQ === 0 && /Comfort fährt ohnehin nicht hoch/.test(hr(KQ.out).grund),
             'Vorschlag Minute ' + tProp + ' · ' + (kl[0] ? kl[0].txt : '') + ' · Quiet 3: ' + hr(KQ.out).grund); }
+    // ---- h5c COP-Veto gegen Efficiency (Daten je Modus x Quiet x Band, wie Deckel/Laufzeit): Comfort Quiet 0 bei 3…7 °C 12 % besser (Stand 14.10. aehnlich: 4,80 gegen 4,27) -> kein Vorschlag nach Efficiency
+    { const seed = (cC, cE) => { const S0 = E.newState(T0 - MIN); S0.takt.nl = {laeuft: false}; S0.takt.copT[E.ymd(T0)] = {'Comfort|0|3…7': [1000, cC, 120, 120 * 17, 17], 'Efficiency|0|3…7': [1000, cE, 120, 120 * 17, 17]}; return S0; };
+      const run = S0 => runSeq(60, i => lauf(i, {hc: 0, rt: 100 + i, vl: 33.5, rl: 30, rooms: RH()}), S0);
+      const RV = run(seed(4800, 4270)), RN = run(seed(4800, 4700)), gV = hr(RV.outs[59]).grund;
+      check('h5c COP-Veto: Comfort von Hand ohne Bedarf, Daten Comfort/Efficiency Quiet 0 bei 3…7 °C je 120 min, Efficiency mehr als 10 % schlechter (korrigiert 3,68 gegen 4,14 aus der Saat, dazu die laufenden Comfort-Minuten) -> kein Vorschlag nach Efficiency (Grund nennt beide COP); bei 2 % Unterschied Vorschlag',
+            !propOf(RV).length && /COP Efficiency 3,68 statt 4,[0-9][0-9] \(Comfort, Quiet 0, 3…7 °C\)/.test(gV) && propOf(RN).length === 1 && RV.outs[59].rec.abl.hc === undefined, gV); }
     // ---- h6 Zusammenspiel mit der Quiet-Freigabe: Quiet 3 deckelt -> zuerst Quiet-Freigabe (Klick 3 -> 0), Efficiency bleibt traege -> Comfort als Notfall nach 10 min (Mindestabstand), noch in der Anlaufphase; waehrend Comfort der Regel steht kein Effizienz-Deckel
     { const K = hcKlick({t0: T0, q0: 3, hc0: 1}), kl = []; let deckelVs = 0;
       for (let i = 0; i < 70; i++) {
