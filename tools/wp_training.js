@@ -121,8 +121,9 @@ function lade(dir, monate, tage) {                                              
     }
     // Läufe und Pausen
     const runs = [], pausen = [];
-    let i0 = null;
+    let i0 = null, abgeschnitten = M.length > 0 && M[0].lauf;                      // Lauf am Fensteranfang (--tage): Beginn nicht gesehen → kein Lauf (sonst M[i0 - 1] = undefined)
     for (let i = 0; i < M.length; i++) {
+        if (abgeschnitten) { if (M[i].lauf) { continue; } abgeschnitten = false; }
         if (M[i].lauf && i0 === null) { i0 = i; }
         if (!M[i].lauf && i0 !== null) {
             const last = M[i - 1], art = (last.vl !== null && last.soll !== null && last.vl >= last.soll + 2.75) ? 'thermo' : (M[i].zust === 'heizgrenze' || (M[Math.min(M.length - 1, i + 2)].flow || 0) < 1 && (M[i].at || 0) >= 14 ? 'heizgrenze' : 'sonst');

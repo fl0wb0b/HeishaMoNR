@@ -1,0 +1,10 @@
+# Baukontext für docker/optimizer-tools/Dockerfile (Wurzel des Repos): nur die Werkzeuge und die Steuerung, sonst nichts.
+*
+!tools/engine_core.js
+!tools/engine_replay.js
+!tools/replay_tag.js
+!tools/wp_zwilling.js
+!tools/wp_training.js
+!tools/wp_training_nacht.py
+!tools/kennzahlen_tag.py
+!docker/optimizer-tools/ot.py

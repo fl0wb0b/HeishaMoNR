@@ -1,0 +1,40 @@
+# optimizer-tools auf der NAS: im Verzeichnis dieser Datei  `docker compose up -d`  (siehe README.md).
+# Liest die Protokolle des Node-RED-Optimierers NUR LESEND, schreibt nur in das eigene Volume, braucht kein Netz.
+# Das Image wird vorher gebaut (docker build … -t optimizer-tools:1, siehe README) und nie aus dem Netz geholt.
+name: optimizer-tools
+
+services:
+  optimizer-tools:
+    image: optimizer-tools:1
+    pull_policy: never              # nie von Docker Hub holen; fehlt das Image, bricht compose mit „No such image“ ab
+    container_name: optimizer-tools
+    restart: unless-stopped
+    init: true                      # tini als PID 1: Signale und Zombies sauber
+    network_mode: none              # kein Netz nötig (keine Abrufe, kein Sprachmodell)
+    read_only: true                 # Wurzeldateisystem schreibgeschützt ...
+    tmpfs:
+      - /tmp:size=128m,mode=1777    # ... nur /tmp (Arbeitskopien des Trainings, ~10 MB) und /ergebnis sind schreibbar
+    user: "10001:10001"             # nicht root und nicht uid 1000 (node-red): owm.json/vrm.json (600) bleiben unlesbar
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 1g
+    memswap_limit: 1g
+    cpus: 2
+    pids_limit: 64
+    environment:
+      TZ: Europe/Berlin
+      ZEITPLAN: "06:40"             # HH:MM[,HH:MM] Ortszeit; danach jeweils Training, Replay (Vortag), Kennzahlen (Vortag)
+      NACHHOLEN: "1"                # nach Neustart einen verpassten Lauf des Tages nachholen
+      AUFBEWAHREN_TAGE: "120"       # Replay-Berichte und Trainingsparameter so lange behalten
+    volumes:
+      - ${OT_DATEN:-/volume2/@docker/volumes/node_red_node-red-data/_data/optimizer}:/daten:ro
+      - ergebnis:/ergebnis
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+volumes:
+  ergebnis:                         # Name auf dem Host: optimizer-tools_ergebnis
