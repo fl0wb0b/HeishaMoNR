@@ -324,6 +324,19 @@ check('nach einem Neustart gelten gespeicherte Eingaben UND neue Standardwerte (
   s = scene({ki_oben: [21.9], ki_unten: [23.0], schlaf: [20.0]});
   check('Karte "Räume": Spalte "eigene Heizung" (Tooltip "Eigene Nachheizung: …") mit Schalter (room:<id>:eigeneHeizung); Kinderzimmer oben mit Haken, die anderen ohne; "Raum unter Minimum" nennt die eigene Nachheizung',
         /<th title="Eigene Nachheizung: [^"]+">eigene Heizung<\/th>/.test(tplR) && tplR.includes("ng-model=\"r.eigen\" ng-change=\"set(r, 'eigeneHeizung', r.eigen)\"") && rowOf(s, 'ki_oben').eigen === true && rowOf(s, 'schlaf').eigen === false && /^Kinderzimmer oben · 0,6 K unter Minimum · .* · eigene Nachheizung$/.test(s.sum.heat), s.sum.heat); }
+// ---------- Sonnenfenster je Raum (Paket 2, 15.10.2026)
+{ const wo = () => gstore.OPT_cfg.rooms.find(r => r.id === 'wohn'), keepCfg = files['/data/optimizer/config.json'].data;
+  check('Sonnenfenster: Standard nur Wohnzimmer (Generator, Suedwestfenster), die anderen Raeume nicht; das Feld steht in OPT_cfg', wo().sonnenfenster === true && gstore.OPT_cfg.rooms.filter(r => r.id !== 'wohn').every(r => r.sonnenfenster === false), JSON.stringify(gstore.OPT_cfg.rooms.map(r => [r.id, r.sonnenfenster])));
+  files['/data/optimizer/config.json'].data = JSON.stringify({rooms: [{id: 'wohn', active: true, min: 20, max: 23.5}]}); delete gstore.OPT_cfg; run('opt_defaults', {});
+  const a = wo().sonnenfenster === true && wo().max === 23.5 && wo().active === true;
+  const rs = setv('room:wohn:sonnenfenster', false), b = wo().sonnenfenster === false && cf().rooms.find(x => x.id === 'wohn').sonnenfenster === false && cf().rooms.find(x => x.id === 'wohn').max === 23.5 && Array.isArray(rs) && rs[1].payload === 'auswerten';
+  delete gstore.OPT_cfg; run('opt_defaults', {}); const c = wo().sonnenfenster === false;
+  setv('room:wohn:sonnenfenster', true); const d = wo().sonnenfenster === true && cf().rooms.find(x => x.id === 'wohn').sonnenfenster === true;
+  check('Sonnenfenster: config.json ohne das Feld (wie live) laesst den Standard stehen; der Schalter der Karte setzt es (room:wohn:sonnenfenster), speichert nur dieses Feld und gilt nach einem Neustart', a && b && c && d, JSON.stringify([a, b, c, d]));
+  files['/data/optimizer/config.json'].data = keepCfg; delete gstore.OPT_cfg; run('opt_defaults', {});
+  const tplS = ALLNODES.find(n => n.id === 'opt_t_rooms').format;
+  check('Karte "Räume": Spalte "Sonne" (Tooltip "Sonnenfenster: …") mit Schalter (room:<id>:sonnenfenster) direkt nach "eigene Heizung"; Wohnzimmer mit Haken, die anderen ohne',
+        /eigene Heizung<\/th><th title="Sonnenfenster: [^"]+">Sonne<\/th>/.test(tplS) && tplS.includes("ng-model=\"r.sf\" ng-change=\"set(r, 'sonnenfenster', r.sf)\"") && rowOf(s, 'wohn').sf === true && rowOf(s, 'schlaf').sf === false, JSON.stringify(s.rooms.map(r => [r.id, r.sf]))); }
 const rejectedCases = [
   ['Minimum ueber Maximum (21,8 > 21)', 'room:schlaf:min', 21.8], ['Band schmaler als 0,5 K (max 18,2 bei min 18)', 'room:schlaf:max', 18.2],
   ['ausserhalb des Bereichs (min 40)', 'room:schlaf:min', 40], ['Gewicht 0', 'room:schlaf:weight', 0], ['Datenalter 2 min', 'room:schlaf:maxAgeMin', 2],
@@ -985,10 +998,31 @@ dfWorld(); hpm('main/Internal_Heater_State', 0); dfAll = collect(2);
 dfAll = dfAll.concat(collect(3, i => { gstore.TOP26_Defrosting_State = 1; gstore.TOP6_Main_Outlet_Temp = 25; hpm('main/Internal_Heater_State', i >= 1 ? 1 : 0); }));
 dfAll = dfAll.concat(collect(4, i => { gstore.TOP26_Defrosting_State = 0; gstore.TOP6_Main_Outlet_Temp = [25, 26, 27, 31.2][i]; hpm('main/Internal_Heater_State', 0); }));
 dfR = defRows(dfAll); dfH = dfR[0] && dfR[0][0].split(','); dfL = dfR[0] && dfR[0][dfR[0].length - 1].split(',');
-check('Abtauzyklus: Heizstab-Minuten werden gezaehlt (2 von 3 Abtau-Minuten mit aktivem Heizstab, danach aus -> heizstab_min 2), Spaltenzahl stimmt', dfR.length === 1 && dfH.length === dfL.length && dfH.indexOf('heizstab_min') === dfH.length - 1 && dfL[dfH.indexOf('heizstab_min')] === '2', dfR[0] && dfR[0].join(' / '));
+check('Abtauzyklus: Heizstab-Minuten werden gezaehlt (2 von 3 Abtau-Minuten mit aktivem Heizstab, danach aus -> heizstab_min 2), Spaltenzahl stimmt', dfR.length === 1 && dfH.length === dfL.length && dfH.indexOf('heizstab_min') === 15 && dfL[dfH.indexOf('heizstab_min')] === '2', dfR[0] && dfR[0].join(' / '));
 dfWorld(); dfAll = collect(2); dfAll = dfAll.concat(collect(3, () => { gstore.TOP26_Defrosting_State = 1; gstore.TOP6_Main_Outlet_Temp = 25; })); dfAll = dfAll.concat(collect(4, i => { gstore.TOP26_Defrosting_State = 0; gstore.TOP6_Main_Outlet_Temp = [25, 26, 27, 31.2][i]; }));
 dfR = defRows(dfAll); dfL = dfR[0] && dfR[0][dfR[0].length - 1].split(',');
-check('Abtauzyklus ohne Heizstab: heizstab_min 0 (kein leeres Feld)', dfR.length === 1 && dfL[dfL.length - 1] === '0', dfL && dfL[dfL.length - 1]);
+check('Abtauzyklus ohne Heizstab: heizstab_min 0 (kein leeres Feld)', dfR.length === 1 && dfL[15] === '0', dfL && dfL[15]);
+// Paket 2 (15.10.2026): Winter-Abtauung wie im Forum (L5: Vorlauf 37 -> 22 °C) mit allen HeishaMon-Werten; zwei Zyklen, damit auch der Abstand gefuellt ist. Jede Spalte gefuellt?
+{ dfWorld({TOP14_Outside_Temp: -3, TOP42_Z1_Water_Target_Temp: 36, TOP6_Main_Outlet_Temp: 36.5, TOP5_Main_Inlet_Temp: 33}); gstore.OPT_weather = {ts: NOW, rh: 92, dew: -4.1};
+  hpm('main/Outside_Pipe_Temp', -7); hpm('main/Internal_Heater_State', 0); let all = collect(3);
+  const zyklus = (vor) => { gstore.OPT_weather.ts = NOW; all = all.concat(collect(1, () => { gstore.TOP26_Defrosting_State = 0; gstore.TOP6_Main_Outlet_Temp = vor; hpm('main/Outside_Pipe_Temp', -7); }));
+      all = all.concat(collect(7, i => { gstore.TOP26_Defrosting_State = 1; gstore.TOP6_Main_Outlet_Temp = [33, 29, 26, 24, 22.5, 22, 23][i]; gstore.TOP16_Heat_Energy_Consumption = 500; hpm('extra/Heat_Power_Production_Extra', -2000); hpm('main/Outside_Pipe_Temp', [-7, -2, 4, 9, 12, 14, 15][i]); hpm('main/Internal_Heater_State', i === 4 ? 1 : 0); }));
+      all = all.concat(collect(12, i => { gstore.TOP26_Defrosting_State = 0; gstore.TOP6_Main_Outlet_Temp = 24 + i * 1.1; gstore.TOP16_Heat_Energy_Consumption = 900; hpm('extra/Heat_Power_Production_Extra', 3200); hpm('main/Outside_Pipe_Temp', i === 0 ? 3 : -8); hpm('main/Internal_Heater_State', 0); })); };
+  zyklus(36.5); all = all.concat(collect(40, () => { gstore.TOP6_Main_Outlet_Temp = 36.5; })); zyklus(36.25);
+  const R = defRows(all), lines = [].concat.apply([], R).filter(l => l.length), H = lines.find(l => l.startsWith('zeit,')).split(','), rows = lines.filter(l => !l.startsWith('zeit,')).map(l => l.split(','));
+  const z = rows[rows.length - 1], g = n => z[H.indexOf(n)], leer = H.filter((h, k) => z[k] === '' || z[k] === undefined);
+  check('Abtau-Protokoll (Paket 2): Kopfzeile wächst hinten um ende, vl_einbruch_k, rohr_aussen_vor, rohr_aussen_nach, strom_nach_kwh; bisherige 16 Spalten unverändert an ihrem Platz',
+        H.slice(0, 16).join() === 'zeit,dauer_min,wiederaufheiz_min,aussen,feuchte,taupunkt,quiet,heizregelung,soll_vl,vl_beginn,vl_min,rl_min,strom_kwh,waerme_kwh,min_seit_letzter_abtauung,heizstab_min' && H.slice(16).join() === 'ende,vl_einbruch_k,rohr_aussen_vor,rohr_aussen_nach,strom_nach_kwh', H.join());
+  check('Abtau-Protokoll (Paket 2, Winter-Zyklus wie Forum L5): jede Spalte gefüllt (Beginn, Ende, Dauer 7 min, Außen −3, Feuchte 92, Taupunkt −4,1, Rohr außen vor −7 / nach 3, Vorlauf-Einbruch 36,25 → 22 = 14,25 K, Wiederaufheizzeit, Heizstab 1 min, Strom während 0,058 kWh und danach, Abstand zur letzten Abtauung)',
+        rows.length === 2 && leer.length === 0 && g('dauer_min') === '7' && g('aussen') === '-3' && g('feuchte') === '92' && g('taupunkt') === '-4.1' && g('rohr_aussen_vor') === '-7' && g('rohr_aussen_nach') === '3' && g('vl_einbruch_k') === '14.25' && g('heizstab_min') === '1' &&
+        Math.abs(Number(g('strom_kwh')) - 0.058) < 0.002 && Number(g('strom_nach_kwh')) > 0.1 && Number(g('min_seit_letzter_abtauung')) >= 55 && /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/.test(g('ende')) && g('ende') > g('zeit') && Number(g('wiederaufheiz_min')) >= 1,
+        'leer: [' + leer.join() + '] · ' + H.map((h, k) => h + '=' + z[k]).join(' '));
+  delete fstore.qs; collect(1); const ws = JSON.parse(files['/data/optimizer/watcher-state.json'].data);
+  check('Abtau-Protokoll: Beginn der letzten Abtauung übersteht einen Neustart (watcher-state.json lastDefrostStart; der Abstand im nächsten Eintrag bleibt gefüllt)', ws.lastDefrostStart > 0 && fstore.qs.lastDefrostStart === ws.lastDefrostStart, JSON.stringify(ws));
+  ['Heater_Stop_Delta', -1, 'Eva_Outlet_Temp', 4, 'Discharge_Temp', 35, 'High_Pressure', 11.2, 'Expansion_Valve', 37, 'Inside_Pipe_Temp', 31].forEach((v, k, arr) => { if (k % 2 === 0) { hpm('main/' + v, arr[k + 1]); } });
+  delete fstore.qHead; const qo = collect(2), ql = qo.filter(x => x[2]).map(x => x[2].payload).join('').split('\n').filter(Boolean), qh = ql.find(l => l.startsWith('zeit,')).split(','), qd = ql.filter(l => !l.startsWith('zeit,')).pop().split(',');
+  check('Minutenprotokoll quiet-*.csv (Paket 2): sechs Spalten hinten angehängt – heizstab_stop_delta (TOP98 Heater_Stop_Delta), verdampfer_aus (Eva_Outlet_Temp), heissgas (Discharge_Temp), hochdruck (High_Pressure), expansionsventil (Expansion_Valve), rohr_innen (Inside_Pipe_Temp) – mit den HeishaMon-Werten; fan1, verdichter_strom, rohr_aussen waren schon da',
+        qh.slice(-6).join() === 'heizstab_stop_delta,verdampfer_aus,heissgas,hochdruck,expansionsventil,rohr_innen' && qd.length === qh.length && qd.slice(-6).join() === '-1,4,35,11.2,37,31' && ['fan1', 'verdichter_strom', 'rohr_aussen', 'heizstab_start_delta'].every(n => qh.indexOf(n) >= 0), qh.slice(-7).join() + ' = ' + qd.slice(-7).join()); }
 world({TOP5_Main_Inlet_Temp: 24.3}); ['Internal_Heater_State', 1, 'External_Heater_State', 0, 'Room_Heater_State', 1, 'Room_Heater_Operations_Hours', 76, 'Heater_Start_Delta', -3, 'Heater_Delay_Time', 15].forEach((v, k, arr) => { if (k % 2 === 0) { hpm('main/' + v, arr[k + 1]); } });
 delete fstore.qHead; const hsOuts = collect(2);
 {
@@ -1899,9 +1933,9 @@ check('Dateien: Ist, Vergleich, Schnappschuesse und Zustand unter /data/optimize
   // Seiten und Karten (Flow-Datei)
   { const tabs = flowsAll.filter(n => n.type === 'ui_tab' && /^opt_ui_tab/.test(n.id)), grp = flowsAll.filter(n => n.type === 'ui_group' && /^opt_g_/.test(n.id)), onTab = id => grp.filter(g => g.tab === id);
     const byOrder = id => onTab(id).sort((a, b) => a.order - b.order).map(g => g.id).join(), hid = id => (flowsAll.find(n => n.id === id) || {}).hidden;
-    check('Seiten (13.10. zusammengelegt): alle Karten der Optimierungs-Seiten 17 breit (zwei Spalten ab ~1840 px, eine bei 1024 ohne waagrechtes Scrollen; kein Mischen der Breiten = Masonry-Falle): Optimierung = 3 Diagramme + Raumkarte + Wärmefahrplan (Plan, Stundenübersicht), Optimierer = fünf Karten der Maschine + zwei Quiet-Statistik-Karten, Daten & Güte sieben Statuskarten; die Tabs Wärmefahrplan und Quiet-Messwerte leer und ausgeblendet',
+    check('Seiten (13.10. zusammengelegt): alle Karten der Optimierungs-Seiten 17 breit (zwei Spalten ab ~1840 px, eine bei 1024 ohne waagrechtes Scrollen; kein Mischen der Breiten = Masonry-Falle): Optimierung = 3 Diagramme + Raumkarte + Wärmefahrplan (Plan, Stundenübersicht), Optimierer = fünf Karten der Maschine + zwei Quiet-Statistik-Karten, Daten & Güte sieben Statuskarten und seit Paket 2 die Karte „Auswertung NAS“; die Tabs Wärmefahrplan und Quiet-Messwerte leer und ausgeblendet',
           byOrder('opt_ui_tab') === 'opt_g_ch_wp,opt_g_ch_rooms,opt_g_ch_at,opt_g_rooms,opt_g_plan,opt_g_plan_tab' && byOrder('opt_eng_ui_tab') === 'opt_g_schema,opt_g_eng_prop,opt_g_eng_rules,opt_g_eng_score,opt_g_eng_mess,opt_g_eng_log,opt_g_qstats,opt_g_qstats2' &&
-          onTab('opt_ui_tab_plan').length === 0 && onTab('opt_ui_tab_quiet').length === 0 && onTab('opt_ui_tab_data').length === 7 && grp.every(g => g.width === 17 || g.id === 'opt_g_schema_ue') && tabs.length === 4 &&
+          onTab('opt_ui_tab_plan').length === 0 && onTab('opt_ui_tab_quiet').length === 0 && onTab('opt_ui_tab_data').length === 8 && byOrder('opt_ui_tab_data').split(',').pop() === 'opt_g_nas' && grp.every(g => g.width === 17 || g.id === 'opt_g_schema_ue') && tabs.length === 4 &&
           hid('opt_ui_tab_plan') === true && hid('opt_ui_tab_quiet') === true && hid('opt_ui_tab') === false && hid('opt_eng_ui_tab') === false && hid('opt_ui_tab_data') === false,
           byOrder('opt_ui_tab') + ' | ' + byOrder('opt_eng_ui_tab') + ' | ' + JSON.stringify(grp.filter(g => g.width !== 17).map(g => g.id + ':' + g.width)));
     { const q1 = NB('opt_t_qstats').format, q2 = NB('opt_t_qstats2').format, cols = f => (/c in \[([\d,]+)\]/.exec(f) || [0, ''])[1].split(',').map(Number), ths = f => (f.match(/<th>/g) || []).length, a = cols(q1), b = cols(q2);
@@ -1990,8 +2024,8 @@ const hpState = (hz, rpm) => { gstore.compressor_frequency = hz; hp('main/Compre
 tick(2);
 let csv = outs.filter(x => x[2]).map(x => x[2].payload).join(''), H = csv.split('\n')[0].split(','), L = csv.split('\n').filter(l => l && !l.startsWith('zeit,')).pop().split(',');
 const col = (n) => L[H.indexOf(n)];
-check('Protokoll: sechs neue Spalten ganz hinten (zustand, shift_anlage, kz_radiator_an, kz_heizluefter_an, kz_heizluefter_w, kz_heizluefter_online), Spaltenzahl stimmt, Zeilen haben genauso viele Werte', H.slice(-11, -4).join() === 'vl_minus_soll,zustand,shift_anlage,kz_radiator_an,kz_heizluefter_an,kz_heizluefter_w,kz_heizluefter_online' && L.length === H.length, H.slice(-11).join());
-check('Protokoll 14.10.2026: vier Spalten ganz hinten (leistung_el_korr_w, cop_momentan_korr, cop_korr_w, rohr_aussen = Outside_Pipe_Temp); Rohspalten leistung_el_w/cop_momentan bleiben', H.slice(-4).join() === 'leistung_el_korr_w,cop_momentan_korr,cop_korr_w,rohr_aussen' && col('cop_korr_w') === '80' && H.indexOf('leistung_el_w') >= 0 && H.indexOf('cop_momentan') >= 0, H.slice(-4).join() + ' / ' + L.slice(-4).join());
+check('Protokoll: sechs neue Spalten ganz hinten (zustand, shift_anlage, kz_radiator_an, kz_heizluefter_an, kz_heizluefter_w, kz_heizluefter_online), Spaltenzahl stimmt, Zeilen haben genauso viele Werte', H.slice(-17, -10).join() === 'vl_minus_soll,zustand,shift_anlage,kz_radiator_an,kz_heizluefter_an,kz_heizluefter_w,kz_heizluefter_online' && L.length === H.length, H.slice(-11).join());
+check('Protokoll 14.10.2026: vier Spalten (leistung_el_korr_w, cop_momentan_korr, cop_korr_w, rohr_aussen = Outside_Pipe_Temp) vor den sechs Spalten von Paket 2; Rohspalten leistung_el_w/cop_momentan bleiben', H.slice(-10, -6).join() === 'leistung_el_korr_w,cop_momentan_korr,cop_korr_w,rohr_aussen' && col('cop_korr_w') === '80' && H.indexOf('leistung_el_w') >= 0 && H.indexOf('cop_momentan') >= 0, H.slice(-4).join() + ' / ' + L.slice(-4).join());
 check('Protokoll: Lauf -> zustand "lauf", Radiator an (1), Heizluefter aus (0), 0 W, Stecker offline (0), Anlagenverschiebung 0', col('zustand') === 'lauf' && col('kz_radiator_an') === '1' && col('kz_heizluefter_an') === '0' && col('kz_heizluefter_w') === '0' && col('kz_heizluefter_online') === '0' && col('shift_anlage') === '0', [col('zustand'), col('kz_radiator_an'), col('kz_heizluefter_an'), col('kz_heizluefter_w'), col('kz_heizluefter_online'), col('shift_anlage')].join('/'));
 // Stopp bei Vorlauf +3,25 K ueber dem Soll
 gstore.TOP6_Main_Outlet_Temp = 33.25; tick(1); hpState(0, 1750); tick(1);
@@ -2072,6 +2106,38 @@ check('ohne Kinderzimmer-Werte (frischer Start): vier Spalten leer, Karte zeigt 
         f && !/global\.set|flow\.set|fs\./.test(f.func) && JSON.stringify(f.wires) === '[["opt_t_schema","opt_t_schema_ue"]]' && i.repeat === '10' && JSON.stringify(i.wires) === '[["opt_schema"]]' &&
         [t1, t2].every(t => !/scope\.send/.test(t.format) && JSON.stringify(t.wires) === '[[]]'), '');
   Object.keys(gstore).forEach(k => delete gstore[k]); Object.assign(gstore, keep); NOW = nowKeep;
+})();
+
+// ---- Paket 2 (15.10.2026): Karte "Auswertung NAS" (Daten & Güte) liest /data/optimizer-tools/status.json des Containers optimizer-tools (nur lesen)
+console.log('\n--- Auswertung NAS (status.json des Containers optimizer-tools)');
+(() => {
+  const SP = '/data/optimizer-tools/status.json', fix = fs.readFileSync(path.join(__dirname, 'fixtures', 'optimizer_tools_status.json'), 'utf8'), nowKeep = NOW, had = files[SP];
+  const fnN = ALLNODES.find(n => n.id === 'opt_nas'), tpl = ALLNODES.find(n => n.id === 'opt_t_nas'), inj = ALLNODES.find(n => n.id === 'opt_i_nas'), grp = ALLNODES.find(n => n.id === 'opt_g_nas');
+  check('Knoten: opt_i_nas (alle 5 min) -> opt_nas (fs, nur lesen: kein writeFileSync, kein global/flow.set) -> opt_t_nas in der Gruppe "Auswertung NAS (optimizer-tools)" auf "Daten & Güte", 17 breit wie die anderen Karten der Seite; die Karte schickt nichts',
+        inj && inj.repeat === '300' && JSON.stringify(inj.wires) === '[["opt_nas"]]' && fnN && JSON.stringify(fnN.wires) === '[["opt_t_nas"]]' && fnN.libs.some(l => l.var === 'fs') && !/writeFileSync|global\.set|flow\.set|mkdirSync/.test(fnN.func) &&
+        grp && grp.tab === 'opt_ui_tab_data' && grp.width === 17 && ALLNODES.filter(n => n.type === 'ui_group' && n.tab === 'opt_ui_tab_data').every(g => g.width === 17) && tpl && tpl.group === 'opt_g_nas' && !/scope\.send/.test(tpl.format) && /\.optchip/.test(tpl.format), '');
+  delete files[SP]; let o = run('opt_nas', {});
+  check('Datei fehlt: eine Zeile "Letzter Lauf: kein Lauf" (Chip warn), sonst nichts', o.payload.rows.length === 1 && o.payload.rows[0][1] === 'kein Lauf' && o.payload.rows[0][3] === 'warn', JSON.stringify(o.payload.rows));
+  files[SP] = {data: '{kaputt', mode: 0o644}; o = run('opt_nas', {});
+  check('Datei kein JSON: "nicht lesbar" (Chip Fehler)', o.payload.rows.length === 1 && o.payload.rows[0][1] === 'nicht lesbar' && o.payload.rows[0][3] === 'fehler', JSON.stringify(o.payload.rows));
+  NOW = new Date(2026, 9, 15, 22, 30, 0).getTime(); files[SP] = {data: fix, mode: 0o644}; o = run('opt_nas', {});
+  const R = o.payload.rows, row = n => R.find(r => r[0] === n) || [];
+  check('echte status.json (15.10. 22:27): Letzter Lauf 15.10. 22:26 · 98 s ok; Training 15.10. grün, Drift 0 (erster Lauf); Replay-Güte 14.10. 100 % ok; Minutenprotokoll 14.10. lückenlos; Raumfühler: Wohnzimmer 971 min (warn); Sicherung 15.10. · 1,6 MB geprüft; keine Fehlerzeile',
+        row('Letzter Lauf')[1] === '15.10. 22:26 · 98 s' && row('Letzter Lauf')[3] === 'ok' && /^15\.10\. · Drift 0 auffällig \(erster Lauf\)$/.test(row('Training')[1]) && row('Training')[2] === 'grün' && row('Training')[3] === 'ok' &&
+        row('Replay-Güte')[1] === '14.10. · 100,0 % gleich live' && row('Replay-Güte')[3] === 'ok' && /raum_offset: nicht bewertbar \(live lief v2/.test(row('Replay-Güte')[4]) && row('Minutenprotokoll')[1] === '14.10. · lückenlos' && row('Minutenprotokoll')[3] === 'ok' &&
+        row('Raumfühler')[1] === '14.10. · Wohnzimmer 971 min' && row('Raumfühler')[3] === 'warn' && row('Sicherung')[1] === '15.10. · 1,6 MB' && row('Sicherung')[2] === 'geprüft' && row('Sicherung')[3] === 'ok' && !R.some(r => r[0] === 'Fehler') && R.length === 6,
+        JSON.stringify(R.map(r => r.slice(0, 4))));
+  const J = JSON.parse(fix); J.ok = false; J.fehler = ['training: Zeitlimit 20 min überschritten']; J.letzter_lauf.ok = false; J.training.ampel = 'gelb'; J.training.drift = {gegen: '2026-10-14', auffaellig: 2, liste: ['ua', 'cap']};
+  J.replay.guete = {bewertbar: false, prozent: null, grund: 'nur 40 % der Minuten mit Live-Eingabe', regeln: {}}; J.datenluecken.minutenprotokoll.luecken_ueber_10min = 2; J.datenluecken.minutenprotokoll.groesste_luecke_min = 37; J.sicherung.geprueft = false;
+  files[SP] = {data: JSON.stringify(J), mode: 0o644}; o = run('opt_nas', {}); const R2 = o.payload.rows, row2 = n => R2.find(r => r[0] === n) || [];
+  check('Fehlerfälle: Lauf mit Fehler (Chip Fehler), Ampel gelb mit 2 Drift (warn), Replay "nicht bewertbar: Grund" (warn), 2 Lücken > 10 min (warn), Sicherung ungeprüft (Fehler), Fehlerzeile mit Text im Tooltip',
+        row2('Letzter Lauf')[3] === 'fehler' && row2('Training')[2] === 'gelb' && row2('Training')[3] === 'warn' && /Drift 2 auffällig/.test(row2('Training')[1]) && /ua, cap/.test(row2('Training')[4]) &&
+        row2('Replay-Güte')[1] === '14.10. · nicht bewertbar: nur 40 % der Minuten mit Live-Eingabe' && row2('Replay-Güte')[3] === 'warn' && row2('Minutenprotokoll')[1] === '14.10. · 2 Lücken > 10 min, größte 37 min' && row2('Minutenprotokoll')[3] === 'warn' &&
+        row2('Sicherung')[2] === 'ungeprüft' && row2('Sicherung')[3] === 'fehler' && row2('Fehler')[3] === 'fehler' && /Zeitlimit/.test(row2('Fehler')[4]), JSON.stringify(R2.map(r => r.slice(0, 4))));
+  NOW = new Date(2026, 9, 17, 9, 0, 0).getTime(); files[SP] = {data: fix, mode: 0o644}; o = run('opt_nas', {});
+  check('Lauf älter als 26 h: "veraltet" (warn), Sicherung ebenso', (o.payload.rows.find(r => r[0] === 'Letzter Lauf') || [])[2] === 'veraltet' && (o.payload.rows.find(r => r[0] === 'Sicherung') || [])[2] === 'veraltet', JSON.stringify(o.payload.rows.map(r => r.slice(0, 4))));
+  NOW = new Date(2026, 9, 15, 22, 30, 0).getTime(); run('opt_nas', {});                      // Vorschau: echte Datei, frisch
+  if (had) { files[SP] = had; } else { delete files[SP]; } NOW = nowKeep;
 })();
 
 console.log('\nERGEBNIS:', assertFails === 0 ? 'alle Pruefungen bestanden' : assertFails + ' Pruefung(en) fehlgeschlagen');

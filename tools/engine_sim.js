@@ -630,9 +630,9 @@ const allScores = R => [].concat.apply([], R.outs.map(o => o.scores));
 {
     // Regelwerk (Review-Paket 13.10.2026: Vorausschau v2 nur noch -1 K; Begruendung im Zweck-Text)
     const RV = E.RULE.vorausschau;
-    check('Regelwerk: Vorausschau v3 (Gebaeudemodell v3, 15.10.2026) ist Befehlsregel der Groesse "shift" (nur -1 K, Richtung soll_runter, eigene Basisrate "vorausschau|v3") mit Sperren Modell-Gate, Vorrang, Gegenrichtung; der Zweck nennt, warum +1 K gestrichen ist (Kurve wird alle 5 min nachgefuehrt, Raeume bei Kaelte ueber der Bandmitte, Hochlauf +48 %) und das Gebaeudemodell v3; Raumeinfluss v4 nimmt an der Arbitrierung teil',
+    check('Regelwerk: Vorausschau v3 (Gebaeudemodell v3, 15.10.2026) ist Befehlsregel der Groesse "shift" (nur -1 K, Richtung soll_runter, eigene Basisrate "vorausschau|v3") mit Sperren Modell-Gate, Vorrang, Gegenrichtung; der Zweck nennt, warum +1 K gestrichen ist (Kurve wird alle 5 min nachgefuehrt, Raeume bei Kaelte ueber der Bandmitte, Hochlauf +48 %) und das Gebaeudemodell v3; Raumeinfluss v5 nimmt an der Arbitrierung teil',
           RV && RV.ver === 3 && RV.groesse === 'shift' && RV.art === 'befehl' && RV.richtung === 'soll_runter' && RV.basis === 'vorausschau|v3' && RV.kurz === 'Vorausschau −1 K' && /ohne den Zweig \+1 K/.test(RV.zweck) && /alle 5 min/.test(RV.zweck) && /Bandmitte/.test(RV.zweck) && /\+48 %/.test(RV.zweck) && /T_innen − T_außen\) − Gewinne/.test(RV.zweck) &&
-          ['modell', 'vorrang', 'gegenrichtung'].every(x => RV.sperren.includes(x)) && E.RULE.raum_offset.ver === 4 && ['vorrang', 'gegenrichtung'].every(x => E.RULE.raum_offset.sperren.includes(x)) && RV.befehl.name === 'SetZ1HeatRequestTemperature', RV.sperren.join(','));
+          ['modell', 'vorrang', 'gegenrichtung'].every(x => RV.sperren.includes(x)) && E.RULE.raum_offset.ver === 5 && ['vorrang', 'gegenrichtung'].every(x => E.RULE.raum_offset.sperren.includes(x)) && RV.befehl.name === 'SetZ1HeatRequestTemperature', RV.sperren.join(','));
     const iVs = E.RULES.findIndex(x => x.id === 'vorausschau');
     // Gate geschlossen: nie ein Vorschlag, nur Anzeige; Vergleichslagen fuer die Basisrate laufen trotzdem mit
     let R = runD(300, i => inp(T0 + i * MIN, {vs: vsx(VSK.down, {gate: 0, n: 1})}));
@@ -1404,6 +1404,54 @@ console.log('--- (g) Raumeinfluss v3, Mindestfrequenz, Startschwelle, Abtau-Ruec
     { const Rq = runSeq(80, i => inp(T0 + i * MIN, {q: 1, hz: 24, rt: 60 + i, at: 9, rooms: RGe({ki_oben: 21.7})})), lq = Rq.outs[79];
       check('g14f Effizienz-Deckel (Quiet hoeher = weniger Leistung): Kinderzimmer oben (eigene Nachheizung) unter Minimum -> kein Deckel-Vorschlag (Komfort nicht sicher), ein laufender Deckel ginge zurueck ("eigene Nachheizung; zählt für Absenkungen weiter")',
             !Rq.outs.some(o => o.prop && o.prop.rule === 'quiet_strecken') && /Kinderzimmer oben/.test(r0(lq, 'quiet_strecken').grund + JSON.stringify(lq.ende)) && /eigene Nachheizung/.test(lq.ende.quiet_strecken || ''), r0(lq, 'quiet_strecken').grund + ' | ' + lq.ende.quiet_strecken); }
+    // ---- g15 Paket 2 (15.10.2026): Raum mit Sonnenfenster (OPT_cfg.rooms[].sonnenfenster, Standard Wohnzimmer) ist kein Ueberschuss-Ausloeser, solange Sonne anliegt
+    //      (11–18 Uhr, PV >= 20 % der 7-Tage-Spitze oder Bewoelkung < 50 %) und er in 60 min gestiegen ist, obwohl der Verdichter stand oder der Vorlauf fiel
+    { const RGs = (o, sf) => RG(o).map(r => r.id === 'wohn' ? Object.assign({}, r, {sonnenfenster: sf !== false}) : r);
+      const sonneSeq = (h0, sf, x) => { x = x || {}; const t0 = new Date(2026, 9, 15, h0, 0, 0).getTime();        // Wohnzimmer steigt 0,4 K/h (23,2 -> 24,5 °C in 200 min), uebrige Raeume mit Reserve
+          return runSeq(200, i => inp(t0 + i * MIN, Object.assign({hz: 0, rt: 0, pump: 1750, vl: 30, rl: 28.5, soll: 32, sollKurve: 32, at: 13, pv: 12000, wolken: 70, rooms: RGs({wohn: Math.round((23.2 + 0.4 * i / 60) * 100) / 100}, sf)}, x.f ? x.f(i) : {}))); };
+      const pR = R0 => R0.outs.map(o => o.prop).find(p => p && p.rule === 'raum_offset');
+      const Sa = sonneSeq(13, false), Sn = sonneSeq(13, true), Sx = sonneSeq(20, true, {f: () => ({pv: 0})}), Sl = sonneSeq(13, true, {f: () => ({hz: 17, rt: 100, vl: 31.75, rl: 29.5})});
+      const pa = pR(Sa), pn = pR(Sn), px = pR(Sx), pl = pR(Sl), ln = Sn.outs[150];
+      check('g15a Sonnenfenster (Wohnzimmer steigt 13–16 Uhr um 0,4 K/h über sein Maximum, Verdichter steht, PV 12 kW): ohne Sonnenfenster −1 K (Überschuss: Wohnzimmer über Maximum), mit Sonnenfenster keine Raumlage −1, kein Vorschlag; der Grund nennt das Sonnenfenster',
+            !!pa && pa.cmd.value === -1 && /Wohnzimmer .* über Maximum/.test(pa.warum) && !pn && Sn.outs.every(o => o.d.raum.dir === 0) && ln.d.raum.sonneL.length === 1 && /Wohnzimmer mit Sonnenfenster \(Sonne: \+0,4 K in 60 min \(Verdichter stand 60 von 60 min\), PV 12,0 kW/.test(ro(ln).grund) && ln.rec.abl.sonne[0] === 'wohn',
+            (pa ? E.iso(pa.ts).slice(11, 16) + ' ' + pa.warum.slice(0, 80) : '-') + ' | ' + ro(ln).grund);
+      check('g15b nach 18 Uhr (keine Sonne) zählt der Raum normal: −1 K kommt (nachts bei 24,5–25 °C soll −1 K weiter kommen); mit laufendem Verdichter und stehendem Vorlauf auch tagsüber (Anstieg nicht durch die Sonne belegt)',
+            !!px && px.cmd.value === -1 && Sx.outs.every(o => !o.d.raum.sonneL.length) && !!pl && pl.cmd.value === -1 && Sl.outs.every(o => !o.d.raum.sonneL.length), (px ? E.iso(px.ts).slice(11, 16) : '-') + ' / ' + (pl ? E.iso(pl.ts).slice(11, 16) : '-'));
+      const Sw = sonneSeq(13, true, {f: () => ({pv: null, wolken: 30})}), Sp = sonneSeq(13, true, {f: () => ({pv: null, wolken: 80})});
+      check('g15c Sonne aus der Bewölkung (ohne PV-Wert; Bewölkung 30 % < 50 %) -> Sonnenfenster wirkt; ohne PV-Wert und Bewölkung 80 % -> keine Sonne, −1 K kommt',
+            !pR(Sw) && /Bewölkung 30 %/.test(ro(Sw.outs[150]).grund) && !!pR(Sp), ro(Sw.outs[150]).grund.slice(0, 160));
+      const Sv = sonneSeq(13, true, {f: i => ({rooms: RGs({wohn: Math.round((23.2 + 0.4 * i / 60) * 100) / 100, schlaf: 19.6}, true)})}), lv = Sv.outs[150], evv = [].concat.apply([], Sv.outs.map(o => o.ev));
+      check('g15d Bedarf und Wärmeverteilung zählen den Raum mit Sonnenfenster immer: Schlafzimmer unter Minimum und Wohnzimmer (Sonne) über Maximum -> Wärmeverteilung erkannt, Text und Hinweis mit „(Sonne)“',
+            lv.d.raum.verteil === true && /Wohnzimmer \+[0-9,]+ K über Maximum \(Sonne\)/.test(lv.d.raum.code) && evv.some(e => e[0] === 'optimierer_hinweis' && /Wärmeverteilung: Wohnzimmer .* über Maximum \(Sonne\)/.test(e[1])), lv.d.raum.code);
+      const seedK = () => { const S0 = E.newState(new Date(2026, 9, 15, 13, 0, 0).getTime() - MIN); S0.shift = 1; S0.arb.applied = {rule: 'quiet_strecken', w: 1, von: 0, ts: S0.born}; return S0; };
+      const kSeq = sf => runSeq(130, i => inp(new Date(2026, 9, 15, 13, 0, 0).getTime() + i * MIN, {hz: 0, rt: 0, pump: 1750, vl: 30, rl: 28.5, shift: 1, soll: 33, sollKurve: 32, at: 13, pv: 12000, rooms: RGs({wohn: Math.round((21.4 + 0.4 * i / 60) * 100) / 100}, sf)}), seedK());
+      const Ka = kSeq(false), Kn = kSeq(true), ka = Ka.outs.findIndex(o => /Wohnzimmer .* über der Bandmitte/.test(o.ende['quiet_strecken|shift'] || ''));
+      check('g15e Deckel/Laufzeit v6: +1 K steht, Wohnzimmer steigt in der Sonne mehr als 0,3 K über die Bandmitte -> ohne Sonnenfenster Rückweg („über der Bandmitte“), mit Sonnenfenster nicht',
+            ka > 60 && Kn.outs.every(o => !/Wohnzimmer/.test(o.ende['quiet_strecken|shift'] || '')), ka + ' / ' + (Ka.outs[ka] ? Ka.outs[ka].ende['quiet_strecken|shift'] : ''));
+      const rec = Sn.outs[150].rec, un = E.unsnap(0, rec.in), wr = rec.in.rooms.find(a => a[0] === 'wohn'), kr = rec.in.rooms.find(a => a[0] === 'ki_oben');
+      check('g15f Datensatz: PV, Bewölkung und Sonnenfenster stehen im Datensatz (Raum [.., eigene Heizung 0, Sonnenfenster 1]) und kommen beim Nachspielen zurück; ein Raum ohne beides bleibt 8 Felder lang',
+            rec.in.pv === 12000 && rec.in.wolken === 70 && wr.length === 10 && wr[8] === 0 && wr[9] === 1 && kr.length === 8 && un.rooms.find(r => r.id === 'wohn').sonnenfenster === true && un.rooms.find(r => r.id === 'wohn').eigeneHeizung === false && un.pv === 12000,
+            JSON.stringify(wr)); }
+    // ---- g16 Paket 2: Frist von +1 K ruht bei Dauerbedarf (Befund Anlagen-Zwilling, Frost: +1 K 6 h, Rueckweg nach Ablauf, 1 h spaeter wieder +1 K)
+    { const dauer = (n, roomsOf) => {                                                          // geschlossener Kreis mit Klick-Uebernahme (wie frostSim), Verschiebung folgt dem Befehl
+          let S = null, A = E.newApply(), sh = 0; const log = {sends: [], ev: [], halten: []}, t0 = new Date(2026, 11, 7, 0, 0, 0).getTime();
+          for (let i = 0; i < n; i++) {
+              const t = t0 + i * MIN, o = E.step(S, inp(t, {at: 1, hz: 25, rt: 100 + i, vl: 33 + sh, rl: 30 + sh, soll: 33 + sh, sollKurve: 33, shift: sh, q: 0, rooms: roomsOf(i)}), cfg); S = o.S;
+              o.ev.forEach(e => log.ev.push([i, e[0], e[1]])); if (o.halten.raum_offset) { log.halten.push([i, o.halten.raum_offset]); }
+              const ctx = {now: t, enabled: true, knoten: true, rules: ['raum_offset'], eng: {ts: t, prop: o.prop, locks: o.locks, stoerung: o.stoerung}, cfg: cfg, endReason: o.ende, halten: o.halten}, pl = () => ({q: 0, shift: sh, hpAge: 0.4, block: 0, heatMode: 0, z1Sensor: 0});
+              if (o.prop && o.prop.rule === 'raum_offset') { const r = E.applyRequest(A, {topic: 'uebernehmen', payload: {id: o.prop.id, sum: o.prop.sum}}, Object.assign({}, ctx, {plant: pl()})); A = r.A; r.send.forEach(m => { sh = +m.payload; log.sends.push([i, sh, 'Klick']); }); }
+              const r2 = E.applyTick(A, Object.assign({}, ctx, {now: t + 15000, plant: pl()})); A = r2.A; r2.send.forEach(m => { sh = +m.payload; log.sends.push([i, sh, (r2.log.find(l => l.aktion === 'rueckweg') || {}).grund || 'Wiederholung']); });
+          }
+          return log; };
+      const D = dauer(32 * 60, () => RG({ki_unten: 19.6})), s1 = D.sends.filter(x => x[1] === 1), s0 = D.sends.filter(x => x[1] === 0), hw = D.ev.find(e => e[1] === 'optimierer_hinweis' && /^dauerbedarf: /.test(e[2]));
+      check('g16a Dauerbedarf (Kinderzimmer unten 32 h lang 0,4 K unter Minimum): +1 K einmal; die Frist (6 h) ruht ("Bedarf besteht weiter … Frist ruht"), Rückweg erst nach 24 h ("nach Ablauf"), dann Hinweis „Heizkurve/Kaltpunkt prüfen“; vorher kein +1/0-Wechsel alle 7 h',
+            s1.length >= 1 && s0.length === 1 && s0[0][0] - s1[0][0] >= 24 * 60 && s0[0][0] - s1[0][0] <= 24 * 60 + 5 && /nach Ablauf/.test(s0[0][2]) && D.halten.some(h => h[0] - s1[0][0] > 6 * 60 + 5 && /^Bedarf besteht weiter \(Kinderzimmer unten [-−]0,4 K zum Minimum\): Frist ruht seit/.test(h[1])) && !!hw && /Heizkurve\/Kaltpunkt prüfen/.test(hw[2]),
+            D.sends.map(x => Math.round(x[0] / 6) / 10 + ' h ' + x[1] + ' ' + String(x[2]).slice(0, 24)).join(' | ') + ' · ' + (hw ? hw[2].slice(0, 90) : 'kein Hinweis'));
+      const G = dauer(12 * 60, i => RG({ki_unten: i < 8 * 60 ? 19.6 : 20.5})), g0 = G.sends.filter(x => x[1] === 0);
+      check('g16b Bedarf nach 8 h gedeckt (Kinderzimmer unten 20,5 °C): die ruhende Frist hält bis dahin, danach Rückweg „Bedarf gedeckt“ nach 30 min am Stück; kein Hinweis Dauerbedarf',
+            g0.length === 1 && g0[0][0] >= 8 * 60 + 30 && g0[0][0] <= 8 * 60 + 32 && /Bedarf gedeckt: Kinderzimmer unten/.test(g0[0][2]) && !G.ev.some(e => /^dauerbedarf/.test(e[2])), G.sends.map(x => Math.round(x[0] / 6) / 10 + ' h ' + x[1] + ' ' + String(x[2]).slice(0, 30)).join(' | '));
+      const U = dauer(9 * 60, i => RG({ki_unten: 19.6}).map(r => r.id === 'ki_unten' && i >= 2 * 60 ? Object.assign({}, r, {valid: false, age: 900}) : r)), u0 = U.sends.filter(x => x[1] === 0);
+      check('g16c ohne gültigen Bedarfsraum (Fühler ab 2 h ungültig) gilt die Frist wie bisher: Rückweg nach 6 h', u0.length === 1 && /nach Ablauf/.test(u0[0][2]) && u0[0][0] - U.sends[0][0] >= 6 * 60 && u0[0][0] - U.sends[0][0] <= 6 * 60 + 5, U.sends.map(x => Math.round(x[0] / 6) / 10 + ' h ' + x[1] + ' ' + String(x[2]).slice(0, 30)).join(' | ')); }
     // ---- g13 Phase 2 als Vergleichskennzahl; Karte "Messwerte & Lernen" mit "Räume und Wächter"
     { const R = runSeq(60, i => inp(T0 + i * MIN, {rooms: RG({ki_unten: 22.4}), korr: {v: i < 30 ? 0 : -1, code: 'x', distrib: false, lead: ''}})), P2 = E.p2Summe(R.S);
       const VW = require('./engine_view.js'), UI = require('./eng_ui.js'), M = VW.messBuild(R.S, T0 + 59 * MIN, cfg, null), h = UI.html('mess', M);
@@ -1668,7 +1716,7 @@ if (fs.existsSync(path.join(dataDir, 'quiet-2026-10.csv'))) {
     // Vorausschau mit den echten Daten (OWM-Vorhersage aus optimizer-v2): Gate zu wie live -> nie ein Vorschlag
     const nVs = RP.inputs.filter(x => x.vs).length, vsSt = {}, iVsR = E.RULES.findIndex(R0 => R0.id === 'vorausschau'); RP.perMin.forEach(m => { vsSt[m.st[iVsR]] = (vsSt[m.st[iVsR]] || 0) + 1; });
     check('Replay Vorausschau, Gate zu (1 Tag, wie live): Vorhersage in fast jeder Minute vorhanden, nie ein Vorschlag, Status "gesperrt" (Modell-Gate)', nVs >= RP.inputs.length - 30 && !RP.props.some(p => p.rule === 'vorausschau') && vsSt.gesperrt >= nVs - 30, nVs + ' Minuten mit Vorhersage, Status ' + JSON.stringify(vsSt));
-    check('Datensatzgroesse: unter 2,7 MB je Tag (ca. 80 MB/Monat; seit der Vorausschau mit Vorhersage im Schnappschuss und fuenfter Regel)', RP.bytes / (RP.inputs.length / 1440) < 2.7e6, Math.round(RP.bytes / (RP.inputs.length / 1440)) + ' Bytes/Tag');
+    check('Datensatzgroesse: unter 2,8 MB je Tag (ca. 84 MB/Monat; seit der Vorausschau mit Vorhersage im Schnappschuss und fuenfter Regel, seit Paket 2 mit PV und Bewoelkung)', RP.bytes / (RP.inputs.length / 1440) < 2.8e6, Math.round(RP.bytes / (RP.inputs.length / 1440)) + ' Bytes/Tag');
     if (alt) {                                                                       // nur der Datensatz 07.–10.10. (Kopie vom 10.10. 13:24, liegt nicht mehr vor)
         const RP1 = replay(dataDir, ko({cfg: {sv: 1}})), rv1 = RP1.report.find(r => r.regel === 'raum_offset'), rv2 = RP.report.find(r => r.regel === 'raum_offset');
         const m1 = RP1.scores.filter(s0 => /^verpasst/.test(s0.typ)), m2 = RP.scores.filter(s0 => /^verpasst/.test(s0.typ));
@@ -1694,8 +1742,8 @@ if (fs.existsSync(path.join(dataDir, 'quiet-2026-10.csv'))) {
         // Raumeinfluss v4 und Waechter mit dem Standard seit Entscheidung 5 (Kinderzimmer oben mit eigener Nachheizung)
         const RPd = replay(dataDir, {bis: BIS});
         { const rp = RPd.props.filter(p => p.rule === 'raum_offset'), rr = RPd.report.find(r => r.regel === 'raum_offset'), hw = RPd.events.filter(e => e[1] === 'optimierer_hinweis');
-          check('Replay Raumeinfluss v4 (Standard: Kinderzimmer oben mit eigener Nachheizung): 5 Vorschlaege -1 K 10.10. 22:09, 11.10. 01:48 und 05:52, 12.10. 05:37 und 13.10. 03:48 (die letzten zwei im Dauerlauf bei Vorlauf <= Soll), 4 Treffer, kein Fehlalarm, kein Schaden, nichts verpasst; das +1 K vom 09.10. 19:47 (Kinderzimmer oben) entfaellt (v3: 6 Vorschlaege, 5 Treffer; v2: 8 Vorschlaege, -23,49 Punkte)',
-                rp.map(p => E.iso(p.ts).slice(5, 16) + ' ' + p.cmd.value).join(',') === '10-10 22:09 -1,10-11 01:48 -1,10-11 05:52 -1,10-12 05:37 -1,10-13 03:48 -1' && rr.v === 4 && rr.treffer === 4 && rr.fehlalarm === 0 && rr.schaden === 0 && rr.verpasst === 0 && rr.punkte > 0,
+          check('Replay Raumeinfluss v5 (Standard: Kinderzimmer oben mit eigener Nachheizung, Wohnzimmer mit Sonnenfenster): 5 Vorschlaege -1 K 10.10. 22:09, 11.10. 01:48 und 05:52, 12.10. 05:37 und 13.10. 03:48 (die letzten zwei im Dauerlauf bei Vorlauf <= Soll), 4 Treffer, kein Fehlalarm, kein Schaden, nichts verpasst; das +1 K vom 09.10. 19:47 (Kinderzimmer oben) entfaellt (v3: 6 Vorschlaege, 5 Treffer; v2: 8 Vorschlaege, -23,49 Punkte)',
+                rp.map(p => E.iso(p.ts).slice(5, 16) + ' ' + p.cmd.value).join(',') === '10-10 22:09 -1,10-11 01:48 -1,10-11 05:52 -1,10-12 05:37 -1,10-13 03:48 -1' && rr.v === 5 && rr.treffer === 4 && rr.fehlalarm === 0 && rr.schaden === 0 && rr.verpasst === 0 && rr.punkte > 0,
                 rp.map(p => E.iso(p.ts).slice(5, 16) + ' ' + p.cmd.value).join(',') + ' · ' + JSON.stringify({p: rr.punkte, t: rr.treffer, f: rr.fehlalarm, s: rr.schaden, v: rr.verpasst}));
           check('Replay Waechter: Kurvenform "kaltseitig senken" (08.10. 23:41), Waermeverteilung 10.10. 06:58–08:58 (neu seit v4: Kinderzimmer oben zaehlt auch bei geschlossenem Relais als kalt, Kinderzimmer unten ueber Maximum) und 12.10. 09:23–10:58 (Kinderzimmer unten ueber Maximum, Schlafzimmer unter Minimum), Dornroeschenschlaf nur beim ungeklaerten Spaetstart 12.10. 21:21 (Start 21:31), kein H23',
                 hw.map(e => e[0].slice(5, 16) + ' ' + e[2].split(':')[0]).join(',') === '10-08 23:41 kurvenform,10-10 06:58 verteilung,10-12 09:23 verteilung,10-12 21:21 dornroeschen' && !RPd.events.some(e => e[1] === 'optimierer_alarm') && /Kinderzimmer oben/.test(hw[1][2]), hw.map(e => e[0] + ' ' + e[2].slice(0, 90)).join(' | '));
@@ -1708,7 +1756,7 @@ if (fs.existsSync(path.join(dataDir, 'quiet-2026-10.csv'))) {
         { const P2 = E.p2Summe(RPd.S);
           check('Replay Phase 2 nur noch Vergleich: 71 % der Minuten gleiche Richtung wie v3 (8640 Minuten)', P2.min === 8640 && P2.anteil === 0.71, JSON.stringify(P2)); }
         const rq = RP.report.find(r => r.regel === 'quiet_strecken');
-        check('Deckel/Laufzeit v5 im Replay: keine Faelle, keine Punkte (v4: 3 Faelle, 0 Fehlalarme)', rq.faelle === 0 && rq.fehlalarm === 0 && rq.v === 5 && rq.punkte === 0, JSON.stringify({f: rq.faelle, t: rq.treffer, fa: rq.fehlalarm, n: rq.neutral, p: rq.punkte}));
+        check('Deckel/Laufzeit v6 im Replay: keine Faelle, keine Punkte (v4: 3 Faelle, 0 Fehlalarme)', rq.faelle === 0 && rq.fehlalarm === 0 && rq.v === 6 && rq.punkte === 0, JSON.stringify({f: rq.faelle, t: rq.treffer, fa: rq.fehlalarm, n: rq.neutral, p: rq.punkte}));
     }
 }
 
@@ -1854,6 +1902,15 @@ if (flowsFile) {
       gstore = keepG; fstores = keepF; files = keepFi; NOW = keepNow;
       check('Huelle (Entscheidung 5): OPT_cfg.rooms ohne Feld eigeneHeizung -> Standard des Generators (Kinderzimmer oben: eigene Nachheizung, im Datensatz 9. Feld = 1); eigeneHeizung false aus der Konfiguration gilt; ein anderer Raum ohne Feld (Schlafzimmer) hat keine',
             l1.in.rooms[0][0] === 'ki_oben' && l1.in.rooms[0][8] === 1 && l2.in.rooms[0].length === 8 && l3.in.rooms[0][0] === 'schlaf' && l3.in.rooms[0].length === 8, JSON.stringify([l1.in.rooms, l2.in.rooms, l3.in.rooms])); }
+    { // Paket 2 (15.10.2026): Sonnenfenster je Raum (Standard Wohnzimmer, ohne Feld in OPT_cfg), PV-Leistung (OPT_plan_in.pvNow, <= 5 min) und Bewoelkung (OPT_weather) gehen an den Kern
+      const keepG = JSON.parse(JSON.stringify(gstore)), keepF = JSON.parse(JSON.stringify(fstores)), keepFi = Object.assign({}, files), keepNow = NOW;
+      gstore.OPT_cfg = Object.assign({}, gstore.OPT_cfg, {rooms: [{id: 'wohn', name: 'Wohnzimmer', active: true, min: 20, max: 23.5, maxAgeMin: 90}]}); gstore.OPT_rooms = {wohn: {ema: 23.9, ts: NOW - 5 * 60000}};
+      gstore.OPT_plan_in = {ts: NOW, pvNow: 8123.4}; gstore.OPT_weather = Object.assign({}, gstore.OPT_weather || {}, {ts: NOW, clouds: 30});
+      NOW += 60000; runN('opt_engine', {topic: '', payload: NOW}); const l1 = JSON.parse(files[decFile].trim().split('\n').pop());
+      gstore.OPT_cfg.rooms[0].sonnenfenster = false; gstore.OPT_plan_in.ts = NOW - 10 * 60000; gstore.OPT_weather.ts = NOW - 120 * 60000; NOW += 60000; runN('opt_engine', {topic: '', payload: NOW}); const l2 = JSON.parse(files[decFile].trim().split('\n').pop());
+      gstore = keepG; fstores = keepF; files = keepFi; NOW = keepNow;
+      check('Huelle (Paket 2): OPT_cfg.rooms ohne Feld sonnenfenster -> Standard des Generators (Wohnzimmer: Sonnenfenster, im Datensatz [.., 0, 1]); PV 8123 W und Bewoelkung 30 % im Datensatz; sonnenfenster false gilt; veraltete PV (10 min) und Wetter (2 h) fehlen in der Eingabe',
+            l1.in.rooms[0][0] === 'wohn' && l1.in.rooms[0][8] === 0 && l1.in.rooms[0][9] === 1 && l1.in.pv === 8123.4 && l1.in.wolken === 30 && l2.in.rooms[0].length === 8 && l2.in.pv === undefined && l2.in.wolken === undefined, JSON.stringify([l1.in.rooms, l1.in.pv, l1.in.wolken, l2.in.rooms, l2.in.pv, l2.in.wolken])); }
     const nDec = files[decFile].length, an = runN('opt_engine', {topic: 'anzeige'});
     check('Huelle: "anzeige" (von der Uebernahme) baut nur die Karten neu, rechnet und schreibt nichts', an && an[0] && an[0].payload.prop && an[4] === null && files[decFile].length === nDec, '');
     check('Huelle schreibt nur OPT_*-Werte (keine Anlagen-/HeishaMoNR-Variable)', (() => { const before = JSON.stringify(Object.keys(gstore).filter(k => !/^OPT_/.test(k)).sort().map(k => [k, gstore[k]])); world(); minute(2); return JSON.stringify(Object.keys(gstore).filter(k => !/^OPT_/.test(k)).sort().map(k => [k, gstore[k]])) === before; })(), '');
@@ -1936,8 +1993,12 @@ if (flowsFile) {
     check('Raumoffset: Klick sendet SetZ1HeatRequestTemperature = 1', p3 && p3.rule === 'raum_offset' && r[0] && r[0][0].topic === 'panasonic_heat_pump/commands/SetZ1HeatRequestTemperature' && r[0][0].payload === '1', p3 ? p3.id : 'kein Vorschlag');
     gstore.OPT_hp.Z1_Heat_Request_Temp.v = 1; gstore.TOP27_Z1_Heat_Request_Temp = 1; gstore.TOP42_Z1_Water_Target_Temp = 31;
     R = minute(6 * 60 + 2, () => { gstore.OPT_state.korr = 1; const pa = gstore.OPT_apply && gstore.OPT_apply.pending; if (pa && pa.art === 'rueckweg') { gstore.OPT_hp.Z1_Heat_Request_Temp.v = 0; gstore.TOP27_Z1_Heat_Request_Temp = 0; } });   // Anlage bestaetigt den Rueckweg
-    const back = sends(R);
-    check('Raumoffset: automatischer Rueckweg nach 6 h (gehoert zum geklickten Vorschlag): genau ein Befehl SetZ1HeatRequestTemperature = 0, bestaetigt, Uebernahme beendet', back.length === 1 && back[0][0].payload === '0' && !gstore.OPT_apply.aktiv, JSON.stringify(back));
+    const ruht = sends(R), haltTxt = (gstore.OPT_engine.halten || {}).raum_offset || '';
+    check('Raumoffset v5: nach 6 h kein Rueckweg, solange der Bedarf besteht (Kinderzimmer oben weiter unter Minimum): die Frist ruht ("Bedarf besteht weiter … Frist ruht")', ruht.length === 0 && gstore.OPT_apply.aktiv && /^Bedarf besteht weiter \(Kinderzimmer oben .*\): Frist ruht seit/.test(haltTxt), haltTxt + ' · ' + JSON.stringify(ruht));
+    gstore.OPT_rooms.ki_oben = {ema: 22.5, ts: NOW};
+    R = minute(35, () => { gstore.OPT_rooms.ki_oben.ts = NOW; const pa = gstore.OPT_apply && gstore.OPT_apply.pending; if (pa && pa.art === 'rueckweg') { gstore.OPT_hp.Z1_Heat_Request_Temp.v = 0; gstore.TOP27_Z1_Heat_Request_Temp = 0; } });
+    const back = sends(R), lgB = Object.keys(files).filter(f => /applied-\d{4}-\d\d\.jsonl$/.test(f)).map(f => files[f]).join('\n').trim().split('\n').filter(Boolean).map(l => JSON.parse(l)).filter(l => l.aktion === 'rueckweg').pop();
+    check('Raumoffset: automatischer Rueckweg (gehoert zum geklickten Vorschlag), sobald der Bedarf 30 min gedeckt ist: genau ein Befehl SetZ1HeatRequestTemperature = 0, bestaetigt, Uebernahme beendet, Grund nennt „Bedarf gedeckt“', back.length === 1 && back[0][0].payload === '0' && !gstore.OPT_apply.aktiv && !!lgB && /Bedarf gedeckt: Kinderzimmer oben/.test(lgB.grund), JSON.stringify(back) + ' · ' + (lgB ? lgB.grund : Object.keys(files).filter(f => /applied/.test(f)).join()));
     // 9) Whitelist/Wertebereich direkt am Kern (verfaelschte Vorschlaege in OPT_engine)
     const forge = (cmd, value, art) => { const pp = JSON.parse(JSON.stringify(gstore.OPT_engine.prop || p3)); pp.cmd = {name: cmd, topic: 'panasonic_heat_pump/commands/' + cmd, value: value}; pp.art = art || 'befehl'; pp.von = gstore.TOP27_Z1_Heat_Request_Temp; pp.bis = NOW + 600000; pp.sum = E.checksum(pp); return E.applyRequest(null, {topic: 'uebernehmen', payload: {id: pp.id, sum: pp.sum}}, {now: NOW, enabled: true, rules: [pp.rule], eng: {ts: NOW, prop: pp, locks: {}}, plant: {q: 3, shift: pp.von, hpAge: 0.3, block: 0, heatMode: 0, z1Sensor: 0}}); };
     check('Whitelist (14.10.2026): SetHeatingControl nur 0/1 (Wert 2 abgelehnt), SetOperationMode steht nicht darauf', forge('SetHeatingControl', 2).send.length === 0 && /nicht erlaubt/.test(forge('SetHeatingControl', 2).toast.text) && forge('SetOperationMode', 1).send.length === 0 && /nicht auf der Whitelist/.test(forge('SetOperationMode', 1).toast.text), forge('SetHeatingControl', 2).toast.text);

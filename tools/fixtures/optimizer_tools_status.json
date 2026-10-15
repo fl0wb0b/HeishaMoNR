@@ -1,0 +1,221 @@
+{
+ "format": 2,
+ "version": "69565ef",
+ "werkzeug": "optimizer-tools 69565ef",
+ "aktualisiert": "2026-10-15 22:27:00",
+ "dienst": {
+  "gestartet": "2026-10-15 22:27:00",
+  "zeitplan": "06:40",
+  "naechster_lauf": "2026-10-16 06:40:00"
+ },
+ "letzter_lauf": {
+  "art": "alles",
+  "beginn": "2026-10-15 22:25:13",
+  "ende": "2026-10-15 22:26:51",
+  "dauer_s": 98.0,
+  "ok": true,
+  "speicher_spitze_mb": 182,
+  "schritte": {
+   "training": {
+    "ok": true,
+    "rc": 0,
+    "dauer_s": 42.3,
+    "fehler": null,
+    "tag": "2026-10-15"
+   },
+   "replay": {
+    "ok": true,
+    "rc": 0,
+    "dauer_s": 13.6,
+    "fehler": null,
+    "tag": "2026-10-14"
+   },
+   "kennzahlen": {
+    "ok": true,
+    "rc": 0,
+    "dauer_s": 2.2,
+    "fehler": null,
+    "tag": "2026-10-14"
+   },
+   "sicherung": {
+    "ok": true,
+    "rc": 0,
+    "dauer_s": 0.6,
+    "fehler": null,
+    "tag": "2026-10-15"
+   }
+  }
+ },
+ "training": {
+  "tag": "2026-10-15",
+  "ok": true,
+  "fehler": null,
+  "dauer_s": 42.3,
+  "datei": "training/wp_params_2026-10-15.json",
+  "ampel": "gruen",
+  "ampel_grenzen": {
+   "Strom TOP16 RMSE (W)": 40.0,
+   "Wasserkreis RMSE (K)": 1.5,
+   "Pause Median-Fehler (min)": 30.0
+  },
+  "guete_test": {
+   "Strom TOP16 RMSE (W)": 21.6,
+   "Wärme RMSE (W)": 247.4,
+   "Regler RMSE (Hz)": 1.364,
+   "Wasserkreis RMSE (K)": 0.992,
+   "Hausmittel RMSE (K)": 0.423,
+   "Pause Median-Fehler (min)": 7,
+   "Lauf Median-Fehler (min)": 30,
+   "Freilauf kWh el Zwilling/Messung": [
+    32.19,
+    30.87
+   ]
+  },
+  "guete_test_vorher": null,
+  "daten": {
+   "ordner": "protokolle_2026-10-15",
+   "von": "2026-10-07 16:55",
+   "bis": "2026-10-15 22:24",
+   "minuten": 11850,
+   "laeufe": 32,
+   "pausen": 31
+  },
+  "drift": {
+   "gegen": null,
+   "werte": 0,
+   "auffaellig": 0,
+   "liste": []
+  }
+ },
+ "replay": {
+  "tag": "2026-10-14",
+  "datei": "replay/2026-10-14.md",
+  "minuten": 1440,
+  "vorschlaege": 0,
+  "punkte_eintraege": 3,
+  "guete": {
+   "bewertbar": true,
+   "prozent": 100,
+   "grund": null,
+   "nicht_bewertbar": [
+    "quiet_freigabe",
+    "quiet_strecken",
+    "raum_offset"
+   ],
+   "regeln": {
+    "quiet_freigabe": {
+     "prozent": null,
+     "bewertbar": false,
+     "minuten": 885,
+     "grund": "live lief v2 (555 min), Replay rechnet v3: nur 885 von 1440 Minuten vergleichbar"
+    },
+    "quiet_strecken": {
+     "prozent": null,
+     "bewertbar": false,
+     "minuten": 885,
+     "grund": "live lief v4 (555 min), Replay rechnet v5: nur 885 von 1440 Minuten vergleichbar"
+    },
+    "raum_offset": {
+     "prozent": null,
+     "bewertbar": false,
+     "minuten": 885,
+     "grund": "live lief v2 (555 min), Replay rechnet v3: nur 885 von 1440 Minuten vergleichbar"
+    },
+    "vorausschau": {
+     "prozent": 100,
+     "bewertbar": true,
+     "minuten": 1440,
+     "grund": null
+    },
+    "heizregelung": {
+     "prozent": 100,
+     "bewertbar": true,
+     "minuten": 544,
+     "grund": null
+    }
+   },
+   "eingang": "live",
+   "eingang_live_minuten": 1440
+  }
+ },
+ "kennzahlen": {
+  "tag": "2026-10-14",
+  "datei": "kennzahlen/2026-10-14.json",
+  "tag_vollstaendig": true,
+  "strom_kwh": 5.37,
+  "waerme_kwh": 27.34,
+  "cop": 5.09,
+  "kwh_je_gradstunde": 0.0221,
+  "abweichung_7t_prozent": null,
+  "komfort_gehalten": 0,
+  "laeufe": 4,
+  "starts": 4,
+  "abtauungen": 0,
+  "heizstab_min": 0,
+  "aussen_mittel": 12.1,
+  "befunde": {
+   "hinweis": 1,
+   "info": 0,
+   "warnung": 0
+  }
+ },
+ "datenluecken": {
+  "frische": {
+   "datei": "quiet-2026-10.csv",
+   "lesbar": true,
+   "juengste_zeile": "2026-10-15 22:26:43",
+   "alter_min": 0.3
+  },
+  "minutenprotokoll": {
+   "tag": "2026-10-14",
+   "minutenzeilen": 1440,
+   "luecken_ueber_10min": 0,
+   "groesste_luecke_min": 0,
+   "liste": []
+  },
+  "raumfuehler": {
+   "tag": "2026-10-14",
+   "raeume": {
+    "ki_oben": {
+     "name": "Kinderzimmer oben",
+     "ungueltig_min": 173,
+     "laengste_min": 31
+    },
+    "ki_unten": {
+     "name": "Kinderzimmer unten",
+     "ungueltig_min": 263,
+     "laengste_min": 30
+    },
+    "schlaf": {
+     "name": "Schlafzimmer",
+     "ungueltig_min": 0,
+     "laengste_min": 0
+    },
+    "wohn": {
+     "name": "Wohnzimmer",
+     "ungueltig_min": 971,
+     "laengste_min": 700
+    }
+   }
+  }
+ },
+ "sicherung": {
+  "tag": "2026-10-15",
+  "datei": "sicherung/daten-2026-10-15.tar.gz",
+  "bytes": 1688924,
+  "sha256": "e5019d64538da92270f7276c8d11cae9374eb9d0209264b0c78dafd66863dc33",
+  "dateien": 25,
+  "bytes_roh": 23514830,
+  "geprueft": true,
+  "archive": 1,
+  "aeltestes": "2026-10-15",
+  "belegt_mb": 1.6
+ },
+ "ok": true,
+ "fehler": [],
+ "hinweise": [
+  "Raumfühler Kinderzimmer oben: 173 min ohne gültigen Wert am 2026-10-14 (längste Lücke 31 min)",
+  "Raumfühler Kinderzimmer unten: 263 min ohne gültigen Wert am 2026-10-14 (längste Lücke 30 min)",
+  "Raumfühler Wohnzimmer: 971 min ohne gültigen Wert am 2026-10-14 (längste Lücke 700 min)"
+ ]
+}

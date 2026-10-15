@@ -93,20 +93,25 @@ def comment(i, text, x, y):
 ROOMS = [
     # eigeneHeizung (Entscheidung 5 vom 15.10.2026): Raum mit eigener Nachheizung (Kinderzimmer oben: Radiator-Relais und Heizluefter, Tab "Dashboard") -> kein +1-K-/Comfort-/
     # Quiet-Bedarf fuer das ganze Haus; zaehlt weiter fuer Absenkungen (keine -1 K, solange er unter Minimum liegt) und fuer den Hinweis Waermeverteilung. config.json kann es je Raum setzen.
+    # sonnenfenster (Paket 2 vom 15.10.2026): Raum mit Sonnenfenster (Wohnzimmer, Suedwest; nachmittags warm durch Sonne) -> kein Ueberschuss-Ausloeser fuer -1 K, solange Sonne
+    # anliegt und er bei stehender WP bzw. fallendem Vorlauf steigt (Raumeinfluss v5, Deckel/Laufzeit v6); fuer Bedarf, Reserve und Waermeverteilung zaehlt er immer.
     {"id": "ki_oben", "name": "Kinderzimmer oben", "topic": "shellyhtg3-lucas/status/temperature:0",
-     "active": True, "min": 22.5, "max": 23.5, "weight": 1, "maxAgeMin": 90, "eigeneHeizung": True},
+     "active": True, "min": 22.5, "max": 23.5, "weight": 1, "maxAgeMin": 90, "eigeneHeizung": True, "sonnenfenster": False},
     {"id": "ki_unten", "name": "Kinderzimmer unten", "topic": "shellyhtg3-lina/status/temperature:0",
-     "active": True, "min": 22.5, "max": 23.5, "weight": 1, "maxAgeMin": 90, "eigeneHeizung": False},
+     "active": True, "min": 22.5, "max": 23.5, "weight": 1, "maxAgeMin": 90, "eigeneHeizung": False, "sonnenfenster": False},
     {"id": "schlaf", "name": "Schlafzimmer", "topic": "shellies/shellyht-Schlaf/sensor/temperature",
-     "active": True, "min": 19, "max": 21, "weight": 1, "maxAgeMin": 90, "eigeneHeizung": False},
+     "active": True, "min": 19, "max": 21, "weight": 1, "maxAgeMin": 90, "eigeneHeizung": False, "sonnenfenster": False},
     # new sensor (Shelly H&T Gen1, SHHT-1): measured and logged from the start, but inactive (no say in the room logic) until the user sets its band
     {"id": "wohn", "name": "Wohnzimmer", "topic": "shellies/shelly-ht-wohnzimmer/sensor/temperature",
-     "active": False, "min": 20, "max": 22.5, "weight": 1, "maxAgeMin": 90, "eigeneHeizung": False},
+     "active": False, "min": 20, "max": 22.5, "weight": 1, "maxAgeMin": 90, "eigeneHeizung": False, "sonnenfenster": True},
 ]
 # Standard "eigene Nachheizung" je Raum-ID: Rueckfall fuer Leser, solange OPT_cfg im Speicher das Feld noch nicht hat (Deploy ohne erneutes opt_i_init)
 EIGEN_STD_JS = json.dumps({r["id"]: r["eigeneHeizung"] for r in ROOMS})
+SONNE_STD_JS = json.dumps({r["id"]: r["sonnenfenster"] for r in ROOMS})
 EIGEN_JS = ("var EIGEN_STD = " + EIGEN_STD_JS + ";   // Raum mit eigener Nachheizung: Standard je Raum-ID (Generator), OPT_cfg.rooms[].eigeneHeizung hat Vorrang\n"
-            "function eigenOf(rc) { return (rc && typeof rc.eigeneHeizung === 'boolean') ? rc.eigeneHeizung : !!(rc && EIGEN_STD[rc.id]); }")
+            "function eigenOf(rc) { return (rc && typeof rc.eigeneHeizung === 'boolean') ? rc.eigeneHeizung : !!(rc && EIGEN_STD[rc.id]); }\n"
+            "var SONNE_STD = " + SONNE_STD_JS + ";   // Raum mit Sonnenfenster (Paket 2): Standard je Raum-ID, OPT_cfg.rooms[].sonnenfenster hat Vorrang\n"
+            "function sonneOf(rc) { return (rc && typeof rc.sonnenfenster === 'boolean') ? rc.sonnenfenster : !!(rc && SONNE_STD[rc.id]); }")
 # numeric settings per room: (field, lowest, highest, step, tooltip); "active" is a checkbox
 ROOM_FIELDS = [
     ("min", 10, 30, 0.5, "Darunter braucht der Raum Wärme."),
@@ -173,7 +178,7 @@ def js(code):
 DEFAULTS_JS = r"""
 // Standardwerte der Optimierungsebene. Gespeicherte Einstellungen (config.json) und bereits gesetzte Werte bleiben erhalten.
 // Jeder Raum hat ein eigenes Komfortband (min/max), eine Gewichtung und ein Datenalter-Limit.
-var ROOM_FIELDS = ['active', 'min', 'max', 'weight', 'maxAgeMin', 'eigeneHeizung'];
+var ROOM_FIELDS = ['active', 'min', 'max', 'weight', 'maxAgeMin', 'eigeneHeizung', 'sonnenfenster'];
 var d = {
     rooms: __ROOMS__,
     control: __CTL__,
@@ -224,7 +229,7 @@ return null;
 """
 
 SET_CFG_JS = r"""
-// Eingaben der Raumkarte -> Konfiguration. msg.topic = "room:<id>:<feld>" (active, eigeneHeizung, min, max, weight, maxAgeMin) oder "gruppe.feld".
+// Eingaben der Raumkarte -> Konfiguration. msg.topic = "room:<id>:<feld>" (active, eigeneHeizung, sonnenfenster, min, max, weight, maxAgeMin) oder "gruppe.feld".
 // Ausgang 1: rote Rueckmeldung bei abgelehnter Eingabe. Ausgang 2: sofort neu auswerten, damit die Karte wieder die gueltigen Werte zeigt.
 var cfg = global.get('OPT_cfg');
 if (!cfg) { return null; }
@@ -237,7 +242,7 @@ if (t.indexOf('room:') === 0) {
     var p = t.split(':');
     var room = (cfg.rooms || []).find(function (r) { return r.id === p[1]; });
     if (!room) { return null; }
-    if (p[2] === 'active' || p[2] === 'eigeneHeizung') {                                          // Schalter (eigene Nachheizung: kein Bedarf fuer das ganze Haus, Entscheidung 5)
+    if (p[2] === 'active' || p[2] === 'eigeneHeizung' || p[2] === 'sonnenfenster') {              // Schalter (eigene Nachheizung: kein Bedarf fuer das ganze Haus, Entscheidung 5; Sonnenfenster: kein Ueberschuss in der Sonne, Paket 2)
         room[p[2]] = (v === true || v === 'true' || v === 1);
     } else {
         var lim = LIMITS[p[2]];
@@ -928,6 +933,7 @@ var rt = num(G('compressor_runtime')), rtLast = num(G('compressor_last_runtime')
 var defrost = num(G('TOP26_Defrosting_State')) === 1, dhw = num(G('TOP20_ThreeWay_Valve_State')) === 1;
 var ss = G('F_SS') || {}, ssRamp = ss.state === 1 && Math.abs(num(ss.correction_value) || 0) > 0;
 var at = num(G('TOP14_Outside_Temp')), fan1 = num(G('TOP62_Fan1_Motor_Speed'));
+var rohrA = (HP.Outside_Pipe_Temp && typeof HP.Outside_Pipe_Temp.v === 'number' && HP.Outside_Pipe_Temp.v > -100) ? HP.Outside_Pipe_Temp.v : null;   // Outside_Pipe_Temp (nur bei Aenderung gemeldet; -128 = kein Fuehler)
 var S = G('OPT_state') || {}, sFresh = S.ts && now - S.ts < 5 * MS_MIN;
 // Kinderzimmer oben (eigene Regelung im Tab Dashboard, hier nur mitgelesen): Radiator-Relais (Shelly 1 Mini) und Heizluefter (Shelly Plug S, elektrisch)
 var KZ = G('OPT_kz') || {}, KZR = KZ.rad || {}, KZF = KZ.fan || {};
@@ -946,7 +952,7 @@ if (!qs) {
     } catch (e) { /* noch keine Datei */ }
     try {                                                                                            // Wechselzeit und Abtau-/Warmwasser-Ende ueberstehen einen Neustart
         var wj = JSON.parse(fs.readFileSync('/data/optimizer/watcher-state.json', 'utf8'));
-        if (wj) { qs.esc = {lastChg: wj.lastChg || 0, lastChgWhat: wj.lastChgWhat || ''}; qs.lastDefrostEnd = wj.lastDefrostEnd || 0; qs.lastDhwEnd = wj.lastDhwEnd || 0; }      // eine alte Sperre (blockUntil) gilt nicht mehr
+        if (wj) { qs.esc = {lastChg: wj.lastChg || 0, lastChgWhat: wj.lastChgWhat || ''}; qs.lastDefrostEnd = wj.lastDefrostEnd || 0; qs.lastDhwEnd = wj.lastDhwEnd || 0; if (wj.lastDefrostStart) { qs.lastDefrostStart = wj.lastDefrostStart; } }      // eine alte Sperre (blockUntil) gilt nicht mehr
     } catch (e) { /* noch keine Datei */ }
     qs.born = now;
 }
@@ -979,8 +985,11 @@ var dfOut = null;
 function dfFinish(dfx, rec) {
     var pd = function (x) { return (x < 10 ? '0' : '') + x; }, ds = new Date(dfx.s);
     var iso = ds.getFullYear() + '-' + pd(ds.getMonth() + 1) + '-' + pd(ds.getDate()) + ' ' + pd(ds.getHours()) + ':' + pd(ds.getMinutes()) + ':' + pd(ds.getSeconds());
-    var cols = ['zeit', 'dauer_min', 'wiederaufheiz_min', 'aussen', 'feuchte', 'taupunkt', 'quiet', 'heizregelung', 'soll_vl', 'vl_beginn', 'vl_min', 'rl_min', 'strom_kwh', 'waerme_kwh', 'min_seit_letzter_abtauung', 'heizstab_min'];
-    var line = [iso, Math.round(((dfx.end || now) - dfx.s) / MS_MIN), rec, c(dfx.at), c(dfx.rh), c(dfx.dew), c(dfx.q), c(dfx.hc), c(dfx.sol), c(dfx.vl0), c(dfx.vlMin), c(dfx.rlMin), c(Math.round(dfx.el * 1000) / 1000), c(Math.round(dfx.th * 1000) / 1000), c(dfx.sinceLast), c(Math.round((dfx.hsMs || 0) / MS_MIN))].join(',');
+    var cols = ['zeit', 'dauer_min', 'wiederaufheiz_min', 'aussen', 'feuchte', 'taupunkt', 'quiet', 'heizregelung', 'soll_vl', 'vl_beginn', 'vl_min', 'rl_min', 'strom_kwh', 'waerme_kwh', 'min_seit_letzter_abtauung', 'heizstab_min',
+                'ende', 'vl_einbruch_k', 'rohr_aussen_vor', 'rohr_aussen_nach', 'strom_nach_kwh'];   // Paket 2 (15.10.2026, nur angehaengt): Ende des Abtauens, Vorlauf-Einbruch, Outside_Pipe_Temp vor/nach, Strom beim Wiederaufheizen
+    var de0 = dfx.end ? new Date(dfx.end) : null, isoE = de0 ? de0.getFullYear() + '-' + pd(de0.getMonth() + 1) + '-' + pd(de0.getDate()) + ' ' + pd(de0.getHours()) + ':' + pd(de0.getMinutes()) + ':' + pd(de0.getSeconds()) : '';
+    var line = [iso, Math.round(((dfx.end || now) - dfx.s) / MS_MIN), rec, c(dfx.at), c(dfx.rh), c(dfx.dew), c(dfx.q), c(dfx.hc), c(dfx.sol), c(dfx.vl0), c(dfx.vlMin), c(dfx.rlMin), c(Math.round(dfx.el * 1000) / 1000), c(Math.round(dfx.th * 1000) / 1000), c(dfx.sinceLast), c(Math.round((dfx.hsMs || 0) / MS_MIN)),
+                isoE, c(dfx.vlMin !== null && (dfx.vlVor !== undefined ? dfx.vlVor : dfx.vl0) !== null ? (dfx.vlVor !== undefined ? dfx.vlVor : dfx.vl0) - dfx.vlMin : null), c(dfx.rohr0), c(dfx.rohr1), c(Math.round((dfx.elN || 0) * 1000) / 1000)].join(',');
     var f0 = '/data/optimizer/defrost-' + iso.slice(0, 7) + '.csv', hd = cols.join(','), need = true;
     try { var lh = null; String(fs.readFileSync(f0, 'utf8')).split('\n').forEach(function (l) { if (l.indexOf('zeit,') === 0) { lh = l; } }); need = lh !== hd; } catch (e) { need = true; }
     return {filename: f0, payload: (need ? hd + '\n' : '') + line + '\n'};
@@ -988,7 +997,8 @@ function dfFinish(dfx, rec) {
 if (defrost && !qs.defrost) {                                                                  // neuer Abtauzyklus (ein noch laufender Erholungs-Eintrag wird vorher abgeschlossen)
     if (qs.df && qs.df.state === 'recover') { dfOut = dfFinish(qs.df, 'unterbrochen'); }
     var W0 = G('OPT_weather') || {}, w0ok = W0.ts && now - W0.ts < 60 * MS_MIN;
-    qs.df = {s: now, state: 'defrost', at: at, rh: w0ok ? W0.rh : null, dew: w0ok ? W0.dew : null, q: qNow, hc: hpv('Heating_Control'), sol: solVL, vl0: istVL, vlMin: istVL, rlMin: istRL, el: 0, th: 0,
+    qs.df = {s: now, state: 'defrost', at: at, rh: w0ok ? W0.rh : null, dew: w0ok ? W0.dew : null, q: qNow, hc: hcMode, sol: solVL, vl0: istVL, vlVor: (qs.vlPrev !== undefined && qs.vlPrev !== null) ? qs.vlPrev : istVL, vlMin: istVL, rlMin: istRL, el: 0, th: 0, elN: 0,
+             rohr0: (qs.rohrPrev !== undefined && qs.rohrPrev !== null) ? qs.rohrPrev : rohrA, rohr1: null,
              sinceLast: qs.lastDefrostStart ? Math.round((now - qs.lastDefrostStart) / MS_MIN) : null};
     qs.lastDefrostStart = now;
 }
@@ -1002,16 +1012,19 @@ if (qs.df && qs.df.state === 'defrost') {
         var thRaw = hpv('Heat_Power_Production_Extra'); qs.df.th += (thRaw !== null && thRaw > -30000 && thRaw < 30000 ? thRaw : 0) / 60000;
         if (istVL !== null && (qs.df.vlMin === null || istVL < qs.df.vlMin)) { qs.df.vlMin = istVL; }
         if (istRL !== null && (qs.df.rlMin === null || istRL < qs.df.rlMin)) { qs.df.rlMin = istRL; }
-    } else { qs.df.state = 'recover'; qs.df.end = now; }
+    } else { qs.df.state = 'recover'; qs.df.end = now; qs.df.rohr1 = rohrA; }
 }
 if (qs.df && qs.df.state === 'recover' && !(defrost && !qs.defrost)) {
     var dfRec = Math.round((now - qs.df.end) / MS_MIN);
+    if (qs.df.end !== now) { qs.df.elN = (qs.df.elN || 0) + (pel !== null && pel >= 0 ? pel : 0) * tickDt / 3600000000; }       // Strom beim Wiederaufheizen (kWh, Zeit statt Aufrufe)
+    if (qs.df.rohr1 === null && rohrA !== null) { qs.df.rohr1 = rohrA; }
     if (istVL !== null && qs.df.sol !== null && istVL >= qs.df.sol - 1) { dfOut = dfFinish(qs.df, dfRec); qs.df = null; }                  // Vorlauf wieder bis 1 K unter Soll
     else if (now - qs.df.end >= 60 * MS_MIN) { dfOut = dfFinish(qs.df, '>60'); qs.df = null; }
     else if (!running) { dfOut = dfFinish(qs.df, 'Verdichter aus'); qs.df = null; }                                                       // Anforderung erfuellt, Verdichter steht
 }
 if (!dhw && qs.dhw) { qs.lastDhwEnd = now; }
 qs.freqOn = running; qs.defrost = defrost; qs.dhw = dhw;
+if (!defrost) { qs.vlPrev = istVL; qs.rohrPrev = rohrA; }                                     // Werte vor dem Abtauen (Beginn wird erst in der ersten Abtau-Minute erkannt)
 // Statistik je Quiet-Stufe: nur Minuten mit laufendem Verdichter (ohne Abtauen/Warmwasser), einmal pro Minute
 var mk = Math.floor(now / MS_MIN);
 if (qs.lastMin !== mk) {
@@ -1125,7 +1138,7 @@ if (!escDataOk) {
     } else if (escDef || escDhw || escDev === null || escDev < -escBand - 0.5) { ES.reachSince = 0; }
     escTxt = 'läuft ' + Math.round(escRunMin) + ' min' + (ES.late ? ' (Beginn unbekannt)' : '') + ' · Vorlauf ' + (escDev !== null ? sg(escDev, 1, 'K') + ' zum Soll' : '–') + ' · ' + (ES.reached !== null ? (ES.late ? 'Sollvorlauf erreicht' : 'Sollvorlauf erreicht nach ' + ES.reached + ' min') : 'Sollvorlauf noch nicht erreicht');
 }
-var escSave = JSON.stringify({lastChg: ES.lastChg, lastChgWhat: ES.lastChgWhat, lastDefrostEnd: qs.lastDefrostEnd, lastDhwEnd: qs.lastDhwEnd});
+var escSave = JSON.stringify({lastChg: ES.lastChg, lastChgWhat: ES.lastChgWhat, lastDefrostEnd: qs.lastDefrostEnd, lastDhwEnd: qs.lastDhwEnd, lastDefrostStart: qs.lastDefrostStart || 0});   // Paket 2: Beginn der letzten Abtauung (Abstand im Abtau-Protokoll nach einem Neustart)
 if (escSave !== ES.saved) { try { fs.mkdirSync('/data/optimizer', {recursive: true}); fs.writeFileSync('/data/optimizer/watcher-state.json', escSave); ES.saved = escSave; } catch (e) { /* kein Zugriff */ } }
 
 var rows = [
@@ -1237,7 +1250,8 @@ if (!qs.lastLog || now - qs.lastLog >= MS_MIN - 1000) {
                 'heizstab_intern', 'heizstab_extern', 'heizstab_raum_frei', 'heizstab_stunden', 'heizstab_start_delta', 'heizstab_verzoegerung_min',
                 'waechter_zustand', 'waechter_ausloeser', 'waechter_sperre', 'zeit_bis_soll_min', 'lauf_min', 'vl_minus_soll',
                 'zustand', 'shift_anlage', 'kz_radiator_an', 'kz_heizluefter_an', 'kz_heizluefter_w', 'kz_heizluefter_online',
-                'leistung_el_korr_w', 'cop_momentan_korr', 'cop_korr_w', 'rohr_aussen'];          // 14.10.2026 (nur angehaengt): Strom/COP mit Korrektur und ihre Konstante; Outside_Pipe_Temp fuer die Abtau-Kennzahl des Beobachters
+                'leistung_el_korr_w', 'cop_momentan_korr', 'cop_korr_w', 'rohr_aussen',          // 14.10.2026 (nur angehaengt): Strom/COP mit Korrektur und ihre Konstante; Outside_Pipe_Temp fuer die Abtau-Kennzahl des Beobachters
+                'heizstab_stop_delta', 'verdampfer_aus', 'heissgas', 'hochdruck', 'expansionsventil', 'rohr_innen'];   // Paket 2 (15.10.2026, nur angehaengt): Heater_Stop_Delta (TOP98), Eva_Outlet_Temp, Discharge_Temp, High_Pressure, Expansion_Valve, Inside_Pipe_Temp (Winter: Verdampfer/Ueberhitzung, Forum Expansionsventil)
     var hv = function (n) { return HP[n] && typeof HP[n].v === 'number' ? HP[n].v : null; };
     // Review-Paket 13.10.2026: Spalten der gestrichenen Quiet-Empfehlung, des Kontrolltests und des Eskalationswaechters bleiben im Kopf (Leser nach Spaltenname), Werte leer
     var vals2 = [iso, qNow, '', '', '', '', '', '', '', c(solVL), c(istVL), c(solRL), c(istRL), c(rlErr), c(qs.errS),
@@ -1247,7 +1261,8 @@ if (!qs.lastLog || now - qs.lastLog >= MS_MIN - 1000) {
                  c(hv('Internal_Heater_State')), c(hv('External_Heater_State')), c(hv('Room_Heater_State')), c(hv('Room_Heater_Operations_Hours')), c(hv('Heater_Start_Delta')), c(hv('Heater_Delay_Time')),
                  '', '', '', (ES.reached !== null && !ES.late) ? c(ES.reached) : '', escRunMin !== null ? c(Math.round(escRunMin)) : '', c(escDev),
                  zustandNow, c(shiftHpNow), kzRad, kzFanOn, c(kzFanW), kzFanOnline,
-                 c(pelKNow), c(copNowK), COP_KW, c(hv('Outside_Pipe_Temp'))];
+                 c(pelKNow), c(copNowK), COP_KW, c(hv('Outside_Pipe_Temp')),
+                 c(hv('Heater_Stop_Delta')), c(hv('Eva_Outlet_Temp')), c(hv('Discharge_Temp')), c(hv('High_Pressure')), c(hv('Expansion_Valve')), c(hv('Inside_Pipe_Temp'))];
     var file = '/data/optimizer/quiet-' + month + '.csv', head = cols.join(',');
     var needHead = true;
     if (flow.get('qHead') === month + '|' + head) { needHead = false; }
@@ -2163,7 +2178,7 @@ var rooms = [];
     var on = rc.active !== false;
     var x = {id: rc.id, name: rc.name, on: on, active: on && band, hasData: (r.ema !== undefined && a !== null), age: a, lim: lim,
              ema: r.ema, last: r.last, trend: (r.trend === undefined ? null : r.trend), min: rc.min, max: rc.max, weight: rc.weight || 1,
-             dev: 0, score: 0, dLow: null, dHigh: null, eigen: eigenOf(rc)};
+             dev: 0, score: 0, dLow: null, dHigh: null, eigen: eigenOf(rc), sf: sonneOf(rc)};
     x.valid = x.active && x.hasData && a <= lim;
     if (x.hasData && band) {
         x.dLow = x.ema - x.min; x.dHigh = x.max - x.ema;
@@ -2185,7 +2200,7 @@ var none = !valids.length;
 var sum = {
     heat: none ? '–' : (heat ? heat.name + ' · ' + f(-heat.dev, 1, 'K') + ' unter Minimum · ' + trTxt(heat) + (heat.eigen ? ' · eigene Nachheizung' : '') : 'keiner'),
     heatCls: (none || heat) ? 'warn' : 'ok',
-    over: none ? '–' : (over ? over.name + ' · ' + f(over.dev, 1, 'K') + ' über Maximum · ' + trTxt(over) : 'keiner'),
+    over: none ? '–' : (over ? over.name + ' · ' + f(over.dev, 1, 'K') + ' über Maximum · ' + trTxt(over) + (over.sf ? ' · Sonnenfenster' : '') : 'keiner'),
     overCls: (none || over) ? 'warn' : 'ok',
     tight: tight ? sg(tight.m, 1, 'K') + ' (' + tight.room.name + ')' : '–',
     tightCls: (tight && tight.m < 0.3) ? 'warn' : '',
@@ -2202,7 +2217,7 @@ var roomsOut = rooms.map(function (x) {
             valid: why + (x.hasData ? ' · ' + age(x.age) : ''),
             role: x === heat ? 'heat' : (x === over ? 'over' : ''),
             cls: !x.valid ? 'mute' : (x.dev !== 0 ? 'warn' : 'ok'),
-            on: x.on, eigen: x.eigen, min: x.min, max: x.max, weight: x.weight, maxAgeMin: x.lim};
+            on: x.on, eigen: x.eigen, sf: x.sf, min: x.min, max: x.max, weight: x.weight, maxAgeMin: x.lim};
 });
 
 // ---------- Aussen / Wetter
@@ -2541,7 +2556,8 @@ GROUPS = [("opt_g_ch_wp", "Wärmepumpe · letzte 24 h", OPT_W, UI_TAB), ("opt_g_
           ("opt_g_rooms", "Räume und Komfortbänder", OPT_W, UI_TAB),
           ("opt_g_opt", "Optimierung", OPT_W, UI_TAB_DATA),
           ("opt_g_wx", "Außen & Wetter", OPT_W, UI_TAB_DATA), ("opt_g_calc", "Berechnete Außentemperatur", OPT_W, UI_TAB_DATA), ("opt_g_quiet", "Leistung & Quiet (Shadow)", OPT_W, UI_TAB_DATA), ("opt_g_en", "Energie & Preise (nur Anzeige)", OPT_W, UI_TAB_DATA),
-          ("opt_g_fq", "Prognosegüte (nur Anzeige)", OPT_W, UI_TAB_DATA), ("opt_g_wp", "Wärmepumpe", OPT_W, UI_TAB_DATA)]
+          ("opt_g_fq", "Prognosegüte (nur Anzeige)", OPT_W, UI_TAB_DATA), ("opt_g_wp", "Wärmepumpe", OPT_W, UI_TAB_DATA),
+          ("opt_g_nas", "Auswertung NAS (optimizer-tools)", OPT_W, UI_TAB_DATA)]
 _ord = {}
 for gid, gname, gwidth, gtab in GROUPS:
     _ord[gtab] = _ord.get(gtab, 0) + 1
@@ -2732,6 +2748,79 @@ upsert(chart_card("rooms", "opt_g_ch_rooms", "Verlauf Räume", 6, 560, CH_ROOMS)
 upsert(chart_card("at", "opt_g_ch_at", "Verlauf Außentemperatur", 6, 600, CH_AT))
 upsert(fn("opt_hist", "Verlaufsdaten (nur lesen)", HIST_JS.replace("__COPKW__", COP_KW_JS), 3, [["opt_t_ch_wp"], ["opt_t_ch_rooms"], ["opt_t_ch_at"]], 440, 520, FS))
 upsert(inject("opt_i_hist", "alle 5 Minuten", 300, 20, ["opt_hist"], 140, 520))
+# ---------------------------------------------------------------- Status des NAS-Containers optimizer-tools (Paket 2, 15.10.2026; Karte auf "Daten & Güte")
+# Der Container schreibt /data/optimizer-tools/status.json (Format 2, Branch nas-container: docker/optimizer-tools/README.md). opt_nas liest die Datei alle 5 min
+# (nur lesen; fehlt sie: "kein Lauf") und baut kompakte Zeilen [Bezeichnung, Wert, Chip, Chip-Klasse ok/warn/fehler, Tooltip].
+NAS_JS = r"""
+// Status des NAS-Containers optimizer-tools: /data/optimizer-tools/status.json NUR LESEN (Format 2). Fehlt die Datei: "kein Lauf". Keine Regelwirkung.
+var now = Date.now(), MS_MIN = 60000, P = '/data/optimizer-tools/status.json';
+function ok(v) { return v !== null && v !== undefined && isFinite(v); }
+function f(v, d) { return ok(v) ? Number(v).toFixed(d).replace('.', ',') : '–'; }
+function tsOf(s) { var m = /^(\d{4})-(\d\d)-(\d\d)[ T](\d\d):(\d\d)(?::(\d\d))?/.exec(String(s || '')); return m ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0)).getTime() : null; }
+function dm(s) { var m = /^(\d{4})-(\d\d)-(\d\d)/.exec(String(s || '')); return m ? m[3] + '.' + m[2] + '.' : '–'; }
+function dmhm(s) { var m = /^(\d{4})-(\d\d)-(\d\d)[ T](\d\d):(\d\d)/.exec(String(s || '')); return m ? m[3] + '.' + m[2] + '. ' + m[4] + ':' + m[5] : '–'; }
+function dauer(sek) { return !ok(sek) ? '–' : (sek < 120 ? Math.round(sek) + ' s' : f(sek / 60, 1) + ' min'); }
+var st = null, err = null;
+try { st = JSON.parse(String(fs.readFileSync(P, 'utf8'))); } catch (e) { err = (e && e.code === 'ENOENT') ? 'kein Lauf' : 'nicht lesbar'; }
+var rows = [];
+if (!st || typeof st !== 'object') {
+    rows.push(['Letzter Lauf', err || 'nicht lesbar', err === 'kein Lauf' ? 'kein Lauf' : 'Fehler', err === 'kein Lauf' ? 'warn' : 'fehler', P + (err === 'kein Lauf' ? ' fehlt (Container optimizer-tools noch nicht gelaufen)' : ' ist kein gültiges JSON')]);
+    return {payload: {rows: rows}};
+}
+var fehler = Array.isArray(st.fehler) ? st.fehler : [], hinweise = Array.isArray(st.hinweise) ? st.hinweise : [];
+// Letzter Lauf
+var L = st.letzter_lauf || null, lEnde = L ? tsOf(L.ende) : null, alt = lEnde !== null && now - lEnde > 26 * 60 * MS_MIN;
+if (L) {
+    var sch = L.schritte || {}, schT = Object.keys(sch).map(function (k) { var x = sch[k] || {}; return k + ': ' + (x.ok ? 'ok' : 'Fehler' + (x.fehler ? ' (' + x.fehler + ')' : '')) + ', ' + dauer(x.dauer_s) + (x.tag ? ', Tag ' + dm(x.tag) : ''); });
+    rows.push(['Letzter Lauf', dmhm(L.ende || L.beginn) + ' · ' + dauer(L.dauer_s), L.ok === false ? 'Fehler' : (alt ? 'veraltet' : 'ok'), L.ok === false ? 'fehler' : (alt ? 'warn' : 'ok'),
+               'Art ' + (L.art || '–') + ' · ' + schT.join(' · ') + (st.dienst && st.dienst.naechster_lauf ? ' · nächster Lauf ' + dmhm(st.dienst.naechster_lauf) : '') + (st.version ? ' · Stand ' + st.version : '')]);
+} else { rows.push(['Letzter Lauf', 'kein Lauf', 'kein Lauf', 'warn', 'status.json ohne letzten Lauf (Dienst gestartet ' + dmhm(st.dienst && st.dienst.gestartet) + ')']); }
+// Training: Ampel und Drift
+var T = st.training || null;
+if (T) {
+    var amp = String(T.ampel || ''), ampT = {gruen: 'grün', gelb: 'gelb', rot: 'rot'}[amp] || '–', dr = T.drift || {}, nDr = ok(dr.auffaellig) ? dr.auffaellig : null, G = T.guete_test || {};
+    rows.push(['Training', dm(T.tag) + ' · Drift ' + (nDr === null ? '–' : nDr + ' auffällig') + (dr.gegen ? '' : ' (erster Lauf)'), T.ok === false ? 'Fehler' : ampT, T.ok === false || amp === 'rot' ? 'fehler' : (amp === 'gelb' || nDr > 0 ? 'warn' : (amp === 'gruen' ? 'ok' : '')),
+               Object.keys(G).filter(function (k) { return ok(G[k]); }).map(function (k) { return k + ' ' + f(G[k], G[k] < 10 ? 2 : 0); }).join(' · ') + (Array.isArray(dr.liste) && dr.liste.length ? ' · Drift: ' + dr.liste.join(', ') : '') + (T.fehler ? ' · ' + T.fehler : '')]);
+} else { rows.push(['Training', 'noch keins', '–', '', '']); }
+// Replay-Güte
+var R = st.replay || null, RG = R && R.guete ? R.guete : null;
+if (RG) {
+    var regT = Object.keys(RG.regeln || {}).map(function (k) { var x = RG.regeln[k]; return k + ': ' + (x.bewertbar ? f(x.prozent, 1) + ' %' : 'nicht bewertbar' + (x.grund ? ' (' + x.grund + ')' : '')); });
+    rows.push(['Replay-Güte', dm(R.tag) + ' · ' + (RG.bewertbar && ok(RG.prozent) ? f(RG.prozent, 1) + ' % gleich live' : 'nicht bewertbar: ' + (RG.grund || 'unbekannt')),
+               RG.bewertbar && ok(RG.prozent) ? (RG.prozent >= 99 ? 'ok' : 'Abweichung') : 'offen', RG.bewertbar && ok(RG.prozent) ? (RG.prozent >= 99 ? 'ok' : 'warn') : 'warn',
+               regT.join(' · ') + (ok(R.vorschlaege) ? ' · Vorschläge ' + R.vorschlaege : '')]);
+} else { rows.push(['Replay-Güte', R ? dm(R.tag) + ' · ohne Güte' : 'noch keins', '–', '', '']); }
+// Datenluecken: Minutenprotokoll und Raumfuehler
+var DL = st.datenluecken || {}, MP = DL.minutenprotokoll || null, FR = DL.frische || null, RF = DL.raumfuehler || null;
+if (MP || FR) {
+    var nL = MP && ok(MP.luecken_ueber_10min) ? MP.luecken_ueber_10min : null, frAlt = FR && ok(FR.alter_min) ? FR.alter_min : null;
+    rows.push(['Minutenprotokoll', (MP ? dm(MP.tag) + ' · ' + (nL === null ? '–' : (nL ? nL + ' Lücken > 10 min, größte ' + f(MP.groesste_luecke_min, 0) + ' min' : 'lückenlos')) : '–'),
+               frAlt !== null && frAlt > 30 ? 'veraltet' : (nL ? 'Lücken' : 'ok'), frAlt !== null && frAlt > 30 ? 'fehler' : (nL ? 'warn' : 'ok'),
+               (MP ? MP.minutenzeilen + ' Minutenzeilen' : '') + (FR ? ' · jüngste Zeile ' + dmhm(FR.juengste_zeile) + ' (' + f(FR.alter_min, 1) + ' min alt)' : '') + (MP && Array.isArray(MP.liste) && MP.liste.length ? ' · ' + MP.liste.slice(0, 5).map(function (x) { return typeof x === 'object' ? JSON.stringify(x) : String(x); }).join(', ') : '')]);
+}
+if (RF && RF.raeume) {
+    var RR = Object.keys(RF.raeume).map(function (k) { var x = RF.raeume[k] || {}; return {n: x.name || k, u: ok(x.ungueltig_min) ? x.ungueltig_min : 0, l: ok(x.laengste_min) ? x.laengste_min : 0}; });
+    var lang = RR.filter(function (x) { return x.l > 120; }).sort(function (a, b) { return b.u - a.u; }), summe = RR.reduce(function (a, x) { return a + x.u; }, 0);
+    rows.push(['Raumfühler', dm(RF.tag) + ' · ' + (lang.length ? lang.map(function (x) { return x.n + ' ' + x.u + ' min'; }).join(', ') : (summe ? summe + ' min ungültig' : 'alle gültig')), lang.length ? 'Lücke' : 'ok', lang.length ? 'warn' : 'ok',
+               'ungültige Minuten (längste Lücke): ' + RR.map(function (x) { return x.n + ' ' + x.u + ' (' + x.l + ')'; }).join(' · ')]);
+}
+// Sicherung
+var SI = st.sicherung || null;
+if (SI) {
+    var siAlt = SI.tag && tsOf(SI.tag + ' 23:59') !== null && now - tsOf(SI.tag + ' 23:59') > 26 * 60 * MS_MIN;
+    rows.push(['Sicherung', dm(SI.tag) + ' · ' + f((SI.bytes || 0) / 1048576, 1) + ' MB', SI.geprueft === true ? (siAlt ? 'veraltet' : 'geprüft') : 'ungeprüft', SI.geprueft === true ? (siAlt ? 'warn' : 'ok') : 'fehler',
+               (SI.dateien || 0) + ' Dateien, roh ' + f((SI.bytes_roh || 0) / 1048576, 1) + ' MB · ' + (SI.archive || 0) + ' Archive seit ' + dm(SI.aeltestes) + ', belegt ' + f(SI.belegt_mb, 1) + ' MB · SHA-256 ' + String(SI.sha256 || '–').slice(0, 16) + '…']);
+} else { rows.push(['Sicherung', 'noch keine', 'fehlt', 'warn', '']); }
+if (fehler.length) { rows.push(['Fehler', fehler.length + ' im letzten Lauf', 'Fehler', 'fehler', fehler.join(' · ')]); }
+return {payload: {rows: rows, stand: st.aktualisiert || '', hinweise: hinweise.length}};
+"""
+NAS_TPL = ('<div class="optfit"><div class="optkv"><div class="kv" ng-repeat="r in msg.payload.rows track by $index" title="{{r[4]}}">'
+           '<span class="l">{{r[0]}}</span><span class="v">{{r[1]}}<span class="optchip" ng-if="r[2]" ng-class="r[3]">{{r[2]}}</span></span></div></div></div>')
+upsert({"id": "opt_t_nas", "type": "ui_template", "z": TAB, "group": "opt_g_nas", "name": "Auswertung NAS", "order": 1, "width": 0,
+        "height": 3, "format": NAS_TPL + FIT_JS.replace("__ID__", "opt_t_nas"), "storeOutMessages": True,
+        "fwdInMessages": False, "resendOnRefresh": True, "templateScope": "local", "className": "", "x": 1260, "y": 580, "wires": [[]]})
+upsert(fn("opt_nas", "Status NAS-Container (nur lesen)", NAS_JS, 1, [["opt_t_nas"]], 440, 580, FS))
+upsert(inject("opt_i_nas", "alle 5 Minuten", 300, 25, ["opt_nas"], 140, 580))
 
 PLAN_TPL = """<div class="optp optfit">
 <div class="kpi"><div class="tile" ng-repeat="t in msg.payload.kpi track by $index" title="{{t.t}}"><div class="k">{{t.k}}</div><div class="v">{{t.v}}</div><div class="s">{{t.s}}</div></div></div>
@@ -2791,7 +2880,7 @@ ROOMS_TPL = """<div class="optr optfit" ng-if="d">
 <span class="k">Gültige Räume</span><span ng-class="d.sum.validCls">{{d.sum.valid}}</span>
 </div>
 <table title="Abstand: positiv = noch Luft bis zur Grenze, negativ = Grenze verletzt; jeder Raum wird nach seinem eigenen Band bewertet. Änderungen gelten, sobald das Feld verlassen wird; inaktive Räume werden nur angezeigt. Die Gewichtung ist ein Faktor für die Abweichung und entscheidet bei mehreren Verstößen, welcher Raum maßgeblich ist.">
-<tr><th>Raum</th><th class="n">Ist</th><th class="n">Abstand unten</th><th class="n">Abstand oben</th><th>Trend</th><th>Gültig</th><th>Aktiv</th><th title="Eigene Nachheizung: Der Raum heizt selbst nach (Radiator-Relais, Heizlüfter). Unter Minimum kein Bedarf für das ganze Haus, für Absenkungen zählt er weiter.">eigene Heizung</th><th class="n">Min °C</th><th class="n">Max °C</th><th class="n">Gewicht</th><th class="n">Alter max. (min)</th></tr>
+<tr><th>Raum</th><th class="n">Ist</th><th class="n">Abstand unten</th><th class="n">Abstand oben</th><th>Trend</th><th>Gültig</th><th>Aktiv</th><th title="Eigene Nachheizung: Der Raum heizt selbst nach (Radiator-Relais, Heizlüfter). Unter Minimum kein Bedarf für das ganze Haus, für Absenkungen zählt er weiter.">eigene Heizung</th><th title="Sonnenfenster: Der Raum wird nachmittags durch die Sonne warm. Steigt er zwischen 11 und 18 Uhr bei Sonne (PV ab 20 % der Spitze oder Bewölkung unter 50 %), obwohl die Wärmepumpe steht oder der Vorlauf fällt, löst er kein −1 K aus. Für Bedarf, Reserve und Wärmeverteilung zählt er immer.">Sonne</th><th class="n">Min °C</th><th class="n">Max °C</th><th class="n">Gewicht</th><th class="n">Alter max. (min)</th></tr>
 <tr ng-repeat="r in d.rooms track by r.id">
 <td>{{r.name}}<span class="role" ng-if="r.role==='heat'">größte Unterschreitung</span><span class="role" ng-if="r.role==='over'">größte Überschreitung</span></td>
 <td class="n" ng-class="r.cls">{{r.ist}}</td>
@@ -2799,6 +2888,7 @@ ROOMS_TPL = """<div class="optr optfit" ng-if="d">
 <td>{{r.trend}}</td><td ng-class="r.cls==='mute' ? 'mute' : ''">{{r.valid}}</td>
 <td><input type="checkbox" ng-model="r.on" ng-change="set(r, 'active', r.on)"></td>
 <td><input type="checkbox" ng-model="r.eigen" ng-change="set(r, 'eigeneHeizung', r.eigen)"></td>
+<td><input type="checkbox" ng-model="r.sf" ng-change="set(r, 'sonnenfenster', r.sf)"></td>
 <td class="n">__IN_min__</td><td class="n">__IN_max__</td><td class="n">__IN_weight__</td><td class="n">__IN_maxAgeMin__</td></tr>
 </table>
 <div class="sec" title="Regeln: 1. Ein Raum unter seinem Minimum: nie absenken, der Raum mit dem größten Defizit führt, langsam höchstens +1 K. 2. Kein Raum unter Minimum, aber einer über Maximum: Absenkung erlaubt, zunächst -1 K. 3. Alle im Band: niedrigste Heizkurve suchen (0 K oder vorsichtig -1 K testen). 4. Gleichzeitig deutlich zu kalt und zu warm: Wärmeverteilungsproblem, die Heizkurve bleibt unverändert. Der Soll-Vorlauf wird nie unter die Untergrenze von 29 °C gesenkt (Heizkörper). Jede Änderung nur nach der Mindesthaltezeit und nie bei Abtauen, Warmwasser, Verdichterstart oder Sanftanlauf. Der Vorschlag steht im Protokoll (korrektur_vorschlag).">Vorschlag für die Heizkurve (nur Anzeige, greift nicht ein)</div>
@@ -3047,7 +3137,7 @@ __EIGEN__
 var rooms = (CF.rooms || []).map(function (rc) {
     var r = RO[rc.id] || {}, a = r.ts ? (now - r.ts) / MIN : null, lim = rc.maxAgeMin || (CF.sensor && CF.sensor.maxAgeMin) || 90;
     var band = isFinite(rc.min) && isFinite(rc.max) && rc.min < rc.max, on = rc.active !== false;
-    return {id: rc.id, name: rc.name, t: r.ema !== undefined ? r.ema : null, age: a, min: rc.min, max: rc.max, active: on && band, valid: on && band && r.ema !== undefined && a !== null && a <= lim, eigeneHeizung: eigenOf(rc)};
+    return {id: rc.id, name: rc.name, t: r.ema !== undefined ? r.ema : null, age: a, min: rc.min, max: rc.max, active: on && band, valid: on && band && r.ema !== undefined && a !== null && a <= lim, eigeneHeizung: eigenOf(rc), sonnenfenster: sonneOf(rc)};
 });
 var OS = G('OPT_state') || {}, korr = (OS.ts && now - OS.ts < 5 * MIN && typeof OS.korr === 'number') ? {v: OS.korr, code: String(OS.korrCode || ''), distrib: !!OS.distrib, lead: String(OS.korrLead || '')} : null;
 var KZ = G('OPT_kz') || {};
@@ -3062,6 +3152,10 @@ var inp = {t: now, hpAge: hpTs ? (now - hpTs) / MIN : null,
            kzRad: (KZ.rad && typeof KZ.rad.on === 'boolean') ? (KZ.rad.on ? 1 : 0) : null, rooms: rooms, korr: korr,
            err: (HP.Error && HP.Error.v !== undefined && HP.Error.v !== null) ? String(HP.Error.v) : null, pipeIn: hpv('Inside_Pipe_Temp'),     // 14.10.2026: Fehlercode (TOP44, H23-Waechter), Leitungstemperatur Innengeraet (H23-Vorstufe)
            kurve: (cvLo !== null && cvHi !== null && cvTl !== null && cvTh !== null) ? [cvLo, cvHi, cvTl, cvTh] : null};                      // Heizkurve Z1 (Kennzahl Kurvenform je Kurve)
+// Sonnenfenster (Raumeinfluss v5): PV-Leistung jetzt (opt_energy aus OPT_en, OPT_plan_in.pvNow, hoechstens 5 min alt) und OWM-Bewoelkung (hoechstens weather.maxAgeMin alt)
+var PIe = G('OPT_plan_in') || {}, WXe = G('OPT_weather') || {};
+if (PIe.ts && now - PIe.ts < 5 * MIN && num(PIe.pvNow) !== null) { inp.pv = num(PIe.pvNow); }
+if (WXe.ts && now - WXe.ts <= ((CF.weather && num(CF.weather.maxAgeMin)) || 60) * MIN && num(WXe.clouds) !== null) { inp.wolken = num(WXe.clouds); }
 // Vorausschau: OWM-Vorhersage und Gebaeudemodell des Waermefahrplans (Gate, coefActivate); Sonne/Wind nur bei aktivem Modell (sonst nicht in der Eingabe)
 var vsIn = null; try { vsIn = ENGINE.vorschau(G('OPT_weather'), G('OPT_plan'), G('OPT_plan_in'), at, now); } catch (e) { vsIn = null; }
 if (vsIn) { inp.vs = vsIn; }

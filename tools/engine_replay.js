@@ -1,7 +1,8 @@
 // Rueckwirkende Pruefung (Replay): spielt die echten Minutenprotokolle offline mit Fake-Uhr durch die Entscheidungsmaschine (tools/engine_core.js).
 // Nur lesen: quiet-YYYY-MM.csv (1 min; aeltere Stillstandszeilen 5 min), optimizer-v2-YYYY-MM.csv (5 min, Raeume + Raumvorschlag Phase 2).
-// Usage: node tools/engine_replay.js <Datenordner> [Ausgabeordner] [--sv1|--sv2|--sv3|--sv4] [--ohne-eigene] [--bis=YYYY-MM-DDTHH:MM]   (schreibt decisions-*.jsonl, scores-*.jsonl, events.csv, report.json in den Ausgabeordner)
+// Usage: node tools/engine_replay.js <Datenordner> [Ausgabeordner] [--sv1|--sv2|--sv3|--sv4] [--ohne-eigene] [--ohne-sonne] [--bis=YYYY-MM-DDTHH:MM]   (schreibt decisions-*.jsonl, scores-*.jsonl, events.csv, report.json in den Ausgabeordner)
 //        --ohne-eigene: kein Raum mit eigener Nachheizung (Verhalten bis Raumeinfluss v3/Quiet-Freigabe v3); --bis: nur Minuten bis zu diesem Zeitpunkt (Ortszeit)
+//        --ohne-sonne: kein Raum mit Sonnenfenster (Verhalten bis Raumeinfluss v4); PV aus energy-YYYY-MM.csv (5 min), Bewoelkung aus optimizer-v2 (Wetter hoechstens 60 min alt)
 //        --sv1 ... --sv4: mit den Bewertungsregeln v1 ... v4 nachrechnen (alte Punkte reproduzieren); Standard ist die aktuelle Version (ENGINE.SCORE_VER)
 // Annahmen fuer Werte, die das Protokoll nicht enthaelt, stehen in ASSUME (und im Bericht).
 process.env.TZ = process.env.TZ_SIM || 'Europe/Berlin';
@@ -26,7 +27,9 @@ const ASSUME = {
     // Gebaeudemodell: Gate zu, coefActivate aus (Sonne/Wind nicht verwendet), wie live; seit Modell v3 (15.10.2026) UA/Gewinne/T_innen wie der Waermefahrplan sie am 14.10. aus 08.–13.10.
     // gelernt haette (tools/modell_v2_replay.js: 153 W/K, 0,45 kW, 22,1 °C), tbal = Bilanzpunkt T_innen − Gewinne/UA; bis 14.10.: UA 0,22, tbal 15 (Heizgrenze, Modell v2)
     model: {n: 1, minDays: 10, gate: false, why: ['weniger als 10 Tage', 'PV-Tage zu gleichfoermig', 'Fehler nicht um 10 % besser'], aktiv: false, ua: 0.15, g: 0.45, ti: 22.1, tbal: 19.1, ver: 3},
-    eigeneHeizung: ['ki_oben']  // Raeume mit eigener Nachheizung (Standard des Generators seit 15.10.2026, Entscheidung 5); --ohne-eigene: keiner
+    eigeneHeizung: ['ki_oben'],  // Raeume mit eigener Nachheizung (Standard des Generators seit 15.10.2026, Entscheidung 5); --ohne-eigene: keiner
+    sonnenfenster: ['wohn'],     // Raeume mit Sonnenfenster (Standard seit Paket 2, 15.10.2026: Wohnzimmer, Suedwest); --ohne-sonne: keiner
+    pvMaxAgeMin: 10             // PV-Wert aus energy-*.csv (5 min) gilt hoechstens 10 min
 };
 const ROOMS = [['ki_oben', 'Kinderzimmer oben'], ['ki_unten', 'Kinderzimmer unten'], ['schlaf', 'Schlafzimmer'], ['wohn', 'Wohnzimmer']];
 
@@ -49,16 +52,18 @@ function readMulti(file) {                                                     /
 function curve(at) { if (at === null) { return null; } if (at <= ASSUME.curve[0]) { return ASSUME.curve[3]; } if (at >= ASSUME.curve[1]) { return ASSUME.curve[2]; } return ASSUME.curve[3] + (ASSUME.curve[2] - ASSUME.curve[3]) * (at - ASSUME.curve[0]) / (ASSUME.curve[1] - ASSUME.curve[0]); }
 function n(x) { if (x === undefined || x === null || x === '') { return null; } const v = Number(x); return isFinite(v) ? v : null; }
 
-function buildInputs(dataDir, month, model, eigen, bis) {
-    const EIG = Array.isArray(eigen) ? eigen : ASSUME.eigeneHeizung;
+function buildInputs(dataDir, month, model, eigen, bis, sonne) {
+    const EIG = Array.isArray(eigen) ? eigen : ASSUME.eigeneHeizung, SF = Array.isArray(sonne) ? sonne : ASSUME.sonnenfenster;
+    const EN = readMulti(path.join(dataDir, 'energy-' + month + '.csv'));
     const Q = readMulti(path.join(dataDir, 'quiet-' + month + '.csv'));
     const V = readMulti(path.join(dataDir, 'optimizer-v2-' + month + '.csv'));
     if (!Q.length) { throw new Error('keine Daten in ' + dataDir); }
     const MIN = 60000, t0 = Math.ceil(Q[0]._t / MIN) * MIN, t1 = Q[Q.length - 1]._t;
-    const out = []; let qi = 0, vi = -1;
+    const out = []; let qi = 0, vi = -1, ei = -1;
     for (let t = t0; t <= (bis ? Math.min(t1, bis) : t1); t += MIN) {
         while (qi + 1 < Q.length && Q[qi + 1]._t <= t) { qi++; }
         while (vi + 1 < V.length && V[vi + 1]._t <= t) { vi++; }
+        while (ei + 1 < EN.length && EN[ei + 1]._t <= t) { ei++; }
         const r = Q[qi]; if (r._t > t) { continue; }
         const v = vi >= 0 ? V[vi] : null, vAge = v ? (t - v._t) / MIN : null;
         const inp = {t: t, hpAge: (t - r._t) / MIN,
@@ -69,12 +74,15 @@ function buildInputs(dataDir, month, model, eigen, bis) {
             heaterI: n(r.heizstab_intern), heaterE: n(r.heizstab_extern), htrOnAT: ASSUME.htrOnAT,
             htrStartDelta: n(r.heizstab_start_delta) !== null ? n(r.heizstab_start_delta) : ASSUME.htrStartDelta, htrDelay: ASSUME.htrDelay,
             heatOffAT: ASSUME.heatOffAT, sollKurve: curve(n(r.aussen)), block: ASSUME.block, otherQ: null, otherShift: null, kzRad: n(r.kz_radiator_an), rooms: []};
+        const en = ei >= 0 ? EN[ei] : null;
+        if (en && (t - en._t) / MIN <= ASSUME.pvMaxAgeMin && n(en.pv_w) !== null) { inp.pv = n(en.pv_w); }
         if (v) {
+            if (n(v.wetter_bewoelkung) !== null && n(v.wetter_alter_min) !== null && n(v.wetter_alter_min) + vAge <= 60) { inp.wolken = n(v.wetter_bewoelkung); }
             ROOMS.forEach(([id, name]) => {
                 const mn = n(v[id + '_min']), mx = n(v[id + '_max']), ema = n(v[id + '_ema']), age = n(v[id + '_alter_min']);
                 if (mn === null || mx === null) { return; }
                 const ageNow = age === null ? null : age + vAge;
-                inp.rooms.push({id: id, name: name, t: ema, age: ageNow, min: mn, max: mx, active: true, valid: v[id + '_gueltig'] === '1' && ageNow !== null && ageNow <= ASSUME.maxAgeMin && ema !== null, eigeneHeizung: EIG.indexOf(id) >= 0});
+                inp.rooms.push({id: id, name: name, t: ema, age: ageNow, min: mn, max: mx, active: true, valid: v[id + '_gueltig'] === '1' && ageNow !== null && ageNow <= ASSUME.maxAgeMin && ema !== null, eigeneHeizung: EIG.indexOf(id) >= 0, sonnenfenster: SF.indexOf(id) >= 0});
             });
             const aw = n(v.aussen_wetter), p1 = n(v.prog_1h), p3 = n(v.prog_3h), p6 = n(v.prog_6h), wa = n(v.wetter_alter_min);
             if (aw !== null && p1 !== null && p3 !== null && p6 !== null) {
@@ -93,7 +101,7 @@ function buildInputs(dataDir, month, model, eigen, bis) {
 function replay(dataDir, opts) {
     opts = opts || {};
     const month = opts.month || '2026-10';
-    const inputs = buildInputs(dataDir, month, opts.model, opts.eigen, opts.bis);
+    const inputs = buildInputs(dataDir, month, opts.model, opts.eigen, opts.bis, opts.sonne);
     const cfg = ENGINE.mergeCfg(opts.cfg || {});
     let S = null;
     const recs = [], scores = [], events = [], props = [], perMin = [];
@@ -161,6 +169,7 @@ module.exports.markdown = markdown;
 if (require.main === module) {
     const svA = process.argv.map(a => /^--sv([1234])$/.exec(a)).filter(Boolean)[0], ropt = svA ? {cfg: {sv: Number(svA[1])}} : {};
     if (process.argv.indexOf('--ohne-eigene') > 0) { ropt.eigen = []; }
+    if (process.argv.indexOf('--ohne-sonne') > 0) { ropt.sonne = []; }
     const bisA = process.argv.map(a => /^--bis=(\d{4})-(\d\d)-(\d\d)T(\d\d):(\d\d)$/.exec(a)).filter(Boolean)[0]; if (bisA) { ropt.bis = new Date(+bisA[1], +bisA[2] - 1, +bisA[3], +bisA[4], +bisA[5]).getTime(); }
     if (process.argv.indexOf('--md') > 0) { console.log(markdown(replay(process.argv[2], ropt))); process.exit(0); }
     const dir = process.argv[2], out = process.argv[3] && process.argv[3].indexOf('--') !== 0 ? process.argv[3] : null;
