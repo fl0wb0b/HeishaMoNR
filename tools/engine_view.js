@@ -216,7 +216,7 @@ var ENGVIEW = (function (E) {
     function raumKacheln(S, now, cfg) {
         S = S || {}; var R3 = S.raum3 || {}, LA = R3.lage || null, H = S.hw || {}, out = [], c = (cfg.rules || E.defaults().rules).raum_offset || E.defaults().rules.raum_offset;
         var dirT = LA && have(LA.dir) ? (LA.dir > 0 ? 'Bedarf +1 K' : (LA.dir < 0 ? 'Überschuss −1 K' : 'im Band')) : '–';
-        out.push({k: 'Raumlage (v3)', v: dirT, vc: LA && LA.dir ? 'warn' : (LA && LA.dir === 0 ? 'ok' : ''), s: LA && have(LA.reserve) ? 'Reserve ' + E.de(LA.reserve, 1) + ' K · Mitte ' + E.sg(LA.mitte, 1) + ' K' : '',
+        out.push({k: 'Raumlage (v4)', v: dirT, vc: LA && LA.dir ? 'warn' : (LA && LA.dir === 0 ? 'ok' : ''), s: LA && have(LA.reserve) ? 'Reserve ' + E.de(LA.reserve, 1) + ' K · Mitte ' + E.sg(LA.mitte, 1) + ' K' : '',
                   title: (LA ? LA.code : 'noch keine Raumlage') + ' · Entscheidung direkt aus den Räumen (Band, geglätteter Wert, Verlauf, Lüften); Haltezeit ' + c.stabilMin + ' min'});
         var hv = H.verteilung || {};
         out.push({k: 'Wärmeverteilung', v: hv.an ? 'Hinweis' : 'ok', vc: hv.an ? 'warn' : 'ok', s: (hv.n || 0) + (hv.n === 1 ? ' Episode' : ' Episoden') + (hv.seit ? ' · zuletzt ' + dm(hv.seit) : ''),

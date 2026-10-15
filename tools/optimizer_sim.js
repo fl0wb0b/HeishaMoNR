@@ -310,6 +310,20 @@ check('Speichern haelt nur die Eingabe fest: keine Standardwerte (plan, energy, 
 setv('room:ki_oben:weight', 2); setv('control.holdMin', 50);
 check('weitere Eingaben ergaenzen die Datei (anderer Raum, Gruppenwert), frueheres bleibt', cf().rooms.find(x => x.id === 'schlaf').min === 18 && cf().rooms.find(x => x.id === 'ki_oben').weight === 2 && cf().control.holdMin === 50 && !('plan' in cf()), JSON.stringify(cf()));
 check('nach einem Neustart gelten gespeicherte Eingaben UND neue Standardwerte (plan bleibt frisch)', (() => { delete gstore.OPT_cfg; run('opt_defaults', {}); return gstore.OPT_cfg.rooms[2].min === 18 && gstore.OPT_cfg.rooms[0].weight === 2 && gstore.OPT_cfg.control.holdMin === 50 && gstore.OPT_cfg.plan.copMax === 8; })(), '');
+// ---------- eigene Nachheizung je Raum (Entscheidung 5, 15.10.2026)
+{ const ko = () => gstore.OPT_cfg.rooms.find(r => r.id === 'ki_oben'), keepCfg = files['/data/optimizer/config.json'].data;
+  check('eigene Nachheizung: Standard nur Kinderzimmer oben (Generator), die anderen Raeume nicht; das Feld steht in OPT_cfg', ko().eigeneHeizung === true && gstore.OPT_cfg.rooms.filter(r => r.id !== 'ki_oben').every(r => r.eigeneHeizung === false), JSON.stringify(gstore.OPT_cfg.rooms.map(r => [r.id, r.eigeneHeizung])));
+  files['/data/optimizer/config.json'].data = JSON.stringify({rooms: [{id: 'ki_oben', min: 22.5, max: 24, weight: 1.3}], plan: {coefActivate: 1}}); delete gstore.OPT_cfg; run('opt_defaults', {});
+  const a = ko().eigeneHeizung === true && ko().max === 24 && ko().weight === 1.3;
+  const rs = setv('room:ki_oben:eigeneHeizung', false), b = ko().eigeneHeizung === false && cf().rooms.find(x => x.id === 'ki_oben').eigeneHeizung === false && cf().rooms.find(x => x.id === 'ki_oben').max === 24 && Array.isArray(rs) && rs[1].payload === 'auswerten';
+  delete gstore.OPT_cfg; run('opt_defaults', {}); const c = ko().eigeneHeizung === false;
+  setv('room:ki_oben:eigeneHeizung', true); const d = ko().eigeneHeizung === true && cf().rooms.find(x => x.id === 'ki_oben').eigeneHeizung === true;
+  check('eigene Nachheizung: config.json ohne das Feld (wie live) laesst den Standard stehen; der Schalter der Karte setzt es (room:ki_oben:eigeneHeizung), speichert nur dieses Feld und gilt nach einem Neustart', a && b && c && d, JSON.stringify([a, b, c, d]));
+  files['/data/optimizer/config.json'].data = keepCfg; delete gstore.OPT_cfg; run('opt_defaults', {});
+  const tplR = ALLNODES.find(n => n.id === 'opt_t_rooms').format;
+  s = scene({ki_oben: [21.9], ki_unten: [23.0], schlaf: [20.0]});
+  check('Karte "Räume": Spalte "eigene Heizung" (Tooltip "Eigene Nachheizung: …") mit Schalter (room:<id>:eigeneHeizung); Kinderzimmer oben mit Haken, die anderen ohne; "Raum unter Minimum" nennt die eigene Nachheizung',
+        /<th title="Eigene Nachheizung: [^"]+">eigene Heizung<\/th>/.test(tplR) && tplR.includes("ng-model=\"r.eigen\" ng-change=\"set(r, 'eigeneHeizung', r.eigen)\"") && rowOf(s, 'ki_oben').eigen === true && rowOf(s, 'schlaf').eigen === false && /^Kinderzimmer oben · 0,6 K unter Minimum · .* · eigene Nachheizung$/.test(s.sum.heat), s.sum.heat); }
 const rejectedCases = [
   ['Minimum ueber Maximum (21,8 > 21)', 'room:schlaf:min', 21.8], ['Band schmaler als 0,5 K (max 18,2 bei min 18)', 'room:schlaf:max', 18.2],
   ['ausserhalb des Bereichs (min 40)', 'room:schlaf:min', 40], ['Gewicht 0', 'room:schlaf:weight', 0], ['Datenalter 2 min', 'room:schlaf:maxAgeMin', 2],
@@ -1300,8 +1314,8 @@ const sumF = (P, k, n) => P.slots.slice(0, n || 104).reduce((a, x) => a + x[k], 
 // ---- 1) Vorschau (Review-Paket 13.10.2026): Waermebedarf, COP aus der Messung und Strom je Slot; keine Verteilung nach Tarif, keine Empfehlungen
 pworld({wide: true});
 let r = step(2), P = planNow();
-check('Vorschau: 104 Slots (26 h), Status ok, Zeitraster 15 min, Version 12', P.status === 'ok' && P.ver === 12 && P.slots.length === 104 && P.slots[1].t - P.slots[0].t === 900000 && P.slots[0].t === T0, P.status + ' ' + P.why);
-check('Vorschau: Wärmebedarf aus Außentemperatur (Heizgrenze 15 °C, Standard-Gebäudewert) plausibel (30-70 kWh/Tag bei ca. 3 °C)', sumF(P, 'bedarf', 96) > 30 && sumF(P, 'bedarf', 96) < 70, sumF(P, 'bedarf', 96).toFixed(1));
+check('Vorschau: 104 Slots (26 h), Status ok, Zeitraster 15 min, Version 13', P.status === 'ok' && P.ver === 13 && P.slots.length === 104 && P.slots[1].t - P.slots[0].t === 900000 && P.slots[0].t === T0, P.status + ' ' + P.why);
+check('Vorschau: Wärmebedarf aus dem Gebäudemodell v3 mit Vorwert (UA 0,15 kW/K, Gewinne 0,3 kW, T_innen aus den Räumen 22 °C) plausibel (30-70 kWh/Tag bei ca. 3 °C)', sumF(P, 'bedarf', 96) > 30 && sumF(P, 'bedarf', 96) < 70 && P.model.ua === 0.15 && P.model.g === 0.3 && Math.abs(P.model.ti - 22) < 1e-9, sumF(P, 'bedarf', 96).toFixed(1));
 check('Review-Paket: keine Verteilung, keine Empfehlungen, keine Preise/Kosten in den Slots (kein p, rec, off, quiet, price, cost, Reserve)', P.slots.every(x => ['p', 'b', 'rec', 'off', 'quiet', 'price', 'cost', 'resBack', 'resFwd', 'att'].every(k => !(k in x))) && !('res' in P) && !('cap' in P), Object.keys(P.slots[0]).join(','));
 check('Vorschau: Strom je Slot = Waermebedarf ÷ COP, Summe der 24 h = Zeile/Kachel "Strom Wärmepumpe"', P.slots.every(x => Math.abs(x.el - x.bedarf / x.cop) < 1e-12) && Math.abs(P.elModel - sumF(P, 'el', 96)) < 1e-9, P.elModel.toFixed(3));
 const nmv = x => parseFloat(String(x).replace(',', '.')), ro = r[1][0].payload, rowsT = Object.fromEntries(ro.rows.map(x => [x[0], x[1]]));
@@ -1367,7 +1381,7 @@ check('Vorschau: mit VRM-Wert 0,03 kWh steht dieser neben dem Modell, beides im 
 pworld({wide: true, quiet: 3}); step(2);
 fstore.plan.plan = {s0: fstore.plan.planSlot, t: NOW, ver: 10, status: 'ok', slots: [{t: 0, b: 1, p: 1, rec: 1, cost: 5}], res: {state: 'alle im Band'}, cap: {kw: 3.3}};      // Plan der Version 10 (mit Verteilung) im Speicher
 let errUpd = null, ro3; try { ro3 = step(1); } catch (e) { errUpd = e.message; }
-check('Update-Sicherheit: ein Plan der Version 10 (Verteilung nach Tarif) im Speicher wirft keinen Fehler, sondern wird sofort als Vorschau (Version 12) neu berechnet', errUpd === null && planNow().ver === 12 && !('res' in planNow()) && planNow().maxDemand && ro3[0][0].payload.plan.length === 24, errUpd || '');
+check('Update-Sicherheit: ein Plan der Version 10 (Verteilung nach Tarif) im Speicher wirft keinen Fehler, sondern wird sofort als Vorschau (Version 13) neu berechnet', errUpd === null && planNow().ver === 13 && !('res' in planNow()) && planNow().maxDemand && ro3[0][0].payload.plan.length === 24, errUpd || '');
 const kpiN = ro3[0][0].payload.kpi.map(t => t.k).join('|');
 check('Kacheln: Stand (Vorschau, keine Empfehlung), Wärmebedarf, Strom, COP (Modell), Höchster Bedarf, Außen 24 h, PV-Prognose 24 h; keine Ersparnis/Reserve/Fenster', kpiN === 'Stand|Wärmebedarf 24 h|Strom Wärmepumpe|COP (Modell)|Höchster Bedarf|Außen 24 h|PV-Prognose 24 h' && ro3[0][0].payload.kpi[0].s === 'Vorschau, keine Empfehlung' && /^\d,\d$/.test(ro3[0][0].payload.kpi[3].v), kpiN);
 
@@ -1396,8 +1410,8 @@ const far = P.slots[88], near = P.slots[2], refAt = P.sum.atRef;
 check('Vertrauen: weit entfernte Slots werden zum Tagesmittel gezogen (schlechte Prognose hat weniger Einfluss), nahe kaum', Math.abs(far.at - refAt) <= Math.abs(far.atRaw - refAt) * (far.cA + 0.001) + 1e-9 && far.cA < near.cA && near.cA > 0.9, far.cA.toFixed(2) + ' / ' + near.cA.toFixed(2));
 
 // ---- 5) Warmer Tag: kaum Heizbedarf -> Vorschau mit Hinweis
-pworld({wide: true, atBase: 18}); r = step(2); P = planNow();
-check('Warmer Tag: kaum Heizbedarf -> Vorschau ok, Hinweis "kaum Heizbedarf" in der Statuszeile, Bedarf und Strom fast 0', P.status === 'ok' && P.enough === false && /kaum Heizbedarf$/.test(r[1][0].payload.rows[0][1]) && P.elModel < 1, r[1][0].payload.rows[0][1]);
+pworld({wide: true, atBase: 22}); r = step(2); P = planNow();
+check('Warmer Tag (Prognose 19–25 °C, Bilanzpunkt 20 °C): kaum Heizbedarf -> Vorschau ok, Hinweis "kaum Heizbedarf" in der Statuszeile, Bedarf und Strom fast 0', P.status === 'ok' && P.enough === false && /kaum Heizbedarf$/.test(r[1][0].payload.rows[0][1]) && P.elModel < 1, r[1][0].payload.rows[0][1]);
 
 // ---- 7) Status ohne Daten: kein Plan, keine erfundenen Werte; sobald die Daten da sind, geht es weiter
 pworld({wide: true, noWeather: true}); r = step(1); P = planNow();
@@ -1408,14 +1422,19 @@ check('Wetter kommt: der Plan wird sofort (nicht erst im naechsten Slot) berechn
 pworld({wide: true}); delete gstore.Z1_Heat_Curve_Target_Low_Temp; step(1); P = planNow();
 check('Ohne Heizkurve: Status "keine Heizkurve"', P.status === 'keine Heizkurve', P.status);
 
-// ---- 8) Lernen des Waermebedarfs aus Tagesdaten (Heizgradstunden gegen gelieferte Waerme), langsam
+// ---- 8) Lernen des Waermebedarfs aus Tagesdaten (Gebaeudemodell v3: UA, Gewinne und T_innen aus den Vortagen, erst ab 2 Lerntagen, langsame Anpassung je Tag)
 pworld({wide: true, atBase: 5, running: true, hp: 2500, atNow: 5});
 O.hp = 2500; step(1440 + 5);
 let P8 = planNow();
-check('Lernen: nach einem Tag (240 Kh, 60 kWh gelieferte Waerme) wird der Bedarf nur teilweise uebernommen: (0,22 x 300 + 60) / (300 + 240) = 0,233 kW/K', fstore.plan.learn.days.length === 1 && Math.abs(P8.model.ua - 0.2333) < 0.004 && P8.model.uaLearned, JSON.stringify(fstore.plan.learn.days) + ' ua ' + P8.model.ua.toFixed(4));
+check('Lernen: nach einem Tag (17 K gegen T_innen 22 °C, 60 kWh gelieferte Waerme) gilt noch der Vorwert (UA 0,15 kW/K, Gewinne 0,3 kW; gelernt erst ab 2 Lerntagen), T_innen 22 °C aus dem Vortag', fstore.plan.learn.days.length === 1 && P8.model.ua === 0.15 && P8.model.g === 0.3 && !P8.model.uaLearned && Math.abs(P8.model.ti - 22) < 1e-9 && Math.abs(fstore.plan.learn.days[0][21] - 408) < 1 && fstore.plan.learn.days[0][22] === 22, JSON.stringify(fstore.plan.learn.days) + ' ua ' + P8.model.ua.toFixed(4));
+
 check('Lernen: Tageswerte werden gesichert (plan-state.json), ein warmer Tag (zu wenig Heizgradstunden) zaehlt nicht', files['/data/optimizer/plan-state.json'] && JSON.parse(files['/data/optimizer/plan-state.json'].data).learn.days.length === 1, '');
 const lastPlanFile = JSON.parse(files['/data/optimizer/plan-state.json'].data);
 check('Neustart: Lernwerte und Schnappschuesse werden aus der Datei geladen, die laufende Stunde bekommt keinen zweiten Schnappschuss', (() => { const keep = JSON.stringify(lastPlanFile.learn), nS = lastPlanFile.snaps.length; Object.keys(fstore).forEach(k => delete fstore[k]); const rr = step(2); return JSON.stringify(fstore.plan.learn) === keep && fstore.plan.snaps.length >= 1 && fstore.plan.snaps.length <= nS + 1 && !rr.some(o => o[3] && new RealDate(NOW).getMinutes() > 3); })(), '');
+{ O.hp = 2500; step(1440); const P9 = planNow(), M9 = fstore.plan.learn.mdl, cf9 = fstore.plan.learn.coef;
+  const lim = (a, b, m) => a + Math.max(-m, Math.min(m, b - a));
+  check('Lernen: nach dem zweiten Tag ist das Grundmodell gelernt (Ziel UA ' + cf9.ua.toFixed(3) + ', Gewinne ' + cf9.g.toFixed(3) + '); der Plan bewegt sich langsam darauf zu: UA hoechstens 15 %, Gewinne hoechstens 0,15 kW je Tag (Stand ' + M9.ua.toFixed(4) + ' / ' + M9.g.toFixed(3) + ')',
+        fstore.plan.learn.days.length === 2 && cf9.gelernt === true && Math.abs(M9.ua - lim(0.15, cf9.ua, 0.15 * 0.15)) < 1e-12 && Math.abs(M9.g - lim(0.3, cf9.g, 0.15)) < 1e-12 && P9.model.ua === M9.ua && P9.model.uaLearned === true && M9.gebremst === (Math.abs(cf9.ua - 0.15) > 0.0225 || Math.abs(cf9.g - 0.3) > 0.15), JSON.stringify({M9, ua: cf9.ua, g: cf9.g})); }
 
 // ---- 9) Schnappschuesse und Vergleich: nur Wissen zum Planungszeitpunkt (kein Look-ahead), Vorhersage jede Stunde leicht anders, damit Vermischen auffaellt
 pworld({wide: true, issueDrift: 0.05, atNow: undefined}); 
@@ -1428,7 +1447,7 @@ outsAll.forEach(o => {
   if (o[2]) { evRows.push(o[2].payload); }
 });
 const snapKeys = Object.keys(snaps).map(Number).sort((a, b) => a - b);
-check('Schnappschuss: genau einer je Stunde (' + snapKeys.length + ' in 27 h), mit Spaltenkopf (Version 12: Strom statt Preis/Plan/Kosten/Empfehlung), Auflösung der Quellen, COP-Quelle und Modellparametern', snapKeys.length >= 27 && snapKeys.length <= 29 && snaps[snapKeys[0]].cols.join() === 't,at,rh,cop,pv,bedarf,strom,defrost,conf_at,conf_pv,taupunkt,wind,wolken,at_korr,sonne_kwh,solar_kand_kwh,wind_kand_kwh,bedarf_basis,bedarf_kand' && snaps[snapKeys[0]].meta.plan_ver === 12 && snaps[snapKeys[0]].meta.cop_korr_w === 80 && snaps[snapKeys[0]].meta.res.pv_min === 60 && !('price_min' in snaps[snapKeys[0]].meta.res) && !('sav_ct' in snaps[snapKeys[0]].meta) && snaps[snapKeys[0]].meta.cop_quelle === 'Carnot' && snaps[snapKeys[0]].meta.model.eta > 0, snapKeys.length);
+check('Schnappschuss: genau einer je Stunde (' + snapKeys.length + ' in 27 h), mit Spaltenkopf (Version 13: Strom statt Preis/Plan/Kosten/Empfehlung; Gebaeudemodell v3 mit Modellversion), Auflösung der Quellen, COP-Quelle und Modellparametern', snapKeys.length >= 27 && snapKeys.length <= 29 && snaps[snapKeys[0]].cols.join() === 't,at,rh,cop,pv,bedarf,strom,defrost,conf_at,conf_pv,taupunkt,wind,wolken,at_korr,sonne_kwh,solar_kand_kwh,wind_kand_kwh,bedarf_basis,bedarf_kand' && snaps[snapKeys[0]].meta.plan_ver === 13 && snaps[snapKeys[0]].meta.modell_ver === 3 && snaps[snapKeys[0]].meta.model.ua === 0.15 && snaps[snapKeys[0]].meta.model.g === 0.3 && snaps[snapKeys[0]].meta.cop_korr_w === 80 && snaps[snapKeys[0]].meta.res.pv_min === 60 && !('price_min' in snaps[snapKeys[0]].meta.res) && !('sav_ct' in snaps[snapKeys[0]].meta) && snaps[snapKeys[0]].meta.cop_quelle === 'Carnot' && snaps[snapKeys[0]].meta.model.eta > 0, snapKeys.length);
 const cols = snaps[snapKeys[0]].cols, ci = n => cols.indexOf(n);
 const distinct = new Set(snapKeys.map(k => { const sn = snaps[k], i = sn.slots.findIndex(x => x[0] * 1000 === T0 + 26 * HH); return i >= 0 ? sn.slots[i][ci('at')] : null; }).filter(v => v !== null));
 check('Schnappschuesse enthalten je Planungszeitpunkt eine eigene Prognose fuer denselben Zielzeitpunkt (Test ist aussagekraeftig)', distinct.size >= 3, [...distinct].join(','));
@@ -1508,83 +1527,107 @@ check('Dateien: Ist, Vergleich, Schnappschuesse und Zustand unter /data/optimize
   pworld({wide: true, windNow: 4.5, cloudsNow: 80, owmTemp: 7, atNow: 6, noPrice: true}); const o4 = step(26, () => { gstore.OPT_weather.ts = NOW - 61 * 60000; }).filter(o => o[1]).map(o => o[1].payload), r4 = o4.length ? o4[0].split('\n').filter(Boolean).pop().split(',') : [];
   check('veraltete Wetterwerte (> weather.maxAgeMin) und nicht frische PV: Wind, Bewoelkung, OWM-Temperatur bleiben leer, PV der Tagessumme wird nicht erhoeht', o4.length > 0 && r4.slice(-9, -6).join() === ',,' && fstore.plan.day.s === 0 && fstore.plan.day.sN === 0 && fstore.plan.day.wN === 0, r4.slice(-9).join('|') + ' s=' + fstore.plan.day.s);
   // Tagesaggregat ueber einen vollen Tag: kh 240 (10 K x 24 h), PV 2000 W x 24 h = 48 kWh, Wind 6 m/s: wk 1440, OWM 7 °C: khW 192, wkW 1152; ueber der Totzone (4 m/s): wkT 480, wkWT 384
+  // Modell v3 (T_innen 22 °C aus den Raeumen 23/23/20): khI 17 K x 24 h = 408, wkI 17 x 2 x 24 = 816, khIW 15 x 24 = 360, wkIW 15 x 2 x 24 = 720
   pworld({wide: true, atBase: 5, running: true, hp: 2500, atNow: 5, pvNow: 2000, windNow: 6, owmTemp: 7}); O.hp = 2500; step(1440 + 5);
   const dayE = fstore.plan.learn.days[0];
-  check('Tagesaggregat: Eintrag mit 21 Werten [d0, hdd, q, n, s, wk, khW, wkW, dtr, sN, wN, owN, wwN, wkT, wkWT, Gate, Warmwasser, Abtauen, Luecke, Eingriff, unplausibel]; ein voller Tag ergibt kh ~240, PV ~48 kWh, wk ~1440, khW ~192, wkW ~1152, dtr 0 (konstante Raeume); Wind ueber 4 m/s: wkT ~480, wkWT ~384; Lern-Gate 0 (lernt mit)', fstore.plan.learn.days.length === 1 && dayE.length === 21 && dayE[15] === 0 && dayE.slice(16).every(v => v === 0) && Math.abs(dayE[1] - 240) < 1 && Math.abs(dayE[4] - 48) < 0.3 && Math.abs(dayE[5] - 1440) < 6 && Math.abs(dayE[6] - 192) < 1 && Math.abs(dayE[7] - 1152) < 5 && dayE[8] === 0 && dayE[9] >= 1430 && dayE[10] >= 1430 && dayE[11] >= 1430 && dayE[12] >= 1430 && Math.abs(dayE[13] - 480) < 2 && Math.abs(dayE[14] - 384) < 2, JSON.stringify(dayE));
-  check('Tagesaggregat: die ersten vier Werte [d0, hdd, q, n] bleiben wie bisher (Plan-UA liest nur diese)', Math.abs(planNow().model.ua - 0.2333) < 0.004 && fstore.plan.learn.days[0][2] > 59 && fstore.plan.learn.days[0][2] < 61, 'ua ' + planNow().model.ua.toFixed(4));
+  check('Tagesaggregat: Eintrag mit 26 Werten [d0, hdd, q, n, s, wk, khW, wkW, dtr, sN, wN, owN, wwN, wkT, wkWT, Gate, Warmwasser, Abtauen, Luecke, Eingriff, unplausibel, khI, T_innen, wkI, khIW, wkIW]; ein voller Tag ergibt kh ~240, PV ~48 kWh, wk ~1440, khW ~192, wkW ~1152, dtr 0 (konstante Raeume); Wind ueber 4 m/s: wkT ~480, wkWT ~384; Lern-Gate 0 (lernt mit); Modell v3: khI ~408, T_innen 22, wkI ~816, khIW ~360, wkIW ~720', fstore.plan.learn.days.length === 1 && dayE.length === 26 && dayE[15] === 0 && dayE.slice(16, 21).every(v => v === 0) && Math.abs(dayE[21] - 408) < 1 && dayE[22] === 22 && Math.abs(dayE[23] - 816) < 3 && Math.abs(dayE[24] - 360) < 1 && Math.abs(dayE[25] - 720) < 3 && Math.abs(dayE[1] - 240) < 1 && Math.abs(dayE[4] - 48) < 0.3 && Math.abs(dayE[5] - 1440) < 6 && Math.abs(dayE[6] - 192) < 1 && Math.abs(dayE[7] - 1152) < 5 && dayE[8] === 0 && dayE[9] >= 1430 && dayE[10] >= 1430 && dayE[11] >= 1430 && dayE[12] >= 1430 && Math.abs(dayE[13] - 480) < 2 && Math.abs(dayE[14] - 384) < 2, JSON.stringify(dayE));
+  check('Tagesaggregat: die ersten vier Werte [d0, hdd, q, n] bleiben wie bisher; der Plan nutzt nach einem Lerntag noch den Vorwert', planNow().model.ua === 0.15 && fstore.plan.learn.days[0][2] > 59 && fstore.plan.learn.days[0][2] < 61, 'ua ' + planNow().model.ua.toFixed(4));
   const fileLearn = JSON.parse(files['/data/optimizer/plan-state.json'].data).learn.days[0];
-  check('plan-state.json: der 21er-Eintrag wird gesichert und ueberlebt einen Neustart (UA unveraendert)', fileLearn.length === 21 && (() => { const keep = JSON.stringify(fileLearn); delete fstore.plan; step(1); return JSON.stringify(fstore.plan.learn.days[0]) === keep && Math.abs(planNow().model.ua - 0.2333) < 0.004; })(), JSON.stringify(fileLearn));
+  check('plan-state.json: der 26er-Eintrag und der Modellstand werden gesichert und ueberleben einen Neustart (UA unveraendert)', fileLearn.length === 26 && (() => { const keep = JSON.stringify(fileLearn), ua0 = planNow().model.ua; delete fstore.plan; step(1); return JSON.stringify(fstore.plan.learn.days[0]) === keep && planNow().model.ua === ua0 && !!fstore.plan.learn.mdl; })(), JSON.stringify(fileLearn));
   // Deploy ohne Neustart: Zustand eines aelteren Stands (ohne neue Zaehler, Plan-Version 7, Tag mit 4er-Eintrag) -> kein NaN, Plan neu gerechnet, Tag schliesst mit null fuer die neuen Summen
   pworld({wide: true, atBase: 5, running: true, hp: 2500, atNow: 5, pvNow: 2000, windNow: 4, owmTemp: 7}); O.hp = 2500; step(5);
   ['windS', 'windN', 'clS', 'clN', 'owS', 'owN', 'toS', 'toN', 'tcS', 'tcN'].forEach(k => { delete fstore.plan.acc[k]; });
-  ['s', 'sN', 'wk', 'wN', 'khW', 'owN', 'wkW', 'wwN', 'wkT', 'wTN', 'wkWT', 'wwTN', 'lgN', 'dhwM', 'defM', 'gapM', 'engM', 'unpM', 'r0', 'rl'].forEach(k => { delete fstore.plan.day[k]; }); fstore.plan.day.n = 700; fstore.plan.day.hdd = 116; fstore.plan.plan.ver = 7; fstore.plan.learn.days = [[1, 100, 25, 1440]];
+  ['s', 'sN', 'wk', 'wN', 'khW', 'owN', 'wkW', 'wwN', 'wkT', 'wTN', 'wkWT', 'wwTN', 'lgN', 'dhwM', 'defM', 'gapM', 'engM', 'unpM', 'r0', 'rl', 'tiS', 'tiN', 'khI', 'kiN', 'khIW', 'kiwN', 'wkI', 'wiN', 'wkIW', 'wiwN'].forEach(k => { delete fstore.plan.day[k]; }); fstore.plan.day.n = 700; fstore.plan.day.hdd = 116; fstore.plan.plan.ver = 7; fstore.plan.learn.days = [[1, 100, 25, 1440]];
   step(3);
-  check('Deploy-Sicherheit: Zustand ohne neue Zaehler und Plan-Version 7 -> keine NaN in den Zaehlern, Vorschau wird neu gerechnet (Version 12), alter 4er-Eintrag bleibt unveraendert', ['windS', 'windN', 'owS', 'toS', 'tcS'].every(k => Number.isFinite(fstore.plan.acc[k])) && Number.isFinite(fstore.plan.day.s) && Number.isFinite(fstore.plan.day.wk) && planNow().ver === 12 && JSON.stringify(fstore.plan.learn.days[0]) === JSON.stringify([1, 100, 25, 1440]), JSON.stringify({ver: planNow().ver, acc: fstore.plan.acc.windS, day: fstore.plan.day.s}));
+  check('Deploy-Sicherheit: Zustand ohne neue Zaehler und Plan-Version 7 -> keine NaN in den Zaehlern, Vorschau wird neu gerechnet (Version 13), alter 4er-Eintrag bleibt unveraendert', ['windS', 'windN', 'owS', 'toS', 'tcS'].every(k => Number.isFinite(fstore.plan.acc[k])) && Number.isFinite(fstore.plan.day.s) && Number.isFinite(fstore.plan.day.wk) && Number.isFinite(fstore.plan.day.khI) && planNow().ver === 13 && JSON.stringify(fstore.plan.learn.days[0]) === JSON.stringify([1, 100, 25, 1440]), JSON.stringify({ver: planNow().ver, acc: fstore.plan.acc.windS, day: fstore.plan.day.s}));
   step(1440 - 8);
   const dayD = fstore.plan.learn.days[1];
-  check('Deploy-Sicherheit: ein Tag, der vor dem Deploy begann (nur ein Teil der Minuten mit neuen Summen), schliesst mit null fuer s/wk/khW/wkW und die Totzonen-Summen wkT/wkWT, hdd/q/n bleiben gueltig', fstore.plan.learn.days.length === 2 && dayD.length === 21 && dayD[4] === null && dayD[5] === null && dayD[6] === null && dayD[7] === null && dayD[13] === null && dayD[14] === null && dayD[15] === null && dayD[1] > 100 && dayD[3] >= 1200, JSON.stringify(dayD));
+  check('Deploy-Sicherheit: ein Tag, der vor dem Deploy begann (nur ein Teil der Minuten mit neuen Summen), schliesst mit null fuer s/wk/khW/wkW, die Totzonen-Summen wkT/wkWT und die Summen des Modells v3 (khI, T_innen, wkI), hdd/q/n bleiben gueltig', fstore.plan.learn.days.length === 2 && dayD.length === 26 && dayD[21] === null && dayD[22] === null && dayD[23] === null && dayD[4] === null && dayD[5] === null && dayD[6] === null && dayD[7] === null && dayD[13] === null && dayD[14] === null && dayD[15] === null && dayD[1] > 100 && dayD[3] >= 1200, JSON.stringify(dayD));
   // Sicherheit: Ausgaenge unveraendert
   const planNode = JSON.parse(fs.readFileSync(flowsFile, 'utf8')).find(n => n.id === 'opt_plan');
   check('Sicherheit (Flow-Datei): opt_plan hat dieselben 5 Ausgaenge (Karten Plan + Stundenuebersicht, Ist, Vergleich, Schnappschuss, frei), kein node.send im Code', JSON.stringify(planNode.wires) === JSON.stringify([['opt_t_plan', 'opt_t_plan_tab'], ['opt_f_pact'], ['opt_f_peval'], ['opt_f_psnap'], []]) && !/node\.send\s*\(/.test(planNode.func), JSON.stringify(planNode.wires));
 }
 
-// ---- S2) Fahrplan v2: Rueckrechnung und Regression (nur berechnen und anzeigen)
+// ---- S2) Fahrplan v2 / Gebaeudemodell v3 (Entscheidung 2, 15.10.2026): Rueckrechnung und Regression UA*(T_innen - T_aussen) - Gewinne (+ Sonne, Wind)
 {
   const pureSrc = /\/\/ == REIN-BEGIN ==[\s\S]*?\/\/ == REIN-END ==/.exec(F['opt_plan'])[0];
-  const PU = new Function(pureSrc + '\n; return {parseCsv, daysFromRows, dayFromArr, gauss, prepRows, ridgeFit, ridgeCore, looMae, ratioUa, looRatio, gateCheck, fitModel, predict, d0Of};')();
-  const O0 = {ua0: 0.22, sUA: 0.10, sW: 0.01, sS: 0.10, useW: false, useS: false, robust: false};
+  const PU = new Function(pureSrc + '\n; return {parseCsv, daysFromRows, dayFromArr, gauss, prepRows, ridgeFit, ridgeCore, looMae, gateCheck, fitModel, predict, d0Of, modellSchritt, tiZiel, tgProfil, mPrior};')();
+  const O0 = {ua0: 0.15, g0: 0.3, priorTage: 2, priorX: [10, 16], uaLo: 0.07, uaHi: 0.35, gLo: 0, gHi: 1.2, sW: 0.01, sS: 0.10, useW: false, useS: false, robust: false};
   const mkO = p => Object.assign({}, O0, p || {});
-  // Handwert und Plan-Schaetzer
-  const r1 = [{y: 30, x1: 100, x2: 0, x3: 0}];
-  check('Regression, Handwert: 1 Tag (100 K·h, 30 kWh): Ridge-UA = (1111,1·0,3 + 100·0,22)/1211,1 = 0,293394 (±1e-6); der bisherige Plan-Schaetzer gibt am selben Tag 0,2400', Math.abs(PU.ridgeFit(r1, mkO()).ua - 0.293394) < 1e-6 && Math.abs(PU.ratioUa(r1, 0.22, 300) - 0.24) < 1e-12, PU.ridgeFit(r1, mkO()).ua.toFixed(6));
-  // Zufallsgenerator mit festem Samen
+  const row = (X, y, o) => Object.assign({y: y, x1: 24 * X, x2: 0, x3: 0, x4: 24}, o || {});        // ein voller Tag mit mittlerem T_innen - T_aussen = X K
+  // Handwert: gewichtete Regression mit dem Vorwert als 2 Pseudo-Tagen bei 10 und 16 K (wie tools/plan_algo.js lerneModell)
+  const wReg = pts => { const sw = pts.reduce((a, p) => a + p[2], 0), mx = pts.reduce((a, p) => a + p[2] * p[0], 0) / sw, my = pts.reduce((a, p) => a + p[2] * p[1], 0) / sw; let sxy = 0, sxx = 0; pts.forEach(p => { sxy += p[2] * (p[0] - mx) * (p[1] - my); sxx += p[2] * (p[0] - mx) ** 2; }); const ua = sxy / sxx; return {ua: ua, g: ua * mx - my}; };
+  const prior = [[10, 0.15 * 10 - 0.3, 2], [16, 0.15 * 16 - 0.3, 2]];
+  { const f0 = PU.ridgeCore([], mkO()), h1 = wReg(prior.concat([[17, 2.5, 1]])), f1 = PU.ridgeFit([row(17, 60)], mkO());
+    check('Modell v3, Handwert: ohne Tage genau der Vorwert (UA 0,15 kW/K, Gewinne 0,3 kW); 1 Tag (17 K, 60 kWh = 2,5 kW) -> gewichtete Regression mit 2 Pseudo-Tagen bei 10/16 K: UA ' + h1.ua.toFixed(4) + ', Gewinne ' + h1.g.toFixed(4) + ' (±1e-9, wie plan_algo lerneModell)',
+          Math.abs(f0.ua - 0.15) < 1e-12 && Math.abs(f0.g - 0.3) < 1e-12 && Math.abs(f1.ua - h1.ua) < 1e-9 && Math.abs(f1.g - h1.g) < 1e-9, f1.ua.toFixed(6) + ' / ' + f1.g.toFixed(6)); }
   const mkRnd = sd => { let s2 = sd; const r = () => (s2 = (s2 * 1103515245 + 12345) % 2147483648) / 2147483648; const g = () => { const u = 1 - r(), v = r(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }; return {r, g}; };
-  // Wiederfindung: 20 Tage, UA 0,25, bs 0,08, bw 0,015, 3 % Rauschen
+  // Wiederfindung: 20 Tage, UA 0,14, Gewinne 0,3 kW, bs 0,08, bw 0,012 (Wind-Merkmal (T_innen - T_aussen) x Wind ueber 4 m/s), 3 % Rauschen
   let recOk = true, recDetail = '';
   [4711, 1, 2, 3].forEach(sd => {
-    const R = mkRnd(sd), rows = []; for (let i = 0; i < 20; i++) { const kh = 40 + R.r() * 160, v = 1 + R.r() * 7, S = 5 + R.r() * 95, wk = kh * v; rows.push({y: (0.25 * kh + 0.015 * wk - 0.08 * S) * (1 + 0.03 * R.g()), x1: kh, x2: wk, x3: S}); }
-    const ft = PU.ridgeFit(rows, mkO({useW: true, useS: true}));
-    if (!(Math.abs(ft.ua / 0.25 - 1) < 0.10 && Math.abs(ft.bs / 0.08 - 1) < 0.10 && Math.abs(ft.bw / 0.015 - 1) < 0.20)) { recOk = false; recDetail += 'Samen ' + sd + ': ' + ft.ua.toFixed(4) + '/' + ft.bw.toFixed(4) + '/' + ft.bs.toFixed(4) + ' '; }
+    const R = mkRnd(sd), rows = []; for (let i = 0; i < 20; i++) { const X = 6 + R.r() * 14, v = R.r() * 5, S = 5 + R.r() * 95, wk = 24 * X * v; rows.push(row(X, (24 * (0.14 * X - 0.3) + 0.012 * wk - 0.08 * S) * (1 + 0.03 * R.g()), {x2: wk, x3: S})); }
+    const ft = PU.ridgeFit(rows, mkO({useW: true, useS: true})), sM = rows.reduce((a, r) => a + r.x3, 0) / rows.length, gGes = ft.g + ft.bs * sM / 24, gWahr = 0.3 + 0.08 * sM / 24;
+    if (!(Math.abs(ft.ua / 0.14 - 1) < 0.10 && Math.abs(gGes - gWahr) < 0.1 && Math.abs(ft.bs / 0.08 - 1) < 0.3 && Math.abs(ft.bw / 0.012 - 1) < 0.25)) { recOk = false; recDetail += 'Samen ' + sd + ': ' + [ft.ua, ft.g, ft.bw, ft.bs].map(v => v.toFixed(4)).join('/') + ' '; }
   });
-  check('Regression, Wiederfindung (4 feste Zufallssamen, 20 synthetische Tage, 3 % Rauschen): UA ±10 %, Sonne ±10 %, Wind ±20 % (der Prior zieht Wind leicht zu 0)', recOk, recDetail);
-  // Kollinearitaet in beide Richtungen
+  check('Modell v3, Wiederfindung (4 feste Zufallssamen, 20 synthetische Tage, 3 % Rauschen): UA ±10 %, Gewinne + mittlere Sonne zusammen ±0,1 kW (Gewinne, Sonne und Wind wirken fast konstant und teilen sich den Anteil), Sonne ±30 %, Wind ±25 % (Vorwert und Prior ziehen leicht)', recOk, recDetail);
+  // Kollinearitaet Sonne/Temperaturdifferenz in beide Richtungen
   let colOk = true, colDetail = '';
   [0.9, -0.9].forEach(rho => {
-    const R = mkRnd(77), rows = []; for (let i = 0; i < 20; i++) { const z1 = R.g(), z3 = rho * z1 + Math.sqrt(1 - rho * rho) * R.g(), kh = 120 + 40 * z1, S = 50 + 15 * z3; rows.push({y: (0.25 * kh - 0.08 * S) * (1 + 0.03 * R.g()), x1: kh, x2: 0, x3: S}); }
+    const R = mkRnd(77), rows = []; for (let i = 0; i < 20; i++) { const z1 = R.g(), z3 = rho * z1 + Math.sqrt(1 - rho * rho) * R.g(), X = 13 + 3 * z1, S = 50 + 15 * z3; rows.push(row(X, (24 * (0.14 * X - 0.4) - 0.08 * S) * (1 + 0.03 * R.g()), {x3: S})); }
     const ft = PU.ridgeFit(rows, mkO({useS: true}));
-    if (!(ft.bs >= 0 && ft.ua >= 0.11 - 1e-9 && ft.ua <= 0.44 + 1e-9 && Math.abs(ft.ua / 0.25 - 1) < 0.25)) { colOk = false; colDetail += 'rho ' + rho + ': ' + ft.ua.toFixed(4) + '/' + ft.bs.toFixed(4) + ' '; }
+    if (!(ft.bs >= 0 && ft.ua >= 0.07 - 1e-9 && ft.ua <= 0.35 + 1e-9 && ft.g >= -1e-9 && ft.g <= 1.2 + 1e-9 && Math.abs(ft.ua / 0.14 - 1) < 0.25)) { colOk = false; colDetail += 'rho ' + rho + ': ' + ft.ua.toFixed(4) + '/' + ft.g.toFixed(4) + '/' + ft.bs.toFixed(4) + ' '; }
   });
-  check('Regression, Kollinearitaet PV/Heizgradstunden (r = +0,9 und −0,9): keine Vorzeichenumkehr, UA in den Grenzen und innerhalb ±25 % des wahren Wertes', colOk, colDetail);
-  // Vorzeichen: wahre Sonne wirkt "falsch herum" -> 0, UA = Loesung ohne Sonnenterm
-  { const R = mkRnd(5), rows = []; for (let i = 0; i < 15; i++) { const kh = 60 + R.r() * 120, S = 10 + R.r() * 80; rows.push({y: 0.25 * kh + 0.05 * S, x1: kh, x2: 0, x3: S}); }
+  check('Modell v3, Kollinearitaet PV/Temperaturdifferenz (r = +0,9 und −0,9): keine Vorzeichenumkehr, UA und Gewinne in den Grenzen, UA innerhalb ±25 % des wahren Wertes', colOk, colDetail);
+  // Vorzeichen: wahre Sonne wirkt "falsch herum" -> 0, UA/Gewinne = Loesung ohne Sonnenterm
+  { const R = mkRnd(5), rows = []; for (let i = 0; i < 15; i++) { const X = 8 + R.r() * 10, S = 10 + R.r() * 80; rows.push(row(X, 24 * (0.15 * X - 0.3) + 0.05 * S, {x3: S})); }
     const a2 = PU.ridgeFit(rows, mkO({useS: true})), b2 = PU.ridgeFit(rows.map(r => Object.assign({}, r, {x3: 0})), mkO({useS: false}));
-    check('Regression, Vorzeichen: Daten mit "negativer Sonne" -> bs genau 0 und UA gleich der Loesung ohne Sonnenterm (1e-9)', a2.bs === 0 && Math.abs(a2.ua - b2.ua) < 1e-9, a2.bs + ' / ' + a2.ua.toFixed(6) + ' vs ' + b2.ua.toFixed(6)); }
-  // Exaktheit gegen projiziertes Gradientenverfahren (200 Zufallsprobleme)
+    check('Modell v3, Vorzeichen: Daten mit "negativer Sonne" -> bs genau 0, UA und Gewinne gleich der Loesung ohne Sonnenterm (1e-9)', a2.bs === 0 && Math.abs(a2.ua - b2.ua) < 1e-9 && Math.abs(a2.g - b2.g) < 1e-9, a2.bs + ' / ' + a2.ua.toFixed(6) + ' vs ' + b2.ua.toFixed(6)); }
+  // Grenzen: ein Haus, das die Grenzen verlangt (UA 0,5 kW/K, Gewinne -1 kW), landet auf der Grenze
+  { const rows = [8, 12, 16, 20].map(X => row(X, 24 * (0.5 * X + 1))), fb = PU.ridgeFit(rows, mkO());
+    check('Modell v3, Plausibilitaetsgrenzen: unplausible Daten (UA 0,5 kW/K, Gewinne −1 kW) -> UA 0,35 und Gewinne 0 (Grenzen), nie darueber', Math.abs(fb.ua - 0.35) < 1e-12 && Math.abs(fb.g) < 1e-12, fb.ua + ' / ' + fb.g); }
+  // Exaktheit gegen projiziertes Gradientenverfahren (200 Zufallsprobleme, Zielfunktion mit Pseudo-Tagen und Ridge-Prior fuer Wind/Sonne)
   { const R = mkRnd(2026); let worst = 0, detail = '';
-    const J = (rows, beta, o) => { const n = rows.length, ym = rows.reduce((a, r) => a + r.y, 0) / n, sr = Math.max(1, 0.1 * ym), sg = [o.sUA, o.sW, o.sS], b0 = [o.ua0, 0, 0]; let j = 0; rows.forEach(r => { const e = r.y - (beta[0] * r.x1 + beta[1] * r.x2 - beta[2] * r.x3); j += e * e / (sr * sr); }); [0, 1, 2].forEach(p => { j += (beta[p] - b0[p]) ** 2 / sg[p] ** 2; }); return j; };
+    const rowsP = rows => rows.map(r => ({w: 1, y: r.y, f: [r.x1, r.x2, -r.x3, -r.x4]})).concat([10, 16].map(X => ({w: 2, y: 24 * (0.15 * X - 0.3), f: [24 * X, 0, 0, -24]})));
+    const J = (rows, beta, o) => { const n = rows.length, ym = rows.reduce((a, r) => a + r.y, 0) / n, sr = Math.max(1, 0.1 * Math.abs(ym)); let j = 0; rowsP(rows).forEach(r => { const e = r.y - r.f.reduce((a, f, p) => a + f * beta[p], 0); j += r.w * e * e / (sr * sr); }); if (o.useW) { j += beta[1] ** 2 / o.sW ** 2; } if (o.useS) { j += beta[2] ** 2 / o.sS ** 2; } return j; };
     for (let it = 0; it < 200; it++) {
       const n = 2 + Math.floor(R.r() * 8), useW = R.r() < 0.5, useS = R.r() < 0.7, rows = [];
-      for (let i = 0; i < n; i++) { const kh = 30 + R.r() * 170, w = kh * (1 + R.r() * 6), S = 5 + R.r() * 90; rows.push({y: Math.max(1, (0.25 * kh + (R.r() - 0.4) * 0.03 * w - (R.r() - 0.3) * 0.2 * S) + R.g() * 2), x1: kh, x2: useW ? w : 0, x3: useS ? S : 0}); }
-      const o = mkO({useW, useS}), ft = PU.ridgeFit(rows, o), jf = J(rows, [ft.ua, ft.bw, ft.bs], o);
-      const lo = [0.11, 0, 0], hi = [0.44, useW ? 1 : 0, useS ? 5 : 0]; let b = [0.22, 0, 0];
-      const ym = rows.reduce((a, r) => a + r.y, 0) / n, sr = Math.max(1, 0.1 * ym), Lp = rows.reduce((a, r) => a + (r.x1 ** 2 + r.x2 ** 2 + r.x3 ** 2) / (sr * sr), 0) * 2 + 2 * (1 / o.sUA ** 2 + 1 / o.sW ** 2 + 1 / o.sS ** 2);
-      for (let k = 0; k < 40000; k++) { const g = [0, 0, 0]; rows.forEach(r => { const e = r.y - (b[0] * r.x1 + b[1] * r.x2 - b[2] * r.x3); g[0] += -2 * e * r.x1 / (sr * sr); g[1] += -2 * e * r.x2 / (sr * sr); g[2] += 2 * e * r.x3 / (sr * sr); }); g[0] += 2 * (b[0] - 0.22) / o.sUA ** 2; g[1] += 2 * b[1] / o.sW ** 2; g[2] += 2 * b[2] / o.sS ** 2; b = b.map((v, p) => Math.min(hi[p], Math.max(lo[p], v - g[p] / Lp))); if (!useW) { b[1] = 0; } if (!useS) { b[2] = 0; } }
+      for (let i = 0; i < n; i++) { const X = 4 + R.r() * 16, w = 24 * X * R.r() * 5, S = 5 + R.r() * 90; rows.push(row(X, Math.max(1, 24 * (0.14 * X - 0.4) + (R.r() - 0.4) * 0.03 * w - (R.r() - 0.3) * 0.2 * S + R.g() * 2), {x2: useW ? w : 0, x3: useS ? S : 0})); }
+      const o = mkO({useW, useS}), ft = PU.ridgeFit(rows, o), jf = J(rows, [ft.ua, ft.bw, ft.bs, ft.g], o);
+      const lo = [0.07, 0, 0, 0], hi = [0.35, useW ? 1 : 0, useS ? 5 : 0, 1.2]; let b = [0.15, 0, 0, 0.3];
+      const ym = rows.reduce((a, r) => a + r.y, 0) / n, sr = Math.max(1, 0.1 * Math.abs(ym)), RP = rowsP(rows), Lp = RP.reduce((a, r) => a + r.w * r.f.reduce((s0, f) => s0 + f * f, 0) / (sr * sr), 0) * 2 + 2 * (1 / o.sW ** 2 + 1 / o.sS ** 2);
+      for (let k = 0; k < 60000; k++) { const g = [0, 0, 0, 0]; RP.forEach(r => { const e = r.y - r.f.reduce((a, f, p) => a + f * b[p], 0); for (let p = 0; p < 4; p++) { g[p] += -2 * r.w * e * r.f[p] / (sr * sr); } }); if (useW) { g[1] += 2 * b[1] / o.sW ** 2; } if (useS) { g[2] += 2 * b[2] / o.sS ** 2; } b = b.map((v, p) => Math.min(hi[p], Math.max(lo[p], v - g[p] / Lp))); }
       const jp = J(rows, b, o), rel = (jp - jf) / Math.max(1, Math.abs(jf)); if (rel < -1e-6) { worst = Math.max(worst, -rel); detail = 'Fall ' + it + ': exakt ' + jf.toFixed(6) + ' > Referenz ' + jp.toFixed(6); } }
-    check('Regression, Exaktheit: in 200 Zufallsproblemen (mit/ohne Wind und Sonne, 2-9 Tage, Grenzen aktiv) ist das Ergebnis nie schlechter als ein projiziertes Gradientenverfahren (Zielwert, 1e-6)', worst === 0, detail); }
-  // Leave-one-day-out von Hand
-  { const rows = [{y: 24, x1: 100, x2: 0, x3: 0}, {y: 30, x1: 120, x2: 0, x3: 0}, {y: 40, x1: 150, x2: 0, x3: 0}];
-    const sr = (y) => Math.max(1, 0.1 * y), ua = (rs) => { const ym = rs.reduce((a, r) => a + r.y, 0) / rs.length, r2 = sr(ym) ** 2; return Math.min(0.44, Math.max(0.11, (rs.reduce((a, r) => a + r.x1 * r.y / r2, 0) + 0.22 / 0.01) / (rs.reduce((a, r) => a + r.x1 * r.x1 / r2, 0) + 1 / 0.01))); };
-    let e = 0; rows.forEach((r, i) => { const rest = rows.filter((x, j) => j !== i); e += Math.abs(r.y - ua(rest) * r.x1); });
-    check('Regression, Leave-one-day-out: 3 Tage nur UA stimmt mit der Handrechnung ueberein (1e-9); der Plan-Schaetzer-Fehler ebenso (looRatio)', Math.abs(PU.looMae(rows, mkO()) - e / 3) < 1e-9 && PU.looRatio(rows, 0.22, 300) > 0, (PU.looMae(rows, mkO())).toFixed(6) + ' vs ' + (e / 3).toFixed(6)); }
-  // Ausreisser: ein Tag mit +50 % Waerme wird herausgenommen
-  { const R = mkRnd(31), rows = []; for (let i = 0; i < 16; i++) { const kh = 60 + R.r() * 120; rows.push({y: 0.25 * kh * (1 + 0.02 * R.g()), x1: kh, x2: 0, x3: 0}); }
-    rows[7].x1 = 170; rows[7].y = 0.25 * 170 * 1.6; const fr = PU.ridgeFit(rows, mkO({robust: true})), fn = PU.ridgeFit(rows, mkO({robust: false}));
-    check('Regression, Ausreisser: ein Tag mit +60 % Waerme (> 3 sigma) wird einmalig herausgenommen (removed 1), UA bleibt innerhalb ±5 % des wahren Wertes, ohne die Robustheit weicht er staerker ab', fr.removed === 1 && Math.abs(fr.ua / 0.25 - 1) < 0.05 && Math.abs(fn.ua / 0.25 - 1) > Math.abs(fr.ua / 0.25 - 1), 'robust ' + fr.ua.toFixed(4) + ' / ohne ' + fn.ua.toFixed(4)); }
-  // Gate
-  { const mkRows = (n) => Array.from({length: n}, (_, i) => ({y: 30, x1: 120, x2: 0, x3: i % 2 ? 80 : 20})), fit = {ua: 0.25, bw: 0, bs: 0.1};
-    const g10 = PU.gateCheck(10, mkRows(10), 10, 8.5, fit, {minDays: 10}), g9 = PU.gateCheck(9, mkRows(9), 10, 8.5, fit, {minDays: 10}), gN = PU.gateCheck(10, mkRows(10), 10, 9.5, fit, {minDays: 10}), gP = PU.gateCheck(10, mkRows(10), 10, 8.5, {ua: 0.25, bw: 0, bs: 0.6}, {minDays: 10}), gF = PU.gateCheck(10, Array.from({length: 10}, () => ({y: 30, x1: 120, x2: 0, x3: 50})), 10, 8.5, fit, {minDays: 10});
-    check('Gate (nur Anzeige): ok bei 10 Tagen, PV-Spreizung und 15 % besserem Fehler; nicht ok bei 9 Tagen, nur 5 % Verbesserung, unplausiblem Koeffizienten (bs 0,6) oder gleichfoermigem PV', g10.ok && !g9.ok && !gN.ok && !gP.ok && !gF.ok, JSON.stringify([g10.why, g9.why, gN.why, gP.why, gF.why])); }
-  // Rueckrechnung aus plan-actuals: mehrere Kopfzeilen, Zuordnung ueber Namen, falsche Zeilen, Zeitumstellung
+    check('Modell v3, Exaktheit: in 200 Zufallsproblemen (mit/ohne Wind und Sonne, 2-9 Tage, Grenzen aktiv) ist das Ergebnis nie schlechter als ein projiziertes Gradientenverfahren (Zielwert, 1e-6)', worst === 0, detail); }
+  // Leave-one-day-out von Hand (Grundmodell: UA und Gewinne, Vorwert bleibt drin)
+  { const rows = [row(12, 36), row(15, 47), row(18, 62)];
+    let e = 0; rows.forEach((r, i) => { const rest = rows.filter((x, j) => j !== i), h = wReg(prior.concat(rest.map(x => [x.x1 / 24, x.y / 24, 1]))); e += Math.abs(r.y - 24 * (h.ua * r.x1 / 24 - h.g)); });
+    check('Modell v3, Leave-one-day-out: 3 Tage Grundmodell (UA, Gewinne) stimmt mit der Handrechnung ueberein (1e-9) – das ist der Fehlermassstab "Fehler Plan" des Gates', Math.abs(PU.looMae(rows, mkO()) - e / 3) < 1e-9, PU.looMae(rows, mkO()).toFixed(6) + ' vs ' + (e / 3).toFixed(6)); }
+  // Ausreisser: ein Tag mit +60 % Waerme wird herausgenommen
+  { const R = mkRnd(31), rows = []; for (let i = 0; i < 16; i++) { const X = 8 + R.r() * 10; rows.push(row(X, 24 * (0.16 * X - 0.35) * (1 + 0.02 * R.g()))); }
+    rows[7] = row(17, 24 * (0.16 * 17 - 0.35) * 1.6); const fr = PU.ridgeFit(rows, mkO({robust: true})), fn = PU.ridgeFit(rows, mkO({robust: false}));
+    check('Modell v3, Ausreisser: ein Tag mit +60 % Waerme (> 3 sigma) wird einmalig herausgenommen (removed 1), UA bleibt innerhalb ±5 % des wahren Wertes, ohne die Robustheit weicht er staerker ab', fr.removed === 1 && Math.abs(fr.ua / 0.16 - 1) < 0.05 && Math.abs(fn.ua / 0.16 - 1) > Math.abs(fr.ua / 0.16 - 1), 'robust ' + fr.ua.toFixed(4) + ' / ohne ' + fn.ua.toFixed(4)); }
+  // Gate (unveraendert: 10 Tage, PV-Spreizung, Fehler 10 % kleiner, plausible Koeffizienten)
+  { const mkRows = (n) => Array.from({length: n}, (_, i) => row(14, 30, {x3: i % 2 ? 80 : 20})), fit = {ua: 0.15, bw: 0, bs: 0.1};
+    const g10 = PU.gateCheck(10, mkRows(10), 10, 8.5, fit, {minDays: 10}), g9 = PU.gateCheck(9, mkRows(9), 10, 8.5, fit, {minDays: 10}), gN = PU.gateCheck(10, mkRows(10), 10, 9.5, fit, {minDays: 10}), gP = PU.gateCheck(10, mkRows(10), 10, 8.5, {ua: 0.15, bw: 0, bs: 0.6}, {minDays: 10}), gF = PU.gateCheck(10, Array.from({length: 10}, () => row(14, 30, {x3: 50})), 10, 8.5, fit, {minDays: 10});
+    check('Gate (unveraendert, Fehlermassstab = Grundmodell v3): ok bei 10 Tagen, PV-Spreizung und 15 % besserem Fehler; nicht ok bei 9 Tagen, nur 5 % Verbesserung, unplausiblem Koeffizienten (bs 0,6) oder gleichfoermigem PV', g10.ok && !g9.ok && !gN.ok && !gP.ok && !gF.ok, JSON.stringify([g10.why, g9.why, gN.why, gP.why, gF.why])); }
+  // fitModel: Grundmodell erst ab 2 Lerntagen, Fehler Plan = LOO des Grundmodells; Kandidat Sonne
+  { const MPx = Object.assign({}, O0, {lernMinTage: 2, minDays: 10, minWindDays: 7, storeC: [0, 3]}), dd = (k, X, S) => ({d0: k, kh: 24 * (X - 7), q: 24 * (0.14 * X - 0.4) - 0.08 * S, n: 1440, s: S, khI: 24 * X, ti: 22, wkI: null, khIW: null, wkIW: null, dtr: 0});
+    const f1 = PU.fitModel([dd(0, 15, 30)], MPx), f5 = PU.fitModel([dd(0, 9, 20), dd(1, 12, 70), dd(2, 15, 30), dd(3, 18, 60), dd(4, 11, 40)], MPx);
+    check('fitModel: 1 Lerntag -> Vorwert (gelernt false, UA 0,15, Gewinne 0,3); 5 Tage -> gelernt (UA/Gewinne aus dem Grundmodell), Fehler Plan = Leave-one-day-out des Grundmodells, Kandidat mit Sonne kleiner',
+          f1.gelernt === false && f1.ua === 0.15 && f1.g === 0.3 && f5.gelernt === true && Math.abs(f5.ua - PU.ridgeFit(PU.prepRows([dd(0, 9, 20), dd(1, 12, 70), dd(2, 15, 30), dd(3, 18, 60), dd(4, 11, 40)], MPx).rows, MPx).ua) < 1e-12 && f5.maeBase > 0 && f5.maeSun < f5.maeBase && f5.maeUA === f5.maeBase, JSON.stringify({ua: f5.ua, g: f5.g, base: f5.maeBase, sun: f5.maeSun})); }
+  // Langsame Anpassung je Tag und T_innen
+  { const D = 1000 * 86400000, P = {stepUaRel: 0.15, stepGainKw: 0.15, stepTiK: 0.5}, prev = {ua: 0.15, g: 0.3, ti: 22, d0: D}, z = {ua: 0.2, g: 0.6, ti: 23, n: 5, gelernt: true, quelle: 'x'};
+    const a = PU.modellSchritt(null, z, D, P), b = PU.modellSchritt(prev, z, D + 86400000, P), c = PU.modellSchritt(prev, z, D, P), d = PU.modellSchritt(prev, z, D + 3 * 86400000, P);
+    check('Langsame Anpassung: ohne Vorstand sofort das Ziel; je neuem Tag UA hoechstens ±15 % (0,15 -> 0,1725), Gewinne ±0,15 kW (0,3 -> 0,45), T_innen ±0,5 K (22 -> 22,5), "gebremst"; am selben Tag unveraendert; nach 3 Tagen am Ziel',
+          a.ua === 0.2 && !a.gebremst && Math.abs(b.ua - 0.1725) < 1e-12 && Math.abs(b.g - 0.45) < 1e-12 && Math.abs(b.ti - 22.5) < 1e-12 && b.gebremst && c === prev && Math.abs(d.ua - 0.2) < 1e-12 && Math.abs(d.g - 0.6) < 1e-12 && d.ti === 23 && !d.gebremst, JSON.stringify([b, d]));
+    const T1 = PU.tiZiel([{ti: 21}, {ti: 22}, {ti: 23}, {ti: 24}], 3, 20, {tiStd: 22, tiMin: 18, tiMax: 25}), T2 = PU.tiZiel([], 3, 20.5, {tiStd: 22, tiMin: 18, tiMax: 25}), T3 = PU.tiZiel([], 3, null, {tiStd: 22, tiMin: 18, tiMax: 25}), T4 = PU.tiZiel([{ti: 30}], 3, null, {tiStd: 22, tiMin: 18, tiMax: 25});
+    check('T_innen fuer den Plan: Mittel der letzten 3 vollen Tage (23,0), ohne Tage die Raeume jetzt (20,5), ohne beides 22 °C, Grenze 25 °C', T1.ti === 23 && T1.n === 3 && T2.ti === 20.5 && T3.ti === 22 && T4.ti === 25, JSON.stringify([T1, T2, T3, T4])); }
+  // Tagesgang Fuehler - OWM
+  { const d0 = PU.d0Of('2026-11-12'), rows = []; for (let k = 1; k <= 3; k++) { for (let h = 0; h < 24; h++) { for (let q = 0; q < 4; q++) { rows.push([d0 - k * 86400000, h, h < 6 ? -3 : (h >= 12 && h < 16 ? 1 : 0)]); } } }
+    const tg = PU.tgProfil(rows.concat([[d0, 3, 9]]), d0, 3), tgL = PU.tgProfil(rows.filter(x => !(x[1] === 5 && x[0] < d0 - 86400000)), d0, 3), tg0 = PU.tgProfil(rows, d0, 0);
+    check('Tagesgang Fuehler − OWM (3 Vortage, je Uhrzeit): nachts −3 K, mittags +1 K, sonst 0; Werte von heute zaehlen nicht; eine Stunde mit weniger als 6 Werten -> kein Tagesgang (null); biasDays 0 -> aus',
+          tg && tg[3] === -3 && tg[13] === 1 && tg[20] === 0 && tgL === null && tg0 === null, JSON.stringify(tg)); }
+  // Rueckrechnung aus plan-actuals: mehrere Kopfzeilen, Zuordnung ueber Namen, falsche Zeilen, Zeitumstellung; Modell v3: K*h gegen T_innen, T_innen, Wind x (T_innen - T_aussen)
   { const mkSlots = (day, count, extra) => { const o = []; for (let i = 0; i < count; i++) { const h = Math.floor(i / 4), m = (i % 4) * 15; o.push(day + ' ' + (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m); } return o; };
     const hOld = 'slot_start,ist_aussen,ist_pv_w,ist_waerme_kwh,ist_raum_a', hNew = 'slot_start,ist_aussen,ist_pv_w,ist_waerme_kwh,ist_raum_a,ist_wind_ms,ist_aussen_owm';
     let txt = hOld + '\n'; mkSlots('2026-11-10', 96).forEach((s2, i) => { txt += s2 + ',5,2000,0.6,' + (22 + i / 96) + '\n'; });
@@ -1593,32 +1636,59 @@ check('Dateien: Ist, Vergleich, Schnappschuesse und Zustand unter /data/optimize
     mkSlots('2026-11-12', 96).forEach(s2 => { txt += s2 + ',5,2000,0.6,22,7,7\n'; });
     const ds = PU.daysFromRows(PU.parseCsv(txt), 15), d1 = ds.find(d => d.d0 === PU.d0Of('2026-11-10')), d2 = ds.find(d => d.d0 === PU.d0Of('2026-11-11')), d3 = ds.find(d => d.d0 === PU.d0Of('2026-10-25')), d4 = ds.find(d => d.d0 === PU.d0Of('2026-11-12'));
     check('Rueckrechnung: Tag aus 96 Slots (alte Kopfzeile ohne Wind) -> n 1440, kh 240, q 57,6, PV 48 kWh, Wind/OWM null, Raumaenderung ~0,99 K; Zeilen mit falscher Spaltenzahl werden uebersprungen', ds.length === 4 && d1.wkT === null && d1.wkWT === null && d1.n === 1440 && Math.abs(d1.kh - 240) < 1e-9 && Math.abs(d1.q - 57.6) < 1e-9 && Math.abs(d1.s - 48) < 1e-9 && d1.wk === null && d1.khW === null && Math.abs(d1.dtr - 95 / 96) < 1e-9, JSON.stringify(d1));
-    check('Rueckrechnung: Tag mit neuer Kopfzeile (Wind 4 m/s, OWM 7 °C) -> wk 960, khW 192, wkW 768; Wind genau an der Totzone (4 m/s) -> wkT 0, wkWT 0', Math.abs(d2.wk - 960) < 1e-9 && Math.abs(d2.khW - 192) < 1e-9 && Math.abs(d2.wkW - 768) < 1e-9 && d2.dtr === 0 && d2.wkT === 0 && d2.wkWT === 0, JSON.stringify(d2));
-    check('Rueckrechnung, Totzone: Wind 7 m/s -> wkT = 10 K · (7 − 4) m/s · 24 h = 720, wkWT = 8 K · 3 m/s · 24 h = 576; wk bleibt roh (1680)', Math.abs(d4.wkT - 720) < 1e-9 && Math.abs(d4.wkWT - 576) < 1e-9 && Math.abs(d4.wk - 1680) < 1e-9, JSON.stringify(d4));
-    check('Rueckrechnung: Zeitumstellung (25.10.2026, 100 Slots) -> n 1500, wird gezaehlt', d3.n === 1500 && Math.abs(d3.q - 30) < 1e-9, JSON.stringify(d3)); }
+    check('Rueckrechnung Modell v3: T_innen 22 … 22,99 °C bei 5 °C -> K·h gegen T_innen 408 + 11,875 = 419,875, T_innen 22,495; ohne Wind/OWM null', Math.abs(d1.khI - 419.875) < 1e-9 && Math.abs(d1.ti - (22 + 95 / 192)) < 1e-9 && d1.wkI === null && d1.khIW === null && d1.wkIW === null, JSON.stringify([d1.khI, d1.ti, d1.wkI]));
+    check('Rueckrechnung: Tag mit neuer Kopfzeile (Wind 4 m/s, OWM 7 °C) -> wk 960, khW 192, wkW 768; Wind genau an der Totzone (4 m/s) -> wkT 0, wkWT 0; Modell v3: khI 408, khIW 360, wkI 0', Math.abs(d2.wk - 960) < 1e-9 && Math.abs(d2.khW - 192) < 1e-9 && Math.abs(d2.wkW - 768) < 1e-9 && d2.dtr === 0 && d2.wkT === 0 && d2.wkWT === 0 && Math.abs(d2.khI - 408) < 1e-9 && Math.abs(d2.khIW - 360) < 1e-9 && d2.wkI === 0 && d2.wkIW === 0, JSON.stringify(d2));
+    check('Rueckrechnung, Totzone: Wind 7 m/s -> wkT = 10 K · (7 − 4) m/s · 24 h = 720, wkWT = 8 K · 3 m/s · 24 h = 576; wk bleibt roh (1680); Modell v3: wkI = 17 K · 3 · 24 = 1224, wkIW = 15 K · 3 · 24 = 1080', Math.abs(d4.wkT - 720) < 1e-9 && Math.abs(d4.wkWT - 576) < 1e-9 && Math.abs(d4.wk - 1680) < 1e-9 && Math.abs(d4.wkI - 1224) < 1e-9 && Math.abs(d4.wkIW - 1080) < 1e-9, JSON.stringify(d4));
+    check('Rueckrechnung: Zeitumstellung (25.10.2026, 100 Slots) -> n 1500, wird gezaehlt; khI = 12 K · 25 h = 300', d3.n === 1500 && Math.abs(d3.q - 30) < 1e-9 && Math.abs(d3.khI - 300) < 1e-9, JSON.stringify(d3)); }
   // Live gegen Rueckrechnung: ein voller Tag live, daraus die plan-actuals-Zeilen, dann zurueckgerechnet
   { pworld({wide: true, atBase: 5, running: true, hp: 2500, atNow: 5, pvNow: 2000, windNow: 6, owmTemp: 7}); O.hp = 2500; const all = step(1440 + 20); let txtL = '';
     all.forEach(o => { [].concat(o[1] || []).forEach(m => { if (/plan-actuals-/.test(m.filename)) { txtL += m.payload; } }); });
     const live = PU.dayFromArr(fstore.plan.learn.days[0]), bf = PU.daysFromRows(PU.parseCsv(txtL), 15).find(d => d.d0 === live.d0);
-    check('Rueckrechnung gegen live: derselbe Tag aus den geschriebenen plan-actuals-Zeilen zurueckgerechnet ergibt kh ±1 %, q ±0,5 %, PV ±1 %, wk ±1 %, khW ±1 % gegenueber den live gesammelten Werten', !!bf && Math.abs(bf.kh / live.kh - 1) < 0.01 && Math.abs(bf.q / live.q - 1) < 0.005 && Math.abs(bf.s / live.s - 1) < 0.01 && Math.abs(bf.wk / live.wk - 1) < 0.01 && Math.abs(bf.khW / live.khW - 1) < 0.01 && Math.abs(bf.wkT / live.wkT - 1) < 0.01 && Math.abs(bf.wkWT / live.wkWT - 1) < 0.01, JSON.stringify({live, bf}).slice(0, 300));
+    check('Rueckrechnung gegen live: derselbe Tag aus den geschriebenen plan-actuals-Zeilen zurueckgerechnet ergibt kh ±1 %, q ±0,5 %, PV ±1 %, wk ±1 %, khW ±1 % gegenueber den live gesammelten Werten; Modell v3: khI, T_innen, wkI, khIW ±1 %', !!bf && Math.abs(bf.kh / live.kh - 1) < 0.01 && Math.abs(bf.q / live.q - 1) < 0.005 && Math.abs(bf.s / live.s - 1) < 0.01 && Math.abs(bf.wk / live.wk - 1) < 0.01 && Math.abs(bf.khW / live.khW - 1) < 0.01 && Math.abs(bf.wkT / live.wkT - 1) < 0.01 && Math.abs(bf.wkWT / live.wkWT - 1) < 0.01 &&
+          Math.abs(bf.khI / live.khI - 1) < 0.01 && Math.abs(bf.ti / live.ti - 1) < 0.01 && Math.abs(bf.wkI / live.wkI - 1) < 0.01 && Math.abs(bf.khIW / live.khIW - 1) < 0.01, JSON.stringify({live, bf}).slice(0, 400));
     const dayMsgs = all.map(o => [].concat(o[1] || [])).reduce((a, b) => a.concat(b), []).filter(m => /plan-days-/.test(m.filename));
-    check('Tagesblatt: beim Tageswechsel eine Zeile in plan-days-2026-11.csv mit Kopfzeile (14 Spalten, hinten wk_tot_fuehler/wk_tot_owm), Datum und Werten mit Punkt', dayMsgs.length === 1 && dayMsgs[0].filename === '/data/optimizer/plan-days-2026-11.csv' && dayMsgs[0].payload.split('\n')[0].split(',').length === 14 && /,wk_tot_fuehler,wk_tot_owm$/.test(dayMsgs[0].payload.split('\n')[0]) && dayMsgs[0].payload.split('\n')[1].split(',').length === 14 && /^2026-11-12,/.test(dayMsgs[0].payload.split('\n')[1]) && /,\d+\.\d+/.test(dayMsgs[0].payload.split('\n')[1]), dayMsgs.map(m => m.payload).join('|').slice(0, 220)); }
-  // Anzeige und Berechnung ueber step(): 4 Tage vorgeben
-  { const day = (k, kh, q, s, wk) => [Date.UTC(2026, 10, 1 + k, 0, 0), kh, q, 1440, s, wk, kh * 0.9, wk * 0.9, 0.1, 1440, wk === null ? 0 : 1440, 1440, wk === null ? 0 : 1440];
-    pworld({wide: true}); step(2); fstore.plan.bf = {days: []}; fstore.plan.learn.days = []; delete fstore.plan.learn.coef; step(1);
+    check('Tagesblatt: beim Tageswechsel eine Zeile in plan-days-2026-11.csv mit Kopfzeile (16 Spalten, hinten wk_tot_fuehler/wk_tot_owm und Modell v3 kh_innen_fuehler/t_innen), Datum und Werten mit Punkt', dayMsgs.length === 1 && dayMsgs[0].filename === '/data/optimizer/plan-days-2026-11.csv' && dayMsgs[0].payload.split('\n')[0].split(',').length === 16 && /,wk_tot_fuehler,wk_tot_owm,kh_innen_fuehler,t_innen$/.test(dayMsgs[0].payload.split('\n')[0]) && dayMsgs[0].payload.split('\n')[1].split(',').length === 16 && /^2026-11-12,/.test(dayMsgs[0].payload.split('\n')[1]) && /,\d+\.\d+/.test(dayMsgs[0].payload.split('\n')[1]), dayMsgs.map(m => m.payload).join('|').slice(0, 260)); }
+  // Anzeige und Berechnung ueber step(): Tage vorgeben (Modell v3: K*h gegen T_innen an Stelle 21, T_innen an 22)
+  { const day = (k, X, q, s, wk) => { const e = [Date.UTC(2026, 10, 1 + k, 0, 0), 24 * (X - 7), q, 1440, s, wk, 24 * (X - 7) * 0.9, wk === null ? null : wk * 0.9, 0.1, 1440, wk === null ? 0 : 1440, 1440, wk === null ? 0 : 1440, null, null, 0, 0, 0, 0, 0, 0]; return e.concat([24 * X, 22, null, null, null]); };
+    pworld({wide: true}); step(2); fstore.plan.bf = {days: [], v: 3}; fstore.plan.learn.days = []; delete fstore.plan.learn.coef; step(1);
     let rowG = () => (planRows().find(r => r[0] === 'Gebäudemodell') || [])[1];
-    check('Anzeige "Gebäudemodell": ohne Tage "UA .. W/K (Plan) · keine Daten"', /^UA \d+ W\/K \(Plan\) · keine Daten$/.test(rowG()), rowG());
-    fstore.plan.learn.days = [day(0, 100, 24, 20, null)]; step(1);
-    check('Anzeige "Gebäudemodell": ein Tag -> "· 1 Tag · Kandidat ab 3 Tagen"', /^UA \d+ W\/K \(Plan\) · 1 Tag · Kandidat ab 3 Tagen$/.test(rowG()), rowG());
-    const R = mkRnd(9); fstore.plan.learn.days = [0, 1, 2, 3, 4].map(k => { const kh = 80 + R.r() * 100, S = 10 + R.r() * 60; return day(k, kh, 0.25 * kh - 0.05 * S, S, null); }); step(1);
+    check('Anzeige "Gebäudemodell": ohne Tage "UA 150 W/K · Gewinne 0,30 kW · innen .. °C (Vorwert) · keine Daten"', /^UA 150 W\/K · Gewinne 0,30 kW · innen [\d,]+ °C \(Vorwert\) · keine Daten$/.test(rowG()), rowG());
+    fstore.plan.learn.days = [day(0, 15, 24 * (0.14 * 15 - 0.4) - 1.6, 20, null)]; step(1);
+    check('Anzeige "Gebäudemodell": ein Tag -> "(Plan) · 1 Tag · Kandidat ab 3 Tagen"', /^UA \d+ W\/K · Gewinne [\d,]+ kW · innen [\d,]+ °C \(Plan\) · 1 Tag · Kandidat ab 3 Tagen$/.test(rowG()), rowG());
+    const R = mkRnd(9); fstore.plan.learn.days = [0, 1, 2, 3, 4].map(k => { const X = 9 + R.r() * 9, S = 10 + R.r() * 60; return day(k, X, 24 * (0.14 * X - 0.4) - 0.05 * S, S, null); }); step(1);
     const cf = fstore.plan.learn.coef;
-    check('Anzeige "Gebäudemodell": 5 Tage -> Kandidat mit UA, Sonne, "Wind n 0 Tage", Fehler Plan/Kandidat; aktiv bleibt false, Gate nicht ok; Berechnung nur bei geaenderten Eingaben (Zeitstempel bleibt)', /^UA \d+ W\/K · Sonne \d,\d{3} · Wind n 0 Tage · Kandidat · 5 Tage · Fehler Plan [\d,]+ \/ Kandidat [\d,]+ kWh$/.test(rowG()) && cf.aktiv === false && cf.gate.ok === false && cf.n === 5 && (() => { const ts0 = cf.ts; step(3); return fstore.plan.learn.coef.ts === ts0; })(), rowG());
+    check('Anzeige "Gebäudemodell": 5 Tage -> UA, Gewinne, innen, Sonne, "Wind n 0 Tage", Fehler Plan/Kandidat; aktiv bleibt false, Gate nicht ok; Berechnung nur bei geaenderten Eingaben (Zeitstempel bleibt)', /^UA \d+ W\/K · Gewinne [\d,]+ kW · innen [\d,]+ °C( \(Ziel .*\))? · Sonne \d,\d{3} · Wind n 0 Tage · Kandidat · 5 Tage · Fehler Plan [\d,]+ \/ Kandidat [\d,]+ kWh$/.test(rowG()) && cf.aktiv === false && cf.gate.ok === false && cf.n === 5 && cf.gelernt === true && (() => { const ts0 = cf.ts; step(3); return fstore.plan.learn.coef.ts === ts0; })(), rowG());
     step(2); const keepCoef = JSON.stringify(fstore.plan.learn.coef); delete fstore.plan; step(1);
     check('Neustart: Koeffizienten und Zeitstempel kommen aus plan-state.json zurueck und werden nicht neu gerechnet', JSON.stringify(fstore.plan.learn.coef) === keepCoef, '');
-    check('Plan unveraendert: mit berechnetem Kandidaten (aktiv false) bleiben UA und Bedarf des Plans beim bisherigen Schaetzer', Math.abs(planNow().model.ua - ((0.22 * 300 + fstore.plan.learn.days.filter(d => d[1] >= 30).reduce((a, d) => a + d[2], 0)) / (300 + fstore.plan.learn.days.filter(d => d[1] >= 30).reduce((a, d) => a + d[1], 0)))) < 1e-9, planNow().model.ua.toFixed(5));
+    const M = fstore.plan.learn.mdl, P5 = planNow();
+    check('Plan: Grundmodell v3 aus dem langsam angepassten Stand (pl.learn.mdl, Ziel = gelerntes Grundmodell, am selben Tag kein Sprung): Slot-Bedarf = max(0, UA·(T_innen − T) − Gewinne)·0,25 h auf 1e-12; Bilanzpunkt = T_innen − Gewinne/UA',
+          P5.model.ua === M.ua && P5.model.g === M.g && P5.model.ti === M.ti && Math.abs(M.ziel.ua - cf.ua) < 1e-12 && P5.slots.every(x => Math.abs(x.bas - Math.max(0, M.ua * (M.ti - x.at) - M.g) * 0.25) < 1e-12) && Math.abs(P5.model.tbal - (M.ti - M.g / M.ua)) < 1e-12, JSON.stringify({M: M, z: cf.ua}));
+    const OM = gstore.OPT_plan.model, Ts = [-5, 0, 10, 15, 18, 19, 21, 25];
+    check('OPT_plan.model (Regel Vorausschau): ua, Gewinne, T_innen und tbal = Bilanzpunkt; ua·max(0, tbal − T) = max(0, UA·(T_innen − T) − Gewinne) (gerundet, ±0,002 kW), Modellversion 3', OM.ver === 3 && Ts.every(T => Math.abs(OM.ua * Math.max(0, OM.tbal - T) - Math.max(0, M.ua * (M.ti - T) - M.g)) < 0.002) && Math.abs(OM.ti - M.ti) < 0.006, JSON.stringify(OM));
     // robust: leere/NaN-Eingaben
-    const fe = PU.fitModel([], {ua0: 0.22, h0: 300, sUA: 0.1, sW: 0.01, sS: 0.1, minDays: 10, minWindDays: 7, storeC: [0, 3]}), fn2 = PU.fitModel([{d0: 1, kh: NaN, q: NaN, n: 1440, s: NaN, wk: null, khW: null, wkW: null, dtr: null}], {ua0: 0.22, h0: 300, sUA: 0.1, sW: 0.01, sS: 0.1, minDays: 10, minWindDays: 7, storeC: [0, 3]});
-    check('Randfaelle: leere oder NaN-Tage -> Prior, keine Kandidaten, kein Fehler', fe.n === 0 && fn2.n === 0 && Number.isFinite(fe.ua), JSON.stringify([fe.n, fn2.n])); }
+    const MPx = Object.assign({}, O0, {lernMinTage: 2, minDays: 10, minWindDays: 7, storeC: [0, 3]});
+    const fe = PU.fitModel([], MPx), fn2 = PU.fitModel([{d0: 1, kh: NaN, q: NaN, n: 1440, s: NaN, wk: null, khW: null, wkW: null, dtr: null, khI: NaN}], MPx);
+    check('Randfaelle: leere oder NaN-Tage -> Vorwert, keine Kandidaten, kein Fehler', fe.n === 0 && fn2.n === 0 && fe.ua === 0.15 && fe.g === 0.3, JSON.stringify([fe.n, fn2.n])); }
+}
+
+// ---- S2c) Gebaeudemodell v3 im Plan: Tagesgang Fuehler − OWM in der Prognose, Modellwechsel, A/B nur mit Schnappschuessen des jetzigen Modells
+{
+  pworld({wide: true}); step(2);
+  const dT = new RealDate(NOW).setHours(0, 0, 0, 0), bias = h => (h < 6 ? -2 : (h >= 12 && h < 16 ? 1 : 0)), rowsTg = [];
+  for (let k = 1; k <= 3; k++) { for (let h = 0; h < 24; h++) { for (let q = 0; q < 4; q++) { rowsTg.push([dT - k * 86400000, h, bias(h)]); } } }
+  fstore.plan.tg = {rows: []}; fstore.plan.planSlot = 0; run('opt_plan', {}); const P0 = planNow();
+  fstore.plan.tg = {rows: rowsTg}; fstore.plan.planSlot = 0; const o1 = run('opt_plan', {}), P1 = planNow(), hNow = new RealDate(NOW).getHours();
+  const ok1 = P1.slots.every((x, i) => Math.abs((x.atRaw - P0.slots[i].atRaw) - (bias(new RealDate(x.t + 450000).getHours()) - bias(hNow) * Math.exp(-x.L / 4))) < 1e-9);
+  check('Modell v3, Prognose: Tagesgang Fuehler − OWM (3 Vortage, je Uhrzeit) geht in die Temperatur jedes Slots ein: OWM + Tagesgang + abklingender Rest des heutigen Versatzes (1e-9); ohne Tagesgang unveraendert; Zeile "Wärmebedarf" nennt ihn',
+        ok1 && P1.model.tg === 1 && P0.model.tg === 0 && /Tagesgang Fühler − OWM/.test(o1[0].payload.rows.find(r => r[0] === 'Wärmebedarf nächste 24 h')[1]) && P1.slots.some(x => Math.abs(x.atRaw - P0.slots[P1.slots.indexOf(x)].atRaw) > 1), P1.slots.slice(0, 3).map(x => x.atRaw.toFixed(2)).join(',') + ' / ' + P0.slots.slice(0, 3).map(x => x.atRaw.toFixed(2)).join(','));
+  // Modellwechsel (Stand eines aelteren Modells im Speicher): A/B-Tage, Drift, Rueckfall und Modellstand beginnen neu
+  pworld({wide: true}); step(2); Object.assign(fstore.plan.learn, {mv: 2, ab: [{d0: 1, L6: {n: 96, q: 30, b: 20, k: 20}}], lg: {n: 1, up: {s: 3, an: false}}, rueckfall: {ts: NOW, bis: NOW + 86400000}, coefHist: [{ts: 1}], mdl: {ua: 0.3, g: 0, ti: 20, d0: NOW}}); step(1);
+  const Lm = fstore.plan.learn;
+  check('Modellwechsel (MODELL_VER 2 -> 3): A/B-Tage, Drift-Zaehler, Rueckfall-Sperre und Stände des alten Modells werden verworfen, der Modellstand neu gesetzt (Vorwert UA 0,15)', Lm.mv === 3 && Lm.ab.length === 0 && !Lm.rueckfall && Lm.coefHist.length === 0 && Lm.lg && !Lm.lg.n && Lm.mdl.ua === 0.15 && planNow().model.ua === 0.15, JSON.stringify({mv: Lm.mv, ab: Lm.ab, lg: Lm.lg, mdl: Lm.mdl}));
+  // A/B: nur Schnappschuesse mit modell_ver 3 zaehlen (aeltere Vorhersagen stammen vom alten Modell)
+  pworld({wide: true, pvPeak: 6000, windF: 4}); step(6 * 60 + 30); const abNeu = fstore.plan.ab && fstore.plan.ab.L6 ? fstore.plan.ab.L6.n : 0;
+  pworld({wide: true, pvPeak: 6000, windF: 4}); step(6 * 60 + 30, () => { (fstore.plan && fstore.plan.snaps || []).forEach(sn => { if (sn.meta) { sn.meta.modell_ver = 2; } }); }); const abAlt = fstore.plan.ab && fstore.plan.ab.L6 ? fstore.plan.ab.L6.n : 0;
+  check('A/B des Bedarfsmodells: Schnappschuesse des jetzigen Modells (modell_ver 3) zaehlen (6-h-Vorlauf ' + abNeu + ' Slots), Schnappschuesse eines aelteren Modells nicht (0)', abNeu > 0 && abAlt === 0, abNeu + ' / ' + abAlt);
 }
 
 // ---- S2b) Fahrplan v2: Fuehlerkorrektur OWM -> Fuehler (nur berechnen, anzeigen, protokollieren)
@@ -1658,14 +1728,14 @@ check('Dateien: Ist, Vergleich, Schnappschuesse und Zustand unter /data/optimize
 // ---- S3-S5) Fahrplan v2: Sonne und Wind im Waermebedarf (Koeffizienten 0 = unveraendert), A/B-Bilanz, Aktivierung nur mit Schalter
 {
   const mkRnd = sd => { let s2 = sd; const r = () => (s2 = (s2 * 1103515245 + 12345) % 2147483648) / 2147483648; const g = () => { const u = 1 - r(), v = r(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }; return {r, g}; };
-  const dayA = (k, kh, q, s, wk) => [Date.UTC(2026, 9, 20 + k, 0, 0), kh, q, 1440, s, wk, kh, wk === null ? null : wk, 0, 1440, wk === null ? 0 : 1440, 1440, wk === null ? 0 : 1440];
-  const sunDays = n => { const R = mkRnd(404), out = []; for (let k = 0; k < n; k++) { const kh = 80 + R.r() * 100, S = 10 + R.r() * 80; out.push(dayA(k, kh, (0.25 * kh - 0.08 * S) * (1 + 0.02 * R.g()), S, null)); } return out; };
-  const prep = (opts) => { pworld(Object.assign({wide: true, pvPeak: 6000, windF: 4}, opts || {})); step(2); fstore.plan.bf = {days: []}; fstore.plan.learn.days = sunDays(12); delete fstore.plan.learn.coef; fstore.plan.planSlot = 0; step(1); };
+  const dayA = (k, kh, q, s, wk) => [Date.UTC(2026, 9, 20 + k, 0, 0), kh, q, 1440, s, wk, kh, wk === null ? null : wk, 0, 1440, wk === null ? 0 : 1440, 1440, wk === null ? 0 : 1440, null, null, 0, 0, 0, 0, 0, 0, kh + 7 * 24, 22, null, null, null];   // Modell v3: khI = kh + 7 K x 24 h (T_innen 22 °C)
+  const sunDays = n => { const R = mkRnd(404), out = []; for (let k = 0; k < n; k++) { const kh = 80 + R.r() * 100, S = 10 + R.r() * 80, X = kh / 24 + 7; out.push(dayA(k, kh, (24 * (0.14 * X - 0.4) - 0.08 * S) * (1 + 0.02 * R.g()), S, null)); } return out; };
+  const prep = (opts) => { pworld(Object.assign({wide: true, pvPeak: 6000, windF: 4}, opts || {})); step(2); fstore.plan.bf = {days: [], v: 3}; fstore.plan.learn.days = sunDays(12); delete fstore.plan.learn.coef; fstore.plan.planSlot = 0; step(1); };
   // Standard: Schalter aus -> Kandidat vorhanden, Gate ok, aber keine Wirkung (bit-identisch)
   prep(); { const cf = fstore.plan.learn.coef, P3 = planNow();
     check('S3/S5: mit 12 Tagen Sonneneffekt ist das Gate ok und der Kandidat gerechnet, aber ohne Schalter (plan.coefActivate) bleibt aktiv false: bedarf = bisheriges Modell in jedem Slot, Wirkung auf die Summe 0', cf.n === 12 && cf.gate.ok === true && cf.aktiv === false && P3.slots.every(x => x.bedarf === x.bas && x.solU === 0 && x.winU === 0) && P3.sum.solU === 0 && P3.slots.some(x => x.solK > 0), JSON.stringify({n: cf.n, gate: cf.gate, aktiv: cf.aktiv, bs: cf.bs})); }
   { const M = (gstore.OPT_plan || {}).model || {};
-    check('Gebaeudemodell fuer die Entscheidungsmaschine (OPT_plan.model): Lernstand 12 Tage, Gate ok, ohne Schalter aktiv false und Sonne/Wind-Koeffizienten 0', M.n === 12 && M.gate === true && M.aktiv === false && M.bs === 0 && M.bw === 0 && M.minDays === 10 && M.tbal === 15, JSON.stringify(M)); }
+    check('Gebaeudemodell fuer die Entscheidungsmaschine (OPT_plan.model): Lernstand 12 Tage, Gate ok, ohne Schalter aktiv false und Sonne/Wind-Koeffizienten 0', M.n === 12 && M.gate === true && M.aktiv === false && M.bs === 0 && M.bw === 0 && M.minDays === 10 && Math.abs(M.tbal - (M.ti - M.g / M.ua)) < 0.01 && M.tbal > 15 && M.tbal < 21, JSON.stringify(M)); }
   // Schalter an: Wirkung nach Formel, Obergrenze, Nichtnegativitaet
   prep({cfg: {coefActivate: 1}}); { const cf = fstore.plan.learn.coef, P3 = planNow(), M = (gstore.OPT_plan || {}).model || {};
     check('OPT_plan.model mit Schalter (coefActivate) und Gate: aktiv true, Sonnen-Koeffizient wie der aktive Kandidat', M.aktiv === true && M.gate === true && M.bs === cf.bs && M.bs > 0, JSON.stringify(M));
@@ -1682,11 +1752,12 @@ check('Dateien: Ist, Vergleich, Schnappschuesse und Zustand unter /data/optimize
     check('S3 Glaettung: Sonne je Slot folgt S[i] = S[i−1] + (S_roh − S[i−1])·(1 − e^(−0,125)) auf 1e-12, Startwert = Mittel der Ist-PV der letzten 2 h (0,5 kWh); S_roh waechst mit dem Vertrauen (cP)', Math.abs(P3.slots[0].sun - (0.5 + (sRaw(P3.slots[0]) - 0.5) * al)) < 1e-12 && P3.slots.slice(1, 60).every((x, i) => Math.abs(x.sun - (P3.slots[i].sun + (sRaw(x) - P3.slots[i].sun) * al)) < 1e-12), P3.slots[0].sun.toFixed(4)); }
   // Wind: Handrechnung mit festen Koeffizienten
   prep({cfg: {coefActivate: 1}, windF: 7}); { fstore.plan.learn.coef = Object.assign({}, fstore.plan.learn.coef, {n: 12, aktiv: true, bs: 0, bw: 0.01, maeWind: 0.5, bsW: 0, nW: 9, sig: fstore.plan.learn.coef.sig}); fstore.plan.planSlot = 0; step(1); const P3 = planNow();
-    check('S3 Wind: mit βw 0,01 gilt bedarf = Basis + βw·max(0, Tbal − T)·max(0, Wind − 4)·0,25 h auf 1e-9 (Wind 7 m/s aus der Prognose, 3 m/s ueber der Totzone)', P3.slots.every(x => Math.abs(x.bedarf - Math.max(0, x.bas + 0.01 * Math.max(0, 15 - x.at) * 3 * 0.25)) < 1e-9) && P3.slots.some(x => x.winU > 0), P3.slots[0].bedarf.toFixed(5) + ' vs ' + (P3.slots[0].bas + 0.01 * Math.max(0, 15 - P3.slots[0].at) * 0.75).toFixed(5)); }
+    const ti3 = P3.model.ti;
+    check('S3 Wind (Modell v3): mit βw 0,01 gilt bedarf = Basis + βw·max(0, T_innen − T)·max(0, Wind − 4)·0,25 h auf 1e-9 (Wind 7 m/s aus der Prognose, 3 m/s ueber der Totzone)', P3.slots.every(x => Math.abs(x.bedarf - Math.max(0, x.bas + 0.01 * Math.max(0, ti3 - x.at) * 3 * 0.25)) < 1e-9) && P3.slots.some(x => x.winU > 0), P3.slots[0].bedarf.toFixed(5) + ' vs ' + (P3.slots[0].bas + 0.01 * Math.max(0, ti3 - P3.slots[0].at) * 0.75).toFixed(5)); }
   prep({cfg: {coefActivate: 1}, windF: 4}); { fstore.plan.learn.coef = Object.assign({}, fstore.plan.learn.coef, {n: 12, aktiv: true, bs: 0, bw: 0.01, maeWind: 0.5, bsW: 0, nW: 9, sig: fstore.plan.learn.coef.sig}); fstore.plan.planSlot = 0; step(1);
     check('S3 Wind-Totzone: Wind 4 m/s (genau an der Totzone) -> Windterm 0 in jedem Slot, bedarf = Basis', planNow().slots.every(x => x.winU === 0 && x.winK === 0 && x.bedarf === x.bas), ''); }
   prep({cfg: {coefActivate: 1}, windF: 7}); { fstore.plan.learn.coef = Object.assign({}, fstore.plan.learn.coef, {n: 12, aktiv: true, bs: 0, bw: 0.05, maeWind: 0.5, bsW: 0, nW: 9, sig: fstore.plan.learn.coef.sig}); fstore.plan.planSlot = 0; step(1); const P4 = planNow(), M4 = (gstore.OPT_plan || {}).model || {};
-    check('S3 Wind-Grenze: ein (eingeschleust) aktives βw 0,05 wirkt nur mit 0,0125 (Nutzerentscheidung 13.10.); OPT_plan.model meldet bw 0,0125, Totzone 4 m/s und Modellversion 2', P4.slots.every(x => Math.abs(x.winU - 0.0125 * Math.max(0, 15 - x.at) * 3 * 0.25) < 1e-9) && M4.bw === 0.0125 && M4.windTot === 4 && M4.ver === 2, JSON.stringify(M4)); }
+    check('S3 Wind-Grenze: ein (eingeschleust) aktives βw 0,05 wirkt nur mit 0,0125 (Nutzerentscheidung 13.10.); OPT_plan.model meldet bw 0,0125, Totzone 4 m/s und Modellversion 3', P4.slots.every(x => Math.abs(x.winU - 0.0125 * Math.max(0, P4.model.ti - x.at) * 3 * 0.25) < 1e-9) && M4.bw === 0.0125 && M4.windTot === 4 && M4.ver === 3, JSON.stringify(M4)); }
   { prep({cfg: {coefActivate: 1}, windF: undefined}); fstore.plan.learn.coef = Object.assign({}, fstore.plan.learn.coef, {n: 12, aktiv: true, bs: 0, bw: 0.01, maeWind: 0.5, bsW: 0, nW: 9, sig: fstore.plan.learn.coef.sig}); fstore.plan.planSlot = 0; step(1);
     check('S3 Wind: ohne Windprognose (4-elementige Punkte) ist der Windterm 0, kein Fehler', planNow().status === 'ok' && planNow().slots.every(x => x.bedarf === x.bas), ''); }
   // Hysterese: war aktiv und das Gate ist nicht mehr ok, aber der Kandidat ist weiter besser als der Plan-Schaetzer -> bleibt aktiv
@@ -1708,14 +1779,14 @@ check('Dateien: Ist, Vergleich, Schnappschuesse und Zustand unter /data/optimize
   // Nutzerentscheidung 13.10.2026: Wind-Grenze 0,0125, Totzone 4 m/s, Modellversion 2
   { const rows10 = Array.from({length: 10}, (_, i) => ({y: 30, x1: 120, x2: 0, x3: i % 2 ? 20 : 80}));
     const gA = PUA.gateCheck(12, rows10, 10, 8, {ua: 0.25, bw: 0.0125, bs: 0.1}, {minDays: 10}), gB = PUA.gateCheck(12, rows10, 10, 8, {ua: 0.25, bw: 0.0126, bs: 0.1}, {minDays: 10});
-    check('Wind-Grenze im Gate: bw 0,0125 ist plausibel, 0,0126 "Koeffizient unplausibel" (harter Fehler); Konstanten COEF_LIM 0,5/0,0125, Totzone 4 m/s, Modellversion 2', gA.ok && gB.why.includes('Koeffizient unplausibel') && PUA.coefHardFail(gB) && PUA.COEF_LIM.bs === 0.5 && PUA.COEF_LIM.bw === 0.0125 && PUA.WIND_TOT === 4 && PUA.MODELL_VER === 2, JSON.stringify([gA.why, gB.why]));
+    check('Wind-Grenze im Gate: bw 0,0125 ist plausibel, 0,0126 "Koeffizient unplausibel" (harter Fehler); Konstanten COEF_LIM 0,5/0,0125, Totzone 4 m/s, Modellversion 3', gA.ok && gB.why.includes('Koeffizient unplausibel') && PUA.coefHardFail(gB) && PUA.COEF_LIM.bs === 0.5 && PUA.COEF_LIM.bw === 0.0125 && PUA.WIND_TOT === 4 && PUA.MODELL_VER === 3, JSON.stringify([gA.why, gB.why]));
     check('Wind-Totzone: windEff(3) = 0, windEff(4) = 0, windEff(7) = 3, ohne Wert null', PUA.windEff(3) === 0 && PUA.windEff(4) === 0 && PUA.windEff(7) === 3 && PUA.windEff(null) === null, '');
-    const dW = [0, 1, 2].map(k => ({d0: k, kh: 100 + k * 10, q: 25 + k, n: 1440, s: 10, wk: 900 + k * 100, khW: 90, wkW: 800, dtr: 0, wkT: k * 50, wkWT: k * 40}));
+    const dW = [0, 1, 2].map(k => ({d0: k, kh: 100 + k * 10, q: 25 + k, n: 1440, s: 10, wk: 900 + k * 100, khW: 90, wkW: 800, dtr: 0, wkT: k * 50, wkWT: k * 40, khI: 300 + k * 10, khIW: 280, wkI: k * 60, wkIW: k * 45}));
     const pw = PUA.prepRows(dW, {useW: true, useS: true, tref: 'kh', C: 0}), pwO = PUA.prepRows(dW, {useW: true, useS: true, tref: 'khW', C: 0});
-    check('Fit-Merkmal Wind = Summe ueber der Totzone (wkT bzw. wkWT bei OWM-Temperatur), nicht der rohe Wind (wk)', pw.rows.map(r => r.x2).join() === '0,50,100' && pwO.rows.map(r => r.x2).join() === '0,40,80' && pw.nW === 3, JSON.stringify(pw.rows.map(r => r.x2))); }
+    check('Fit-Merkmale Modell v3: x1 = K·h gegen T_innen (khI bzw. khIW), Wind = (T_innen − T) × Wind ueber der Totzone (wkI bzw. wkIW), nicht die alten Heizgradstunden/der rohe Wind; x4 = 24 h (Gewinne)', pw.rows.map(r => r.x2).join() === '0,60,120' && pwO.rows.map(r => r.x2).join() === '0,45,90' && pw.rows.map(r => r.x1).join() === '300,310,320' && pwO.rows.every(r => r.x1 === 280) && pw.rows.every(r => r.x4 === 24) && pw.nW === 3, JSON.stringify(pw.rows.map(r => r.x2))); }
   prep({cfg: {coefActivate: 1}}); { const cfOld = Object.assign({}, fstore.plan.learn.coef, {aktiv: true, sig: '12|alt', ver: undefined}); fstore.plan.learn.days = fstore.plan.learn.days.map(d => { const e = d.slice(); e[4] = 50; return e; }); fstore.plan.learn.coef = cfOld; fstore.plan.bf = {days: []}; step(1);
     const cfN = fstore.plan.learn.coef;
-    check('Modellversion: gespeicherte Koeffizienten ohne Version (roher Wind) werden neu gerechnet (Signatur "v2|...", ver 2); ihr "aktiv" wird nicht uebernommen (gleichfoermige PV-Tage: Gate zu, keine Hysterese) ', cfN.ver === 2 && /^v2\|/.test(cfN.sig) && cfN.aktiv === false && cfN.gate.ok === false && fstore.plan.bf.v === 2, JSON.stringify({ver: cfN.ver, sig: cfN.sig.slice(0, 12), aktiv: cfN.aktiv, why: cfN.gate.why, bf: fstore.plan.bf.v})); }
+    check('Modellversion: gespeicherte Koeffizienten eines aelteren Modells werden neu gerechnet (Signatur "v3|...", ver 3); ihr "aktiv" wird nicht uebernommen (gleichfoermige PV-Tage: Gate zu, keine Hysterese) ', cfN.ver === 3 && /^v3\|/.test(cfN.sig) && cfN.aktiv === false && cfN.gate.ok === false && fstore.plan.bf.v === 3, JSON.stringify({ver: cfN.ver, sig: cfN.sig.slice(0, 12), aktiv: cfN.aktiv, why: cfN.gate.why, bf: fstore.plan.bf.v})); }
   // Validierung (D): Ueberanpassungs-Quote Test/Training (Idee pump-ahead cross_validation.py, 1,5)
   { const rows10 = Array.from({length: 10}, (_, i) => ({y: 30, x1: 120, x2: 0, x3: i % 2 ? 20 : 80})), fx = {ua: 0.25, bw: 0, bs: 0.05};
     const gU = PUA.gateCheck(12, rows10, 10, 8, fx, {minDays: 10, maeIn: 5}), gO = PUA.gateCheck(12, rows10, 10, 8, fx, {minDays: 10, maeIn: 6});
@@ -1758,7 +1829,7 @@ check('Dateien: Ist, Vergleich, Schnappschuesse und Zustand unter /data/optimize
     check('Drift-Zaehler werden einmalig aus den gesicherten A/B-Tagen nachgerechnet (Echtdaten 11./12.10., 6-h-Vorlauf: Ist 30,0/36,0 kWh gegen Plan-Modell 19,7/31,1 kWh -> CUSUM 3,8 von 4, noch "ruhig"); ein dritter Tag mit +10 % meldet "Mehrbedarf"', lg.n === 2 && lg.up.an === false && Math.abs(lg.up.s - 3.79) < 0.01 && /^ruhig \(CUSUM \+ 3,8 \/ − 0,0, 2 Tage\)$/.test(rD) && lg3.up.an === true, rD); }
     { const D = gstore.OPT_plan.lern.drift; check('OPT_plan.lern.drift wie die Zeile "Bedarfsmodell Drift": 2 A/B-Tage, Mehrbedarf-CUSUM 3,8 (gerundet), Minderbedarf 0, kein Alarm, Alarmschwelle 4', D.n === 2 && D.up === 3.8 && D.dn === 0 && D.upAn === false && D.dnAn === false && D.h === 4, JSON.stringify(D)); }
   // Absicherung (D): Rueckfall im laufenden Fluss (Tageswechsel mit A/B-Tag) und Sperre bei der naechsten Neuberechnung
-  { pworld({wide: true, pvPeak: 6000, windF: 4, start: 18 * HH, cfg: {coefActivate: 1}}); step(2); fstore.plan.bf = {days: [], v: 2}; fstore.plan.learn.days = sunDays(12); delete fstore.plan.learn.coef; fstore.plan.planSlot = 0; step(1);
+  { pworld({wide: true, pvPeak: 6000, windF: 4, start: 18 * HH, cfg: {coefActivate: 1}}); step(2); fstore.plan.bf = {days: [], v: 3}; fstore.plan.learn.days = sunDays(12); delete fstore.plan.learn.coef; fstore.plan.planSlot = 0; step(1);
     const akt0 = fstore.plan.learn.coef.aktiv, hist0 = (fstore.plan.learn.coefHist || []).length;
     fstore.plan.ab = {d0: new RealDate(NOW).setHours(0, 0, 0, 0), L24: {n: 96, q: 84, b: 80, k: 60}, L6: {n: 96, q: 84, b: 80, k: 60}}; fstore.plan.learn.lg = {rb: {s: 2.5, an: false}};
     step(6 * 60 + 30); const rf = fstore.plan.learn.rueckfall, cfR = fstore.plan.learn.coef, rD = (planRows().find(r => r[0] === 'Bedarfsmodell Drift') || [])[1];
@@ -1842,13 +1913,15 @@ check('Dateien: Ist, Vergleich, Schnappschuesse und Zustand unter /data/optimize
     check('Sicherheit: opt_hist liest nur (fs, kein mqtt/Link), sein Ausgaenge gehen an die drei Diagrammkarten, die Inject-Vorlage laeuft alle 300 s', JSON.stringify(NB('opt_hist').wires) === JSON.stringify([['opt_t_ch_wp'], ['opt_t_ch_rooms'], ['opt_t_ch_at']]) && NB('opt_i_hist').repeat === '300', ''); }
 }
 
-// ---- S0) Referenzlauf: der Waermebedarf (und mit ihm Vertrauen, Abtaurisiko und - ohne gemessene Baender - der Carnot-COP) bleibt bit-identisch zum Stand vor Fahrplan v2.
+// ---- S0) Referenzlauf: Vertrauen, Abtaurisiko, Prognose und - ohne gemessene Baender - der Carnot-COP bleiben bit-identisch zum Stand vor Fahrplan v2; der Waermebedarf und UA
+//      folgen seit PLAN_VER 13 dem Gebaeudemodell v3 (Entscheidung 2) und werden gegen dessen Formel geprueft, nicht gegen die Referenz.
 //      Die Referenz (tools/fixtures/plan_ref_v7.json, erzeugt mit dem alten Code) enthaelt noch Plan, Kosten und Empfehlungen; seit dem Review-Paket (Vorschau, Version 11)
 //      werden nur noch die Bedarfsfelder verglichen: Zeit, Aussen, Feuchte, PV, Bedarf, Abtaurisiko, Vertrauen Temperatur/PV, UA, eta, COP (wo die Referenz unter ihrer alten Grenze 6,5 lag).
 {
   const refFile = path.join(__dirname, 'fixtures', 'plan_ref_v7.json');
   const RI = [0, 1, 2, 5, 6, 17, 18, 19];
-  const capture = () => { const P = planNow(); return {status: P.status, ua: P.model && P.model.ua, eta: P.model && P.model.eta, slots: P.slots.map(x => [x.t, x.at, x.rh, x.pv, x.bedarf, x.risk, x.cA, x.cP]), cop: P.slots.map(x => x.cop)}; };
+  const capture = () => { const P = planNow(); return {status: P.status, ua: P.model && P.model.ua, eta: P.model && P.model.eta, slots: P.slots.map(x => [x.t, x.at, x.rh, x.pv, x.bedarf, x.risk, x.cA, x.cP]), cop: P.slots.map(x => x.cop),
+                                                        formel: P.slots.every(x => Math.abs(x.bedarf - Math.max(0, P.model.ua * (P.model.ti - x.at) - P.model.g) * 0.25) < 1e-12)}; };
   const scen = [['A wide', {wide: true}, 6], ['B warm+PV', {wide: true, atBase: 14, pvPeak: 15000}, 6], ['C quiet3', {wide: true, quiet: 3}, 6], ['D gelernter Tag', {wide: true, atBase: 5, running: true, hp: 2500, atNow: 5}, 1445 + 5]];
   const got = {};
   scen.forEach(([name, o, n]) => { pworld(o); if (o.hp) { O.hp = o.hp; } step(n); got[name] = capture(); });
@@ -1857,15 +1930,16 @@ check('Dateien: Ist, Vergleich, Schnappschuesse und Zustand unter /data/optimize
     const ref = JSON.parse(fs.readFileSync(refFile, 'utf8'));
     Object.keys(got).forEach(nm => {
       const a = ref[nm], b = got[nm]; if (!a) { same = false; first = first || nm + ': fehlt in der Referenz'; return; }
-      ['status', 'ua', 'eta'].forEach(k => { if (JSON.stringify(a[k]) !== JSON.stringify(b[k])) { same = false; first = first || nm + '.' + k + ': ' + a[k] + ' <> ' + b[k]; } });
+      ['status', 'eta'].forEach(k => { if (JSON.stringify(a[k]) !== JSON.stringify(b[k])) { same = false; first = first || nm + '.' + k + ': ' + a[k] + ' <> ' + b[k]; } });
+      if (!b.formel) { same = false; first = first || nm + ': Bedarf folgt nicht der Formel des Modells v3'; }
       if (a.slots.length !== b.slots.length) { same = false; first = first || nm + ': Slotzahl'; return; }
       a.slots.forEach((rs, i) => {
-        const ra = RI.map(j => rs[j]); if (JSON.stringify(ra) !== JSON.stringify(b.slots[i])) { same = false; first = first || nm + '.slots[' + i + ']: ' + JSON.stringify(ra) + ' <> ' + JSON.stringify(b.slots[i]); }
+        const ra = RI.map(j => rs[j]), rb = b.slots[i].slice(); ra[4] = 0; rb[4] = 0; if (JSON.stringify(ra) !== JSON.stringify(rb)) { same = false; first = first || nm + '.slots[' + i + ']: ' + JSON.stringify(ra) + ' <> ' + JSON.stringify(b.slots[i]); }
         if (rs[3] < 6.49) { nCop++; if (rs[3] !== b.cop[i]) { same = false; first = first || nm + '.cop[' + i + ']: ' + rs[3] + ' <> ' + b.cop[i]; } }
       });
     });
   } catch (e) { same = false; first = 'Referenzdatei fehlt oder ist nicht lesbar (' + e.message + ')'; }
-  check('Referenzlauf: 4 Szenarien - Waermebedarf, Vertrauen, Abtaurisiko, UA/eta und Carnot-COP (' + nCop + ' Slots) sind bit-identisch zum Stand vor Fahrplan v2 (Plan/Kosten/Empfehlungen seit dem Review-Paket entfallen)', same && nCop > 300, first);
+  check('Referenzlauf: 4 Szenarien - Prognose, Vertrauen, Abtaurisiko, eta und Carnot-COP (' + nCop + ' Slots) sind bit-identisch zum Stand vor Fahrplan v2 (Plan/Kosten/Empfehlungen seit dem Review-Paket entfallen); der Waermebedarf folgt in jedem Slot dem Gebaeudemodell v3', same && nCop > 300, first);
 }
 })();
 
