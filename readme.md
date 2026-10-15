@@ -1,117 +1,50 @@
-<a id="top"></a>
+# HeishaMoNR-Ableger: Dashboard und Optimierer für eine Panasonic Aquarea L
 
-<img src="images/dashboard/banner_heishamonr.png" width="1000">
-<span style="display:inline-block; margin-right:6px;">
-  <a href="https://www.paypal.com/donate?business=ed_terbak%40hotmail.com&no_recurring=0&item_name=Support+my+work&currency_code=EUR">
-    <img alt="Donate with PayPal" src="https://img.shields.io/badge/Donate-PayPal-0070ba?style=for-the-badge&logo=paypal&logoColor=white">
-  </a>
-</span>
-<span style="display:inline-block;">
-  <a href="https://ko-fi.com/edterbak">
-    <img alt="Buy me a Ko‑fi" src="https://img.shields.io/badge/Buy%20me%20a-Ko%E2%80%91fi-FF5E5B?style=for-the-badge&logo=ko-fi&logoColor=white">
-  </a>
-</span>
+Dieses Repository ist ein **eigenständiger Ableger** von [Egyras/HeishaMoNR](https://github.com/Egyras/HeishaMoNR). Der Node-RED-Flow des Originals ist die Basis, aber Dashboard, Steuerlogik und Werkzeuge wurden für eine konkrete Anlage weit umgebaut. Eine Rückführung in das Hauptprojekt ist nicht geplant. Die ursprüngliche Anleitung liegt unverändert in [readme_heishamonr_original.md](readme_heishamonr_original.md).
 
-********
-**Previously called:** Node Red dashboard for Heishamon
-<br><br>
-**Current version:** v26.5.1 Stable<br>
-**Release date:** 2026-05-14
+**Anlage:** Panasonic Aquarea L, WH-WDG05LE5 (5 kW Monoblock, R290), nur Heizen über Heizkörper, eine Zone, kein Warmwasser über die Wärmepumpe. Anbindung über [HeishaMon](https://github.com/Egyras/HeishaMon) und MQTT, Node-RED auf einer NAS, Energiedaten von Victron Venus/VRM und evcc, Wetter von OpenWeatherMap, Raumfühler Shelly H&T.
 
-********
+## Was anders ist als im Original
 
-<a id="index"></a>
-## Table of Content
-- [Introduction](#introduction)
-- [Gallery](documentation/gallery.md)
-- [Requirements](documentation/requirements.md)
-- [Installation](documentation/nodered_installation.md)
-	- [Node-Red](documentation/nodered_installation.md#node-red-installation)
-		- [Persistent storage](documentation/nodered_installation.md#persistent-storage)
- 		- [Required Node-Red libraries/pallets](documentation/nodered_installation.md#required-node-red-librariespallets)
-  		- [Timezone setup](documentation/nodered_installation.md#timezone-setup)
-    - [Flow](documentation/flow_installation.md)
-    	- [Import](documentation/flow_installation.md#1-download)
-     	- [Adjust settings](documentation/flow_installation.md#3-adjust-settings)
-      	- [Deploy](documentation/flow_installation.md#4-deploy-the-flow)
-- [Update instructions](documentation/update_instructions.md)
-- [Flow configuration](documentation/flow_configuration.md)
-  - [Quick start](documentation/flow_configuration_quickstart.md)
-  - [Setup Guidelines](documentation/flow_configuration_guidelines.md)
-  - [Functions](documentation/flow_configuration_functions.md)
-  - [External sensors](documentation/flow_configuration_external_sensors.md)
-  - [Tips](documentation/flow_configuration_tips.md)
-- [Changes](documentation/changes.md)
-- [FAQ](documentation/faq.md)
-- [Acknowledgments](documentation/acknowledgements.md)
-- [Donations](documentation/donations.md)  
+- **Deutsches Dashboard** mit elf Seiten: Übersicht (Anlagenschema mit Kältekreis, Modulkacheln), Einstellungen, Heizung, Betrieb, Zeitplan, Auswertung, Effizienz, Optimierung, Optimierer, Daten & Güte, System. Nur für Desktop ausgelegt (1024 bis 2560 px).
+- **COP-Korrektur:** HeishaMon meldet die elektrische Leistung ohne Steuerung und Pumpe. Der Kern rechnet im Verdichterlauf +80 W dazu (Forum-Befund), in COP, kWh-Zählern und der Weitergabe an VRM.
+- **Optimierer** (Tab „WP Optimizer“, alle Knoten mit Präfix `opt_*`, erzeugt aus `tools/optimizer_phase1.py`):
+  - Entscheidungsmaschine `tools/engine_core.js` mit Regeln als Daten: Quiet-Freigabe, Deckel/Laufzeit, Raumeinfluss, Vorausschau (Wetter), Heizregelung (Comfort/Efficiency). Jede Regel hat Sperren, Arbitrierung, Prognose und Bewertung (Brier-Punkte).
+  - **Ein-Klick-Übernahme:** Die Maschine schlägt vor, der Mensch klickt. Begrenzt auf wenige Befehle am Tag, mit Rücklesen und Rückweg. Ohne Freigabe reiner Schattenbetrieb.
+  - Pro-Raum-Komfortbänder, berechnete Außentemperatur, Wärmefahrplan (Vorschau), COP-Kennfeld je Modus × Quiet × Außenband, Takt- und Mindestleistungsmessung, Kälte-Vorsorge, Heizstab-Wächter.
+  - Protokolle als CSV im Container (`/data/optimizer/`), Minutentakt für die Wärmepumpe, 5-Minuten-Takt für Räume und Wetter.
+- **Bonsai-Beobachter** (`tools/bonsai_beobachter.py`): tägliche Auswertung der Protokolle mit einem lokalen Sprachmodell, nur Hinweise, keine Steuerung.
+- **Messungen statt Annahmen:** Stopp bei Vorlauf = Soll +3 K, Start bei Soll −3,25 K, Quiet-Deckel je Stufe, Verhalten von Comfort und Efficiency, Mindestfrequenz bei Frost. Die Befunde stehen in `docs/`.
 
-********
+## Arbeitsweise
 
-## Abstract
-`HeishaMoNR` is a **Node-Red flow** which gives you a user friendly dashboard for local control of your Panasonic heat pump.<br>
+1. **Erst simulieren, dann einspielen.** `tools/optimizer_sim.js` und `tools/engine_sim.js` spielen den Flow offline mit Fake-Uhr und echten Protokollen durch. `tools/opt_seiten_vorschau.js` und `tools/ui_vorschau_pruefen.js` rendern die Dashboard-Seiten bei 1024/1920/2560 px und prüfen auf Querscrollen und abgeschnittene Elemente.
+2. **Nur `opt_*`-Knoten über den Generator.** Änderungen am Kern (Originalflow) laufen über eigene, idempotente Patch-Skripte mit Test und byte-gleichem Rückbau (`tools/*_patch.py`), Deploy nur als Typ `nodes`.
+3. **Kein Eingriff ohne Freigabe.** Die Anlage bekommt Befehle nur nach Klick, jeder Befehl wird protokolliert und bewertet.
 
-[Top](#top)
+## Aufbau
 
-********
+| Pfad | Inhalt |
+|---|---|
+| `flows (26.5.1 stable).json` | Node-RED-Flow (Kern aus dem Original plus eigene Änderungen) |
+| `tools/optimizer_phase1.py` | Generator für alle `opt_*`-Knoten, Vorlagen und Funktionen |
+| `tools/engine_core.js`, `engine_view.js`, `eng_ui.js` | Entscheidungsmaschine, Karten, Oberfläche |
+| `tools/schema_ui.js`, `ui_chart.js`, `ui_optik.css` | Anlagenschema, Diagramme, gemeinsamer Stil |
+| `tools/*_sim.js`, `*_test.py`, `*_analyse.js` | Simulationen, Tests, Auswertungen der Protokolle |
+| `tools/bonsai_beobachter.py` | Beobachter mit lokalem Sprachmodell |
+| `docs/OPTIMIERER.md` | Doku der Maschine: Regeln, Punktesystem, Übernahme, Beobachter |
+| `docs/heating_control_concept.md` | Comfort/Efficiency: Konzept und Messungen |
+| `docs/replay_2026-10-07_bis_10.md` | Replay der Maschine auf echten Daten |
+| `documentation/`, `images/` | Anleitung und Bilder des Originals |
 
-<a id="introduction"></a>
-## Introduction
-You can connect your Panasonic heat pump to the default CZ-TAW1 module. Then you are locked in the Panasonic ecosystem depending on using the wallmounted controller or Aquarea Smart Cloud.
+## Branches
 
-Alternatively you can connect and control your Panasonic heat pump locally with Heishamon. The Heishamon board is created by Egyras. AWESOME job! Get one here: https://www.tindie.com/stores/thehognl/ <br/> <br/>
-The Node Red flow from this repository uses the above mentioned pcb to communicate with your Panasonic heat pump. <br/>
+`main` zeigt den eingespielten Stand. Arbeitszweige heißen nach ihrem Thema (`ui-lambda`, `regel-heizregelung`, `cop-korrektur`, `raumeinfluss-v3`, …) und werden nach dem Einspielen in `main` übernommen.
 
-```mermaid
----
-config:
-  look: handDrawn
-  theme: forest
----
-flowchart LR
-    A((A
-		Panasonic    
-		Heat pump)) <---> B(B
-		Heishamon)
-	B <---> C{{C
-		MQTT Broker}}
-    C <---> D(D
-		Node-Red)
-	style D fill:#f9f,stroke:#333,stroke-width:4px
-```
-* []() A > B: The Panasonic heat pump communicates with the heishamon board
-* []() B > C: Heishamon communicates with your MQTT broker
-* []() C > D: Node-Red communicates with the MQTT broker
+## Hinweise
 
-I have chosen to use **Node-Red** (=NR) as FrontEnd and automation platform. 
-In this repository you will find out all about this Node-Red flow.
+- Die Anlage, das Haus und die Messwerte sind spezifisch. Schwellen und Regeln sind für andere Anlagen nicht ohne Prüfung übertragbar.
+- Die Regeln haben noch keinen Winter gesehen; alle Schwellen für Frost, Abtauen und Heizstab sind Annahmen und im Code so gekennzeichnet.
+- Zugangsdaten (OpenWeatherMap, VRM) liegen nur in Dateien im Container, nie im Flow oder Repository.
 
-[Top](#top)
-
-********
-
-## What can `HeishaMoNR` do for you (the simple benefits)
-So, what can it do.
-* Offers **local control**. No dependency on Panasonic Cloud at all.
-* It provides a nice **dashboard**.
-* Shows detailed **graphs and charts** with real‑time or historical data.
-* Allows advanced **custom functions** such as CCC, RTC, SoftStart, and Solar‑driven DHW optimizations.
-* Works with **any sensor** for the custom functions. 
-* **Automations** using schedules with conditions.
-
-### Dashboard examples
-Here are just a few images to show the dashboard. For more images look in [the gallery.](documentation/gallery.md)
-
-*Home dashboard*<br>
-<img src="images/dashboard/home_01.png" width=70%>
-<br>
-
-*RoomTemperatureCorrection function*<br>
-<img src="images/dashboard/function_rtc_01.png" width=70%>
-<br><br>
-
-[Top](#top)
-
-********
-
-
+Lizenz und Urheberrecht des Originals bleiben unberührt, siehe [readme_heishamonr_original.md](readme_heishamonr_original.md).
