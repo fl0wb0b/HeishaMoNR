@@ -3,11 +3,12 @@
 
 Befehle (docker compose run --rm optimizer-tools <befehl> [--tag JJJJ-MM-TT]):
   dienst      Standard: Zeitplan (ZEITPLAN, Standard 06:40) und danach jeweils „nacht“; holt einen verpassten Lauf nach (NACHHOLEN=1)
-  nacht       Training (Tag = heute), Replay (gestern), Kennzahlen (gestern), dann status.json
+  nacht       Training (Tag = heute), Replay (gestern), Kennzahlen (gestern), Sicherung der Protokolle, dann status.json
   alles       wie nacht, dazu Kennzahlen aller Tage und Replays der fehlenden Tage (höchstens 31) nachrechnen (Erstinstallation)
   training    nur Training des Anlagen-Zwillings
   replay      nur Replay der Entscheidungsmaschine für einen Tag (Standard: gestern)
   kennzahlen  nur Tageskennzahlen (Standard: gestern; --alle für alle Tage)
+  sicherung   nur die Sicherung der Protokolle nach /ergebnis/sicherung (tar.gz, Allowlist, SICHERUNG_TAGE Tage)
   status      status.json ausgeben
   gesund      Healthcheck (Dienst lebt, Datenordner lesbar)
   hilfe       diese Hilfe
@@ -17,12 +18,14 @@ Jede Zeile auf stdout trägt einen Zeitstempel; das Protokoll des letzten Laufs 
 """
 import datetime as dt
 import fcntl
+import hashlib
 import json
 import os
 import re
 import signal
 import subprocess
 import sys
+import tarfile
 import threading
 import time
 
@@ -35,7 +38,17 @@ NACHHOLEN = os.environ.get("NACHHOLEN", "1") == "1"
 HERZ = os.environ.get("OT_HERZSCHLAG", "/tmp/optimizer-tools.herz")
 VERSION = os.environ.get("OT_VERSION", "dev")
 AUFBEWAHREN_TAGE = int(os.environ.get("AUFBEWAHREN_TAGE", "120"))
-TIMEOUT = {"training": 1200, "replay": 600, "kennzahlen": 600}       # Sekunden je Schritt (N100: Training ~1 min, Replay ~15 s, Kennzahlen ~5 s)
+SICHERUNG_TAGE = int(os.environ.get("SICHERUNG_TAGE", "120"))                 # tägliche Archive so lange behalten ...
+SICHERUNG_MONATSERSTE = os.environ.get("SICHERUNG_MONATSERSTE", "1") == "1"   # ... das Archiv vom 1. jedes Monats (enthält den Vormonat komplett) unbegrenzt
+SICHERUNG_VORMONAT_TAGE = 7                                                   # Monatsdateien des Vormonats bis zum 7. mitsichern
+TIMEOUT = {"training": 1200, "replay": 600, "kennzahlen": 600, "sicherung": 600}   # Sekunden je Schritt (N100: Training ~1–5 min, Replay ~30 s, Kennzahlen ~5 s, Sicherung ~10 s)
+STATUS_FORMAT = 2                                                             # Aufbau von status.json, siehe README „status.json“
+# Ergebnisordner auf der NAS: Unterordner im Node-RED-Datenvolume; einmalig anzulegen (ohne root, als node-red):
+ANLEGEN_HILFE = "docker exec node_red-node-red-1 sh -c 'mkdir -p /data/optimizer-tools && chmod 2775 /data/optimizer-tools'"
+# Allowlist der Sicherung: Monatsdateien (CSV/JSONL) und Zustands-JSON; Geheimnisse ausdrücklich ausgeschlossen (zusätzlich zur Unlesbarkeit, Modus 600)
+SICH_MONAT = re.compile(r"^[a-z][a-z0-9-]*-(\d{4})-(\d{2})\.(csv|jsonl)$")
+SICH_JSON = re.compile(r"^[a-z][a-z0-9-]*\.json$")
+SICH_NIE = re.compile(r"(?i)owm|vrm|cred|secret|token|passw|key|auth")
 DATEN_MAX_ALTER_MIN = 30                                           # jüngste Zeile in quiet-*.csv älter → Fehler in status.json (Node-RED schreibt jede Minute)
 # Ampel für die Güte des Trainings (ANNAHME, aus den Testwerten 15.10.2026 mit Abstand: TOP16 21,6 W, Vorlauf 0,97 K, Pause Median 7 min)
 GUETE_GRENZEN = {"Strom TOP16 RMSE (W)": 40.0, "Wasserkreis RMSE (K)": 1.5, "Pause Median-Fehler (min)": 30.0}
@@ -158,8 +171,95 @@ def cmd_replay(tag):
     return ["node", os.path.join(TOOLS, "replay_tag.js"), DATEN, ERGEBNIS, "--tag", tag.isoformat()]
 
 
+def cmd_sicherung(tag):
+    return [sys.executable, os.path.abspath(__file__), "_sicherung", "--tag", tag.isoformat()]
+
+
 def cmd_kennzahlen(tag, alle=False):
     return [sys.executable, os.path.join(TOOLS, "kennzahlen_tag.py"), "--daten", DATEN, "--ergebnis", ERGEBNIS, "--tag", tag.isoformat()] + (["--alle"] if alle else [])
+
+
+# ------------------------------------------------------------------ Sicherung der Protokolle
+def sicherung_dateien(tag):
+    """Dateinamen aus /daten für das Archiv: Monatsdateien des Monats von <tag> (bis zum 7. auch des Vormonats) und Zustands-JSON, nur Allowlist, nur lesbare."""
+    monate = {tag.strftime("%Y-%m")}
+    if tag.day <= SICHERUNG_VORMONAT_TAGE:
+        monate.add((tag.replace(day=1) - dt.timedelta(days=1)).strftime("%Y-%m"))
+    namen, uebersprungen = [], 0
+    for f in sorted(os.listdir(DATEN)):
+        p = os.path.join(DATEN, f)
+        m = SICH_MONAT.match(f)
+        erlaubt = (m and "%s-%s" % (m.group(1), m.group(2)) in monate) or (SICH_JSON.match(f) and not m)
+        if not erlaubt or SICH_NIE.search(f) or not os.path.isfile(p) or os.path.islink(p):
+            uebersprungen += 1
+            continue
+        if not os.access(p, os.R_OK):
+            uebersprungen += 1
+            continue
+        namen.append(f)
+    return namen, uebersprungen
+
+
+def sha256_datei(pfad):
+    h = hashlib.sha256()
+    with open(pfad, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def sicherung_ausfuehren(tag):
+    """Archiv /ergebnis/sicherung/daten-<tag>.tar.gz (+ .sha256), prüfen (ganz entpacken im Speicher-Strom), alte löschen, letzte.json schreiben."""
+    t = time.time()
+    ordner = os.path.join(ERGEBNIS, "sicherung")
+    os.makedirs(ordner, exist_ok=True)
+    namen, uebersprungen = sicherung_dateien(tag)
+    if not namen:
+        raise RuntimeError("keine Dateien für die Sicherung in %s" % DATEN)
+    name = "daten-%s.tar.gz" % tag.isoformat()
+    ziel = os.path.join(ordner, name)
+    tmp = os.path.join(ordner, ".tmp_" + name)
+    inhalt = []
+    with tarfile.open(tmp, "w:gz", compresslevel=6, format=tarfile.PAX_FORMAT) as tar:
+        for f in namen:
+            p = os.path.join(DATEN, f)
+            with open(p, "rb") as quelle:                    # Node-RED hängt laufend an: genau die Länge beim Öffnen sichern (vollständige Zeilen bis dahin)
+                st = os.fstat(quelle.fileno())
+                ti = tarfile.TarInfo(f)
+                ti.size, ti.mtime, ti.mode, ti.uid, ti.gid = st.st_size, int(st.st_mtime), 0o644, st.st_uid, st.st_gid
+                tar.addfile(ti, quelle)
+            inhalt.append({"name": f, "bytes": st.st_size})
+    n = 0
+    with tarfile.open(tmp, "r:gz") as tar:                   # Prüfung: alles lesen (gzip-CRC), Namen und Längen vergleichen
+        for ti in tar:
+            daten = tar.extractfile(ti).read()
+            if ti.name != inhalt[n]["name"] or len(daten) != inhalt[n]["bytes"]:
+                raise RuntimeError("Prüfung des Archivs fehlgeschlagen bei %s" % ti.name)
+            n += 1
+    if n != len(inhalt):
+        raise RuntimeError("Prüfung des Archivs: %d statt %d Dateien" % (n, len(inhalt)))
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, ziel)
+    summe = sha256_datei(ziel)
+    schreibe_atomar(ziel + ".sha256", "%s  %s\n" % (summe, name))
+    # Aufbewahrung: älter als SICHERUNG_TAGE löschen, Archive vom Monatsersten behalten (SICHERUNG_MONATSERSTE=1)
+    grenze = (tag - dt.timedelta(days=SICHERUNG_TAGE)).isoformat()
+    geloescht = 0
+    for f in sorted(os.listdir(ordner)):
+        m = re.match(r"^daten-(\d{4}-\d{2}-(\d{2}))\.tar\.gz(\.sha256)?$", f)
+        if m and m.group(1) < grenze and not (SICHERUNG_MONATSERSTE and m.group(2) == "01"):
+            os.unlink(os.path.join(ordner, f))
+            geloescht += 0 if m.group(3) else 1
+    archive = sorted(f for f in os.listdir(ordner) if re.match(r"^daten-\d{4}-\d{2}-\d{2}\.tar\.gz$", f))
+    belegt = sum(os.path.getsize(os.path.join(ordner, f)) for f in archive)
+    info = {"tag": tag.isoformat(), "datei": "sicherung/" + name, "bytes": os.path.getsize(ziel), "sha256": summe, "dateien": len(inhalt),
+            "bytes_roh": sum(x["bytes"] for x in inhalt), "uebersprungen": uebersprungen, "inhalt": inhalt, "geprueft": True,
+            "dauer_s": round(time.time() - t, 1), "archive": len(archive), "aeltestes": archive[0][6:16] if archive else None,
+            "belegt_mb": round(belegt / 1048576, 1), "geloescht": geloescht}
+    schreibe_atomar(os.path.join(ordner, "letzte.json"), json.dumps(info, ensure_ascii=False, indent=1) + "\n")
+    print("Sicherung %s: %d Dateien, %.1f MB roh → %.1f MB gepackt, geprüft, sha256 %s…; %d Archive (%.1f MB), %d alte gelöscht, %d Namen übersprungen (anderer Monat oder nicht in der Allowlist)" % (
+        name, len(inhalt), info["bytes_roh"] / 1048576, info["bytes"] / 1048576, summe[:16], len(archive), info["belegt_mb"], geloescht, uebersprungen), flush=True)
+    return info
 
 
 # ------------------------------------------------------------------ Status
@@ -193,27 +293,53 @@ def guete_ampel(tr):
     return "gruen"
 
 
+def replay_guete(ab):
+    """Güte des Replays (Status gleich live) nur, wenn das Maß sauber ist (replay_tag.js v2: Live-Eingänge, gleiche Regelversion); sonst null mit Grund."""
+    if not ab:
+        return {"bewertbar": False, "prozent": None, "grund": "kein Replay"}
+    if "bewertbar" not in ab:                                     # Replay-Datei vor v2: Maß verglich auch verschiedene Regelversionen und 5-min-Raumwerte
+        return {"bewertbar": False, "prozent": None, "grund": "Replay-Datei im alten Format (Abgleich ohne Versionsprüfung)"}
+    regeln = {rid: {"prozent": g.get("gleichProzent") if g.get("bewertbar") else None, "bewertbar": bool(g.get("bewertbar")),
+                    "minuten": g.get("vergleichbar"), "grund": g.get("grund")} for rid, g in (ab.get("regeln") or {}).items()}
+    return {"bewertbar": bool(ab.get("bewertbar")), "prozent": ab.get("gleichProzent") if ab.get("bewertbar") else None,
+            "grund": ab.get("grund"), "nicht_bewertbar": ab.get("nichtBewertbar") or [], "regeln": regeln,
+            "eingang": ab.get("eingang"), "eingang_live_minuten": (ab.get("eingangAusLive") or {}).get("tag")}
+
+
 def baue_status(lauf=None, dienst=None):
+    """status.json (Format 2, Felder im README unter „status.json“). Wird nach jedem Lauf und beim Dienststart neu geschrieben."""
     alt = lies_json(os.path.join(ERGEBNIS, "status.json")) or {}
-    S = {"version": 1, "werkzeug": "optimizer-tools %s" % VERSION, "aktualisiert": jetzt().isoformat(sep=" ")}
+    S = {"format": STATUS_FORMAT, "version": VERSION, "werkzeug": "optimizer-tools %s" % VERSION, "aktualisiert": jetzt().isoformat(sep=" ")}
     S["dienst"] = dienst or alt.get("dienst")
     S["letzter_lauf"] = lauf or alt.get("letzter_lauf")
+    fehler, hinweise = [], []
     tr = lies_json(os.path.join(ERGEBNIS, "training", "letzter.json"))
+    S["training"] = None
     if tr:
         S["training"] = {"tag": tr.get("tag"), "ok": tr.get("ok"), "fehler": tr.get("fehler"), "dauer_s": tr.get("dauer_s"), "datei": "training/" + str(tr.get("datei")),
-                         "ampel": guete_ampel(tr), "guete_test": tr.get("guete_test"), "guete_test_vorher": tr.get("guete_test_vorher"),
+                         "ampel": guete_ampel(tr), "ampel_grenzen": GUETE_GRENZEN, "guete_test": tr.get("guete_test"), "guete_test_vorher": tr.get("guete_test_vorher"),
                          "daten": tr.get("daten"), "drift": {k: (tr.get("drift") or {}).get(k) for k in ("gegen", "werte", "auffaellig", "liste")}}
-    # jüngster Replay- und Kennzahlen-Tag
-    for art in ("replay", "kennzahlen"):
+        if (S["training"]["drift"] or {}).get("auffaellig"):
+            hinweise.append("Training: %d Parameter mit auffälliger Drift" % S["training"]["drift"]["auffaellig"])
+        if S["training"]["ampel"] == "gelb":
+            hinweise.append("Training: Güte gelb (Grenze überschritten)")
+    S["replay"], S["kennzahlen"] = None, None
+    luecken = {"frische": datenfrische(), "minutenprotokoll": None, "raumfuehler": None}
+    for art in ("replay", "kennzahlen"):                          # jüngster Replay- und Kennzahlen-Tag
         o = os.path.join(ERGEBNIS, art)
         tage = sorted(f[:10] for f in (os.listdir(o) if os.path.isdir(o) else []) if re.match(r"^\d{4}-\d{2}-\d{2}\.json$", f))
         if not tage:
             continue
         j = lies_json(os.path.join(o, tage[-1] + ".json")) or {}
         if art == "replay":
-            ab = j.get("abgleichLive") or {}
             S["replay"] = {"tag": j.get("tag"), "datei": "replay/%s.md" % tage[-1], "minuten": j.get("minuten"), "vorschlaege": len(j.get("vorschlaege") or []),
-                           "punkte_eintraege": len(j.get("punkte") or []), "gleich_live_prozent": ab.get("gleichProzent"), "live_minuten": ab.get("liveMinuten")}
+                           "punkte_eintraege": len(j.get("punkte") or []), "guete": replay_guete(j.get("abgleichLive"))}
+            R = j.get("raeume")
+            if R is not None:
+                luecken["raumfuehler"] = {"tag": j.get("tag"), "raeume": {rid: {"name": x.get("name"), "ungueltig_min": x.get("ungueltig"), "laengste_min": x.get("laengsteMin")} for rid, x in R.items()}}
+                for x in R.values():
+                    if (x.get("ungueltig") or 0) > 120:
+                        hinweise.append("Raumfühler %s: %d min ohne gültigen Wert am %s (längste Lücke %d min)" % (x.get("name"), x["ungueltig"], j.get("tag"), x.get("laengsteMin") or 0))
         else:
             F = j.get("fakten") or {}
             S["kennzahlen"] = {"tag": j.get("tag"), "datei": "kennzahlen/%s.json" % tage[-1], "tag_vollstaendig": j.get("tag_vollstaendig"),
@@ -221,21 +347,26 @@ def baue_status(lauf=None, dienst=None):
                                "kwh_je_gradstunde": F.get("effizienz.kwh_je_gradstunde"), "abweichung_7t_prozent": F.get("effizienz.abweichung_prozent"),
                                "komfort_gehalten": F.get("komfort.gehalten"), "laeufe": F.get("laeufe.anzahl"), "starts": F.get("laeufe.starts"),
                                "abtauungen": F.get("abtau.anzahl"), "heizstab_min": F.get("heizstab.minuten"), "aussen_mittel": F.get("aussen.mittel"),
-                               "befunde": j.get("befunde_anzahl"), "luecken_ueber_10min": F.get("daten.luecken_ueber_10min")}
-    S["daten"] = datenfrische()
-    fehler = []
-    if S["daten"]["lesbar"] is False:
-        fehler.append("Datenordner: %s nicht lesbar" % S["daten"]["datei"])
-    elif S["daten"]["alter_min"] is not None and S["daten"]["alter_min"] > DATEN_MAX_ALTER_MIN:
-        fehler.append("Daten veraltet: jüngste Zeile vor %s min" % S["daten"]["alter_min"])
+                               "befunde": j.get("befunde_anzahl")}
+            luecken["minutenprotokoll"] = {"tag": j.get("tag"), "minutenzeilen": F.get("daten.minutenzeilen"), "luecken_ueber_10min": F.get("daten.luecken_ueber_10min"),
+                                           "groesste_luecke_min": F.get("daten.groesste_luecke_min"), "liste": j.get("luecken")}
+            if F.get("daten.luecken_ueber_10min"):
+                hinweise.append("Minutenprotokoll %s: %d Lücken über 10 min (größte %s min)" % (j.get("tag"), F["daten.luecken_ueber_10min"], F.get("daten.groesste_luecke_min")))
+    S["datenluecken"] = luecken
+    sich = lies_json(os.path.join(ERGEBNIS, "sicherung", "letzte.json"))
+    S["sicherung"] = {k: sich.get(k) for k in ("tag", "datei", "bytes", "sha256", "dateien", "bytes_roh", "geprueft", "archive", "aeltestes", "belegt_mb")} if sich else None
+    fr = luecken["frische"]
+    if fr["lesbar"] is False:
+        fehler.append("Datenordner: %s nicht lesbar" % fr["datei"])
+    elif fr["alter_min"] is not None and fr["alter_min"] > DATEN_MAX_ALTER_MIN:
+        fehler.append("Daten veraltet: jüngste Zeile vor %s min" % fr["alter_min"])
     ll = S.get("letzter_lauf") or {}
-    for n, s in (ll.get("schritte") or {}).items():
-        if not s.get("ok"):
-            fehler.append("%s: %s" % (n, s.get("fehler")))
-    if S.get("training") and S["training"].get("drift", {}).get("auffaellig"):
-        fehler.append("Hinweis: %d Parameter mit auffälliger Drift" % S["training"]["drift"]["auffaellig"])
+    for n, st in (ll.get("schritte") or {}).items():
+        if not st.get("ok"):
+            fehler.append("%s: %s" % (n, st.get("fehler")))
+    S["ok"] = not fehler
     S["fehler"] = fehler
-    S["ok"] = not [f for f in fehler if not f.startswith("Hinweis")]
+    S["hinweise"] = hinweise
     schreibe_atomar(os.path.join(ERGEBNIS, "status.json"), json.dumps(S, ensure_ascii=False, indent=1) + "\n")
     return S
 
@@ -271,6 +402,10 @@ class Sperre:
         self.f.close()
 
 
+def ergebnis_schreibbar():
+    return os.path.isdir(ERGEBNIS) and os.access(ERGEBNIS, os.W_OK | os.X_OK)
+
+
 def lauf(art, argv):
     global _log_datei, _im_lauf
     gestern = heute() - dt.timedelta(days=1)
@@ -283,9 +418,14 @@ def lauf(art, argv):
     if art in ("nacht", "alles", "kennzahlen"):
         kt = tag - dt.timedelta(days=1) if (tag and art != "kennzahlen") else (tag or gestern)
         plan.append(("kennzahlen", cmd_kennzahlen(kt, alle=(art == "alles" or "--alle" in argv))))
+    if art in ("nacht", "alles", "sicherung"):
+        plan.append(("sicherung", cmd_sicherung(tag or heute())))
     if not os.path.isdir(DATEN):
         log("Fehler: Datenordner %s fehlt (Volume nicht eingehängt?)" % DATEN, art)
         return 2
+    if not ergebnis_schreibbar():
+        log("Fehler: Ergebnisordner %s nicht schreibbar (uid %d, Gruppen %s). Auf der NAS einmalig anlegen: %s" % (ERGEBNIS, os.getuid(), os.getgroups(), ANLEGEN_HILFE), art)
+        return 4
     try:
         sperre = Sperre().__enter__()
     except RuntimeError as e:
@@ -390,6 +530,8 @@ def dienst():
         ZEITPLAN, gestartet.strftime("%H:%M"), DATEN, ERGEBNIS, "an" if NACHHOLEN else "aus"), "dienst")
     if not os.path.isdir(DATEN):
         log("Warnung: Datenordner %s fehlt; Läufe brechen ab, bis er eingehängt ist" % DATEN, "dienst")
+    if not ergebnis_schreibbar():
+        log("Warnung: Ergebnisordner %s nicht schreibbar; Läufe brechen ab (rc 4). Einmalig anlegen: %s" % (ERGEBNIS, ANLEGEN_HILFE), "dienst")
     plan = naechster(gestartet)
     alt = (lies_json(os.path.join(ERGEBNIS, "status.json")) or {}).get("letzter_lauf") or {}
     erster_heute = dt.datetime.combine(gestartet.date(), zeiten()[0])
@@ -440,6 +582,9 @@ def gesund():
     if not os.access(DATEN, os.R_OK | os.X_OK):
         print("Datenordner %s nicht lesbar" % DATEN)
         return 1
+    if not ergebnis_schreibbar():
+        print("Ergebnisordner %s nicht schreibbar" % ERGEBNIS)
+        return 1
     print("gesund")
     return 0
 
@@ -448,7 +593,14 @@ def main(argv):
     befehl = argv[1] if len(argv) > 1 else "dienst"
     if befehl == "dienst":
         return dienst()
-    if befehl in ("nacht", "alles", "training", "replay", "kennzahlen"):
+    if befehl == "_sicherung":                                   # interner Schritt (Kindprozess von lauf(), Sperre hält der Elternprozess)
+        try:
+            sicherung_ausfuehren(tag_arg(argv[2:], heute()))
+        except (OSError, RuntimeError, tarfile.TarError) as e:
+            print("Fehler: Sicherung: %s" % e, flush=True)
+            return 1
+        return 0
+    if befehl in ("nacht", "alles", "training", "replay", "kennzahlen", "sicherung"):
         signal.signal(signal.SIGTERM, beende)
         return lauf(befehl, argv[2:])
     if befehl == "status":

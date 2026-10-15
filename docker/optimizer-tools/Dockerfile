@@ -11,6 +11,7 @@ LABEL org.opencontainers.image.title="optimizer-tools" \
 
 # python3 für die Steuerung, Training-Hülle und Kennzahlen; tzdata für Europe/Berlin (Sommer-/Winterzeit im Zeitplan).
 # Eigener Benutzer 10001: NICHT uid 1000 (= node im Image und node-red auf der NAS), damit owm.json/vrm.json (Modus 600, uid 1000) unlesbar bleiben.
+# Schreiben in /data/optimizer-tools (2775, 1000:1000) über die Zusatzgruppe 1000 (compose: group_add); Gruppenrechte von 600-Dateien sind leer.
 RUN apk add --no-cache python3 tzdata \
  && addgroup -S -g 10001 ot \
  && adduser -S -D -H -u 10001 -G ot -s /sbin/nologin ot \
