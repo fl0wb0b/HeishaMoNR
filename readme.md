@@ -13,7 +13,7 @@ Die Anlage ist eine Panasonic Aquarea L („Leisha“), Außengerät WH-WDG05LE5
 Das Umfeld:
 
 - HeishaMon an der Wärmepumpe, MQTT-Broker und Node-RED als Docker-Container auf einer NAS.
-- Vier Räume mit Shelly H&T Gen3 (melden nur bei Änderung um 0,5 K) und je einem eigenen Komfortband.
+- Vier Räume mit Shelly H&T (zwei Gen3, zwei Gen1; melden teils nur bei Änderung um 0,5 K) und je einem eigenen Komfortband.
 - Ein Kinderzimmer mit eigenem Radiator-Relais und Heizlüfter, gesteuert im Flow.
 - Energiedaten von Victron Venus/VRM (PV, Akku, Netz) und evcc, Wetter und Vorhersage von OpenWeatherMap.
 
