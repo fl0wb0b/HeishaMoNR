@@ -1,8 +1,12 @@
 // Offline-Pruefung der Entscheidungsmaschine (tools/engine_core.js) mit Fake-Uhr: Regeln, Sperren, Datensaetze, Punktesystem, Klick-Uebernahme,
 // Mehrtages-Szenarien mit einem einfachen Anlagenmodell, Replay der echten Daten (wenn vorhanden) und - mit Flow-Datei - die Node-RED-Huellen.
 // Usage: node tools/engine_sim.js [flows.json] [Datenordner]
+//        node tools/engine_sim.js <flows.json> --zwilling <wp_params.json> [--szenario frost|abtau|mild|woche|alle]   (geschlossen gegen den Anlagen-Zwilling)
 //   ohne flows.json: nur Kern + Replay; Datenordner Standard: ../engine_brief/data (fehlt er, werden die Replay-Pruefungen uebersprungen)
 process.env.TZ = process.env.TZ_SIM || 'Europe/Berlin';
+// Modus Zwilling (15.10.2026): node tools/engine_sim.js <flows.json> --zwilling <wp_params.json> [--szenario frost|abtau|mild|woche|alle] – die Maschine läuft geschlossen
+// gegen den Anlagen-Zwilling (tools/engine_vs_zwilling.js, Schatten gegen sofort übernommen); die übrigen Prüfungen dieser Datei laufen dann nicht
+if (process.argv.indexOf('--zwilling') > 1) { require('./engine_vs_zwilling.js').cli(process.argv.slice(2)); process.exit(process.exitCode || 0); }
 const fs = require('fs');
 const path = require('path');
 const E = require('./engine_core.js');
