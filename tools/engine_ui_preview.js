@@ -25,7 +25,9 @@ function snapshots(dataDir) {
     const V = {ep: [], open: {}}, out = {};
     const tA = new Date(2026, 9, 10, 8, 38).getTime(), tF = new Date(2026, 9, 13, 13, 52).getTime();   // F: Heizregelung schlaegt Efficiency vor (Comfort von Hand seit 07:06)
     let last = null;
-    const R = replay(dataDir, {keepRecs: false, onStep: (o, inp) => {
+    // ohne Raum mit eigener Nachheizung (eigen: []): Schnappschuss A zeigt die Quiet-Freigabe des Boosts 10.10. 08:38 (Kinderzimmer oben 1,6 K unter Minimum) als Beispiel einer
+    // Karte mit Vorschlag; mit dem Standard seit Entscheidung 5 (Kinderzimmer oben mit eigener Nachheizung) gaebe es dort keinen Vorschlag
+    const R = replay(dataDir, {keepRecs: false, eigen: [], onStep: (o, inp) => {
         VW.track(V, o.res, o.S.rules, inp.t);
         last = {t: inp.t, res: o.res, prop: o.prop, anl: {z: o.d.zustand, lauf: o.d.runMin, hz: o.d.hz, q: o.d.q, vlR: o.d.vlRueck}};
         if (inp.t === tA) {

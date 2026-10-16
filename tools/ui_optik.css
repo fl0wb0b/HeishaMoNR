@@ -35,6 +35,7 @@
 .optr .sum{grid-template-columns:max-content minmax(0,1fr) max-content minmax(0,1fr)}.optr .sum .wide{grid-column:2 / span 3}
 .optr .warn,.optr .ok{font-weight:600}
 .optr td:first-child{font-weight:500}.optr td:nth-child(5){white-space:nowrap}
+.optr td,.optr th{padding-left:4px;padding-right:4px}   /* Paket 2: Spalte „Sonne“ – engere Zellen, damit die Tabelle bei 1024 px in die Karte passt */
 .optr .role{display:block;font-size:12px;color:#c62828;line-height:1.2}
 .optr input[type=number]{width:52px;padding:2px 4px;font:inherit;font-size:13.5px;text-align:right;border:1px solid #b0bec5;border-radius:4px;background:#fff;color:inherit}
 .optr input[type=number]:focus{outline:none;border-color:#0094ce;box-shadow:0 0 0 2px rgba(0,148,206,.2)}
@@ -42,3 +43,6 @@
 /* Diagramm-Karte ohne Daten: kompakte Zeile statt einer leeren Flaeche */
 .optch-leer{border:1px dashed #b0bec5;border-radius:8px;padding:10px 12px;color:#546e7a;font-size:13px}
 @media (max-width:700px){ui-card-panel:has(.optr),.nr-dashboard-cardpanel:has(.optr),.nr-dashboard-cardcontainer:has(.optr),md-card.nr-dashboard-template:has(.optr){width:100% !important;min-width:0 !important;max-width:100% !important}}
+/* Chips ok/warn/fehler (Karte "Auswertung NAS", Paket 2): Farben wie die Chips der Seite "Optimierer" (eng_ui.js .oe-ok/.oe-warn/.oe-bad) */
+.optfit .optchip{display:inline-block;margin-left:8px;padding:0 8px;border-radius:10px;font-size:12px;line-height:18px;font-weight:600;white-space:nowrap;background:#eceff1;color:#455a64;vertical-align:baseline}
+.optfit .optchip.ok{background:#e6f4ea;color:#1b5e20}.optfit .optchip.warn{background:#fff3e0;color:#8a4b00}.optfit .optchip.fehler{background:#fdecea;color:#b71c1c}
