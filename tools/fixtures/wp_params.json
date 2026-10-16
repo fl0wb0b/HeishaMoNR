@@ -1,0 +1,2339 @@
+{
+ "version": 1,
+ "modell": "wp_zwilling v1",
+ "daten": {
+  "ordner": "replay_data_1610",
+  "von": "2026-10-07 16:55",
+  "bis": "2026-10-16 22:57",
+  "minuten": 13323,
+  "laeufe": 35,
+  "pausen": 34
+ },
+ "trennung": {
+  "training": [
+   "2026-10-07",
+   "2026-10-12"
+  ],
+  "test": [
+   "2026-10-13",
+   "2026-10-16"
+  ]
+ },
+ "werte": {
+  "kurve": [
+   -13,
+   11,
+   29,
+   37
+  ],
+  "sollRasterMin": 5,
+  "hgAus": 15,
+  "hgAn": 12,
+  "hgStartMin": 3,
+  "startK": 2.75,
+  "startVerzugMin": 18,
+  "startHystK": 99,
+  "stopK": 3,
+  "stopHaltMin": 3,
+  "minPauseMin": 3,
+  "hzMin": 16.5,
+  "hzMinFrost": [
+   [
+    -10,
+    35
+   ],
+   [
+    -4,
+    25
+   ]
+  ],
+  "hzMaxTab": [
+   [
+    -4,
+    52
+   ],
+   [
+    4,
+    48
+   ],
+   [
+    9,
+    35
+   ],
+   [
+    99,
+    30
+   ]
+  ],
+  "spike": [
+   33,
+   24
+  ],
+  "capQ3": 17,
+  "capQ2kalt": 21,
+  "capQ2warm": 17,
+  "capQ2grenze": 7,
+  "capQ1": 21,
+  "regSenkK": 1,
+  "regAbHzMin": 0.5,
+  "comfortWiederK": 99,
+  "effT1": 30,
+  "effK1": 4,
+  "effL1": 21,
+  "effT2": 36,
+  "effK2": 1.25,
+  "effKp": 3,
+  "effKi": 0.1,
+  "pthHz": 120.566,
+  "pthHzAT": 0.7431,
+  "pthEnde": 0.0583,
+  "pthFrostAb": 1,
+  "pthFrostJeK": 0.045,
+  "pthFrostMin": 0.7,
+  "pelFrostAnteil": 0.6,
+  "pel0": -113.73,
+  "pelHz": 11.1022,
+  "pelRL": 0.63649,
+  "pelAT": -0.2828,
+  "pelKorrW": 80,
+  "pelPauseW": 34,
+  "pelAusW": 15,
+  "flowPause": 13.4,
+  "flowComfort": 13.7,
+  "flowEff": [
+   30,
+   21,
+   35,
+   90
+  ],
+  "flowHgNeustart": 35,
+  "flowAbtau": 21,
+  "pumpe0": 1741,
+  "pumpeJeL": 118,
+  "fanQ": [
+   316,
+   240,
+   306,
+   222
+  ],
+  "fanKalt": [
+   110,
+   105,
+   105,
+   100
+  ],
+  "fanKaltAtC": 4,
+  "fanJeHz": 4.62,
+  "cw": 0.3832,
+  "krad": 0.16718,
+  "nrad": 1.3,
+  "cr": 0.1189,
+  "hr": 0.6,
+  "kv": 0,
+  "tvRef": 22,
+  "tauLokMin": 240,
+  "ua": 0.1513,
+  "gain": 0.2296,
+  "ch": 4.2,
+  "sonne": 0.0542,
+  "hausAtTauMin": 240,
+  "raeume": {
+   "ki_oben": [
+    2.21141,
+    0.13509,
+    -0.15215,
+    0.08507,
+    30,
+    0.57,
+    11.71,
+    6.12,
+    18.45
+   ],
+   "ki_unten": [
+    0.13297,
+    0,
+    0.00802,
+    0,
+    30,
+    0.57,
+    11.71,
+    6.12,
+    18.45
+   ],
+   "schlaf": [
+    -0.22866,
+    0.01042,
+    -0.0093,
+    0.01307,
+    30,
+    0.57,
+    11.71,
+    6.12,
+    18.45
+   ],
+   "wohn": [
+    4.67407,
+    0.04159,
+    -0.224,
+    0.00665,
+    60,
+    0.83,
+    11.01,
+    6.12,
+    18.45
+   ]
+  },
+  "raumAtTauMin": 360,
+  "raumPvTauMin": 120,
+  "pipe0": 1.726,
+  "pipeQ": 0.812,
+  "pipeTauMin": 3,
+  "pipeSprungK": 0.7,
+  "pipeSprungAnteil": 0.3,
+  "pipeSprungHz": 8,
+  "pipeSlowMin": 120,
+  "abtauAtMax": 10,
+  "abtauLinie": [
+   0.9,
+   -6,
+   -22.5,
+   -5
+  ],
+  "abtauHaltMin": 3,
+  "abtauMinHeizMin": 35,
+  "abtauDauerMin": 8,
+  "abtauWaermeKWh": 0.5,
+  "abtauHz": 58,
+  "abtauPelW": 1000,
+  "nachAbtauEffMin": 20,
+  "nachAbtauComfortHz": 50,
+  "startHochAtC": 4,
+  "startHochHz": 67,
+  "startHochBisK": 1,
+  "startHochMaxMin": 45,
+  "atExtVersatz": 0,
+  "atExtAbC": 2,
+  "eisRate": 0.01665,
+  "eisAnker": [
+   0,
+   90,
+   90
+  ],
+  "eisSchmelzJeK": 0.02,
+  "forceDefrostAuto": 0,
+  "hsFrei": 1,
+  "hsOnAT": 0,
+  "hsStartK": -3,
+  "hsStopK": -2,
+  "hsDelayMin": 15,
+  "hsPumpeMin": 9,
+  "hsSperreMin": 20,
+  "hsKW": 3,
+  "hsBeimAbtauen": 0,
+  "heizgrenzeEinstellung": 12
+ },
+ "werteTraining": {
+  "kurve": [
+   -13,
+   11,
+   29,
+   37
+  ],
+  "sollRasterMin": 5,
+  "hgAus": 15,
+  "hgAn": 12,
+  "hgStartMin": 3,
+  "startK": 3,
+  "startVerzugMin": 9,
+  "startHystK": 99,
+  "stopK": 3,
+  "stopHaltMin": 4,
+  "minPauseMin": 3,
+  "hzMin": 16.5,
+  "hzMinFrost": [
+   [
+    -10,
+    35
+   ],
+   [
+    -4,
+    25
+   ]
+  ],
+  "hzMaxTab": [
+   [
+    -4,
+    52
+   ],
+   [
+    4,
+    48
+   ],
+   [
+    9,
+    35
+   ],
+   [
+    99,
+    30
+   ]
+  ],
+  "spike": [
+   33,
+   24
+  ],
+  "capQ3": 17,
+  "capQ2kalt": 21,
+  "capQ2warm": 17,
+  "capQ2grenze": 7,
+  "capQ1": 21,
+  "regSenkK": 1.25,
+  "regAbHzMin": 1,
+  "comfortWiederK": 99,
+  "effT1": 19,
+  "effK1": 1.75,
+  "effL1": 19,
+  "effT2": 33,
+  "effK2": 1.25,
+  "effKp": 2.5,
+  "effKi": 0.1,
+  "pthHz": 120.814,
+  "pthHzAT": 0.5084,
+  "pthEnde": 0.0561,
+  "pthFrostAb": 1,
+  "pthFrostJeK": 0.045,
+  "pthFrostMin": 0.7,
+  "pelFrostAnteil": 0.6,
+  "pel0": -125.04,
+  "pelHz": 11.9785,
+  "pelRL": 0.62253,
+  "pelAT": -0.28389,
+  "pelKorrW": 80,
+  "pelPauseW": 34,
+  "pelAusW": 15,
+  "flowPause": 13.4,
+  "flowComfort": 13.4,
+  "flowEff": [
+   30,
+   21.5,
+   35,
+   95
+  ],
+  "flowHgNeustart": 35,
+  "flowAbtau": 21,
+  "pumpe0": 1734,
+  "pumpeJeL": 118.4,
+  "fanQ": [
+   311,
+   270,
+   305,
+   220
+  ],
+  "fanKalt": [
+   110,
+   105,
+   105,
+   100
+  ],
+  "fanKaltAtC": 4,
+  "fanJeHz": 5.33,
+  "cw": 0.3929,
+  "krad": 0.15624,
+  "nrad": 1.3,
+  "cr": 0.1598,
+  "hr": 0.5553,
+  "kv": 0,
+  "tvRef": 22,
+  "tauLokMin": 240,
+  "ua": 0.1466,
+  "gain": 0.3247,
+  "ch": 4.2,
+  "sonne": 0.0361,
+  "hausAtTauMin": 240,
+  "raeume": {
+   "ki_oben": [
+    2.13463,
+    0.1262,
+    -0.16994,
+    0.09523,
+    30,
+    0.67,
+    11.6,
+    6.82,
+    17.58
+   ],
+   "ki_unten": [
+    0.62515,
+    0.00122,
+    -0.02592,
+    0,
+    30,
+    0.67,
+    11.6,
+    6.82,
+    17.58
+   ],
+   "schlaf": [
+    -0.63613,
+    0.00189,
+    0.02454,
+    0.00181,
+    120,
+    1.2,
+    10.88,
+    6.82,
+    17.58
+   ],
+   "wohn": [
+    5.88728,
+    0,
+    -0.3,
+    0,
+    30,
+    1.63,
+    11.21,
+    6.82,
+    17.58
+   ]
+  },
+  "raumAtTauMin": 360,
+  "raumPvTauMin": 120,
+  "pipe0": 1.726,
+  "pipeQ": 0.812,
+  "pipeTauMin": 3,
+  "pipeSprungK": 0.7,
+  "pipeSprungAnteil": 0.3,
+  "pipeSprungHz": 8,
+  "pipeSlowMin": 120,
+  "abtauAtMax": 10,
+  "abtauLinie": [
+   0.9,
+   -6,
+   -22.5,
+   -5
+  ],
+  "abtauHaltMin": 3,
+  "abtauMinHeizMin": 35,
+  "abtauDauerMin": 8,
+  "abtauWaermeKWh": 0.5,
+  "abtauHz": 58,
+  "abtauPelW": 1000,
+  "nachAbtauEffMin": 20,
+  "nachAbtauComfortHz": 50,
+  "startHochAtC": 4,
+  "startHochHz": 67,
+  "startHochBisK": 1,
+  "startHochMaxMin": 45,
+  "atExtVersatz": 0,
+  "atExtAbC": 2,
+  "eisRate": 0.01647,
+  "eisAnker": [
+   0,
+   90,
+   90
+  ],
+  "eisSchmelzJeK": 0.02,
+  "forceDefrostAuto": 0,
+  "hsFrei": 1,
+  "hsOnAT": 0,
+  "hsStartK": -3,
+  "hsStopK": -2,
+  "hsDelayMin": 15,
+  "hsPumpeMin": 9,
+  "hsSperreMin": 20,
+  "hsKW": 3,
+  "hsBeimAbtauen": 0,
+  "heizgrenzeEinstellung": 12
+ },
+ "herkunft": {
+  "kurve": {
+   "einheit": "°C",
+   "herkunft": "N",
+   "quelle": "Heizkurve Z1: Außen −13 °C → 37 °C (bis 13.10. 13:00 38 °C), 11 °C → 29 °C (Z1_Heat_Curve_*)"
+  },
+  "sollRasterMin": {
+   "einheit": "min",
+   "herkunft": "M",
+   "quelle": "Soll ändert sich nur im 5-min-Raster (OPTIMIERER 2; „Soll folgt binnen 6 min“)"
+  },
+  "hgAus": {
+   "einheit": "°C",
+   "herkunft": "M",
+   "quelle": "Heizgrenze 12: aus ab Fühler 15 °C (5/5 Übergänge 07.–15.10.)"
+  },
+  "hgAn": {
+   "einheit": "°C",
+   "herkunft": "M",
+   "quelle": "Heizgrenze 12: an bei Fühler ≤ 12 °C (5/5)"
+  },
+  "hgStartMin": {
+   "einheit": "min",
+   "herkunft": "M",
+   "quelle": "nach dem Ende des Heizgrenze-Aus startet der Verdichter nach 3–4 min (3/3: 10.10., 13.10., 14.10.)"
+  },
+  "startK": {
+   "einheit": "K",
+   "herkunft": "M",
+   "quelle": "Startschwelle: Vorlauf ≤ Soll − startK (Startschwellen-Analyse 14 Pausen: 3,25 K)",
+   "fit": "gefittet",
+   "gruppe": "startStopp"
+  },
+  "startVerzugMin": {
+   "einheit": "min",
+   "herkunft": "M",
+   "quelle": "Start, sobald die Schwelle seit so vielen Minuten erreicht ist (Median 9 min, 6–13)",
+   "fit": "gefittet",
+   "gruppe": "startStopp"
+  },
+  "startHystK": {
+   "einheit": "K",
+   "herkunft": "M",
+   "quelle": "die Wartezeit beginnt neu, wenn der Vorlauf wieder mehr als so viel über die Schwelle steigt (Fühler im 0,25-K-Raster flattert)",
+   "fit": "gefittet",
+   "gruppe": "startStopp"
+  },
+  "stopK": {
+   "einheit": "K",
+   "herkunft": "M",
+   "quelle": "Stopp bei Vorlauf ≥ Soll + 3,0…3,25 K (20/20)",
+   "fit": "gefittet",
+   "gruppe": "startStopp"
+  },
+  "stopHaltMin": {
+   "einheit": "min",
+   "herkunft": "F",
+   "quelle": "„Vorlauf 3 min lang > Soll + 3 K“ (L7 4004893, M)",
+   "fit": "gefittet",
+   "gruppe": "startStopp"
+  },
+  "minPauseMin": {
+   "einheit": "min",
+   "herkunft": "H",
+   "quelle": "Verdichter startet frühestens 3 min nach dem Stopp (Handbuch J 16.1.1)"
+  },
+  "hzMin": {
+   "einheit": "Hz",
+   "herkunft": "M",
+   "quelle": "Minimum 16–17 Hz (wechselnd) bei 1–15 °C"
+  },
+  "hzMinFrost": {
+   "einheit": "Hz",
+   "herkunft": "F",
+   "quelle": "Mindestfrequenz L5: ab ≤ −4 °C 25 Hz, ab ≤ −10 °C 35 Hz, unabhängig vom Flüstermodus (4596796, 4593782, 4593801)"
+  },
+  "hzMaxTab": {
+   "einheit": "Hz",
+   "herkunft": "F/M",
+   "quelle": "Höchstfrequenz je WP-AT in Stufen (Winterpaket 16.10.2026, LEISHA_WISSEN (a)): ≤ −4 °C 52 Hz, −3…+4 °C 48 Hz (vorläufig; L5 48 Hz nach nächtlicher Abschaltung bei 2 °C 4517558, „5er 48 Hz bei +4 °C“ 4103634 niedrig), 5…9 °C 35 Hz (M: 35 Hz bei 6 °C; F 4132106), ab 10 °C 30 Hz (F L5 4134403; M 31–34 Hz bei 11–13 °C liegt knapp darüber); Sprungstelle 4/5 °C (L7 4515271); bis 15.10. linear interpoliert"
+  },
+  "spike": {
+   "einheit": "Hz",
+   "herkunft": "M",
+   "quelle": "Startspitze Laufminute 0/1 (Median 32 Starts), unabhängig von Quiet (F L7 4187405: „Startspike trotzdem 34 Hz“)"
+  },
+  "capQ3": {
+   "einheit": "Hz",
+   "herkunft": "M",
+   "quelle": "Quiet 3 hält 16–17 Hz (1–14 °C)"
+  },
+  "capQ2kalt": {
+   "einheit": "Hz",
+   "herkunft": "M",
+   "quelle": "Quiet 2 bis 20–21 Hz bei 1–4 °C (12.10., 168 min)"
+  },
+  "capQ2warm": {
+   "einheit": "Hz",
+   "herkunft": "M",
+   "quelle": "Quiet 2 hält 16–17 Hz bei 12–13 °C"
+  },
+  "capQ2grenze": {
+   "einheit": "°C",
+   "herkunft": "M",
+   "quelle": "Grenze zwischen beiden Quiet-2-Deckeln (DECKEL-Tabelle, engine_core)"
+  },
+  "capQ1": {
+   "einheit": "Hz",
+   "herkunft": "M",
+   "quelle": "Quiet 1 bis 20–21 Hz bei 12 °C (13.10., 28 min); bei Frost unbekannt"
+  },
+  "regSenkK": {
+   "einheit": "K",
+   "herkunft": "M",
+   "quelle": "Vorlauf ≥ Soll + x K: Frequenz fährt auf das Minimum zurück (F L7 4002439: Abmodulation ab Soll + 1,5 K)",
+   "fit": "gefittet",
+   "gruppe": "regler"
+  },
+  "regAbHzMin": {
+   "einheit": "Hz/min",
+   "herkunft": "M",
+   "quelle": "Rampe nach unten",
+   "fit": "gefittet",
+   "gruppe": "regler"
+  },
+  "comfortWiederK": {
+   "einheit": "K",
+   "herkunft": "M",
+   "quelle": "Comfort: nach dem Abregeln erst wieder auf den Deckel, wenn der Vorlauf so weit unter Soll fällt (12.10.: 25 Hz gehalten)",
+   "fit": "gefittet",
+   "gruppe": "regler"
+  },
+  "effT1": {
+   "einheit": "min",
+   "herkunft": "M",
+   "quelle": "Efficiency: erste Anhebung frühestens ab Laufminute x",
+   "fit": "gefittet",
+   "gruppe": "regler"
+  },
+  "effK1": {
+   "einheit": "K",
+   "herkunft": "M",
+   "quelle": "Efficiency: erste Anhebung bei Vorlauf ≤ Soll − x K",
+   "fit": "gefittet",
+   "gruppe": "regler"
+  },
+  "effL1": {
+   "einheit": "Hz",
+   "herkunft": "M",
+   "quelle": "Efficiency: Obergrenze der ersten Anhebung",
+   "fit": "gefittet",
+   "gruppe": "regler"
+  },
+  "effT2": {
+   "einheit": "min",
+   "herkunft": "M",
+   "quelle": "Efficiency: zweite Anhebung ab Laufminute x (gemessen 39–46)",
+   "fit": "gefittet",
+   "gruppe": "regler"
+  },
+  "effK2": {
+   "einheit": "K",
+   "herkunft": "M",
+   "quelle": "Efficiency: zweite Anhebung bei Vorlauf ≤ Soll − x K",
+   "fit": "gefittet",
+   "gruppe": "regler"
+  },
+  "effKp": {
+   "einheit": "Hz/K",
+   "herkunft": "M",
+   "quelle": "Efficiency: Anhebung = kp · Rückstand des Vorlaufs",
+   "fit": "gefittet",
+   "gruppe": "regler"
+  },
+  "effKi": {
+   "einheit": "Hz/min",
+   "herkunft": "M/A",
+   "quelle": "Efficiency: langsames Nachschieben bei bleibendem Rückstand ab der zweiten Stufe (Boost 10.10.: 29 → 34 Hz)",
+   "fit": "gefittet",
+   "gruppe": "regler"
+  },
+  "pthHz": {
+   "einheit": "W/Hz",
+   "herkunft": "M",
+   "quelle": "Wärme je Hz bei 5 °C (stabile Laufminuten)",
+   "fit": "gefittet",
+   "gruppe": "waerme"
+  },
+  "pthHzAT": {
+   "einheit": "W/(Hz·K)",
+   "herkunft": "M",
+   "quelle": "Zunahme der Wärme je Hz und K Außentemperatur",
+   "fit": "gefittet",
+   "gruppe": "waerme"
+  },
+  "pthEnde": {
+   "einheit": "1/K",
+   "herkunft": "M",
+   "quelle": "gemessen steigt die Wärme (Durchfluss × Spreizung) am Laufende: +x je K Vorlauf über Soll + 1 K (16–17 Hz: 2050 W bei Soll ±1 K, 2200–2350 W bei +2…+3 K; Ursache unklar, empirisch)",
+   "fit": "gefittet",
+   "gruppe": "waerme"
+  },
+  "pthFrostAb": {
+   "einheit": "°C",
+   "herkunft": "F/A",
+   "quelle": "unter dieser AT fällt die Wärme je Hz stärker (keine eigenen Daten)"
+  },
+  "pthFrostJeK": {
+   "einheit": "1/K",
+   "herkunft": "F",
+   "quelle": "Abfall je K unter pthFrostAb; Anker: L5 −2 °C 16 Hz ≈ 1,6 kW (4596796), −3 °C 16 Hz ≈ 1,5 kW (4606872), −4 °C 25 Hz ≈ 2 kW (4596796)"
+  },
+  "pthFrostMin": {
+   "einheit": "–",
+   "herkunft": "S/A",
+   "quelle": "Untergrenze des Faktors; Anker Datenblatt ~5 kW bei −7 °C (3661016) und 59 Hz"
+  },
+  "pelFrostAnteil": {
+   "einheit": "–",
+   "herkunft": "F/S",
+   "quelle": "Anteil des Frost-Faktors, um den auch die Verdichterleistung sinkt (Massenstrom); kalibriert auf COP −3 °C ≈ 3,7 (L5 4013336) und −7 °C ≈ 3,0 (Datenblatt 3661016)"
+  },
+  "pel0": {
+   "einheit": "W",
+   "herkunft": "M",
+   "quelle": "TOP16 = pel0 + Hz · (pelHz + pelRL · Rücklauf + pelAT · AT); bei 16,5 Hz ≈ 10 W je K Rücklauf (bekannt: 12 W/K)",
+   "fit": "gefittet",
+   "gruppe": "strom"
+  },
+  "pelHz": {
+   "einheit": "W/Hz",
+   "herkunft": "M",
+   "quelle": "Strom je Hz (Formel bei pel0)",
+   "fit": "gefittet",
+   "gruppe": "strom"
+  },
+  "pelRL": {
+   "einheit": "W/(Hz·K)",
+   "herkunft": "M",
+   "quelle": "Strom je Hz und K Rücklauf (Formel bei pel0)",
+   "fit": "gefittet",
+   "gruppe": "strom"
+  },
+  "pelAT": {
+   "einheit": "W/(Hz·K)",
+   "herkunft": "M",
+   "quelle": "Strom je Hz und K Außentemperatur (Formel bei pel0)",
+   "fit": "gefittet",
+   "gruppe": "strom"
+  },
+  "pelKorrW": {
+   "einheit": "W",
+   "herkunft": "F/M",
+   "quelle": "TOP16 untertreibt im Lauf um 70–90 W (L5 4545989, 4597230); nur bei laufendem Verdichter"
+  },
+  "pelPauseW": {
+   "einheit": "W",
+   "herkunft": "M",
+   "quelle": "TOP16 in der Pause mit Pumpe",
+   "fit": "gefittet",
+   "gruppe": "standby"
+  },
+  "pelAusW": {
+   "einheit": "W",
+   "herkunft": "M",
+   "quelle": "TOP16 im Heizgrenze-Aus (Pumpe aus)",
+   "fit": "gefittet",
+   "gruppe": "standby"
+  },
+  "flowPause": {
+   "einheit": "l/min",
+   "herkunft": "M",
+   "quelle": "Durchfluss in der Pause (Pumpe 1750 U/min)",
+   "fit": "gefittet",
+   "gruppe": "pumpe"
+  },
+  "flowComfort": {
+   "einheit": "l/min",
+   "herkunft": "M",
+   "quelle": "Comfort: ΔT-geregelt, Pumpe 1750 U/min",
+   "fit": "gefittet",
+   "gruppe": "pumpe"
+  },
+  "flowEff": {
+   "einheit": "min, l/min, min, min",
+   "herkunft": "M",
+   "quelle": "Efficiency: bis Laufminute a 13,4 l/min, dann b l/min bis Minute c, linear zurück bis Minute d",
+   "fit": "gefittet",
+   "gruppe": "pumpe"
+  },
+  "flowHgNeustart": {
+   "einheit": "l/min",
+   "herkunft": "M",
+   "quelle": "Spülen beim Ende des Heizgrenze-Aus (33,8–37,7 l/min, 3 min)"
+  },
+  "flowAbtau": {
+   "einheit": "l/min",
+   "herkunft": "F",
+   "quelle": "L5 Abtauen: Volumenstrom 10 → 17 → 21 l/min (4288323)"
+  },
+  "pumpe0": {
+   "einheit": "U/min",
+   "herkunft": "M",
+   "quelle": "Pumpendrehzahl bei 13,4 l/min",
+   "fit": "gefittet",
+   "gruppe": "pumpe"
+  },
+  "pumpeJeL": {
+   "einheit": "U/min je l/min",
+   "herkunft": "M",
+   "quelle": "Comfort → Efficiency: 1750 → 2870 U/min bei 13,4 → 23 l/min",
+   "fit": "gefittet",
+   "gruppe": "pumpe"
+  },
+  "fanQ": {
+   "einheit": "U/min",
+   "herkunft": "M",
+   "quelle": "Lüfter am Minimum je Quiet 0/1/2/3 (Median; Forum L5 4504115 ähnlich)",
+   "fit": "gefittet",
+   "gruppe": "luefter"
+  },
+  "fanKalt": {
+   "einheit": "U/min",
+   "herkunft": "M",
+   "quelle": "Lüfterstufe bei WP-AT ≤ fanKaltAtC: +110 (Q0) … +100 (Q3) U/min am Minimum (eigene Auswertung quiet-2026-10.csv 07.–15.10.: Q0 330 → 420–450, Q3 220 → 330–340 U/min bei 2–4 °C; L7 „Turbofan“ 490–540 U/min unter +4 °C 4903887, 4877511)"
+  },
+  "fanKaltAtC": {
+   "einheit": "°C",
+   "herkunft": "M/F",
+   "quelle": "Lüfterstufe ab WP-AT ≤ 4 °C (eigene Messung; L7 Sprungstelle 4/5 °C 4515271)"
+  },
+  "fanJeHz": {
+   "einheit": "U/min je Hz",
+   "herkunft": "M",
+   "quelle": "Lüfter-Zunahme je Hz über dem Minimum",
+   "fit": "gefittet",
+   "gruppe": "luefter"
+  },
+  "cw": {
+   "einheit": "kWh/K",
+   "herkunft": "M",
+   "quelle": "Wärmespeicher Wasser + Heizkörper",
+   "fit": "gefittet",
+   "gruppe": "wasserkreis"
+  },
+  "krad": {
+   "einheit": "kW/K^n",
+   "herkunft": "M",
+   "quelle": "Heizkörperabgabe krad · (tw − th)^n",
+   "fit": "gefittet",
+   "gruppe": "wasserkreis"
+  },
+  "nrad": {
+   "einheit": "–",
+   "herkunft": "A",
+   "quelle": "Heizkörper-Exponent (EN 442, typisch 1,3)"
+  },
+  "cr": {
+   "einheit": "kWh/K",
+   "herkunft": "M",
+   "quelle": "Raumluft/Oberflächen an den Heizkörpern (schneller Knoten zwischen Heizkörper und Hausmasse)",
+   "fit": "gefittet",
+   "gruppe": "wasserkreis"
+  },
+  "hr": {
+   "einheit": "kW/K",
+   "herkunft": "M",
+   "quelle": "Übergang schneller Knoten → Hausmittel",
+   "fit": "gefittet",
+   "gruppe": "wasserkreis"
+  },
+  "kv": {
+   "einheit": "1/K",
+   "herkunft": "M",
+   "quelle": "Thermostatventile: Abgabe × max(0,2; 1 − kv · (tr − tvRef)) – je wärmer die Luft an den Heizkörpern, desto weniger Abgabe (Ventile am 15.10. nachgestellt)",
+   "fit": "gefittet",
+   "gruppe": "wasserkreis"
+  },
+  "tvRef": {
+   "einheit": "°C",
+   "herkunft": "A",
+   "quelle": "Bezug der Ventil-Drosselung"
+  },
+  "tauLokMin": {
+   "einheit": "min",
+   "herkunft": "A",
+   "quelle": "Fühler im Innengerät bei stehender Pumpe: Auskühlen zur Raumtemperatur"
+  },
+  "ua": {
+   "einheit": "kW/K",
+   "herkunft": "M",
+   "quelle": "Wärmeverlust des Hauses (plan_algo: 141 W/K)",
+   "fit": "gefittet",
+   "gruppe": "haus"
+  },
+  "gain": {
+   "einheit": "kW",
+   "herkunft": "M",
+   "quelle": "innere Gewinne (plan_algo: 0,38 kW)",
+   "fit": "gefittet",
+   "gruppe": "haus"
+  },
+  "ch": {
+   "einheit": "kWh/K",
+   "herkunft": "M/A",
+   "quelle": "Speichermasse des Hausmittels",
+   "fit": "gefittet",
+   "gruppe": "haus"
+  },
+  "sonne": {
+   "einheit": "kW je kW PV",
+   "herkunft": "M",
+   "quelle": "Sonnengewinn je kW PV-Leistung (PV als Strahlungsmaß)",
+   "fit": "gefittet",
+   "gruppe": "haus"
+  },
+  "hausAtTauMin": {
+   "einheit": "min",
+   "herkunft": "M",
+   "quelle": "die Hülle sieht die Außentemperatur geglättet (Speichermasse der Wände; besser als ungeglättet: RMSE 0,65 statt 0,84 K)",
+   "fit": "gefittet",
+   "gruppe": "haus"
+  },
+  "raeume": {
+   "einheit": "K, –, –, K/kW, min, K…",
+   "herkunft": "M",
+   "quelle": "je Raum Abweichung vom Hausmittel (Kinderzimmer oben ohne eigenes Relais/Heizlüfter-Modell: mittleres Verhalten); keine Extrapolation über den gemessenen Bereich",
+   "fit": "gefittet",
+   "gruppe": "raeume"
+  },
+  "raumAtTauMin": {
+   "einheit": "min",
+   "herkunft": "A",
+   "quelle": "Zeitkonstante des AT-Filters für die Räume"
+  },
+  "raumPvTauMin": {
+   "einheit": "min",
+   "herkunft": "A",
+   "quelle": "Zeitkonstante des PV-Filters für die Räume"
+  },
+  "pipe0": {
+   "einheit": "K",
+   "herkunft": "M",
+   "quelle": "AT − Rohr = pipe0 + pipeQ · Verdampferleistung (kW) · 300 / Lüfter (U/min); mit Lüfter besser als ohne (RMSE 0,92 statt 1,07 K); Frost: Lüfter L5 630 U/min bei −13 °C (F 4600750)",
+   "fit": "gefittet",
+   "gruppe": "rohr"
+  },
+  "pipeQ": {
+   "einheit": "K/kW",
+   "herkunft": "M",
+   "quelle": "siehe pipe0",
+   "fit": "gefittet",
+   "gruppe": "rohr"
+  },
+  "pipeTauMin": {
+   "einheit": "min",
+   "herkunft": "A",
+   "quelle": "Zeitkonstante des Rohrfühlers"
+  },
+  "pipeSprungK": {
+   "einheit": "K/Hz",
+   "herkunft": "F/A",
+   "quelle": "Pseudo-Abtauung: Frequenzsprung über +30 % des langsamen Mittels senkt das Rohr (L5 4540566: 1 → −16 °C; L7 4230252; Schwelle 4868882 V)"
+  },
+  "pipeSprungAnteil": {
+   "einheit": "–",
+   "herkunft": "F",
+   "quelle": "gefährlicher Sprung ab etwa +30 % (4868882, V)"
+  },
+  "pipeSprungHz": {
+   "einheit": "Hz",
+   "herkunft": "F",
+   "quelle": "oder ab +8 Hz absolut über dem langsamen Mittel, je nachdem was zuerst greift: „+6 Hz meist ohne Einbruch, +10 Hz eher nicht“ (L7 4553013, 4868882); Winterpaket 16.10.2026"
+  },
+  "pipeSlowMin": {
+   "einheit": "min",
+   "herkunft": "F/A",
+   "quelle": "Zeitkonstante des langsamen Frequenzmittels = träges Expansionsventil: es öffnet höchstens 30 Halbschritte je 90 s und schließt nach einem Start mit kleiner Frequenz über ~2 h (Kältekreis eingeschwungen nach ~2 h 25 min: L7 4886674, 4549934, 4538558); Spanne 90–120 min, bis 15.10. 30 min (A)"
+  },
+  "abtauAtMax": {
+   "einheit": "°C",
+   "herkunft": "F",
+   "quelle": "Abtau-Auslöser bis WP-AT unter 10 °C: Pseudoabtauungen bis 9 °C (L9 nach FM-Selbstabschaltung 4011622; 7 °C 4230815; 6 °C 3456847), über 10 °C nie (4466101); bis 15.10. 5 °C (Handbuch J Force-Defrost-Grenze)"
+  },
+  "abtauLinie": {
+   "einheit": "°C",
+   "herkunft": "H/F",
+   "quelle": "Auslöser Rohr < min(d; max(c; a·WP-AT + b)) = Handbuchlinie y = 0,9·AT − 11 (begrenzt −27,5…−6 °C, Handbuch J 15.2.2, 3585656, 3585691) + 5 K, weil die L bis zu 5–6 K über der Linie auslöst (4371449, 4472442, 4890839); obere Grenze real −5 °C (Abtauung schon bei Rohr −6 °C, 4137878). Anker: −9 °C → −14,1 °C (4600685 ✓), 0 °C → −6 °C (3971807 ✓); bis 15.10. −13,5 + 0,6·(AT + 9)"
+  },
+  "abtauHaltMin": {
+   "einheit": "min",
+   "herkunft": "H",
+   "quelle": "Rohr 3 min am Stück unter der Linie (Handbuch J 15.2.2)"
+  },
+  "abtauMinHeizMin": {
+   "einheit": "min",
+   "herkunft": "H/F",
+   "quelle": "Heizzeit seit der letzten Abtauung > 35 min (Handbuch J; L7 4613622)"
+  },
+  "abtauDauerMin": {
+   "einheit": "min",
+   "herkunft": "F",
+   "quelle": "L5: 8 min (4288323); J ~9 min (4598540), Handbuch max. 9,5 min"
+  },
+  "abtauWaermeKWh": {
+   "einheit": "kWh",
+   "herkunft": "F/A",
+   "quelle": "Wärmeentzug aus dem Heizwasser je Abtauung, Spanne 0,3–1,6 kWh: 1,6 kWh im Januar-Extrem, „sonst deutlich weniger“ (L7 3810731); 300 l × 2 K ≈ 0,7 kWh (4076731); WMZ ≤ 1 kWh für 3 Abtauungen (4084491); [J] Richtwert 0,4 kWh (4075412). 0,5 kWh = unteres Drittel (Heizkörper ohne Puffer). Der interne Wärmezähler bucht die Abtauwärme positiv (L5 4074654, 4752841): im Zwilling zählt Heat_Energy_Production beim Abtauen positiv, die Wärme des Wasserkreises (Heat_Power_Production_Extra) negativ"
+  },
+  "abtauHz": {
+   "einheit": "Hz",
+   "herkunft": "F",
+   "quelle": "Abtauen bei ~58 Hz (L5 4092731, L7 4548650)"
+  },
+  "abtauPelW": {
+   "einheit": "W",
+   "herkunft": "A",
+   "quelle": "Stromaufnahme beim Abtauen (TOP16)"
+  },
+  "nachAbtauEffMin": {
+   "einheit": "min",
+   "herkunft": "F",
+   "quelle": "Efficiency hält nach dem Abtauen ~20 min niedrige Frequenz (L5 4582615, L7 4095732)"
+  },
+  "nachAbtauComfortHz": {
+   "einheit": "Hz",
+   "herkunft": "F",
+   "quelle": "nach dem Abtauen startet die L5 normalerweise mit ~50 Hz (4542523); hier 3 min, gedeckelt durch die Höchstfrequenz"
+  },
+  "startHochAtC": {
+   "einheit": "°C",
+   "herkunft": "F",
+   "quelle": "Comfort-Kaltstart: bei WP-AT ≤ +4 °C fährt die L im Comfort unabhängig vom Soll mit hoher Frequenz an (L7 4005690, 4005591, 3474343, 3456847)"
+  },
+  "startHochHz": {
+   "einheit": "Hz",
+   "herkunft": "F",
+   "quelle": "Frequenz des Comfort-Kaltstarts: L7 67–68 Hz (gemessen bis 76 Hz, 620 U/min Lüfter, Heißgas ~80 °C, Rohr −20 °C, danach Abtauung; 4005690, 3474343); L5 unbekannt (48 Hz nach nächtlicher Abschaltung bei 2 °C, 4517558) – Auftrag Winterpaket: 67 Hz; nicht über den Quiet-Deckel (Quiet 1–3)"
+  },
+  "startHochBisK": {
+   "einheit": "K",
+   "herkunft": "F/A",
+   "quelle": "Comfort-Kaltstart bleibt oben, bis der Vorlauf Soll − 1 K erreicht (20–45 min bis zum Ziel, 4005690)"
+  },
+  "startHochMaxMin": {
+   "einheit": "min",
+   "herkunft": "F/A",
+   "quelle": "Comfort-Kaltstart höchstens 45 min (4005690: 20–45 min)"
+  },
+  "atExtVersatz": {
+   "einheit": "K",
+   "herkunft": "F/A",
+   "quelle": "externer Panasonic-Fühler: bei AT < 2 °C bewertet die Steuerung ihn zu warm (2–3 K über dem internen, L7/L9 4557101, 4716238, 4890713, 4890839). WP-AT = Physik-AT + v, v = 0 ab atExtAbC, linear bis atExtVersatz bei 0 °C und darunter; vorläufig 0 (messen: LEISHA (c) 3)"
+  },
+  "atExtAbC": {
+   "einheit": "°C",
+   "herkunft": "F",
+   "quelle": "ab dieser AT liest der externe Fühler richtig (4716238)"
+  },
+  "eisRate": {
+   "einheit": "1/(min·K)",
+   "herkunft": "A",
+   "quelle": "Vereisung je min und K (Taupunkt − Rohr), wirkt als Rohrabsenkung 1 K je Einheit; kalibriert auf den Forum-Anker",
+   "fit": "kalibriert (Annahme-Anker)",
+   "gruppe": "vereisung"
+  },
+  "eisAnker": {
+   "einheit": "°C, %, min",
+   "herkunft": "F/A",
+   "quelle": "Kalibrieranker: bei 0 °C, 90 % Feuchte und Mindestlast Abtauung alle ~90 min (L5 gedämmt „worst case ~90 min“ 4879325 E; L9 0,8 °C 94 %: 35 min und 1:40 h 4132154)"
+  },
+  "eisSchmelzJeK": {
+   "einheit": "1/(min·K)",
+   "herkunft": "A",
+   "quelle": "Abbau der Vereisung im Stillstand je K über 0 °C"
+  },
+  "forceDefrostAuto": {
+   "einheit": "0/1",
+   "herkunft": "H",
+   "quelle": "Force Defrost „Auto“ (alle 3 h unter 5 °C) – Werkseinstellung Manual (Handbuch J Z. 6965); bei der L nicht belegt"
+  },
+  "hsFrei": {
+   "einheit": "0/1",
+   "herkunft": "M",
+   "quelle": "heizstab_raum_frei = 1 im Protokoll; ob der Heizstab an der Anlage wirklich freigegeben ist, ist offen (L ab Werk aus, F 3957497)"
+  },
+  "hsOnAT": {
+   "einheit": "°C",
+   "herkunft": "M",
+   "quelle": "Heater_On_Outdoor_Temp 0 °C"
+  },
+  "hsStartK": {
+   "einheit": "K",
+   "herkunft": "M",
+   "quelle": "Heater_Start_Delta −3 K"
+  },
+  "hsStopK": {
+   "einheit": "K",
+   "herkunft": "H/F",
+   "quelle": "Aus bei Vorlauf ≥ Soll − 2 K: Werkseinstellung Heizstab Aus −2 K (Handbuch J Z. 7049–7075), L7-Besitzer −5 °C / 30 min / Ein −4 K / Aus −2 K (4580843); Heater_Stop_Delta (TOP98) seit 15.10. im Protokoll; bis 15.10. −1 K (A)"
+  },
+  "hsDelayMin": {
+   "einheit": "min",
+   "herkunft": "M",
+   "quelle": "Heater_Delay_Time 15 min nach Thermo-Ein"
+  },
+  "hsPumpeMin": {
+   "einheit": "min",
+   "herkunft": "H",
+   "quelle": "nach 9 min Pumpenlauf (Handbuch J 14.6.1)"
+  },
+  "hsSperreMin": {
+   "einheit": "min",
+   "herkunft": "H",
+   "quelle": "20 min seit dem letzten Aus (Handbuch J 14.6.1)"
+  },
+  "hsKW": {
+   "einheit": "kW",
+   "herkunft": "A",
+   "quelle": "Heizstab-Leistung (L-Innengerät 3 kW, nicht gemessen)"
+  },
+  "hsBeimAbtauen": {
+   "einheit": "0/1",
+   "herkunft": "F",
+   "quelle": "die L schaltet den Heizstab beim Abtauen nicht zu (L5 4879325, 4288323); Handbuch J: bei Wassereintritt < 27 °C schon"
+  },
+  "heizgrenzeEinstellung": {
+   "einheit": "°C",
+   "herkunft": "M",
+   "quelle": "Heating_Off_Outdoor_Temp (Einstellung, für die Maschine)"
+  }
+ },
+ "fit": {
+  "training": {
+   "waerme": {
+    "n": 4666,
+    "rmseW": 260.9,
+    "modell": "Pth = Hz · (a + b · (AT − 5)) · (1 + c · max(0, VL − Soll − 1))"
+   },
+   "strom": {
+    "n": 4666,
+    "rmseW": 20,
+    "modell": "TOP16 = c0 + Hz · (c1 + c2 · RL + c3 · AT)",
+    "dPel_dRL_16_5Hz": 10.27,
+    "dPel_dAT_16_5Hz": -4.68
+   },
+   "standby": {
+    "nPause": 1649,
+    "nAus": 1194
+   },
+   "pumpe": {
+    "nEff": 3175,
+    "rmseEff": 2.79,
+    "nComfort": 96,
+    "comfortQuelle": "gemessen",
+    "rmsePumpe": 21
+   },
+   "luefter": {
+    "n": 4666,
+    "rmse": 22,
+    "minutenJeQuiet": [
+     1437,
+     0,
+     235,
+     2994
+    ]
+   },
+   "rohr": {
+    "n": 2388,
+    "rmseK": 0.84,
+    "quelle": "alle Tage (Spalte rohr_aussen erst ab 14.10.; keine Testtrennung)",
+    "atBereich": [
+     3,
+     15
+    ]
+   },
+   "startStopp": {
+    "stopp": {
+     "n": 20,
+     "maeMin": 1.65,
+     "biasMin": -1.25
+    },
+    "start": {
+     "n": 19,
+     "maeMin": 12.37,
+     "medianMin": 3,
+     "biasMin": -9.32
+    }
+   },
+   "regler": {
+    "n": 5417,
+    "rmseHz": 1.091,
+    "auswertungen": 158
+   },
+   "wasserkreis": {
+    "n": 6322,
+    "rmseK": 0.814,
+    "segmentMin": 360,
+    "nrad": 1.3
+   },
+   "zyklen": {
+    "vorher": {
+     "verlust": 1.905,
+     "wasserkreisRmseK": 0.814,
+     "logFehler": 0.266
+    },
+    "nachher": {
+     "verlust": 1.637,
+     "wasserkreisRmseK": 0.882,
+     "logFehler": 0.16
+    },
+    "auswertungen": 56
+   },
+   "haus": {
+    "n": 2436,
+    "rmseKKalt": 0.43,
+    "biasKKalt": 0.005,
+    "rmseKAlle24h": 0.576,
+    "hausmittel": "ki_unten + schlaf",
+    "bilanzpunktC": 19.1,
+    "verfahren": "UA, Gewinne, Speicher, AT-Glättung: Simulation 48 h, Fehler bei AT ≤ 8 °C; Sonne und Startwerte aus 24-h-Energiebilanzen",
+    "energiebilanz": {
+     "fenster24h": 40,
+     "ua": 0.1576,
+     "gain": 0.3747,
+     "sonne": 0.0361,
+     "bilanzpunktC": 18.9,
+     "vorwert": "UA 0,154 kW/K, Gewinne 0,3 kW als 2 Pseudo-Tage (−5/+10 °C)"
+    }
+   },
+   "raeume": {
+    "ki_oben": {
+     "n": 7336,
+     "rmseK": 0.892
+    },
+    "ki_unten": {
+     "n": 7336,
+     "rmseK": 0.395
+    },
+    "schlaf": {
+     "n": 7336,
+     "rmseK": 0.395
+    },
+    "wohn": {
+     "n": 6065,
+     "rmseK": 1.814
+    }
+   },
+   "vereisung": {
+    "anker": {
+     "at": 0,
+     "rh": 90,
+     "zielMin": 90,
+     "ergebnisMin": 90
+    },
+    "pruefung": [
+     {
+      "at": 4,
+      "rh": 95,
+      "abtauungen48h": 0,
+      "intervallMin": null,
+      "soll": "Forum L5 4540566: bei 3–5 °C und Regen tagelang keine Abtauung"
+     },
+     {
+      "at": -7,
+      "rh": 85,
+      "abtauungen48h": 23,
+      "intervallMin": 127.7,
+      "soll": "Forum J5 2911944/2913337 (nicht L): alle 1–2 h bei −5…−10 °C"
+     },
+     {
+      "at": -9,
+      "rh": 85,
+      "abtauungen48h": 26,
+      "intervallMin": 110.5,
+      "soll": "Forum 4600685 (E): Kriterium Rohr < −13/−14 °C bei −9 °C"
+     }
+    ]
+   }
+  },
+  "alle": {
+   "waerme": {
+    "n": 8369,
+    "rmseW": 254.3,
+    "modell": "Pth = Hz · (a + b · (AT − 5)) · (1 + c · max(0, VL − Soll − 1))"
+   },
+   "strom": {
+    "n": 8369,
+    "rmseW": 20,
+    "modell": "TOP16 = c0 + Hz · (c1 + c2 · RL + c3 · AT)",
+    "dPel_dRL_16_5Hz": 10.5,
+    "dPel_dAT_16_5Hz": -4.67
+   },
+   "standby": {
+    "nPause": 2385,
+    "nAus": 2393
+   },
+   "pumpe": {
+    "nEff": 4728,
+    "rmseEff": 2.75,
+    "nComfort": 708,
+    "comfortQuelle": "gemessen",
+    "rmsePumpe": 24
+   },
+   "luefter": {
+    "n": 8369,
+    "rmse": 22,
+    "minutenJeQuiet": [
+     2181,
+     784,
+     238,
+     5166
+    ]
+   },
+   "rohr": {
+    "n": 2388,
+    "rmseK": 0.84,
+    "quelle": "Trainingstage",
+    "atBereich": [
+     3,
+     15
+    ]
+   },
+   "startStopp": {
+    "stopp": {
+     "n": 30,
+     "maeMin": 4.43,
+     "biasMin": -0.43
+    },
+    "start": {
+     "n": 27,
+     "maeMin": 10.41,
+     "medianMin": 5,
+     "biasMin": -5
+    }
+   },
+   "regler": {
+    "n": 8544,
+    "rmseHz": 1.092,
+    "auswertungen": 157
+   },
+   "wasserkreis": {
+    "n": 10800,
+    "rmseK": 0.878,
+    "segmentMin": 360,
+    "nrad": 1.3
+   },
+   "zyklen": {
+    "vorher": {
+     "verlust": 2.012,
+     "wasserkreisRmseK": 0.878,
+     "logFehler": 0.274
+    },
+    "nachher": {
+     "verlust": 1.767,
+     "wasserkreisRmseK": 0.894,
+     "logFehler": 0.195
+    },
+    "auswertungen": 52
+   },
+   "haus": {
+    "n": 4749,
+    "rmseKKalt": 0.489,
+    "biasKKalt": -0.012,
+    "rmseKAlle24h": 0.615,
+    "hausmittel": "ki_unten + schlaf",
+    "bilanzpunktC": 19.8,
+    "verfahren": "UA, Gewinne, Speicher, AT-Glättung: Simulation 48 h, Fehler bei AT ≤ 8 °C; Sonne und Startwerte aus 24-h-Energiebilanzen",
+    "energiebilanz": {
+     "fenster24h": 88,
+     "ua": 0.1513,
+     "gain": 0.2296,
+     "sonne": 0.0542,
+     "bilanzpunktC": 19.8,
+     "vorwert": "UA 0,154 kW/K, Gewinne 0,3 kW als 2 Pseudo-Tage (−5/+10 °C)"
+    }
+   },
+   "raeume": {
+    "ki_oben": {
+     "n": 13034,
+     "rmseK": 0.839
+    },
+    "ki_unten": {
+     "n": 13034,
+     "rmseK": 0.408
+    },
+    "schlaf": {
+     "n": 13034,
+     "rmseK": 0.406
+    },
+    "wohn": {
+     "n": 11584,
+     "rmseK": 1.554
+    }
+   },
+   "vereisung": {
+    "anker": {
+     "at": 0,
+     "rh": 90,
+     "zielMin": 90,
+     "ergebnisMin": 90
+    },
+    "pruefung": [
+     {
+      "at": 4,
+      "rh": 95,
+      "abtauungen48h": 0,
+      "intervallMin": null,
+      "soll": "Forum L5 4540566: bei 3–5 °C und Regen tagelang keine Abtauung"
+     },
+     {
+      "at": -7,
+      "rh": 85,
+      "abtauungen48h": 29,
+      "intervallMin": 99.7,
+      "soll": "Forum J5 2911944/2913337 (nicht L): alle 1–2 h bei −5…−10 °C"
+     },
+     {
+      "at": -9,
+      "rh": 85,
+      "abtauungen48h": 29,
+      "intervallMin": 100.6,
+      "soll": "Forum 4600685 (E): Kriterium Rohr < −13/−14 °C bei −9 °C"
+     }
+    ]
+   }
+  }
+ },
+ "guete": {
+  "training": {
+   "tage": [
+    "2026-10-07",
+    "2026-10-08",
+    "2026-10-09",
+    "2026-10-10",
+    "2026-10-11",
+    "2026-10-12"
+   ],
+   "teil": {
+    "pthRmseW": 260.9,
+    "pthBiasW": 12.1,
+    "pthKWhModellMessung": [
+     169.21,
+     168.26
+    ],
+    "pelRmseW": 20,
+    "pelBiasW": 0,
+    "nStabil": 4666,
+    "pipeRmseK": null,
+    "nPipe": 0,
+    "reglerRmseHz": 1.091,
+    "wasserkreisRmseK": 0.882,
+    "hausRmseK": 0.576,
+    "raeume": {
+     "ki_oben": {
+      "n": 7336,
+      "rmseK": 0.892,
+      "biasK": 0
+     },
+     "ki_unten": {
+      "n": 7336,
+      "rmseK": 0.395,
+      "biasK": 0
+     },
+     "schlaf": {
+      "n": 7336,
+      "rmseK": 0.395,
+      "biasK": 0
+     },
+     "wohn": {
+      "n": 6065,
+      "rmseK": 1.814,
+      "biasK": 0
+     }
+    },
+    "stoppRegelMaeMin": 1.65,
+    "stoppN": 20,
+    "startRegelMaeMin": 12.37,
+    "startN": 19
+   },
+   "zyklenHausGemessen": {
+    "pause": {
+     "n": 22,
+     "maeMin": 13.7,
+     "medianAbsMin": 7.5,
+     "biasMin": 1.1
+    },
+    "lauf": {
+     "n": 22,
+     "maeMin": 37.1,
+     "medianAbsMin": 14.5,
+     "biasMin": -4.4
+    }
+   },
+   "zyklenHausSimuliert": {
+    "pause": {
+     "n": 22,
+     "maeMin": 22.2,
+     "medianAbsMin": 7.5,
+     "biasMin": 9.9
+    },
+    "lauf": {
+     "n": 22,
+     "maeMin": 48.9,
+     "medianAbsMin": 21,
+     "biasMin": 10.4
+    }
+   },
+   "zyklenDetail": [
+    {
+     "art": "pause",
+     "zeit": "2026-10-07 22:31",
+     "istMin": 99,
+     "zwillingMin": 89,
+     "pumpeAus": false
+    },
+    {
+     "art": "pause",
+     "zeit": "2026-10-08 00:55",
+     "istMin": 519,
+     "zwillingMin": 519,
+     "pumpeAus": true
+    },
+    {
+     "art": "pause",
+     "zeit": "2026-10-08 11:51",
+     "istMin": 328,
+     "zwillingMin": 324,
+     "pumpeAus": true
+    },
+    {
+     "art": "pause",
+     "zeit": "2026-10-09 03:19",
+     "istMin": 68,
+     "zwillingMin": 71,
+     "pumpeAus": false
+    },
+    {
+     "art": "pause",
+     "zeit": "2026-10-09 09:49",
+     "istMin": 85,
+     "zwillingMin": 96,
+     "pumpeAus": false
+    },
+    {
+     "art": "pause",
+     "zeit": "2026-10-09 15:35",
+     "istMin": 66,
+     "zwillingMin": 73,
+     "pumpeAus": false
+    },
+    {
+     "art": "pause",
+     "zeit": "2026-10-09 19:52",
+     "istMin": 68,
+     "zwillingMin": 69,
+     "pumpeAus": false
+    },
+    {
+     "art": "pause",
+     "zeit": "2026-10-09 23:28",
+     "istMin": 73,
+     "zwillingMin": 72,
+     "pumpeAus": false
+    },
+    {
+     "art": "pause",
+     "zeit": "2026-10-10 02:56",
+     "istMin": 74,
+     "zwillingMin": 84,
+     "pumpeAus": false
+    },
+    {
+     "art": "pause",
+     "zeit": "2026-10-10 05:47",
+     "istMin": 101,
+     "zwillingMin": 106,
+     "pumpeAus": false
+    },
+    {
+     "art": "pause",
+     "zeit": "2026-10-10 09:26",
+     "istMin": 112,
+     "zwillingMin": 321,
+     "pumpeAus": false
+    },
+    {
+     "art": "pause",
+     "zeit": "2026-10-10 11:51",
+     "istMin": 179,
+     "zwillingMin": 176,
+     "pumpeAus": true
+    },
+    {
+     "art": "pause",
+     "zeit": "2026-10-10 17:13",
+     "istMin": 69,
+     "zwillingMin": 76,
+     "pumpeAus": false
+    },
+    {
+     "art": "pause",
+     "zeit": "2026-10-10 22:09",
+     "istMin": 65,
+     "zwillingMin": 74,
+     "pumpeAus": false
+    },
+    {
+     "art": "pause",
+     "zeit": "2026-10-11 01:07",
+     "istMin": 81,
+     "zwillingMin": 90,
+     "pumpeAus": false
+    },
+    {
+     "art": "pause",
+     "zeit": "2026-10-11 05:52",
+     "istMin": 66,
+     "zwillingMin": 83,
+     "pumpeAus": false
+    },
+    {
+     "art": "pause",
+     "zeit": "2026-10-11 09:10",
+     "istMin": 142,
+     "zwillingMin": 114,
+     "pumpeAus": false
+    },
+    {
+     "art": "pause",
+     "zeit": "2026-10-11 14:36",
+     "istMin": 91,
+     "zwillingMin": 88,
+     "pumpeAus": false
+    },
+    {
+     "art": "pause",
+     "zeit": "2026-10-11 18:03",
+     "istMin": 68,
+     "zwillingMin": 76,
+     "pumpeAus": false
+    },
+    {
+     "art": "pause",
+     "zeit": "2026-10-12 11:21",
+     "istMin": 57,
+     "zwillingMin": 114,
+     "pumpeAus": false
+    },
+    {
+     "art": "pause",
+     "zeit": "2026-10-12 14:17",
+     "istMin": 97,
+     "zwillingMin": 92,
+     "pumpeAus": false
+    },
+    {
+     "art": "pause",
+     "zeit": "2026-10-12 19:21",
+     "istMin": 131,
+     "zwillingMin": 50,
+     "pumpeAus": false
+    },
+    {
+     "art": "lauf",
+     "zeit": "2026-10-07 20:19",
+     "istMin": 132,
+     "zwillingMin": 167,
+     "ende": "thermo"
+    },
+    {
+     "art": "lauf",
+     "zeit": "2026-10-08 00:10",
+     "istMin": 45,
+     "zwillingMin": 45,
+     "ende": "heizgrenze"
+    },
+    {
+     "art": "lauf",
+     "zeit": "2026-10-08 09:34",
+     "istMin": 137,
+     "zwillingMin": 151,
+     "ende": "thermo"
+    },
+    {
+     "art": "lauf",
+     "zeit": "2026-10-08 17:19",
+     "istMin": 600,
+     "zwillingMin": 785,
+     "ende": "thermo"
+    },
+    {
+     "art": "lauf",
+     "zeit": "2026-10-09 04:27",
+     "istMin": 322,
+     "zwillingMin": 322,
+     "ende": "thermo"
+    },
+    {
+     "art": "lauf",
+     "zeit": "2026-10-09 11:14",
+     "istMin": 261,
+     "zwillingMin": 93,
+     "ende": "thermo"
+    },
+    {
+     "art": "lauf",
+     "zeit": "2026-10-09 16:41",
+     "istMin": 191,
+     "zwillingMin": 245,
+     "ende": "thermo"
+    },
+    {
+     "art": "lauf",
+     "zeit": "2026-10-09 21:00",
+     "istMin": 148,
+     "zwillingMin": 244,
+     "ende": "thermo"
+    },
+    {
+     "art": "lauf",
+     "zeit": "2026-10-10 00:41",
+     "istMin": 135,
+     "zwillingMin": 156,
+     "ende": "thermo"
+    },
+    {
+     "art": "lauf",
+     "zeit": "2026-10-10 04:10",
+     "istMin": 97,
+     "zwillingMin": 91,
+     "ende": "thermo"
+    },
+    {
+     "art": "lauf",
+     "zeit": "2026-10-10 11:18",
+     "istMin": 33,
+     "zwillingMin": 29,
+     "ende": "heizgrenze"
+    },
+    {
+     "art": "lauf",
+     "zeit": "2026-10-10 14:50",
+     "istMin": 143,
+     "zwillingMin": 138,
+     "ende": "thermo"
+    },
+    {
+     "art": "lauf",
+     "zeit": "2026-10-10 18:22",
+     "istMin": 227,
+     "zwillingMin": 364,
+     "ende": "thermo"
+    },
+    {
+     "art": "lauf",
+     "zeit": "2026-10-10 23:14",
+     "istMin": 113,
+     "zwillingMin": 105,
+     "ende": "thermo"
+    },
+    {
+     "art": "lauf",
+     "zeit": "2026-10-11 02:28",
+     "istMin": 204,
+     "zwillingMin": 220,
+     "ende": "thermo"
+    },
+    {
+     "art": "lauf",
+     "zeit": "2026-10-11 06:58",
+     "istMin": 132,
+     "zwillingMin": 121,
+     "ende": "thermo"
+    },
+    {
+     "art": "lauf",
+     "zeit": "2026-10-11 11:32",
+     "istMin": 184,
+     "zwillingMin": 129,
+     "ende": "thermo"
+    },
+    {
+     "art": "lauf",
+     "zeit": "2026-10-11 16:07",
+     "istMin": 116,
+     "zwillingMin": 137,
+     "ende": "thermo"
+    },
+    {
+     "art": "lauf",
+     "zeit": "2026-10-11 19:11",
+     "istMin": 970,
+     "zwillingMin": 1043,
+     "ende": "thermo"
+    },
+    {
+     "art": "lauf",
+     "zeit": "2026-10-12 12:18",
+     "istMin": 119,
+     "zwillingMin": 101,
+     "ende": "thermo"
+    },
+    {
+     "art": "lauf",
+     "zeit": "2026-10-12 15:54",
+     "istMin": 207,
+     "zwillingMin": 135,
+     "ende": "thermo"
+    },
+    {
+     "art": "lauf",
+     "zeit": "2026-10-12 21:32",
+     "istMin": 784,
+     "zwillingMin": 707,
+     "ende": "thermo"
+    }
+   ],
+   "freilauf": [
+    {
+     "tag": "2026-10-08",
+     "minuten": 1440,
+     "kwhElZwilling": 4.31,
+     "kwhElMessung": 4.16,
+     "kwhThZwilling": 21.23,
+     "kwhThMessung": 20.32,
+     "startsZwilling": 3,
+     "startsMessung": 3,
+     "laufMinZwilling": 612,
+     "laufMinMessung": 583,
+     "rmseVlK": 0.85,
+     "rmsePelW": 57.7,
+     "rmseHausK": 0.33,
+     "biasHausK": -0.12,
+     "raeume": {
+      "ki_oben": {
+       "rmseK": 0.76,
+       "biasK": -0.47
+      },
+      "ki_unten": {
+       "rmseK": 0.41,
+       "biasK": -0.09
+      },
+      "schlaf": {
+       "rmseK": 0.53,
+       "biasK": -0.16
+      },
+      "wohn": {
+       "rmseK": 4.18,
+       "biasK": -2.07
+      }
+     }
+    },
+    {
+     "tag": "2026-10-09",
+     "minuten": 1440,
+     "kwhElZwilling": 7.86,
+     "kwhElMessung": 8.13,
+     "kwhThZwilling": 37.71,
+     "kwhThMessung": 37.77,
+     "startsZwilling": 5,
+     "startsMessung": 4,
+     "laufMinZwilling": 1076,
+     "laufMinMessung": 1121,
+     "rmseVlK": 2.11,
+     "rmsePelW": 198.5,
+     "rmseHausK": 0.73,
+     "biasHausK": -0.21,
+     "raeume": {
+      "ki_oben": {
+       "rmseK": 1,
+       "biasK": -0.13
+      },
+      "ki_unten": {
+       "rmseK": 0.67,
+       "biasK": -0.24
+      },
+      "schlaf": {
+       "rmseK": 0.86,
+       "biasK": -0.24
+      },
+      "wohn": {
+       "rmseK": 1.46,
+       "biasK": -0.01
+      }
+     }
+    },
+    {
+     "tag": "2026-10-10",
+     "minuten": 1440,
+     "kwhElZwilling": 6.08,
+     "kwhElMessung": 6.14,
+     "kwhThZwilling": 30.35,
+     "kwhThMessung": 29.93,
+     "startsZwilling": 6,
+     "startsMessung": 7,
+     "laufMinZwilling": 826,
+     "laufMinMessung": 799,
+     "rmseVlK": 2.16,
+     "rmsePelW": 223.9,
+     "rmseHausK": 0.57,
+     "biasHausK": -0.27,
+     "raeume": {
+      "ki_oben": {
+       "rmseK": 1.18,
+       "biasK": 1.01
+      },
+      "ki_unten": {
+       "rmseK": 0.42,
+       "biasK": -0.36
+      },
+      "schlaf": {
+       "rmseK": 0.84,
+       "biasK": -0.19
+      },
+      "wohn": {
+       "rmseK": 1.22,
+       "biasK": 0.85
+      }
+     }
+    },
+    {
+     "tag": "2026-10-11",
+     "minuten": 1440,
+     "kwhElZwilling": 6.63,
+     "kwhElMessung": 7.52,
+     "kwhThZwilling": 32.09,
+     "kwhThMessung": 36.19,
+     "startsZwilling": 6,
+     "startsMessung": 5,
+     "laufMinZwilling": 909,
+     "laufMinMessung": 992,
+     "rmseVlK": 2.1,
+     "rmsePelW": 214.5,
+     "rmseHausK": 0.91,
+     "biasHausK": 0.5,
+     "raeume": {
+      "ki_oben": {
+       "rmseK": 0.42,
+       "biasK": 0.13
+      },
+      "ki_unten": {
+       "rmseK": 0.96,
+       "biasK": 0.45
+      },
+      "schlaf": {
+       "rmseK": 0.98,
+       "biasK": 0.55
+      },
+      "wohn": {
+       "rmseK": 0.51,
+       "biasK": -0.22
+      }
+     }
+    },
+    {
+     "tag": "2026-10-12",
+     "minuten": 1440,
+     "kwhElZwilling": 9.95,
+     "kwhElMessung": 9.35,
+     "kwhThZwilling": 43.26,
+     "kwhThMessung": 42.64,
+     "startsZwilling": 2,
+     "startsMessung": 3,
+     "laufMinZwilling": 1262,
+     "laufMinMessung": 1155,
+     "rmseVlK": 2.74,
+     "rmsePelW": 242.6,
+     "rmseHausK": 0.44,
+     "biasHausK": -0.2,
+     "raeume": {
+      "ki_oben": {
+       "rmseK": 1.05,
+       "biasK": -0.89
+      },
+      "ki_unten": {
+       "rmseK": 0.88,
+       "biasK": -0.09
+      },
+      "schlaf": {
+       "rmseK": 0.65,
+       "biasK": -0.3
+      },
+      "wohn": {
+       "rmseK": 1.87,
+       "biasK": -0.09
+      }
+     }
+    }
+   ],
+   "freilaufSumme": {
+    "kwhElZwilling": 34.83,
+    "kwhElMessung": 35.3,
+    "kwhThZwilling": 164.64,
+    "kwhThMessung": 166.85,
+    "startsZwilling": 22,
+    "startsMessung": 22,
+    "laufMinZwilling": 4685,
+    "laufMinMessung": 4650
+   }
+  },
+  "test": {
+   "tage": [
+    "2026-10-13",
+    "2026-10-14",
+    "2026-10-15",
+    "2026-10-16"
+   ],
+   "teil": {
+    "pthRmseW": 247,
+    "pthBiasW": -20.2,
+    "pthKWhModellMessung": [
+     130.65,
+     131.89
+    ],
+    "pelRmseW": 20.6,
+    "pelBiasW": -7.7,
+    "nStabil": 3703,
+    "pipeRmseK": 0.84,
+    "nPipe": 2388,
+    "reglerRmseHz": 1.268,
+    "wasserkreisRmseK": 1.264,
+    "hausRmseK": 0.519,
+    "raeume": {
+     "ki_oben": {
+      "n": 5698,
+      "rmseK": 0.924,
+      "biasK": -0.754
+     },
+     "ki_unten": {
+      "n": 5698,
+      "rmseK": 0.474,
+      "biasK": 0.228
+     },
+     "schlaf": {
+      "n": 5698,
+      "rmseK": 0.472,
+      "biasK": -0.228
+     },
+     "wohn": {
+      "n": 5519,
+      "rmseK": 1.266,
+      "biasK": -0.061
+     }
+    },
+    "stoppRegelMaeMin": 12.8,
+    "stoppN": 10,
+    "startRegelMaeMin": 10,
+    "startN": 8
+   },
+   "zyklenHausGemessen": {
+    "pause": {
+     "n": 12,
+     "maeMin": 9.5,
+     "medianAbsMin": 6.5,
+     "biasMin": 7.5
+    },
+    "lauf": {
+     "n": 11,
+     "maeMin": 119.5,
+     "medianAbsMin": 29,
+     "biasMin": 19.4
+    }
+   },
+   "zyklenHausSimuliert": {
+    "pause": {
+     "n": 12,
+     "maeMin": 9.9,
+     "medianAbsMin": 6.5,
+     "biasMin": 8.1
+    },
+    "lauf": {
+     "n": 11,
+     "maeMin": 116.7,
+     "medianAbsMin": 41,
+     "biasMin": 37.1
+    }
+   },
+   "zyklenDetail": [
+    {
+     "art": "pause",
+     "zeit": "2026-10-13 10:36",
+     "istMin": 82,
+     "zwillingMin": 93,
+     "pumpeAus": false
+    },
+    {
+     "art": "pause",
+     "zeit": "2026-10-13 13:51",
+     "istMin": 158,
+     "zwillingMin": 156,
+     "pumpeAus": true
+    },
+    {
+     "art": "pause",
+     "zeit": "2026-10-13 19:34",
+     "istMin": 86,
+     "zwillingMin": 83,
+     "pumpeAus": false
+    },
+    {
+     "art": "pause",
+     "zeit": "2026-10-13 22:52",
+     "istMin": 80,
+     "zwillingMin": 92,
+     "pumpeAus": false
+    },
+    {
+     "art": "pause",
+     "zeit": "2026-10-14 02:50",
+     "istMin": 101,
+     "zwillingMin": 106,
+     "pumpeAus": false
+    },
+    {
+     "art": "pause",
+     "zeit": "2026-10-14 06:47",
+     "istMin": 68,
+     "zwillingMin": 102,
+     "pumpeAus": false
+    },
+    {
+     "art": "pause",
+     "zeit": "2026-10-14 10:25",
+     "istMin": 479,
+     "zwillingMin": 473,
+     "pumpeAus": true
+    },
+    {
+     "art": "pause",
+     "zeit": "2026-10-14 23:29",
+     "istMin": 53,
+     "zwillingMin": 60,
+     "pumpeAus": false
+    },
+    {
+     "art": "pause",
+     "zeit": "2026-10-15 11:01",
+     "istMin": 81,
+     "zwillingMin": 92,
+     "pumpeAus": false
+    },
+    {
+     "art": "pause",
+     "zeit": "2026-10-15 15:06",
+     "istMin": 183,
+     "zwillingMin": 185,
+     "pumpeAus": true
+    },
+    {
+     "art": "pause",
+     "zeit": "2026-10-15 23:54",
+     "istMin": 47,
+     "zwillingMin": 73,
+     "pumpeAus": false
+    },
+    {
+     "art": "pause",
+     "zeit": "2026-10-16 10:46",
+     "istMin": 474,
+     "zwillingMin": 474,
+     "pumpeAus": true
+    },
+    {
+     "art": "lauf",
+     "zeit": "2026-10-13 11:58",
+     "istMin": 113,
+     "zwillingMin": 106,
+     "ende": "heizgrenze"
+    },
+    {
+     "art": "lauf",
+     "zeit": "2026-10-13 16:29",
+     "istMin": 185,
+     "zwillingMin": 135,
+     "ende": "thermo"
+    },
+    {
+     "art": "lauf",
+     "zeit": "2026-10-13 21:00",
+     "istMin": 112,
+     "zwillingMin": 142,
+     "ende": "thermo"
+    },
+    {
+     "art": "lauf",
+     "zeit": "2026-10-14 00:12",
+     "istMin": 158,
+     "zwillingMin": 117,
+     "ende": "thermo"
+    },
+    {
+     "art": "lauf",
+     "zeit": "2026-10-14 04:31",
+     "istMin": 136,
+     "zwillingMin": 107,
+     "ende": "thermo"
+    },
+    {
+     "art": "lauf",
+     "zeit": "2026-10-14 07:55",
+     "istMin": 150,
+     "zwillingMin": 118,
+     "ende": "thermo"
+    },
+    {
+     "art": "lauf",
+     "zeit": "2026-10-14 18:24",
+     "istMin": 305,
+     "zwillingMin": 960,
+     "ende": "thermo"
+    },
+    {
+     "art": "lauf",
+     "zeit": "2026-10-15 12:22",
+     "istMin": 164,
+     "zwillingMin": 123,
+     "ende": "thermo"
+    },
+    {
+     "art": "lauf",
+     "zeit": "2026-10-15 18:09",
+     "istMin": 345,
+     "zwillingMin": 485,
+     "ende": "thermo"
+    },
+    {
+     "art": "lauf",
+     "zeit": "2026-10-16 00:41",
+     "istMin": 605,
+     "zwillingMin": 367,
+     "ende": "thermo"
+    },
+    {
+     "art": "lauf",
+     "zeit": "2026-10-16 18:40",
+     "istMin": 215,
+     "zwillingMin": 236,
+     "ende": "thermo"
+    }
+   ],
+   "freilauf": [
+    {
+     "tag": "2026-10-13",
+     "minuten": 1440,
+     "kwhElZwilling": 7.78,
+     "kwhElMessung": 8.23,
+     "kwhThZwilling": 35.53,
+     "kwhThMessung": 38.61,
+     "startsZwilling": 4,
+     "startsMessung": 3,
+     "laufMinZwilling": 1018,
+     "laufMinMessung": 1046,
+     "rmseVlK": 1.42,
+     "rmsePelW": 140.9,
+     "rmseHausK": 0.55,
+     "biasHausK": -0.2,
+     "raeume": {
+      "ki_oben": {
+       "rmseK": 1.25,
+       "biasK": -1.13
+      },
+      "ki_unten": {
+       "rmseK": 0.69,
+       "biasK": -0.09
+      },
+      "schlaf": {
+       "rmseK": 0.62,
+       "biasK": -0.31
+      },
+      "wohn": {
+       "rmseK": 1.19,
+       "biasK": 0.3
+      }
+     }
+    },
+    {
+     "tag": "2026-10-14",
+     "minuten": 1440,
+     "kwhElZwilling": 5.1,
+     "kwhElMessung": 5.37,
+     "kwhThZwilling": 25.24,
+     "kwhThMessung": 27.57,
+     "startsZwilling": 5,
+     "startsMessung": 4,
+     "laufMinZwilling": 693,
+     "laufMinMessung": 749,
+     "rmseVlK": 2.26,
+     "rmsePelW": 187.7,
+     "rmseHausK": 0.57,
+     "biasHausK": 0.29,
+     "raeume": {
+      "ki_oben": {
+       "rmseK": 0.49,
+       "biasK": -0.29
+      },
+      "ki_unten": {
+       "rmseK": 1.03,
+       "biasK": 0.73
+      },
+      "schlaf": {
+       "rmseK": 0.48,
+       "biasK": -0.15
+      },
+      "wohn": {
+       "rmseK": 1.71,
+       "biasK": 1.58
+      }
+     }
+    },
+    {
+     "tag": "2026-10-15",
+     "minuten": 1440,
+     "kwhElZwilling": 7.86,
+     "kwhElMessung": 8.59,
+     "kwhThZwilling": 36.89,
+     "kwhThMessung": 39.34,
+     "startsZwilling": 3,
+     "startsMessung": 3,
+     "laufMinZwilling": 1081,
+     "laufMinMessung": 1148,
+     "rmseVlK": 1.26,
+     "rmsePelW": 114.6,
+     "rmseHausK": 0.54,
+     "biasHausK": -0.25,
+     "raeume": {
+      "ki_oben": {
+       "rmseK": 1.45,
+       "biasK": -1.31
+      },
+      "ki_unten": {
+       "rmseK": 0.77,
+       "biasK": 0.03
+      },
+      "schlaf": {
+       "rmseK": 0.78,
+       "biasK": -0.53
+      },
+      "wohn": {
+       "rmseK": 2.03,
+       "biasK": -1.72
+      }
+     }
+    },
+    {
+     "tag": "2026-10-16",
+     "minuten": 1378,
+     "kwhElZwilling": 5.64,
+     "kwhElMessung": 6.07,
+     "kwhThZwilling": 26.52,
+     "kwhThMessung": 28.95,
+     "startsZwilling": 2,
+     "startsMessung": 2,
+     "laufMinZwilling": 762,
+     "laufMinMessung": 820,
+     "rmseVlK": 1.31,
+     "rmsePelW": 109,
+     "rmseHausK": 0.45,
+     "biasHausK": -0.28,
+     "raeume": {
+      "ki_oben": {
+       "rmseK": 1.18,
+       "biasK": -1.04
+      },
+      "ki_unten": {
+       "rmseK": 0.47,
+       "biasK": -0.26
+      },
+      "schlaf": {
+       "rmseK": 0.63,
+       "biasK": -0.3
+      },
+      "wohn": {
+       "rmseK": 1.6,
+       "biasK": -1.38
+      }
+     }
+    }
+   ],
+   "freilaufSumme": {
+    "kwhElZwilling": 26.38,
+    "kwhElMessung": 28.26,
+    "kwhThZwilling": 124.18,
+    "kwhThMessung": 134.47,
+    "startsZwilling": 14,
+    "startsMessung": 12,
+    "laufMinZwilling": 3554,
+    "laufMinMessung": 3763
+   }
+  }
+ }
+}

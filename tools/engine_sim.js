@@ -1,8 +1,12 @@
 // Offline-Pruefung der Entscheidungsmaschine (tools/engine_core.js) mit Fake-Uhr: Regeln, Sperren, Datensaetze, Punktesystem, Klick-Uebernahme,
 // Mehrtages-Szenarien mit einem einfachen Anlagenmodell, Replay der echten Daten (wenn vorhanden) und - mit Flow-Datei - die Node-RED-Huellen.
 // Usage: node tools/engine_sim.js [flows.json] [Datenordner]
+//        node tools/engine_sim.js <flows.json> --zwilling <wp_params.json> [--szenario frost|abtau|mild|woche|alle]   (geschlossen gegen den Anlagen-Zwilling)
 //   ohne flows.json: nur Kern + Replay; Datenordner Standard: ../engine_brief/data (fehlt er, werden die Replay-Pruefungen uebersprungen)
 process.env.TZ = process.env.TZ_SIM || 'Europe/Berlin';
+// Modus Zwilling (15.10.2026): node tools/engine_sim.js <flows.json> --zwilling <wp_params.json> [--szenario frost|abtau|mild|woche|alle] – die Maschine läuft geschlossen
+// gegen den Anlagen-Zwilling (tools/engine_vs_zwilling.js, Schatten gegen sofort übernommen); die übrigen Prüfungen dieser Datei laufen dann nicht
+if (process.argv.indexOf('--zwilling') > 1) { require('./engine_vs_zwilling.js').cli(process.argv.slice(2)); process.exit(process.exitCode || 0); }
 const fs = require('fs');
 const path = require('path');
 const E = require('./engine_core.js');
@@ -230,7 +234,7 @@ console.log('--- (a) Mehrtages-Simulation (Anlagenmodell, Fake-Uhr)');
             g(r5, 'raum_offset').skill === null && g(r5, 'raum_offset').skillFaelle < E.SCORE.skillMinFaelle && !g(r5, 'raum_offset').kriterien.find(k => k.k === 'skill').ok, 'Skill ' + g(r5, 'raum_offset').skill + ', Faelle mit Beitrag ' + g(r5, 'raum_offset').skillFaelle); }
     const perDay = {}; D.props.filter(p => p.rule === 'quiet_freigabe').forEach(p => { const k = E.iso(p.ts).slice(0, 10); perDay[k] = (perDay[k] || 0) + 1; });
     check('5 Tage kaelter werdend (4 -> -3,5 °C, Bedarf ueber der Mindestleistung): Quiet-Freigabe schlaegt an - Kaelte-Vorsorge unter 2 °C auf Quiet 2 (Messtabelle 21 Hz), Heizstab-Naehe bzw. Raum unter Minimum direkt auf Quiet 0 (Notfall); ohne Klick hoechstens 16 je Tag (Gueltigkeit 30 + Wartezeit 60 min; das Tageslimit zaehlt nur Uebernahmen), kein Fehler',
-          D.errors === 0 && Object.keys(perDay).length >= 3 && Object.keys(perDay).every(k => perDay[k] <= 16) && D.props.filter(p => p.rule === 'quiet_freigabe').every(p => (p.cmd.value === 0 && /Bedarf: .*(Heizstab-Nähe|unter Minimum)/.test(p.warum)) || (p.cmd.value === 2 && (/Kälte-Vorsorge/.test(p.was) || (/Bedarf: .*unter Minimum/.test(p.warum) && /Ziel: Quiet 2 deckelt/.test(p.warum))))) && D.props.some(p => /Kälte-Vorsorge/.test(p.was)), JSON.stringify(perDay));   // seit 14.10.: bei Abtauwetter (-5…+4 °C nach langem Niedriglauf) auch der Raum-Notfall schrittweise auf Quiet 2
+          D.errors === 0 && Object.keys(perDay).length >= 3 && Object.keys(perDay).every(k => perDay[k] <= 16) && D.props.filter(p => p.rule === 'quiet_freigabe').every(p => (p.cmd.value === 0 && /Bedarf: .*(Heizstab-Nähe|unter Minimum)/.test(p.warum)) || (p.cmd.value === 2 && (/Kälte-Vorsorge/.test(p.was) || (/Bedarf: .*unter Minimum/.test(p.warum) && /Ziel: (Quiet 2 deckelt|Abtauwetter .*stufenweise Quiet 3 → 2)/.test(p.warum))))) && D.props.some(p => /Kälte-Vorsorge/.test(p.was)), JSON.stringify(perDay));   // seit 14.10.: bei Abtauwetter auch der Raum-Notfall schrittweise auf Quiet 2; seit 16.10. (Winterpaket, ohne Feuchte/Rohr bis 4 °C) im Lauf stufenweise
 }
 
 // ================================================================== (b) Punktesystem (automatisch, ohne Nutzereingabe)
@@ -342,11 +346,13 @@ console.log('--- (b) Punktesystem');
       const Rw = runSeq(120, zyklus(20, 10, {rooms: rooms({ki_oben: 23.3})}));
       check('... Raum ueber der Bandmitte (Kinderzimmer oben 23,3 °C, Mitte 22,75 °C): kein +1 K (sonst Gegenspieler zu Raumeinfluss −1 K, Regel-Review LS-5)', !Rw.outs.some(o => r0(o, 'quiet_strecken').neu) && /Kinderzimmer oben 0,\d K über der Bandmitte/.test(r0(Rw.outs[70], 'quiet_strecken').grund), r0(Rw.outs[70], 'quiet_strecken').grund);
       const Rv = runSeq(120, zyklus(20, 10, i => (i % 30 < 18 ? {vl: 30} : (i % 30 >= 20 ? {vl: 27.5} : {}))));
-      check('... Vorlauf im Lauf nur am Soll (+1 K loeste bei Quiet 0 einen Hochlauf aus, 11.10. 03:10) und in der Pause bei Soll −2,5 K (+1 K startete sofort): kein +1 K', !Rv.outs.some(o => r0(o, 'quiet_strecken').neu) && /Vorlauf 0,00 K zum Soll: \+1 K löste einen Hochlauf aus/.test(r0(Rv.outs[76], 'quiet_strecken').grund) && /Vorlauf -2,50 K zum Soll: \+1 K startete den Verdichter sofort/.test(r0(Rv.outs[85], 'quiet_strecken').grund), r0(Rv.outs[76], 'quiet_strecken').grund + ' | ' + r0(Rv.outs[85], 'quiet_strecken').grund);
+      check('... Vorlauf im Lauf nur am Soll (+1 K loeste bei Quiet 0 einen Hochlauf aus, 11.10. 03:10) und in der Pause ohne Bedarfsraum (v7, Winterpaket: +1 K in der Pause ist ein Startbefehl): kein +1 K', !Rv.outs.some(o => r0(o, 'quiet_strecken').neu) && /Vorlauf 0,00 K zum Soll: \+1 K löste einen Hochlauf aus/.test(r0(Rv.outs[76], 'quiet_strecken').grund) && /Pause: \+1 K wäre ein Startbefehl .*kein Bedarfsraum unter Minimum/.test(r0(Rv.outs[85], 'quiet_strecken').grund), r0(Rv.outs[76], 'quiet_strecken').grund + ' | ' + r0(Rv.outs[85], 'quiet_strecken').grund);
       { const ca = E.mergeCfg({rules: {raum_offset: {stabilMin: 20}}}); let Sa = null; const sn = [];
         for (let i = 0; i < 150; i++) { const o = E.step(Sa, zyklus(20, 10, i >= 140 ? {} : {rooms: rooms({ki_oben: 21.5})})(i), ca); Sa = o.S; const qp = Sa.rules.quiet_strecken.prop; sn.push({ro: !!Sa.rules.raum_offset.prop, qs: !!(qp && qp.groesse === 'shift'), g: r0(o, 'quiet_strecken').grund, gr: r0(o, 'raum_offset').grund}); }
-        check('Arbitrierung Verschiebung (Raumeinfluss v3): Raumeinfluss +1 K (Bedarf Kinderzimmer oben, Minute 20; v3 ohne Startsperre, der Vorschlag bleibt ueber den naechsten Start), "Deckel/Laufzeit" will dieselbe Richtung und ist "dieselbe Verschiebung +1 K schlägt schon „Raumeinfluss ±1 K“ vor"; nie zwei Verschiebungs-Vorschlaege gleichzeitig',
-              sn[20].ro && sn[30].ro && sn[75].ro && !sn[75].qs && !sn.some(x => x.ro && x.qs) && /dieselbe Verschiebung \+1 K schlägt schon „Raumeinfluss ±1 K“ vor/.test(sn[76].g), sn[76].g); }
+        const endRo = sn.findIndex((x, k) => k > 30 && !x.ro), endQs = sn.findIndex((x, k) => k > endRo && x.qs);
+        check('Arbitrierung Verschiebung (Raumeinfluss v6): Raumeinfluss +1 K (Bedarf Kinderzimmer oben ab Minute 20; Minute 20 liegt in einer frischen Pause, +1 K waere ein Startbefehl -> erst im Lauf ab Minute 30); in der naechsten Pause (Minute 50) endet der noch nicht uebernommene Vorschlag nach 3 min (+1 K waere dort ein Startbefehl, Pause erst 0–2 min); danach schlaegt "Deckel/Laufzeit" dieselbe Richtung vor (Takt), solange es die Groesse hat, ist der Raumeinfluss "dieselbe Verschiebung +1 K schlägt schon „Deckel/Laufzeit“ vor"; nie zwei Verschiebungs-Vorschlaege gleichzeitig',
+              !sn[20].ro && /Startbefehl.*Pause erst/.test(sn[20].gr) && sn[30].ro && sn[49].ro && endRo === 53 && endQs > endRo && !sn.some(x => x.ro && x.qs) && /dieselbe Verschiebung \+1 K schlägt schon „Deckel\/Laufzeit“ vor/.test(sn[76].gr),
+              'Ende Raumeinfluss ' + endRo + ', Deckel/Laufzeit ab ' + endQs + ' · ' + [20, 30, 53, 76].map(k => k + ': ' + sn[k].ro + '/' + sn[k].qs + ' ' + sn[k].gr.slice(0, 120)).join(' ## ')); }
       { const Az = E.newApply(); Az.aktiv = {id: 's', rule: 'quiet_strecken', groesse: 'shift', name: 'SetZ1HeatRequestTemperature', value: 1, von: 0, ts: T0, bis: T0 + 360 * MIN, bestaetigt: true};
         const tq = E.applyTick(JSON.parse(JSON.stringify(Az)), {now: T0 + 60 * MIN, eng: {ts: T0 + 60 * MIN}, plant: {shift: 1, hpAge: 0.3, block: 0}, endReason: {quiet_strecken: 'Bedarf: Kinderzimmer oben 0,4 K unter Minimum'}});
         const ts2 = E.applyTick(JSON.parse(JSON.stringify(Az)), {now: T0 + 60 * MIN, eng: {ts: T0 + 60 * MIN}, plant: {shift: 1, hpAge: 0.3, block: 0}, endReason: {'quiet_strecken|shift': 'Kinderzimmer oben über Maximum'}});
@@ -364,8 +370,8 @@ console.log('--- (b) Punktesystem');
       const Sv = E.newState(T0 - MIN); Sv.sc.tot['quiet_freigabe|v1|s5'] = {rule: 'quiet_freigabe', ver: 1, sv: 5, since: T0 - 3 * 86400000, punkte: -20, faelle: 2, bewertet: 1, treffer: 1, fehlalarm: 0, neutral: 1, bs: 0, bsRef: 0, schaden: 0, verpasst: 1, verpasstSperre: 0, wirkN: 0, wirkP: 0, kalib: 0, trefferNeutral: 0, skillN: 0};
       Sv.sc.base.quiet_freigabe = {30: [20, 19], 60: [20, 19], 120: [20, 19]};
       R = runSeq(160, i => boost(i), Sv); const rpv = E.report(R.S).find(r => r.regel === 'quiet_freigabe'), av = allSc(R).find(x => x.typ === 'ausloeser');
-      check('Regelversion v1 -> v4 im laufenden Zustand: v1-Summen bleiben unveraendert unter "quiet_freigabe|v1|s5" (-20, 1 verpasst), v4 zaehlt getrennt unter "quiet_freigabe|v4|s5", Bericht zeigt v4; die alte Basisrate (v1-Vergleichslagen) wird nicht verwendet (Schluessel "quiet_freigabe|v2", seit v2 dieselbe Ausloesung; der Abtau-Rueckstand von v3 und die eigene Nachheizung von v4 kommen hier nicht vor)',
-            R.S.sc.tot['quiet_freigabe|v1|s5'].punkte === -20 && R.S.sc.tot['quiet_freigabe|v4|s5'].faelle === 1 && rpv.v === 4 && rpv.verpasst === 0 && av && av.v === 4 && av.horizonte.every(h => h.b === 0.5) && !!R.S.sc.base['quiet_freigabe|v2'], JSON.stringify(Object.keys(R.S.sc.tot)) + ' ' + JSON.stringify(av && av.horizonte.map(h => h.b))); }
+      check('Regelversion v1 -> v' + E.RULE.quiet_freigabe.ver + ' im laufenden Zustand: v1-Summen bleiben unveraendert unter "quiet_freigabe|v1|s5" (-20, 1 verpasst), v' + E.RULE.quiet_freigabe.ver + ' zaehlt getrennt unter "quiet_freigabe|v' + E.RULE.quiet_freigabe.ver + '|s5", Bericht zeigt v' + E.RULE.quiet_freigabe.ver + '; die alte Basisrate (v1-Vergleichslagen) wird nicht verwendet (Schluessel "quiet_freigabe|v2", seit v2 dieselbe Ausloesung; der Abtau-Rueckstand von v3 und die eigene Nachheizung von v4 kommen hier nicht vor)',
+            R.S.sc.tot['quiet_freigabe|v1|s5'].punkte === -20 && R.S.sc.tot['quiet_freigabe|v' + E.RULE.quiet_freigabe.ver + '|s5'].faelle === 1 && rpv.v === E.RULE.quiet_freigabe.ver && rpv.verpasst === 0 && av && av.v === E.RULE.quiet_freigabe.ver && av.horizonte.every(h => h.b === 0.5) && !!R.S.sc.base['quiet_freigabe|v2'], JSON.stringify(Object.keys(R.S.sc.tot)) + ' ' + JSON.stringify(av && av.horizonte.map(h => h.b))); }
     // S6: Basisrate lernt aus Vergleichslagen: 8 kurze Episoden (Rueckstand 30 min, dann geloest) -> b fuer 60/120 min nahe 0 -> Treffer zaehlt viel
     let S = null; const ep = [];
     for (let k = 0; k < 8; k++) { for (let i = 0; i < 150; i++) { const t = k * 150 + i; const o = E.step(S, inp(T0 + t * MIN, {rt: 20 + i, soll: 31, sollKurve: 30.5, vl: i < 30 ? 29 : 31.5, rl: i < 30 ? 26.5 : 29.5, q: 3, hz: 16, block: 1, rooms: rooms({ki_oben: 21.2})}), cfg); S = o.S; } }   // v2: Vergleichslage mit Bedarf (Raum unter Minimum)
@@ -632,7 +638,7 @@ const allScores = R => [].concat.apply([], R.outs.map(o => o.scores));
     const RV = E.RULE.vorausschau;
     check('Regelwerk: Vorausschau v3 (Gebaeudemodell v3, 15.10.2026) ist Befehlsregel der Groesse "shift" (nur -1 K, Richtung soll_runter, eigene Basisrate "vorausschau|v3") mit Sperren Modell-Gate, Vorrang, Gegenrichtung; der Zweck nennt, warum +1 K gestrichen ist (Kurve wird alle 5 min nachgefuehrt, Raeume bei Kaelte ueber der Bandmitte, Hochlauf +48 %) und das Gebaeudemodell v3; Raumeinfluss v5 nimmt an der Arbitrierung teil',
           RV && RV.ver === 3 && RV.groesse === 'shift' && RV.art === 'befehl' && RV.richtung === 'soll_runter' && RV.basis === 'vorausschau|v3' && RV.kurz === 'Vorausschau −1 K' && /ohne den Zweig \+1 K/.test(RV.zweck) && /alle 5 min/.test(RV.zweck) && /Bandmitte/.test(RV.zweck) && /\+48 %/.test(RV.zweck) && /T_innen − T_außen\) − Gewinne/.test(RV.zweck) &&
-          ['modell', 'vorrang', 'gegenrichtung'].every(x => RV.sperren.includes(x)) && E.RULE.raum_offset.ver === 5 && ['vorrang', 'gegenrichtung'].every(x => E.RULE.raum_offset.sperren.includes(x)) && RV.befehl.name === 'SetZ1HeatRequestTemperature', RV.sperren.join(','));
+          ['modell', 'vorrang', 'gegenrichtung'].every(x => RV.sperren.includes(x)) && E.RULE.raum_offset.ver === 6 && ['vorrang', 'gegenrichtung'].every(x => E.RULE.raum_offset.sperren.includes(x)) && RV.befehl.name === 'SetZ1HeatRequestTemperature', RV.sperren.join(','));
     const iVs = E.RULES.findIndex(x => x.id === 'vorausschau');
     // Gate geschlossen: nie ein Vorschlag, nur Anzeige; Vergleichslagen fuer die Basisrate laufen trotzdem mit
     let R = runD(300, i => inp(T0 + i * MIN, {vs: vsx(VSK.down, {gate: 0, n: 1})}));
@@ -857,12 +863,12 @@ console.log('--- (e) Quiet-Freigabe v2: Bedarf, Deckel je Stufe, Zielstufe, Ruec
     R = runSeq(150, pauseFall);
     check('... derselbe Abfall in der Pause ist kein Bedarf (der naechste Start heizt nach; der Verlauf zaehlt erst ab Laufminute 15)', !R.S.bedT && !qf(R.outs[149]).bed.some(b => b[0] === 'Bedarf' && b[1]), qf(R.outs[149]).grund);
     // Heizstab-Naehe: kurze Startphase (5 min) und Haltezeit (3 min), Ziel Quiet 0, Notfall
-    const kaltAT = i => inp(T0 + i * MIN, {at: 0, q: 3, hz: i < 2 ? 30 : 16, rt: i, soll: 35, sollKurve: 34.8, vl: 32.5, rl: 30, rooms: rooms()});
+    const kaltAT = i => inp(T0 + i * MIN, {at: 0, rh: 70, pipeOut: 1, q: 3, hz: i < 2 ? 30 : 16, rt: i, soll: 35, sollKurve: 34.8, vl: 32.5, rl: 30, rooms: rooms()});   // trocken (Feuchte 70 %, Rohr +1 °C): kein Abtauwetter
     R = runSeq(20, kaltAT, E.newState(T0 - 20 * MIN)); const fh = firstNeu(R), ph = fh >= 0 ? R.outs[fh].prop : null;
     check('Heizstab-Naehe (0 °C, Vorlauf 2,5 K unter Soll, Heizstab ab 3 K nach Heater_Delay_Time 15 min): Freigabe in Laufminute 10 (Startphase 15 − 5 − 3 = 7 min, dann 3 min Haltezeit: 5 min vor der Heizstab-Freigabe, Regel-Review B4), Ziel Quiet 0, Begruendung "Heizstab-Nähe"', fh === 10 && ph && ph.cmd.value === 0 && /Bedarf: Heizstab-Nähe \(Außen 0 °C, Vorlauf 2,5 K unter Soll, Heizstab ab 3 K\)/.test(ph.warum) && /Ziel: Heizstab-Nähe: volle Leistung/.test(ph.warum) && R.outs[fh].res.find(r => r.id === 'quiet_freigabe').hart, fh + ' · ' + (ph ? ph.warum : qf(R.outs[19]).grund));
     // Zielstufe aus den Daten (je Heizregelung x Quiet x Band, 60 min): kalt mit Quiet-2-Daten -> 3 -> 2; mild mit Quiet-1-Daten -> 3 -> 1
     const seedQ = o => { const S0 = E.newState(T0 - MIN); S0.takt.nl = {laeuft: false}; S0.takt.copT[E.ymd(T0)] = o; return S0; };
-    const need = (at, o) => i => inp(T0 + i * MIN, Object.assign({at: at, q: 3, hz: 16, rt: 30 + i, soll: 33, sollKurve: 32.8, vl: 30.5, rl: 28, rooms: rooms({ki_oben: 21.6})}, o || {}));
+    const need = (at, o) => i => inp(T0 + i * MIN, Object.assign({at: at, rh: 70, pipeOut: 1, q: 3, hz: 16, rt: 30 + i, soll: 33, sollKurve: 32.8, vl: 30.5, rl: 28, rooms: rooms({ki_oben: 21.6})}, o || {}));   // trocken: kein Abtauwetter (Winterpaket)
     R = runSeq(15, need(2), seedQ({'Efficiency|2|-1…3': [1000, 5000, 149, 149 * 20, 21, 21]}));
     check('Zielstufe kalt (2 °C): Quiet 2 hat 149 min Daten und deckelt bei 21 Hz (>= 17 + 4) -> Freigabe Quiet 3 -> 2 (die kleinste wirksame Freigabe; wie der Nutzer am 12.10. 06:38); COP mit Korrektur 5000 / (1000 + 149 x 80/60) = 4,17', R.outs[10].prop && R.outs[10].prop.cmd.value === 2 && /Ziel: Quiet 2 deckelt bei 21 Hz \(149 min Daten, COP 4,17\)/.test(R.outs[10].prop.warum), R.outs[10].prop && R.outs[10].prop.warum);
     R = runSeq(15, need(9), seedQ({'Efficiency|2|7…11': [1000, 6000, 90, 90 * 17, 17, 17], 'Efficiency|1|7…11': [1000, 6100, 70, 70 * 21, 21, 21]}));
@@ -1538,18 +1544,19 @@ console.log('--- (h) Heizregelung: Komfortbedarf, Abtau-Rueckstand, Heizstab-Nae
     // ---- h2 Abtau-Rueckstand (Forum 189605: Efficiency haelt nach dem Abtauen ~20 min niedrig): Lauf 200 min, Abtauen Minute 20-28, danach Vorlauf 4 K unter Soll, keine Raumnot
     { const ab = hc => i => lauf(i, {at: 3, hc: hc, rt: 200 + i, hz: i >= 20 && i < 28 ? 55 : 17, defrost: i >= 20 && i < 28 ? 1 : 0, vl: i >= 28 ? 29 : 33, rl: i >= 28 ? 27.5 : 30.5, rooms: RH()});
       const RE = runSeq(60, ab(1)), PE = propOf(RE), RC = runSeq(60, ab(0)), PC = propOf(RC);
-      check('h2 Abtau-Rueckstand: in Efficiency nach dem Abtauen (Vorlauf 4 K unter Soll, Laufminute 228 > 45) -> Comfort nach der Abtau-Sperre (10 min) und 10 min Haltezeit, Begruendung "Abtau-Rückstand"; in Comfort ab dem Abtauen kein Vorschlag nach Efficiency (Comfort holt den Rueckstand auf: "nicht nach Abtauen", danach Ruecklauf-Rueckstand)',
-            PE.length === 1 && PE[0].i >= 38 && PE[0].i <= 40 && /Abtau-Rückstand/.test(RE.outs[PE[0].i].prop.warum) && !PC.filter(x => x.i >= 20).length && /Abtauen bis/.test(hr(RC.outs[45]).grund) && hr(RC.outs[59]).st === 'bereit',
+      check('h2 Abtau-Rueckstand (v3, Winterpaket 16.10.2026): in Efficiency nach dem Abtauen (Vorlauf 4 K unter Soll, Laufminute 228 > 45) KEIN Comfort mehr (Abtauspirale: Comfort springt hoch, der Verdampfer vereist in 5 min erneut, Forum 4554672), Grund nennt die Quiet-Freigabe; in Comfort ab dem Abtauen kein Vorschlag nach Efficiency (Rueckweg unveraendert: "nicht nach Abtauen", danach Ruecklauf-Rueckstand)',
+            PE.length === 0 && /Efficiency nach dem Abtauen: kein Comfort \(Abtauspirale\)/.test(hr(RE.outs[45]).grund) && RE.outs[45].rec.abl.hc === undefined && !PC.filter(x => x.i >= 20).length && /Abtauen bis/.test(hr(RC.outs[45]).grund) && hr(RC.outs[59]).st === 'bereit',
             (PE.length ? PE[0].i + ': ' + RE.outs[PE[0].i].prop.warum : hr(RE.outs[45]).grund) + ' · Comfort: ' + hr(RC.outs[45]).grund + ' / Minute 59: ' + hr(RC.outs[59]).st + ' ' + hr(RC.outs[59]).grund); }
     // ---- h2b Sperre "Frequenzsprung bei Abtauwetter" (Pseudo-Abtauung): nur erreichbar mit langer traeger Phase (traegeMin per cfg 120 min), 2 °C, 60 min <= 20 Hz, Raum-Notfall ohne Heizstab-Naehe
     { const cA = E.mergeCfg({rules: {heizregelung: {traegeMin: 120}}}), R = runSeq(80, i => lauf(i, {at: 2, htrOnAT: -10, rooms: RH(i >= 60 ? {schlaf: 19.6} : {})}), null, cA), r79 = hr(R.outs[79]);
       check('h2b Sperre "Frequenzsprung bei Abtauwetter": 2 °C, Verdichter seit 60 min hoechstens 20 Hz, Comfort hoebe auf ~33 Hz (+16 Hz) -> gesperrt (auch im Raum-Notfall; nur Heizstab-Naehe ist ausgenommen). Mit dem Standard traegeMin 45 ist die Lage unerreichbar (in der Anlaufphase kein 60-min-Niedriglauf, eine Abtauung setzt ihn zurueck)',
             !propOf(R).length && r79.st === 'gesperrt' && r79.locks.indexOf('abtausprung') >= 0 && /Pseudo-Abtauung/.test(r79.grund), r79.grund); }
     // ---- h3 Heizstab-Naehe (1 °C, Heater_On_Outdoor_Temp 0 °C): Startphase endet Heater_Delay_Time - 5 - 3 = Minute 7, Haltezeit 3 min -> Vorschlag vor dem Heizstab (Minute 15)
-    { const R = runSeq(45, i => i < 15 ? lauf(i, {at: 1, hz: 0, rt: 0, vl: 31, rl: 30, rooms: RH()}) : lauf(i, {at: 1, rt: i - 15, vl: 30, rl: 28, rooms: RH()})), P = propOf(R), p = P.length ? R.outs[P[0].i].prop : null;
-      const H = R.outs[44], HE = H.halten.heizregelung || '';
-      check('h3 Heizstab-Naehe (1 °C, Vorlauf 3 K unter Soll beim Neustart): Comfort ab Laufminute 10 (Startphase bis 7, Haltezeit 3), also 5 min vor der Heizstab-Freigabe, als Notfall; solange Heizstab-Naehe besteht, haelt Comfort (halten)',
-            P.length === 1 && P[0].i - 15 === 10 && p.hart && /Heizstab-Nähe/.test(p.warum) && /Bedarf besteht weiter|Heizstab-Nähe/.test(HE), (P.length ? (P[0].i - 15) + ' min: ' + p.warum : hr(R.outs[44]).grund) + ' · halten: ' + HE); }
+    { const R = runSeq(75, i => i < 15 ? lauf(i, {at: 1, hz: 0, rt: 0, vl: 31, rl: 30, rooms: RH()}) : lauf(i, {at: 1, rt: i - 15, vl: 30, rl: 28, rooms: RH()})), P = propOf(R), p = P.length ? R.outs[P[0].i].prop : null;
+      const H = R.outs[44], HE = H.halten.heizregelung || '', r40 = hr(R.outs[40]);
+      check('h3 Heizstab-Naehe (1 °C, Vorlauf 3 K unter Soll beim Neustart; v3 Winterpaket): in den ersten 45 Laufminuten bei WP-AT <= 4 °C kein Comfort (Kaltstart: die L fuehre mit der Hoechstfrequenz an, Forum 4005690), Sperre "abtausprung" mit Ende; danach Comfort als Notfall (Heizstab-Naehe ist bei Abtauwetter ausgenommen); solange Heizstab-Naehe besteht, haelt Comfort (halten)',
+            P.length === 1 && P[0].i - 15 === 45 && p.hart && /Heizstab-Nähe/.test(p.warum) && r40.st === 'gesperrt' && r40.locks.indexOf('abtausprung') >= 0 && /Kaltstart: Außen \(WP\) 1 °C, Lauf 25 von 45 min/.test(r40.grund) && /Bedarf besteht weiter|Heizstab-Nähe/.test(HE),
+            (P.length ? (P[0].i - 15) + ' min: ' + p.warum : hr(R.outs[74]).grund) + ' · Minute 40: ' + r40.grund + ' · halten: ' + HE); }
     // ---- Klick-Harness mit Heizregelung an der Anlage (gesendete Werte stehen sofort an der Anlage; 4 Takte der Uebernahme je Minute)
     function hcKlick(o) {
         let S = o.S0 || null, A = E.newApply(), pl = {q: o.q0 !== undefined ? o.q0 : 0, shift: 0, hc: o.hc0 !== undefined ? o.hc0 : 1}, t = o.t0, last = null, ctx = null; const sends = [];
@@ -1686,6 +1693,87 @@ console.log('--- (h) Heizregelung: Komfortbedarf, Abtau-Rueckstand, Heizstab-Nae
             'Heizregelung ' + hs.map(s0 => E.iso(new Date(2026, 11, 7).getTime() + s0[0] * MIN).slice(5, 16) + '=' + s0[2] + ' ' + String(s0[3]).slice(0, 24)).join(' | ') + ' · Heizstab ' + F1.heaterMin + ' statt ' + F0.heaterMin + ' min · Comfort-Laufminuten ' + F1.cMin + ' (davon >= 28 Hz ' + F1.cHoch + ') · Klicks je Tag ' + JSON.stringify(perDay)); }
 }
 
+// ================================================================== (w) Winterpaket (16.10.2026): Abtauwetter, Comfort-Sperren, stufenweise Freigabe, +1 K als Startbefehl, Anlage beendet Quiet, Abtau-Abzug
+console.log('--- (w) Winterpaket: Abtauwetter bis unter 10 °C, kein Comfort nach dem Abtauen/beim Kaltstart/bei Abtauwetter, Quiet stufenweise, +1 K in der Pause = Startbefehl, Anlage beendet Quiet, COP mit Abtau-Abzug');
+{
+    const LK = cfg.locks, nul = x => x === undefined ? null : x, AW = (at, rh, po) => E.abtauWetter({at: at, rh: nul(rh), pipeOut: nul(po)}, LK).ja;
+    check('w1 Abtauwetter = WP-AT −5 bis unter 10 °C UND (Feuchte ≥ 80 % ODER Rohr außen ≤ 0 °C); ohne Feuchte und Rohrwert wie bisher bis 4 °C',
+          AW(8, 85) && !AW(8, 70, 2) && AW(8, 70, -1) && AW(9, 95) && !AW(10, 95) && !AW(-6, 95) && AW(-5, 95) && AW(3) && AW(4) && !AW(5) && !AW(8, null, 1) && AW(2, null, 0),
+          [AW(8, 85), AW(8, 70, 2), AW(8, 70, -1), AW(10, 95), AW(-6, 95), AW(3), AW(5)].join(','));
+    const RW = o => { o = o || {}; return [
+        {id: 'ki_oben', name: 'Kinderzimmer oben', t: 22.8, age: 10, valid: true, min: 22, max: 23.5, active: true},
+        {id: 'ki_unten', name: 'Kinderzimmer unten', t: 21.0, age: 10, valid: true, min: 20, max: 22, active: true},
+        {id: 'schlaf', name: 'Schlafzimmer', t: 21.0, age: 10, valid: true, min: 20, max: 22, active: true}].map(r => Object.assign({}, r, o[r.id] !== undefined ? {t: o[r.id]} : {})); };
+    const props = (R, id) => R.outs.map((o, i) => [i, o]).filter(x => r0(x[1], id).neu).map(x => ({i: x[0], p: x[1].S.rules[id].prop}));
+    const lw = o => i => inp(T0 + i * MIN, Object.assign({at: 6, rh: 70, pipeOut: 2, q: 0, hc: 1, hz: 17, rt: 5 + i, soll: 33, sollKurve: 33, vl: 30.5, rl: 28, dT: 3, rooms: RW({schlaf: 19.6})}, typeof o === 'function' ? o(i) : (o || {})));
+    // w2 Heizregelung v3: Kaltstart, nach dem Abtauen, Abtauwetter
+    { const R3 = runSeq(60, lw({at: 3})), R5 = runSeq(60, lw({at: 5})), P3 = props(R3, 'heizregelung'), P5 = props(R5, 'heizregelung'), g30 = r0(R3.outs[30], 'heizregelung'), g45 = r0(R3.outs[45], 'heizregelung');
+      check('w2a Kaltstart (v3): bei WP-AT 3 °C (trocken) kein Comfort in den ersten 45 Laufminuten – gesperrt „Frequenzsprung bei Abtauwetter oder Kaltstart“ (Kaltstart …, bis Laufminute 45), danach regelt Efficiency selbst hoch; bei 5 °C Comfort wie bisher in Laufminute 25',
+            !P3.length && g30.st === 'gesperrt' && g30.locks.indexOf('abtausprung') >= 0 && /Kaltstart: Außen \(WP\) 3 °C, Lauf 35 von 45 min/.test(g30.grund) && /regelt ab Laufminute 45 selbst hoch/.test(g45.grund) && P5.length === 1 && 5 + P5[0].i === 25,
+            g30.grund + ' · ' + g45.grund + ' · 5 °C: ' + P5.map(x => 5 + x.i).join(',')); }
+    { const cT = E.mergeCfg({rules: {heizregelung: {traegeMin: 120}}}), df = i => i >= 15 && i < 23;
+      const R = runSeq(70, lw(i => ({hz: df(i) ? 55 : 17, defrost: df(i) ? 1 : 0})), null, cT), P = props(R, 'heizregelung'), g40 = r0(R.outs[40], 'heizregelung');
+      check('w2b nach dem Abtauen (v3): 30 min nach dem Abtauende kein Comfort (Abtauspirale, Forum 4554672) – trotz Raum-Notfall und träger Efficiency (traegeMin hier 120); Comfort erst 30 min nach dem Ende (Minute 53)',
+            P.length === 1 && P[0].i === 53 && g40.st === 'gesperrt' && /Abtauen bis 06:23: bis 06:53 kein Comfort \(Abtauspirale\)/.test(g40.grund), (P.length ? P[0].i : '–') + ' · ' + g40.grund); }
+    { const R = runSeq(60, lw({rh: 90})), P = props(R, 'heizregelung'), g30 = r0(R.outs[30], 'heizregelung'), Rh = runSeq(30, lw(i => ({at: 1, rh: 90, rt: 50 + i, vl: 30, rooms: RW()}))), Ph = props(Rh, 'heizregelung');
+      check('w2c Abtauwetter (6 °C, 90 %): Comfort nur bei Heizstab-Nähe – mit Raum-Notfall gesperrt („Comfort nur bei Heizstab-Nähe“); bei 1 °C/90 % mit Heizstab-Nähe nach Laufminute 45 Comfort als Notfall',
+            !P.length && g30.st === 'gesperrt' && /Abtauwetter: Außen \(WP\) 6 °C, Feuchte 90 %: Comfort nur bei Heizstab-Nähe/.test(g30.grund) && Ph.length === 1 && Ph[0].p.hart && /Heizstab-Nähe/.test(Ph[0].p.warum),
+            g30.grund + ' · Heizstab: ' + Ph.map(x => (50 + x.i) + ' min').join(',')); }
+    { const cV = E.mergeCfg({rules: {heizregelung: {heizstabVorrang: 1}}}), hs = i => i < 15 ? lw({at: 1, hz: 0, rt: 0, vl: 31, rl: 30, rooms: RW()})(i) : lw({at: 1, rt: i - 15, vl: 30, rl: 28, rooms: RW()})(i);
+      const R0 = runSeq(45, hs), R1 = runSeq(45, hs, null, cV), P0 = props(R0, 'heizregelung'), P1 = props(R1, 'heizregelung');
+      check('w2d Schalter heizstabVorrang (Standard 0 = Auftrag wörtlich): Heizstab-Nähe beim Kaltstart (1 °C) – mit 0 kein Comfort vor Laufminute 45, mit 1 Comfort in Laufminute 10 (5 min vor der Heizstab-Freigabe, wie bis v2)',
+            !P0.length && P1.length === 1 && P1[0].i - 15 === 10 && P1[0].p.hart, P0.map(x => x.i - 15) + ' / ' + P1.map(x => x.i - 15)); }
+    // w3 Quiet-Freigabe v5 stufenweise bei Abtauwetter (Klick: die Anlage stellt den Vorschlag eine Minute spaeter)
+    const qKlick = (n, o) => { let S = null, q = 3; const outs = [], sends = []; for (let i = 0; i < n; i++) { const hz = q === 3 ? 17 : (q === 0 ? 33 : 21); const x = E.step(S, inp(T0 + i * MIN, Object.assign({q: q, hz: hz, rt: 30 + i, soll: 33, sollKurve: 33, vl: 30.5, rl: 28, dT: 3}, o(i))), cfg); S = x.S; outs.push(x);
+                                  const p = r0(x, 'quiet_freigabe').neu ? S.rules.quiet_freigabe.prop : null; if (p) { sends.push([i, p.cmd.value, p.warum]); q = p.cmd.value; } } return {S: S, outs: outs, sends: sends}; };
+    { const K = qKlick(90, () => ({at: 6, rh: 90, rooms: RW({schlaf: 19.6})})), g30 = r0(K.outs[30], 'quiet_freigabe');
+      check('w3a Quiet-Freigabe v5 bei Abtauwetter (6 °C, 90 %, Raum-Notfall): stufenweise 3 → 2 (Deckel 21 Hz), danach 2 → 0 (Quiet 1 deckelt gleich, wird übersprungen) frühestens 30 min nach der letzten Senkung (Sperre mit Ende, statt 10 min Notfall-Abstand)',
+            K.sends.length === 2 && K.sends[0][1] === 2 && K.sends[1][1] === 0 && K.sends[1][0] - K.sends[0][0] - 1 >= 30 && /stufenweise Quiet 3 → 2/.test(K.sends[0][2]) && g30.st === 'gesperrt' && /Quiet nur stufenweise, zuletzt 06:11 gesenkt \(Quiet 3 → 2\), nächste Stufe frühestens 06:41/.test(g30.grund),
+            JSON.stringify(K.sends.map(s => [s[0], s[1]])) + ' · ' + g30.grund); }
+    { const K = qKlick(30, () => ({at: 1, rh: 90, soll: 35, sollKurve: 34.8, vl: 32.5, rl: 30, rooms: RW()})), K2 = qKlick(30, () => ({at: 6, rh: 70, pipeOut: 2, rooms: RW({schlaf: 19.6})}));
+      check('w3b Heizstab-Nähe bei Abtauwetter (1 °C, 90 %): zwei Stufen in einem Vorschlag (3 → 2 → 0); ohne Abtauwetter (6 °C, 70 %, Rohr +2 °C) Raum-Notfall wie bisher direkt Quiet 0',
+            K.sends.length >= 1 && K.sends[0][1] === 0 && /zwei Stufen \(Heizstab-Nähe\) Quiet 3 → 2 → 0/.test(K.sends[0][2]) && K2.sends.length === 1 && K2.sends[0][1] === 0 && !/stufenweise/.test(K2.sends[0][2]),
+            JSON.stringify(K.sends.map(s => [s[0], s[1], s[2].slice(-80)])) + ' · ' + JSON.stringify(K2.sends.map(s => [s[0], s[1]]))); }
+    // w4 Deckel/Laufzeit v7: Quiet hoeher bei Abtauwetter nur eine Stufe
+    { const seed = o => { const S0 = E.newState(T0 - MIN); S0.takt.nl = {laeuft: false}; S0.takt.copT[E.ymd(T0)] = o; return S0; };
+      const dk = o => i => inp(T0 + i * MIN, Object.assign({at: 8, q: 0, hz: 30, rt: 30 + i, soll: 31, sollKurve: 31, vl: 31, rl: 29.5, dT: 3}, o));
+      const d23 = {'Efficiency|2|7…11': [1000, 5000, 90, 90 * 17, 17, 17], 'Efficiency|3|7…11': [1000, 5000, 90, 90 * 17, 17, 17]};
+      const Ra = runSeq(15, dk({rh: 90}), seed(d23), cfg), Rb = runSeq(15, dk({rh: 70, pipeOut: 2}), seed(d23), cfg), Rc = runSeq(15, dk({rh: 90}), seed(Object.assign({'Efficiency|1|7…11': [1000, 5000, 90, 90 * 20, 20, 20]}, d23)), cfg);
+      const pa = props(Ra, 'quiet_strecken'), pb = props(Rb, 'quiet_strecken'), pc = props(Rc, 'quiet_strecken');
+      check('w4 Deckel/Laufzeit v7 (Quiet höher) bei Abtauwetter nur eine Stufe: 8 °C/90 % mit Daten nur für Quiet 2/3 → kein Vorschlag („Abtauwetter: nur Quiet 1, stufenweise“); trocken → Quiet 0 → 2 wie bisher; mit Quiet-1-Daten bei Abtauwetter → Quiet 0 → 1',
+            !pa.length && /Abtauwetter: nur Quiet 1, stufenweise/.test(r0(Ra.outs[14], 'quiet_strecken').grund) && pb.length === 1 && pb[0].p.cmd.value === 2 && pc.length === 1 && pc[0].p.cmd.value === 1,
+            r0(Ra.outs[14], 'quiet_strecken').grund + ' · ' + pb.map(x => x.p.cmd.value) + ' · ' + pc.map(x => x.p.cmd.value)); }
+    // w5 Anlage beendet Quiet selbst (Fluester-Prioritaet "Leistung": 30 min 5 K unter Soll, Forum 3469566)
+    { const an = (k, o) => i => inp(T0 + i * MIN, Object.assign({at: 6, rh: 70, pipeOut: 2, q: i >= 32 && i < 45 ? 0 : 3, hz: i >= 32 && i < 45 ? 33 : 17, rt: 30 + i, soll: 33, sollKurve: 33, vl: 33 - k, rl: 30 - k, dT: 3, rooms: RW(i >= 45 ? {schlaf: 19.6} : {})}, o || {}));
+      const R = runSeq(110, an(5.5)), ev = R.outs.reduce((a, o, i) => a.concat(o.ev.filter(e => e[0] === 'optimierer_anlage').map(e => [i, e[1]])), []), g58 = r0(R.outs[58], 'quiet_freigabe');
+      const pq = props(R, 'quiet_freigabe'), sc = R.outs.reduce((a, o) => a.concat(o.scores), []).filter(s => s.regel === 'quiet_freigabe' && (s.typ === 'verpasst' || s.typ === 'verpasst_sperre'));
+      const Rm = runSeq(60, an(2)), evm = Rm.outs.reduce((a, o) => a.concat(o.ev.filter(e => e[0] === 'optimierer_anlage')), []);
+      check('w5 Anlage beendet Quiet (Quiet 3 → 0 ohne Befehl nach 30 min mit Vorlauf 5,5 K unter Soll): Ereignis „Anlage hat Quiet beendet“ und Hinweis, Datensatz abl.anl_q; nimmt sie Quiet wieder auf, eigenes Ereignis; danach 30 min keine Freigabe (Bedarf ab 06:45, Haltezeit bis 06:55, Sperre bis 07:02) und kein „verpasst“; bei nur 2 K Rückstand (Hand) kein Ereignis',
+            ev.length === 2 && ev[0][0] === 32 && /anlage_quiet: Anlage hat Quiet beendet: Quiet 3 → 0 um 06:32 ohne Befehl, Vor-\/Rücklauf seit \d+ min 5,5 K unter Soll/.test(ev[0][1]) && ev[1][0] === 45 && /wieder aufgenommen/.test(ev[1][1]) && JSON.stringify(R.outs[32].rec.abl.anl_q) === '[3,0]' &&
+            R.outs[40].hinweise.some(h => h.id === 'anlage_quiet') && g58.st === 'gesperrt' && /Anlage hat Quiet um 06:32 selbst beendet \(Flüster-Priorität „Leistung“\): bis 07:02 keine weitere Freigabe/.test(g58.grund) && pq.length >= 1 && pq[0].i >= 62 && sc.every(s => s.typ !== 'verpasst') && !evm.length,
+            JSON.stringify(ev) + ' · ' + g58.grund + ' · Freigabe ' + pq.map(x => x.i) + ' · ' + sc.map(s => s.typ).join(',')); }
+    // w6 +1 K in der Pause ist ein Startbefehl (Raumeinfluss v6)
+    { const ps = (pauseAb, o) => i => inp(T0 + i * MIN, Object.assign({at: 8, rh: 60, pipeOut: 5, q: 3, hz: i < pauseAb ? 17 : 0, rt: i < pauseAb ? 60 + i : 0, pump: 1750, soll: 30, sollKurve: 29.75, vl: i < pauseAb ? 31 : 28, rl: 27, rooms: RW({ki_unten: 19.6})}, o || {}));
+      const Ra = runSeq(75, ps(10)), Rb = runSeq(75, ps(50)), Rc = runSeq(75, ps(10, {at: 3, rh: 90})), pa = props(Ra, 'raum_offset'), pb = props(Rb, 'raum_offset'), pc = props(Rc, 'raum_offset'), gb = r0(Rb.outs[62], 'raum_offset'), gc = r0(Rc.outs[70], 'raum_offset');
+      check('w6 Raumeinfluss v6: +1 K in der Pause nur als gewollter Start (Bedarfsraum unter Minimum, Pause ≥ 20 min) und dann „startet die Wärmepumpe“; Pause erst 12 min → kein Vorschlag; bei 3 °C/90 % gesperrt (Kaltstart bei Abtauwetter)',
+            pa.length === 1 && pa[0].p.cmd.value === 1 && /startet die Wärmepumpe/.test(pa[0].p.was) && /Pause seit \d+ min: \+1 K startet die Wärmepumpe/.test(pa[0].p.warum) && /startet die Wärmepumpe/.test(pa[0].p.erwartung) &&
+            gb.st === 'bereit' && /Pause erst 12 min/.test(gb.grund) && pb.length === 1 && pb[0].i === 70 && !pc.length && gc.st === 'gesperrt' && /Kaltstart bei Abtauwetter/.test(gc.grund),
+            pa.map(x => x.i + ' ' + x.p.was) + ' · ' + gb.grund + ' · ' + pb.map(x => x.i) + ' · ' + gc.grund); }
+    // w7 COP mit Abtau-Abzug (Takt-Messung, Karte Messwerte & Lernen)
+    { let T = E.taktNew(); const t0 = new Date(2026, 11, 1, 0, 0).getTime();
+      for (let i = 0; i < 200; i++) { const df = i >= 100 && i < 108, wd = i >= 108 && i < 125, vl = df ? 25 : (wd ? 25 + (i - 108) * 0.5 : 33);
+        T = E.taktStep(T, {t: t0 + i * MIN, hpAge: 0.5, hz: df ? 58 : 20, at: 1, pel: df ? 1000 : 450, pth: df ? -3000 : (wd ? 4000 : 2000), q: 0, hc: 1, defrost: df ? 1 : 0, dhw: 0, vl: vl, rl: vl - 3, soll: 33, dT: 3}, null); }
+      const K = E.abtauKennzahl(T, null, t0 + 200 * MIN), a = K['-1…3'], SM = E.newState(t0); SM.takt = T;
+      const M = require('./engine_view.js').messBuild(SM, t0 + 200 * MIN, cfg, null), tile = M.takt.find(x => x.k === 'COP mit Abtau-Abzug'), M0 = require('./engine_view.js').messBuild(E.newState(t0), t0, cfg, null).takt.find(x => x.k === 'COP mit Abtau-Abzug');
+      check('w7 COP korrigiert um Abtauen: 1 Abtauung (8 min) und 15 min Wiederaufheizen zählen nicht als Nutzwärme, ihr Strom schon (+80 W je Laufminute): COP 3,82 → 3,24 (−15 %); Kachel „COP mit Abtau-Abzug“ 3,24, ohne Abtauung „noch keine Abtauung“',
+            a && a.n === 1 && a.minAb === 8 && a.minWd === 15 && a.copOhne === 3.82 && a.copMit === 3.24 && a.abzug === 0.15 && tile && tile.v === '3,24' && /ohne Abtauen 3,82 · 1 Abtauungen/.test(tile.s) && /4074654/.test(tile.title) && M0 && M0.s === 'noch keine Abtauung',
+            JSON.stringify(a) + ' · ' + (tile ? tile.v + ' ' + tile.s : '–')); }
+    // w8 Datensatz
+    { const R = runSeq(3, i => inp(T0 + i * MIN, {at: 7, rh: 88, pipeOut: -1})), R2 = runSeq(3, i => inp(T0 + i * MIN, {at: 7, rh: 60, pipeOut: 3})), rec = R.outs[2].rec, un = E.unsnap(T0, rec.in);
+      check('w8 Datensatz: Feuchte und Rohr außen in der Eingabe (in.rh, in.pipeOut), Abtauwetter als abl.aw = 1 (sonst nicht im Datensatz); Nachspielen liest beide',
+            rec.in.rh === 88 && rec.in.pipeOut === -1 && rec.abl.aw === 1 && R2.outs[2].rec.abl.aw === undefined && un.rh === 88 && un.pipeOut === -1, JSON.stringify(rec.abl)); }
+}
+
 // ================================================================== Replay der echten Daten (07.-10.10., 07.-12.10. oder 07.-13.10.; datensatzabhaengige Pruefungen je Zeitraum)
 let RP = null;
 if (fs.existsSync(path.join(dataDir, 'quiet-2026-10.csv'))) {
@@ -1708,8 +1796,8 @@ if (fs.existsSync(path.join(dataDir, 'quiet-2026-10.csv'))) {
     check('Raumeinfluss v3 waehrend des Boosts (Soll 38 von Hand): kein Vorschlag bis 60 min nach dem Boost', !RP.props.some(p => p.rule === 'raum_offset' && p.ts >= new Date(2026, 9, 10, 8, 25).getTime() && p.ts < new Date(2026, 9, 10, 10, 25).getTime()), RP.props.filter(p => p.rule === 'raum_offset').map(p => E.iso(p.ts)).join(','));
     const ds = RP.props.filter(p => p.rule === 'quiet_strecken');
     const RP4 = replay(dataDir, ko({keepRecs: false, cfg: {rules: {quiet_strecken: {hzHoch: 22}}}})), ds4 = RP4.props.filter(p => p.rule === 'quiet_strecken');
-    check('Deckel/Laufzeit v5 im Replay: kein Effizienz-Deckel mehr (die Laeufe mit Uebersteuern nach langer Pause lagen bei 22–25 Hz ohne Takt; COP-Vorteil dort nach der Korrektur nicht belegt); mit der Schwelle von v4 (22 Hz per cfg) dieselben 3 Vorschlaege wie bisher (10.10. 15:39, 11.10. 03:26, 11.10. 12:22); nie +1 K (kein Takt: alle Laeufe >= 97 min)',
-          ds.length === 0 && ds4.length === 3 && ds4.map(p => E.iso(p.ts).slice(5, 16)).join(',') === '10-10 15:39,10-11 03:26,10-11 12:22' && ds4.every(p => p.cmd.name === 'SetQuietMode' && p.cmd.value === 3 && p.von === 0 && p.hebel === 'quiet'), ds.length + ' / ' + ds4.map(p => E.iso(p.ts) + ' ' + p.was).join(' | '));
+    check('Deckel/Laufzeit v5 im Replay: kein Effizienz-Deckel mehr (die Laeufe mit Uebersteuern nach langer Pause lagen bei 22–25 Hz ohne Takt; COP-Vorteil dort nach der Korrektur nicht belegt); mit der Schwelle von v4 (22 Hz per cfg) 2 der 3 Vorschlaege von bisher (10.10. 15:39, 11.10. 12:22; 11.10. 03:26 entfaellt seit v7: Abtauwetter 8 °C bei 86 % Feuchte, stufenweise nur Quiet 0 -> 1, dafuer keine Daten); nie +1 K (kein Takt: alle Laeufe >= 97 min)',
+          ds.length === 0 && ds4.length === 2 && ds4.map(p => E.iso(p.ts).slice(5, 16)).join(',') === '10-10 15:39,10-11 12:22' && ds4.every(p => p.cmd.name === 'SetQuietMode' && p.cmd.value === 3 && p.von === 0 && p.hebel === 'quiet'), ds.length + ' / ' + ds4.map(p => E.iso(p.ts) + ' ' + p.was).join(' | '));
     check('Kein Vorschlag mit aktiver Sperre und keiner ohne frische Daten', RP.recs.every(l => { const d = JSON.parse(l); return d.r.every(r => !(r.st === 'vorschlag' && r.sperren)); }), '');
     const RV = replay(dataDir, ko({cfg: {rules: {quiet_freigabe: {rlRueckK: -99}}}})), extra = RV.props.filter(p => p.rule === 'quiet_freigabe').length - 1;
     check('Ruecklauf-Bedingung der Freigabe: v2 schlaegt auch ohne sie nicht oefter vor (der Bedarf trennt schon; v1: 4 zusaetzliche Freigaben 07.–10.10., alle Fehlalarm, rund -213 Punkte)', extra === 0, extra + ' zusaetzlich');
@@ -1742,8 +1830,8 @@ if (fs.existsSync(path.join(dataDir, 'quiet-2026-10.csv'))) {
         // Raumeinfluss v4 und Waechter mit dem Standard seit Entscheidung 5 (Kinderzimmer oben mit eigener Nachheizung)
         const RPd = replay(dataDir, {bis: BIS});
         { const rp = RPd.props.filter(p => p.rule === 'raum_offset'), rr = RPd.report.find(r => r.regel === 'raum_offset'), hw = RPd.events.filter(e => e[1] === 'optimierer_hinweis');
-          check('Replay Raumeinfluss v5 (Standard: Kinderzimmer oben mit eigener Nachheizung, Wohnzimmer mit Sonnenfenster): 5 Vorschlaege -1 K 10.10. 22:09, 11.10. 01:48 und 05:52, 12.10. 05:37 und 13.10. 03:48 (die letzten zwei im Dauerlauf bei Vorlauf <= Soll), 4 Treffer, kein Fehlalarm, kein Schaden, nichts verpasst; das +1 K vom 09.10. 19:47 (Kinderzimmer oben) entfaellt (v3: 6 Vorschlaege, 5 Treffer; v2: 8 Vorschlaege, -23,49 Punkte)',
-                rp.map(p => E.iso(p.ts).slice(5, 16) + ' ' + p.cmd.value).join(',') === '10-10 22:09 -1,10-11 01:48 -1,10-11 05:52 -1,10-12 05:37 -1,10-13 03:48 -1' && rr.v === 5 && rr.treffer === 4 && rr.fehlalarm === 0 && rr.schaden === 0 && rr.verpasst === 0 && rr.punkte > 0,
+          check('Replay Raumeinfluss v' + E.RULE.raum_offset.ver + ' (Standard: Kinderzimmer oben mit eigener Nachheizung, Wohnzimmer mit Sonnenfenster): 5 Vorschlaege -1 K 10.10. 22:09, 11.10. 01:48 und 05:52, 12.10. 05:37 und 13.10. 03:48 (die letzten zwei im Dauerlauf bei Vorlauf <= Soll), 4 Treffer, kein Fehlalarm, kein Schaden, nichts verpasst; das +1 K vom 09.10. 19:47 (Kinderzimmer oben) entfaellt (v3: 6 Vorschlaege, 5 Treffer; v2: 8 Vorschlaege, -23,49 Punkte)',
+                rp.map(p => E.iso(p.ts).slice(5, 16) + ' ' + p.cmd.value).join(',') === '10-10 22:09 -1,10-11 01:48 -1,10-11 05:52 -1,10-12 05:37 -1,10-13 03:48 -1' && rr.v === E.RULE.raum_offset.ver && rr.treffer === 4 && rr.fehlalarm === 0 && rr.schaden === 0 && rr.verpasst === 0 && rr.punkte > 0,
                 rp.map(p => E.iso(p.ts).slice(5, 16) + ' ' + p.cmd.value).join(',') + ' · ' + JSON.stringify({p: rr.punkte, t: rr.treffer, f: rr.fehlalarm, s: rr.schaden, v: rr.verpasst}));
           check('Replay Waechter: Kurvenform "kaltseitig senken" (08.10. 23:41), Waermeverteilung 10.10. 06:58–08:58 (neu seit v4: Kinderzimmer oben zaehlt auch bei geschlossenem Relais als kalt, Kinderzimmer unten ueber Maximum) und 12.10. 09:23–10:58 (Kinderzimmer unten ueber Maximum, Schlafzimmer unter Minimum), Dornroeschenschlaf nur beim ungeklaerten Spaetstart 12.10. 21:21 (Start 21:31), kein H23',
                 hw.map(e => e[0].slice(5, 16) + ' ' + e[2].split(':')[0]).join(',') === '10-08 23:41 kurvenform,10-10 06:58 verteilung,10-12 09:23 verteilung,10-12 21:21 dornroeschen' && !RPd.events.some(e => e[1] === 'optimierer_alarm') && /Kinderzimmer oben/.test(hw[1][2]), hw.map(e => e[0] + ' ' + e[2].slice(0, 90)).join(' | '));
@@ -1756,15 +1844,15 @@ if (fs.existsSync(path.join(dataDir, 'quiet-2026-10.csv'))) {
         { const P2 = E.p2Summe(RPd.S);
           check('Replay Phase 2 nur noch Vergleich: 71 % der Minuten gleiche Richtung wie v3 (8640 Minuten)', P2.min === 8640 && P2.anteil === 0.71, JSON.stringify(P2)); }
         const rq = RP.report.find(r => r.regel === 'quiet_strecken');
-        check('Deckel/Laufzeit v6 im Replay: keine Faelle, keine Punkte (v4: 3 Faelle, 0 Fehlalarme)', rq.faelle === 0 && rq.fehlalarm === 0 && rq.v === 6 && rq.punkte === 0, JSON.stringify({f: rq.faelle, t: rq.treffer, fa: rq.fehlalarm, n: rq.neutral, p: rq.punkte}));
+        check('Deckel/Laufzeit v' + E.RULE.quiet_strecken.ver + ' im Replay: keine Faelle, keine Punkte (v4: 3 Faelle, 0 Fehlalarme)', rq.faelle === 0 && rq.fehlalarm === 0 && rq.v === E.RULE.quiet_strecken.ver && rq.punkte === 0, JSON.stringify({f: rq.faelle, t: rq.treffer, fa: rq.fehlalarm, n: rq.neutral, p: rq.punkte}));
     }
 }
 
 // Entscheidung 5 (15.10.2026) auf dem ganzen Datensatz: Kinderzimmer oben mit eigener Nachheizung (Standard) gegen ohne
 if (fs.existsSync(path.join(dataDir, 'quiet-2026-10.csv'))) {
     const replay = require('./engine_replay.js').replay;
-    const zaehl = eig => { const c = {min: 0, plus: 0, plusKo: 0, bed: 0, bedKo: 0, not: 0, notKo: 0, verteil: 0, koUnter: 0};
-        const R = replay(dataDir, {keepRecs: false, eigen: eig, onStep: o => { const d = o.d, L = d.raum; c.min++;
+    const zaehl = (eig, bis) => { const c = {min: 0, plus: 0, plusKo: 0, bed: 0, bedKo: 0, not: 0, notKo: 0, verteil: 0, koUnter: 0};
+        const R = replay(dataDir, {keepRecs: false, eigen: eig, bis: bis, onStep: o => { const d = o.d, L = d.raum; c.min++;
             if (L && !L.keine) { if (L.dir > 0) { c.plus++; if ((L.bedL || L.kaltL).some(y => y.r.id === 'ki_oben')) { c.plusKo++; } } if (L.verteil) { c.verteil++; } }
             const B = d.bedQ, ko = d.rooms.find(r => r.id === 'ki_oben'); if (ko && ko.valid && ko.t < ko.min) { c.koUnter++; }
             if (B && B.ja) { c.bed++; if ((B.raum && B.raum.id === 'ki_oben') || (B.trend && B.trend.r.id === 'ki_oben')) { c.bedKo++; } }
@@ -1773,9 +1861,10 @@ if (fs.existsSync(path.join(dataDir, 'quiet-2026-10.csv'))) {
     const Zn = zaehl(undefined), Zo = zaehl([]);
     check('Entscheidung 5 im Replay bis ' + Zn.ende + ': Kinderzimmer oben (eigene Nachheizung) ' + Zn.koUnter + ' min unter Minimum; Raumlage +1 in ' + Zn.plus + ' statt ' + Zo.plus + ' min, Quiet-/Comfort-Bedarf ' + Zn.bed + ' statt ' + Zo.bed + ' min, Komfort-Notfall ' + Zn.not + ' statt ' + Zo.not + ' min, +1-K-Vorschlaege ' + Zn.props + ' statt ' + Zo.props + '; keine dieser Minuten stammt aus Kinderzimmer oben (ohne: ' + Zo.plusKo + ' / ' + Zo.bedKo + ' / ' + Zo.notKo + '); Waermeverteilung ' + Zn.verteil + ' min (unveraendert)',
           Zn.plusKo === 0 && Zn.bedKo === 0 && Zn.notKo === 0 && Zo.plusKo > 0 && Zo.bedKo > 0 && Zn.plus < Zo.plus && Zn.bed < Zo.bed && Zn.verteil === Zo.verteil && Zn.koUnter === Zo.koUnter && Zn.koUnter > 0, JSON.stringify({neu: Zn, ohne: Zo}));
-    if (Zn.ende >= '2026-10-15 17:00') {
-        check('Entscheidung 5, Datensatz 07.–15.10. (replay_data_1510): Raumlage +1 110 min (ohne eigene Nachheizung 966), Quiet-/Comfort-Bedarf 820 min (1813), Komfort-Notfall 370 min (1057), Kinderzimmer oben 952 min unter Minimum, Waermeverteilung 270 min',
-              Zn.plus === 110 && Zo.plus === 966 && Zn.bed === 820 && Zo.bed === 1813 && Zn.not === 370 && Zo.not === 1057 && Zn.koUnter === 952 && Zn.verteil === 270, JSON.stringify({neu: Zn, ohne: Zo}));
+    if (Zn.ende >= '2026-10-15 17:00') {                                         // kalibriert auf replay_data_1510 (Ende 15.10. zwischen 17 und 20 Uhr); spaetere Daten bis 15.10. 19:00 (Winterpaket 16.10.)
+        const Zb = Zn.ende > '2026-10-15 19:00' ? zaehl(undefined, new Date(2026, 9, 15, 19, 0).getTime()) : Zn, Zbo = Zn.ende > '2026-10-15 19:00' ? zaehl([], new Date(2026, 9, 15, 19, 0).getTime()) : Zo;
+        check('Entscheidung 5, Datensatz 07.–15.10. bis 19:00 (replay_data_1510): Raumlage +1 110 min (ohne eigene Nachheizung 966), Quiet-/Comfort-Bedarf 820 min (1813), Komfort-Notfall 370 min (1057), Kinderzimmer oben 952 min unter Minimum, Waermeverteilung 270 min',
+              ((Zn, Zo) => Zn.plus === 110 && Zo.plus === 966 && Zn.bed === 820 && Zo.bed === 1813 && Zn.not === 370 && Zo.not === 1057 && Zn.koUnter === 952 && Zn.verteil === 270)(Zb, Zbo), JSON.stringify({neu: Zb, ohne: Zbo}));
     }
 }
 
@@ -1882,7 +1971,7 @@ if (flowsFile) {
     check('Huelle: ohne Klick sendet nichts (25 min, 100 Takte der Uebernahme)', sends(R).length === 0 && R.eng.every(o => !o || !o[4] || o[4].every(m => /^\/data\/optimizer\//.test(m.filename))), '');
     check('Huelle: Karte zeigt den Vorschlag mit Pruefsumme, Knopf "Übernehmen" gesperrt mit Grund "gesperrt: Hauptschalter aus", Statuszeile "Übernahme gesperrt" (Hauptschalter aus)', (() => { const c = R.eng[24][0].payload; return c.prop && c.prop.id === eng.prop.id && c.prop.sum === eng.prop.sum && c.knopf.ok === false && c.knopf.text === 'Übernehmen' && c.knopf.grund === 'gesperrt: Hauptschalter aus' && c.status.some(s => s.t === 'Übernahme gesperrt' && s.c === 'lock') && c.status[0].c === 'ok' && /^Maschine läuft/.test(c.status[0].t); })(), JSON.stringify(R.eng[24][0].payload.status));
     check('Huelle: Karte "Messwerte & Lernen" kommt ueber Ausgang 6 (Takt-Kacheln mit "Hochlauf nach Start", Mindestleistung, COP-Matrix oder "sammelt", Lernen mit Gebaeudemodell aus OPT_plan 1/10 Tage, Gate zu)',
-          (() => { const m = R.eng[24][5] && R.eng[24][5].payload; return m && m.takt.length === 6 && m.takt[5].k === 'Hochlauf nach Start' && Array.isArray(m.ml) && m.lern.length === 6 && m.lern[0].k === 'Gebäudemodell' && m.lern[0].v === '1/10 Tage' && m.lern[0].chip === 'Gate zu' && m.lern[1].chip === 'keine Daten'; })(), JSON.stringify(R.eng[24][5] && R.eng[24][5].payload.lern.slice(0, 2)));
+          (() => { const m = R.eng[24][5] && R.eng[24][5].payload; return m && m.takt.length === 7 && m.takt[5].k === 'Hochlauf nach Start' && m.takt[6].k === 'COP mit Abtau-Abzug' && Array.isArray(m.ml) && m.lern.length === 6 && m.lern[0].k === 'Gebäudemodell' && m.lern[0].v === '1/10 Tage' && m.lern[0].chip === 'Gate zu' && m.lern[1].chip === 'keine Daten'; })(), JSON.stringify(R.eng[24][5] && R.eng[24][5].payload.lern.slice(0, 2)));
     check('Huelle: Regelkacheln (5 Regeln mit Status-Chip, Bedingungen, einer Zeile), Punkte-Kacheln (5), Entscheidungen als Episoden (Quiet-Freigabe: wartet > Vorschlag, laeuft)', R.eng[24][1].payload.rules.length === 5 && R.eng[24][1].payload.rules.every(r => r.chip && r.line && typeof r.line.l === 'string') && R.eng[24][2].payload.tiles.length === 5 && (() => { const rw = R.eng[24][3].payload.rows; return rw.length === 1 && rw[0].offen && rw[0].steps.map(s => s[0].split(' ')[0]).join('>') === 'wartet>Vorschlag'; })(), JSON.stringify(R.eng[24][3].payload.rows));
     { const hs = gstore.OPT_hp.Heating_Off_Outdoor_Temp; gstore.OPT_hp.Heater_On_Outdoor_Temp = {v: 0, ts: NOW - 3 * 3600000}; const keep = Object.assign({}, hs); hs.ts = NOW - 3 * 3600000;
       NOW += 60000; runN('opt_engine', {topic: '', payload: NOW}); const last = JSON.parse(files[decFile].trim().split('\n').pop()); Object.assign(hs, keep); delete gstore.OPT_hp.Heater_On_Outdoor_Temp;
@@ -1911,6 +2000,14 @@ if (flowsFile) {
       gstore = keepG; fstores = keepF; files = keepFi; NOW = keepNow;
       check('Huelle (Paket 2): OPT_cfg.rooms ohne Feld sonnenfenster -> Standard des Generators (Wohnzimmer: Sonnenfenster, im Datensatz [.., 0, 1]); PV 8123 W und Bewoelkung 30 % im Datensatz; sonnenfenster false gilt; veraltete PV (10 min) und Wetter (2 h) fehlen in der Eingabe',
             l1.in.rooms[0][0] === 'wohn' && l1.in.rooms[0][8] === 0 && l1.in.rooms[0][9] === 1 && l1.in.pv === 8123.4 && l1.in.wolken === 30 && l2.in.rooms[0].length === 8 && l2.in.pv === undefined && l2.in.wolken === undefined, JSON.stringify([l1.in.rooms, l1.in.pv, l1.in.wolken, l2.in.rooms, l2.in.pv, l2.in.wolken])); }
+    { // Winterpaket (16.10.2026): OWM-Feuchte (OPT_weather.rh, hoechstens weather.maxAgeMin alt) und Rohr aussen (OPT_hp.Outside_Pipe_Temp, letzter Wert bis 24 h; -128 = kein Fuehler) gehen an den Kern (Abtauwetter)
+      const keepG = JSON.parse(JSON.stringify(gstore)), keepF = JSON.parse(JSON.stringify(fstores)), keepFi = Object.assign({}, files), keepNow = NOW;
+      gstore.OPT_weather = Object.assign({}, gstore.OPT_weather || {}, {ts: NOW, rh: 91}); gstore.OPT_hp = Object.assign({}, gstore.OPT_hp || {}, {Outside_Pipe_Temp: {v: -2, ts: NOW - 3 * 3600000}});
+      NOW += 60000; runN('opt_engine', {topic: '', payload: NOW}); const w1 = JSON.parse(files[decFile].trim().split('\n').pop());
+      gstore.OPT_weather.ts = NOW - 120 * 60000; gstore.OPT_hp.Outside_Pipe_Temp = {v: -128, ts: NOW}; NOW += 60000; runN('opt_engine', {topic: '', payload: NOW}); const w2 = JSON.parse(files[decFile].trim().split('\n').pop());
+      gstore = keepG; fstores = keepF; files = keepFi; NOW = keepNow;
+      check('Huelle (Winterpaket): Feuchte 91 % und Rohr außen −2 °C (gemeldet vor 3 h, nur bei Änderung) im Datensatz (in.rh, in.pipeOut); veraltetes Wetter (2 h) und Rohr −128 (kein Fühler) fehlen',
+            w1.in.rh === 91 && w1.in.pipeOut === -2 && w2.in.rh === undefined && w2.in.pipeOut === undefined, JSON.stringify([w1.in.rh, w1.in.pipeOut, w1.abl.aw, w2.in.rh, w2.in.pipeOut])); }
     const nDec = files[decFile].length, an = runN('opt_engine', {topic: 'anzeige'});
     check('Huelle: "anzeige" (von der Uebernahme) baut nur die Karten neu, rechnet und schreibt nichts', an && an[0] && an[0].payload.prop && an[4] === null && files[decFile].length === nDec, '');
     check('Huelle schreibt nur OPT_*-Werte (keine Anlagen-/HeishaMoNR-Variable)', (() => { const before = JSON.stringify(Object.keys(gstore).filter(k => !/^OPT_/.test(k)).sort().map(k => [k, gstore[k]])); world(); minute(2); return JSON.stringify(Object.keys(gstore).filter(k => !/^OPT_/.test(k)).sort().map(k => [k, gstore[k]])) === before; })(), '');

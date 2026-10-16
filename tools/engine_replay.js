@@ -71,13 +71,14 @@ function buildInputs(dataDir, month, model, eigen, bis, sonne) {
             flow: n(r.flow_l_min), pump: n(r.pumpe_speed), q: n(r.quiet_aktuell), qPrio: n(r.quiet_prioritaet), hc: n(r.heizregelung), at: n(r.aussen),
             defrost: n(r.defrost), dhw: n(r.warmwasser), ss: n(r.softstart), rt: n(r.verdichter_laufzeit_min),
             shift: n(r.shift_anlage) !== null ? n(r.shift_anlage) : ASSUME.shift, heatMode: ASSUME.heatMode, z1Sensor: ASSUME.z1Sensor,
-            heaterI: n(r.heizstab_intern), heaterE: n(r.heizstab_extern), htrOnAT: ASSUME.htrOnAT,
+            heaterI: n(r.heizstab_intern), heaterE: n(r.heizstab_extern), htrOnAT: ASSUME.htrOnAT, pipeOut: n(r.rohr_aussen),
             htrStartDelta: n(r.heizstab_start_delta) !== null ? n(r.heizstab_start_delta) : ASSUME.htrStartDelta, htrDelay: ASSUME.htrDelay,
             heatOffAT: ASSUME.heatOffAT, sollKurve: curve(n(r.aussen)), block: ASSUME.block, otherQ: null, otherShift: null, kzRad: n(r.kz_radiator_an), rooms: []};
         const en = ei >= 0 ? EN[ei] : null;
         if (en && (t - en._t) / MIN <= ASSUME.pvMaxAgeMin && n(en.pv_w) !== null) { inp.pv = n(en.pv_w); }
         if (v) {
             if (n(v.wetter_bewoelkung) !== null && n(v.wetter_alter_min) !== null && n(v.wetter_alter_min) + vAge <= 60) { inp.wolken = n(v.wetter_bewoelkung); }
+            if (n(v.wetter_feuchte) !== null && n(v.wetter_alter_min) !== null && n(v.wetter_alter_min) + vAge <= 60) { inp.rh = n(v.wetter_feuchte); }      // Winterpaket: Abtauwetter (Feuchte)
             ROOMS.forEach(([id, name]) => {
                 const mn = n(v[id + '_min']), mx = n(v[id + '_max']), ema = n(v[id + '_ema']), age = n(v[id + '_alter_min']);
                 if (mn === null || mx === null) { return; }
