@@ -1251,7 +1251,8 @@ if (!qs.lastLog || now - qs.lastLog >= MS_MIN - 1000) {
                 'waechter_zustand', 'waechter_ausloeser', 'waechter_sperre', 'zeit_bis_soll_min', 'lauf_min', 'vl_minus_soll',
                 'zustand', 'shift_anlage', 'kz_radiator_an', 'kz_heizluefter_an', 'kz_heizluefter_w', 'kz_heizluefter_online',
                 'leistung_el_korr_w', 'cop_momentan_korr', 'cop_korr_w', 'rohr_aussen',          // 14.10.2026 (nur angehaengt): Strom/COP mit Korrektur und ihre Konstante; Outside_Pipe_Temp fuer die Abtau-Kennzahl des Beobachters
-                'heizstab_stop_delta', 'verdampfer_aus', 'heissgas', 'hochdruck', 'expansionsventil', 'rohr_innen'];   // Paket 2 (15.10.2026, nur angehaengt): Heater_Stop_Delta (TOP98), Eva_Outlet_Temp, Discharge_Temp, High_Pressure, Expansion_Valve, Inside_Pipe_Temp (Winter: Verdampfer/Ueberhitzung, Forum Expansionsventil)
+                'heizstab_stop_delta', 'verdampfer_aus', 'heissgas', 'hochdruck', 'expansionsventil', 'rohr_innen',
+                'druck_bar'];   // Winterpaket 16.10.2026 (nur angehaengt): Water_Pressure; der Sensor zaehlt bei laufender Pumpe den Foerderdruck mit (~0,5 bar bei 4250 U/min), statisch nur bei Pumpe 0 (pumpe_speed) gueltig – Auswertung spaeter (Beobachter/Kennzahlen); Paket 2 (15.10.2026, nur angehaengt): Heater_Stop_Delta (TOP98), Eva_Outlet_Temp, Discharge_Temp, High_Pressure, Expansion_Valve, Inside_Pipe_Temp (Winter: Verdampfer/Ueberhitzung, Forum Expansionsventil)
     var hv = function (n) { return HP[n] && typeof HP[n].v === 'number' ? HP[n].v : null; };
     // Review-Paket 13.10.2026: Spalten der gestrichenen Quiet-Empfehlung, des Kontrolltests und des Eskalationswaechters bleiben im Kopf (Leser nach Spaltenname), Werte leer
     var vals2 = [iso, qNow, '', '', '', '', '', '', '', c(solVL), c(istVL), c(solRL), c(istRL), c(rlErr), c(qs.errS),
@@ -1262,7 +1263,8 @@ if (!qs.lastLog || now - qs.lastLog >= MS_MIN - 1000) {
                  '', '', '', (ES.reached !== null && !ES.late) ? c(ES.reached) : '', escRunMin !== null ? c(Math.round(escRunMin)) : '', c(escDev),
                  zustandNow, c(shiftHpNow), kzRad, kzFanOn, c(kzFanW), kzFanOnline,
                  c(pelKNow), c(copNowK), COP_KW, c(hv('Outside_Pipe_Temp')),
-                 c(hv('Heater_Stop_Delta')), c(hv('Eva_Outlet_Temp')), c(hv('Discharge_Temp')), c(hv('High_Pressure')), c(hv('Expansion_Valve')), c(hv('Inside_Pipe_Temp'))];
+                 c(hv('Heater_Stop_Delta')), c(hv('Eva_Outlet_Temp')), c(hv('Discharge_Temp')), c(hv('High_Pressure')), c(hv('Expansion_Valve')), c(hv('Inside_Pipe_Temp')),
+                 c(hv('Water_Pressure'))];
     var file = '/data/optimizer/quiet-' + month + '.csv', head = cols.join(',');
     var needHead = true;
     if (flow.get('qHead') === month + '|' + head) { needHead = false; }
@@ -1287,7 +1289,8 @@ var cfg = global.get('OPT_cfg');
 if (!cfg) { return null; }
 var PC = cfg.plan || {};
 __COPKW__
-var PLAN_VER = 13;                                                                                // bei jeder Aenderung der Plan-Felder erhoehen: aeltere Plaene im Speicher werden dann sofort neu gerechnet
+var PLAN_VER = 14;                                                                                // bei jeder Aenderung der Plan-Felder erhoehen: aeltere Plaene im Speicher werden dann sofort neu gerechnet
+// PLAN_VER 14 (16.10.2026, Winterpaket): je Slot zusaetzlich COP und Strom mit Abtau-Abzug (copAb = COP · (1 − abtauAbzug · Abtaurisiko)); COP, Strom und Schnappschuss unveraendert
 // PLAN_VER 13 (15.10.2026, Entscheidung 2): Gebaeudemodell UA * (T_innen - T_aussen) - Gewinne statt UA * max(0, 15 - T_aussen); Prognose mit Tagesgang Fuehler - OWM
 // PLAN_VER 12 (14.10.2026): COP-Kennfeld und Strom je Slot mit der COP-Korrektur (COP_KW je Laufminute); Schnappschuss-meta cop_korr_w kennzeichnet die Version
 var now = Date.now(), MS_MIN = 60000, Q15 = 900000, H = 3600000, N = 104, NDAY = 96;       // 104 Slots = 26 h (24 h Anzeige + Reserve fuer den Vergleich nach +24 h)
@@ -1968,6 +1971,9 @@ function buildPlan() {
         return rT * (0.3 + 0.7 * rH);
     }
     function dewp(t, rh) { var a = 17.62, b = 243.12, g = Math.log(Math.max(rh, 1) / 100) + a * t / (b + t); return b * g / (a - g); }
+    // Abtau-Abzug (Winterpaket 16.10.2026, Forum LEISHA_WISSEN 10 Punkt 5 und (b) 8): 10–30 Abtauungen am Tag (0,3–1,6 kWh je Abtauung, ~8 min ohne Heizen: 3810731, 4076731,
+    // 4084491) senken den Tages-COP um grob 5–15 %; die gemessenen Baender und Carnot enthalten keine Abtauung. Abzug je Slot = abtauAbzug (10 %, Mitte) x Abtaurisiko 0..1 (ANNAHME)
+    var ABZ_PLAN = clamp(pn('abtauAbzug', 0.10), 0, 0.3);
     var slots = [];
     // Sonne und Wind im Bedarf (Fahrplan v2, S3): wirken nur, wenn die gelernten Koeffizienten aktiviert sind; sonst bit-identisch zum bisherigen Modell. Der Kandidat wird immer mitgerechnet und protokolliert.
     var cfM = pl.learn.coef || null;
@@ -1994,12 +2000,13 @@ function buildPlan() {
             var dNow = biasDot(bcf, biasFeat(new Date(now).getHours(), windNow, piFresh ? PI.pvNow : null, clNow)), rest = (atNow !== null && owmNow !== null) ? clamp((atNow - owmNow) - dNow, -5, 5) : 0;
             atK = atO + dHat + rest * Math.exp(-x.L / tauA);
         }
-        slots.push({t: x.t, L: x.L, at: atE, atRaw: x.atF, rh: rhE, dew: dewp(atE, rhE), vl: vl, cop: cop, copSrc: copSrc, el: bedarf / cop, pv: x.pv, wind: x.windF, cl: x.clF, atK: atK, sun: sunE, solK: solK, winK: winK, bas: bas, kand: kand, solU: solU, winU: winU, bedarf: bedarf, risk: defr(atE, rhE), cA: cA, cP: cP});
+        var riskS = defr(atE, rhE), copAb = cop * (1 - ABZ_PLAN * riskS);                              // Winterpaket: Abtau-Abzug (Waerme beim Abtauen/Wiederaufheizen ist keine Nutzwaerme)
+        slots.push({t: x.t, L: x.L, at: atE, atRaw: x.atF, rh: rhE, dew: dewp(atE, rhE), vl: vl, cop: cop, copSrc: copSrc, el: bedarf / cop, copAb: copAb, elAb: bedarf / copAb, pv: x.pv, wind: x.windF, cl: x.clF, atK: atK, sun: sunE, solK: solK, winK: winK, bas: bas, kand: kand, solU: solU, winU: winU, bedarf: bedarf, risk: defr(atE, rhE), cA: cA, cP: cP});
     });
     // Kennzahlen (24 h)
-    var sumB = 0, sumEl = 0, sumSol = 0, sumWin = 0, pvKwh = 0, pvN = 0, atMin = null, atMax = null, copMin = null, copMaxV = null, maxD = null;
+    var sumB = 0, sumEl = 0, sumElAb = 0, sumSol = 0, sumWin = 0, pvKwh = 0, pvN = 0, atMin = null, atMax = null, copMin = null, copMaxV = null, maxD = null;
     for (i = 0; i < NDAY; i++) {
-        var q = slots[i]; sumB += q.bedarf; sumEl += q.el; sumSol += q.solU; sumWin += q.winU;
+        var q = slots[i]; sumB += q.bedarf; sumEl += q.el; sumElAb += q.elAb; sumSol += q.solU; sumWin += q.winU;
         if (q.pv !== null) { pvKwh += q.pv * 0.25 / 1000; pvN++; }
         if (atMin === null || q.at < atMin) { atMin = q.at; } if (atMax === null || q.at > atMax) { atMax = q.at; }
         if (q.bedarf > 0.0005) { if (copMin === null || q.cop < copMin) { copMin = q.cop; } if (copMaxV === null || q.cop > copMaxV) { copMaxV = q.cop; } }
@@ -2014,7 +2021,7 @@ function buildPlan() {
     var gain = (wBest && wWorst && wBest.v > 0 && wWorst.v > 0) ? 1 / wWorst.v - 1 / wBest.v : null;
     P.minVlC = minVlC; P.maxDemand = maxD; P.elModel = sumEl; P.vrmHp = (PI.vrmHpKwh === undefined || PI.vrmHpKwh === null) ? null : PI.vrmHpKwh;
     P.slots = slots; P.enough = sumB >= pn('minDemandKwh', 4); P.eta = eta;
-    P.sum = {solU: sumSol, winU: sumWin, bedarf: sumB, el: sumEl, cop: sumEl > 0 ? sumB / sumEl : null, copMin: copMin, copMax: copMaxV, pv: pvN >= 0.9 * NDAY ? pvKwh : null, atMin: atMin, atMax: atMax,
+    P.sum = {solU: sumSol, winU: sumWin, bedarf: sumB, el: sumEl, cop: sumEl > 0 ? sumB / sumEl : null, elAb: sumElAb, copAb: sumElAb > 0 ? sumB / sumElAb : null, abzug: ABZ_PLAN, copMin: copMin, copMax: copMaxV, pv: pvN >= 0.9 * NDAY ? pvKwh : null, atMin: atMin, atMax: atMax,
              shift: {best: wBest, worst: wWorst, gain: gain, loss: SHIFT_LOSS}, atRef: atRef, anchor: anchor, tg: tgP, pvRes: pvRes,
              copSrc: CT.pts.length ? 'Messung' : 'Carnot'};
     return P;
@@ -2057,6 +2064,7 @@ if (P.status === 'ok') {
         ['Status', 'Vorschau · berechnet ' + hhmm(P.t) + ' · keine Empfehlung' + (P.enough ? '' : ' · kaum Heizbedarf'), 'ok'],
         ['Wärmebedarf nächste 24 h', f(sm.bedarf, 1, 'kWh') + ' · Ø ' + f(sm.bedarf / 24, 2, 'kW') + ' (' + f(ml.ua * 1000, 0, 'W/K') + ' × (innen ' + f(ml.ti, 1, '°C') + ' − außen) − Gewinne ' + f(ml.g, 2, 'kW') + ', ' + (ml.uaLearned ? 'gelernt aus ' + ml.uaDays + ' Tagen' : 'Vorwert') + '; Bilanzpunkt ' + f(ml.tbal, 1, '°C') + ')' + (ml.tg ? ' · Tagesgang Fühler − OWM' : '') + ((sm.solU || sm.winU) ? ' · Sonne ' + f(-sm.solU, 1, 'kWh') + ' · Wind ' + f(sm.winU, 1, 'kWh') : ''), ''],
         ['Strom Wärmepumpe nächste 24 h', f(P.elModel, 1, 'kWh') + ' (Modell: Wärmebedarf ÷ COP) · VRM-Prognose ' + (P.vrmHp !== null ? f(P.vrmHp, 2, 'kWh') : 'nicht geliefert'), '', 'COP und Strom ' + KORR_TXT],
+        ['Abtau-Abzug', (sm.elAb - P.elModel > 0.05 ? 'mit Abtau-Abzug ' + f(sm.elAb, 1, 'kWh') + ' Strom · COP ' + f(sm.copAb, 2) + ' statt ' + f(sm.cop, 2) : 'kein Abtaurisiko in den nächsten 24 h') + ' (Abzug ' + Math.round(sm.abzug * 100) + ' % × Abtaurisiko je Slot)', '', 'COP korrigiert um Abtauen: die gemessenen Bänder enthalten keine Abtauung (ohne Abtauen/Warmwasser); Wärme beim Abtauen und Wiederaufheizen ist keine Nutzwärme, der interne Zähler bucht sie positiv (Forum 4074654, 4752841). 10–30 Abtauungen am Tag senken den Tages-COP um 5–15 % (je Abtauung 0,3–1,6 kWh: 3810731, 4076731, 4084491); abtauAbzug ' + Math.round(sm.abzug * 100) + ' % ist die Mitte (ANNAHME)'],
         ['Höchster Bedarf', f(P.maxDemand.kw, 1, 'kW') + ' um ' + hhmm(P.maxDemand.t), ''],
         ['COP-Modell', copTxt, '', 'Strom ' + KORR_TXT + ' (TOP16 untertreibt im Lauf: Pumpe, Lüfter, Elektronik fehlen; Forum 189605, L5 70–90 W unter Shelly)'],
         ['Verschieben nach COP (nur Rechnung)', shf.gain === null ? '–' : 'bestes 3-h-Fenster ' + hhmm(sl0[shf.best.i].t) + ' COP ' + f(shf.best.v, 1) + ' · schlechtestes ' + hhmm(sl0[shf.worst.i].t) + ' COP ' + f(shf.worst.v, 1) + ' → ' + f(shf.gain, 3) + ' kWh Strom je verschobener kWh Wärme; das wärmere Haus verliert ' + f(shf.loss[0], 2) + '–' + f(shf.loss[1], 2) + ' (Messung 08.–12.10.) → keine Empfehlung', ''],
@@ -2121,7 +2129,7 @@ if (P.status === 'ok') {                                                        
     kpi = [{k: 'Stand', v: hhmm(P.t), s: 'Vorschau, keine Empfehlung'},
            {k: 'Wärmebedarf 24 h', v: f(sm2.bedarf, 1, 'kWh'), s: 'Ø ' + f(sm2.bedarf / 24, 2, 'kW')},
            {k: 'Strom Wärmepumpe', v: f(P.elModel, 1, 'kWh'), s: 'VRM ' + (P.vrmHp !== null ? f(P.vrmHp, 1, 'kWh') : '–'), t: 'Wärmebedarf ÷ COP, Strom ' + KORR_TXT},
-           {k: 'COP (Modell)', v: f(sm2.cop, 1), s: (sm2.copMin !== null ? f(sm2.copMin, 1) + '–' + f(sm2.copMax, 1) + ' · ' : '') + sm2.copSrc, t: 'Strom ' + KORR_TXT + ' (TOP16 untertreibt im Lauf; Forum 189605)'},
+           {k: 'COP (Modell)', v: f(sm2.cop, 1), s: (sm2.copMin !== null ? f(sm2.copMin, 1) + '–' + f(sm2.copMax, 1) + ' · ' : '') + sm2.copSrc, t: 'Strom ' + KORR_TXT + ' (TOP16 untertreibt im Lauf; Forum 189605) · mit Abtau-Abzug ' + f(sm2.copAb, 2) + ' (' + f(sm2.elAb, 1, 'kWh') + ' Strom; ' + Math.round(sm2.abzug * 100) + ' % × Abtaurisiko je Slot)'},
            {k: 'Höchster Bedarf', v: f(P.maxDemand.kw, 1, 'kW'), s: 'um ' + hhmm(P.maxDemand.t)},
            {k: 'Außen 24 h', v: f(sm2.atMin, 0) + ' … ' + f(sm2.atMax, 0, '°C'), s: 'Prognose (Fühler-angeglichen)'},
            {k: 'PV-Prognose 24 h', v: sm2.pv !== null ? f(sm2.pv, 0, 'kWh') : '–', s: sm2.pv !== null ? 'Anzeige' : 'keine Prognose'}];
@@ -3156,6 +3164,9 @@ var inp = {t: now, hpAge: hpTs ? (now - hpTs) / MIN : null,
 var PIe = G('OPT_plan_in') || {}, WXe = G('OPT_weather') || {};
 if (PIe.ts && now - PIe.ts < 5 * MIN && num(PIe.pvNow) !== null) { inp.pv = num(PIe.pvNow); }
 if (WXe.ts && now - WXe.ts <= ((CF.weather && num(CF.weather.maxAgeMin)) || 60) * MIN && num(WXe.clouds) !== null) { inp.wolken = num(WXe.clouds); }
+// Winterpaket 16.10.2026: Abtauwetter (Sperre "abtausprung"): OWM-Feuchte (hoechstens weather.maxAgeMin alt) und Rohr aussen (Outside_Pipe_Temp, -128 = kein Fuehler)
+if (WXe.ts && now - WXe.ts <= ((CF.weather && num(CF.weather.maxAgeMin)) || 60) * MIN && num(WXe.rh) !== null) { inp.rh = num(WXe.rh); }
+var pipeO = hpSet('Outside_Pipe_Temp'); if (pipeO !== null && pipeO > -100) { inp.pipeOut = pipeO; }   // nur bei Aenderung gemeldet: letzter Wert gilt (wie die Einstellungen) bis 24 h
 // Vorausschau: OWM-Vorhersage und Gebaeudemodell des Waermefahrplans (Gate, coefActivate); Sonne/Wind nur bei aktivem Modell (sonst nicht in der Eingabe)
 var vsIn = null; try { vsIn = ENGINE.vorschau(G('OPT_weather'), G('OPT_plan'), G('OPT_plan_in'), at, now); } catch (e) { vsIn = null; }
 if (vsIn) { inp.vs = vsIn; }

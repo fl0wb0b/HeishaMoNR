@@ -184,7 +184,8 @@ function fitFan(D, r, P) {
     const S = stabil(D, r).filter(m => m.fan > 0 && m.q !== null);
     const X = S.map(m => [m.q === 0 ? 1 : 0, m.q === 1 ? 1 : 0, m.q === 2 ? 1 : 0, m.q === 3 ? 1 : 0, Math.max(0, m.hz - P.hzMin)]);
     const cnt = [0, 1, 2, 3].map(q => S.filter(m => m.q === q).length);
-    const f = lsq(X, S.map(m => m.fan));
+    const kalt = m => (P.fanKalt && m.at !== null && m.at <= P.fanKaltAtC) ? P.fanKalt[Math.max(0, Math.min(3, m.q))] : 0;   // Winterpaket: Lüfterstufe ≤ 4 °C (fanKalt, Messung) herausrechnen
+    const f = lsq(X, S.map(m => m.fan - kalt(m)));
     const fq = [0, 1, 2, 3].map(q => cnt[q] >= 200 ? Math.round(f.x[q]) : P.fanQ[q]);          // erst ab 200 min je Stufe, sonst Messtabelle
     return {fanQ: fq, fanJeHz: rd(f.x[4], 2), _fit: {n: f.n, rmse: rd(f.rmse, 0), minutenJeQuiet: cnt}};
 }

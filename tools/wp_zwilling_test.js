@@ -66,7 +66,8 @@ console.log('--- Frost: Mindestfrequenz, Deckel, Kennlinien');
     const h5 = hzBei(5, 3, 1), hm5 = hzBei(-5, 3, 1), hm11 = hzBei(-11, 3, 1), hm3 = hzBei(-3, 3, 1);
     check('Quiet 3 bei +5 °C hält ≤ 17 Hz; bei −3 °C Mindestfrequenz 16–17 Hz; ab −4 °C ≥ 25 Hz, ab −10 °C ≥ 35 Hz (Forum 4596796/4593782, Flüstermodus ändert das nicht 4593801)',
           Math.max.apply(null, h5) <= 17 && Math.min.apply(null, hm3) >= 16 && Math.max.apply(null, hm3) <= 17 && Math.min.apply(null, hm5) >= 25 && Math.min.apply(null, hm11) >= 35, [h5[0], hm3[0], hm5[0], hm11[0]].join(' / ') + ' Hz');
-    check('Höchstfrequenz je AT: 35 Hz bei +5 °C, 52 Hz bei −3 °C, 59 Hz ab −4 °C (Forum, V/E)', Z.hzMaxAt(P, 5) === 35 && Z.hzMaxAt(P, -3) === 52 && Z.hzMaxAt(P, -6) === 59);
+    check('Höchstfrequenz je WP-AT in Stufen (Winterpaket, LEISHA_WISSEN (a)): 52 Hz ab −4 °C, 48 Hz bei −3…+4 °C, 35 Hz bei 5…9 °C, 30 Hz ab 10 °C; Sprungstelle 4/5 °C', Z.hzMaxAt(P, -6) === 52 && Z.hzMaxAt(P, -4) === 52 && Z.hzMaxAt(P, -3) === 48 && Z.hzMaxAt(P, 4) === 48 && Z.hzMaxAt(P, 5) === 35 && Z.hzMaxAt(P, 9) === 35 && Z.hzMaxAt(P, 10) === 30,
+          [-6, -3, 4, 5, 10].map(a => Z.hzMaxAt(P, a)).join('/'));
     const cop = (at, hz, rl) => Z.pthOf(P, hz, at, 0) / (Z.pelOf(P, hz, at, rl) + P.pelKorrW);
     check('Kennlinien plausibel gegen Forum/Datenblatt: COP 1 °C/16,5 Hz ≈ 4,3 (Messband < 4 °C 4,30), −3 °C ≈ 3,7 (L5 4013336), −7 °C/59 Hz ≈ 3,0 (Datenblatt) je ±0,4',
           Math.abs(cop(1, 16.5, 31) - 4.3) < 0.4 && Math.abs(cop(-3, 16.5, 31) - 3.7) < 0.4 && Math.abs(cop(-7, 59, 33) - 3.0) < 0.4, [cop(1, 16.5, 31), cop(-3, 16.5, 31), cop(-7, 59, 33)].map(x => x.toFixed(2)).join(' / '));
@@ -102,6 +103,37 @@ console.log('--- Abtauen und Heizstab (Modell aus Forum/Handbuch, keine Messung)
     const ersterHs = a1.findIndex(x => x.hs === 1);
     check('Heizstab bei −8 °C und Quiet 3 (Leistung reicht nicht): frühestens nach ' + P.hsDelayMin + ' Laufminuten und bei Vorlauf < Soll ' + P.hsStartK + ' K; nie bei +2 °C (Freigabe unter ' + P.hsOnAT + ' °C), nie ohne Freigabe',
           ersterHs >= 0 && a1[ersterHs].rt >= P.hsDelayMin && a1[ersterHs - 1].vl < a1[ersterHs].soll + P.hsStartK + 0.5 && !a2.some(x => x.hs) && !a0.some(x => x.hs) && kalt(1, -8).S.n.hsMin > 0, 'erster Heizstab in Minute ' + ersterHs + ' (Laufminute ' + (ersterHs >= 0 ? a1[ersterHs].rt : '–') + '), Heizstab-Minuten ' + a1.filter(x => x.hs).length);
+}
+console.log('--- Winterpaket 16.10.2026: Parameter aus LEISHA_WISSEN (a)');
+{
+    const L = a => Math.round(Z.abtauLinieAt(P, a) * 10) / 10;
+    check('Abtau-Linie min(−5; max(−22,5; 0,9·WP-AT − 6)): −9 °C → −14,1 (Anker 4600685), 0 °C → −6 (3971807), +5 °C → −5 (obere Grenze), −20 °C → −22,5 (untere Grenze)', L(-9) === -14.1 && L(0) === -6 && L(5) === -5 && L(-20) === -22.5, [L(-9), L(0), L(5), L(-20)].join(' / '));
+    check('abtauAtMax 10 °C, pipeSlowMin 90–120 min, +8 Hz absolut, hsStopK −2 K, atExtVersatz vorläufig 0, Herkunft F/H je Parameter', P.abtauAtMax === 10 && P.pipeSlowMin >= 90 && P.pipeSlowMin <= 120 && P.pipeSprungHz === 8 && P.hsStopK === -2 && P.atExtVersatz === 0 &&
+          ['abtauLinie', 'abtauAtMax', 'pipeSlowMin', 'pipeSprungHz', 'hzMaxTab', 'startHochHz', 'fanKalt', 'hsStopK', 'atExtVersatz', 'abtauWaermeKWh'].every(k => /[FHM]/.test(Z.PARAM[k][2]) && /\d{7}|Messung|quiet-2026/.test(Z.PARAM[k][3])));
+    check('Abtauverlust je Abtauung als Parameter mit Beleg: 0,5 kWh in der Spanne 0,3–1,6 kWh (3810731, 4076731, 4084491)', P.abtauWaermeKWh >= 0.3 && P.abtauWaermeKWh <= 1.6 && /3810731/.test(Z.PARAM.abtauWaermeKWh[3]) && /0,3–1,6/.test(Z.PARAM.abtauWaermeKWh[3]));
+    const fan = (at, q) => { const r = lauf(Z.neu(P, {modus: 'lauf', rt: 100, th: 20, tw: 30, vl: 33}), 10, i => E(i, {at: at, q: q, hc: 1, th: 20})); return r.A[9].hp.Fan1_Motor_Speed; };
+    check('Lüfterstufe bei WP-AT ≤ 4 °C (eigene Messung): Quiet 0 +' + P.fanKalt[0] + ', Quiet 3 +' + P.fanKalt[3] + ' U/min gegenüber 5 °C am Minimum', fan(4, 0) - fan(5, 0) === P.fanKalt[0] && fan(4, 3) - fan(5, 3) === P.fanKalt[3], fan(5, 0) + '→' + fan(4, 0) + ' / ' + fan(5, 3) + '→' + fan(4, 3));
+    // Comfort-Kaltstart bei 2 °C (Quiet 0): 67 Hz bis Soll − 1 K oder 45 min; Efficiency-Start bleibt am Minimum
+    const ks = hc => lauf(Z.neu(P, {modus: 'pause', pauseMin: 60, th: 20, tw: 24, vl: 24}), 240, i => E(i, {at: 2, rh: 85, q: 0, hc: hc, th: 20}));
+    const kc = ks(0), ke = ks(1), i0 = kc.A.findIndex(x => x.start), i1 = ke.A.findIndex(x => x.start), hzC = kc.A.slice(i0 + 2, i0 + 20).map(x => x.hz), hzE = ke.A.slice(i1 + 2, i1 + 20).map(x => x.hz);
+    const abC = kc.A.findIndex(x => x.modus === 'abtauen'), abE = ke.A.findIndex(x => x.modus === 'abtauen'), rC = Math.min.apply(null, kc.A.slice(i0, i0 + 40).map(x => x.pipe)), rE = Math.min.apply(null, ke.A.slice(i1, i1 + 40).map(x => x.pipe));
+    check('Comfort-Kaltstart bei WP-AT 2 °C: ' + P.startHochHz + ' Hz bis Soll − ' + P.startHochBisK + ' K (Forum L7 4005690/3474343), danach Band-Höchstfrequenz; das Rohr fällt tief, Abtauung nach der Mindestheizzeit; Efficiency-Start bleibt am Minimum, Rohr wärmer, erste Abtauung später',
+          i0 >= 0 && kc.A[i0].hz === P.startHochHz && hzC.every(h => h >= 40) && rC < -15 && abC - i0 >= P.abtauMinHeizMin && abC - i0 <= P.abtauMinHeizMin + 5 && hzE.every(h => h <= 17) && rE > rC + 10 && (abE < 0 || abE - i1 > abC - i0),
+          'Comfort ' + kc.A[i0].hz + ' → ' + hzC.slice(0, 6).join(' ') + ' Hz, Rohr min ' + Math.round(rC) + ' °C, Abtauung ' + (abC - i0) + ' min nach dem Start; Efficiency ' + hzE[0] + ' Hz, Rohr min ' + Math.round(rE) + ' °C, Abtauung ' + (abE < 0 ? 'keine' : (abE - i1) + ' min nach dem Start'));
+    check('kein Comfort-Kaltstart über 4 °C (5 °C: Comfort bis zur Höchstfrequenz ' + Z.hzMaxAt(P, 5) + ' Hz)', (() => { const r = lauf(Z.neu(P, {modus: 'pause', pauseMin: 60, th: 20, tw: 24, vl: 24}), 60, i => E(i, {at: 5, q: 0, hc: 0, th: 20})); const j = r.A.findIndex(x => x.start); return j >= 0 && Math.max.apply(null, r.A.slice(j + 2, j + 30).map(x => x.hz)) <= Z.hzMaxAt(P, 5); })());
+    // Pseudo-Abtauung bei 6 °C (Forum 3456847: 6 °C, FM0): nach langem Niedriglauf (Quiet 3) Sprung auf Quiet 0 + Comfort (16,5 → 35 Hz), Feuchte 92 %
+    const pseudo = (PP, at) => { let S = Z.neu(PP, {modus: 'lauf', rt: 200, th: 20, tw: 26, vl: 27}); const A = []; for (let i = 0; i < 400; i++) { const r = Z.schritt(S, E(i, {at: at, rh: 92, q: i < 240 ? 3 : 0, hc: i < 240 ? 1 : 0, th: 20}), PP); S = r.S; A.push(r.A); } return A; };
+    const ps = pseudo(P, 6), ps0 = ps.slice(0, 240).filter(x => x.modus === 'abtauen').length, ps1 = ps.slice(240).findIndex(x => x.modus === 'abtauen');
+    const psAlt = pseudo(Z.mitWerten(Object.assign({}, P, {abtauAtMax: 5})), 6).some(x => x.modus === 'abtauen');
+    check('Pseudo-Abtauung über 5 °C (Auslöser bis WP-AT unter 10 °C, Forum 4011622/3456847): bei 6 °C nach 4 h am Minimum keine Abtauung, nach dem Sprung auf Quiet 0 + Comfort eine; mit der alten Grenze 5 °C keine',
+          ps0 === 0 && ps1 >= 0 && !psAlt, 'Abtauung ' + ps1 + ' min nach dem Sprung, Rohr min ' + Math.round(Math.min.apply(null, ps.slice(240, 300).map(x => x.pipe))) + ' °C');
+    const ps10 = lauf(Z.neu(P, {modus: 'lauf', rt: 200, th: 20, tw: 26, vl: 27}), 400, i => E(i, {at: 10.4, rh: 92, q: i < 240 ? 3 : 0, hc: i < 240 ? 1 : 0, th: 20}));
+    check('über 10 °C nie Abtauen (4466101), auch nicht nach dem Sprung', !ps10.A.some(x => x.modus === 'abtauen'));
+    const k0 = lauf(Z.neu(P, {modus: 'pause', th: 21, tw: 28}), 1440, i => E(i, {at: 0, rh: 92, q: 0, hc: 1})), ia = k0.A.findIndex(x => x.modus === 'abtauen');
+    check('interner Wärmezähler bucht Abtauwärme positiv (Heat_Energy_Production > 0, 4074654), Wasserkreis negativ (Heat_Power_Production_Extra < 0)', ia >= 0 && k0.A[ia].hp.Heat_Energy_Production > 0 && k0.A[ia].hp.Heat_Power_Production_Extra < 0);
+    const Pv = Z.mitWerten(Object.assign({}, P, {atExtVersatz: 2}));
+    check('atExtVersatz (externer Fühler < 2 °C zu warm): bei 0 °C Physik-AT meldet die WP 2 °C, ab 2 °C kein Versatz', Z.atWP(Pv, 0) === 2 && Z.atWP(Pv, 3) === 3 && Z.atWP(P, 0) === 0 &&
+          Z.schritt(Z.neu(Pv, {modus: 'pause'}), E(0, {at: 0}), Pv).A.hp.Outside_Temp === 2 && Z.schritt(Z.neu(P, {modus: 'pause'}), E(0, {at: 0}), P).A.hp.Outside_Temp === 0);
 }
 console.log('--- Kopplung an die Maschine (engine_core, nur gelesen)');
 {

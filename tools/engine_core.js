@@ -64,7 +64,7 @@ var ENGINE = (function () {
         {id: 'tageslimit', kurz: 'Tageslimit', text: 'Tageslimit der Regel erreicht', herkunft: 'Schreibbudget (Opus: höchstens 6 Wechsel/Tag), EEPROM-Verschleiß unbekannt. Seit 13.10. zählen bei Befehlsregeln nur übernommene Vorschläge (Regel-Review R5: Vorschläge in der Nacht ohne Klick verbrauchten sonst das Kontingent für den Tag; die Übernahme begrenzt ohnehin auf 6 Befehle am Tag); ein Quiet-Notfall ist ausgenommen'},
         {id: 'abkuehlzeit', kurz: 'Wartezeit', text: 'Wartezeit nach dem letzten Vorschlag', herkunft: 'kein Flattern: ein abgelaufener oder zurückgezogener Vorschlag kommt erst nach einer Pause wieder; ein Quiet-Notfall nach notfallMin (10 min), außer der vorige Notfall-Vorschlag ist nur abgelaufen (nachts klickt niemand, sonst käme derselbe Vorschlag alle 40 min)'},
         {id: 'takt', kurz: 'Takt-Gefahr', text: 'Takt-Gefahr: Vorlauf über Soll', herkunft: 'Anlage schaltet bei Vorlauf ≥ Soll +3,25 K nach ~3 min ab (6 Stopps 07.–10.10.); Sperre ab Soll +1 K für Maßnahmen, die den Vorlauf näher an diese Grenze bringen (mehr Leistung, −1 K). −1 K im Lauf also nur bei Vorlauf ≤ Soll: danach höchstens +1 K über dem neuen Soll, im ungünstigsten Fall (natürlicher Sollsprung −1 K an der Rundungsgrenze der Kurve, Regel-Review RE-2) +2 K; gemessen 07.–13.10.: nach einem Sollsprung −1 K kein Stopp bis +2,25 K (18 von 18), Stopp ab +2,5 K nach 11–14 min, ab +3,25 K nach 3 min'},
-        {id: 'abtausprung', kurz: 'Abtauwetter', text: 'Frequenzsprung bei Abtauwetter', herkunft: 'Pseudo-Abtauungen: läuft der Verdichter lange niedrig und dreht dann hoch, reißt das Abtaukriterium ohne Vereisung (Forum 189605: L5 4540566, L7 4230252 und 4581423; Sprung > +30 % als Gefahr 4868882, Vermutung). Darum im Bereich −5…+4 °C (Fühlerwert der WP, Forum F6-a) nach mindestens 60 min mit höchstens 20 Hz keine Maßnahme, die den Verdichter um 8 Hz oder mehr anhebt; Heizstab-Nähe ist ausgenommen'},
+        {id: 'abtausprung', kurz: 'Abtauwetter', text: 'Frequenzsprung bei Abtauwetter oder Kaltstart', herkunft: 'Pseudo-Abtauungen: läuft der Verdichter lange niedrig und dreht dann hoch, reißt das Abtaukriterium ohne Vereisung (Forum 189605: L5 4540566, L7 4230252 und 4581423; Sprung > +30 % als Gefahr 4868882, Vermutung); bis 9 °C beobachtet, über 10 °C nie (4011622, 3456847, 4466101). Abtauwetter (Winterpaket 16.10.2026) = Fühlerwert der WP −5 °C bis unter 10 °C UND (OWM-Feuchte ≥ 80 % ODER Rohr außen ≤ 0 °C); ohne Feuchte und Rohrwert wie bisher −5…+4 °C. Dann: (1) nach mindestens 60 min mit höchstens 20 Hz keine Maßnahme, die den Verdichter um 8 Hz oder mehr anhebt (+6 Hz meist ohne Einbruch, +10 Hz eher nicht: 4553013; das Expansionsventil öffnet höchstens 30 Halbschritte je 90 s und braucht ~2,5 h zum Einschwingen: 4549934, 4886674); (2) Quiet-Freigabe nur stufenweise (3 → 2 → 1 → 0, Heizstab-Nähe zwei Stufen) mit stufeMin 30 min Abstand; (3) Comfort (Heizregelung) nur bei Heizstab-Nähe, nie binnen 30 min nach dem Abtauen und nie in den ersten 45 Laufminuten bei WP-Außentemperatur ≤ 4 °C (Comfort-Kaltstart 67–68 Hz, Rohr −20 °C, Abtauung: 4005690, 3474343, 4006429); (4) +1 K in der Pause (Startbefehl) nicht bei ≤ 4 °C; (5) 30 min nach „Anlage hat Quiet beendet“ (Flüster-Priorität „Leistung“, 3469566) keine weitere Freigabe. Heizstab-Nähe ist bei (1), (3) und (5) ausgenommen'},
         {id: 'heizstab', kurz: 'Heizstab-Nähe', text: 'Heizstab-Nähe', herkunft: 'Heizstab ab Außentemperatur < Heater_On_Outdoor_Temp (0 °C) bei Vorlauf < Soll −3 K nach 15 min; ein +1-K-Schritt vergrößert den Rückstand sofort um 1 K'},
         {id: 'modell', kurz: 'Modell-Gate', text: 'Gebäudemodell noch nicht freigegeben', herkunft: 'Wärmefahrplan: Gate des Gebäudemodells (≥ 10 Tage, Fehler mit Sonne/Wind ≥ 10 % kleiner als beim Grundmodell UA · (T_innen − T_außen) − Gewinne, Leave-one-day-out; plausible Koeffizienten); vorher ist eine Bedarfsvorhersage nicht belegt'},
         {id: 'vorrang', kurz: 'andere Regel', text: 'Die Stellgröße gehört einer anderen Regel', herkunft: 'Arbitrierung je Stellgröße (Heizkurven-Verschiebung: Raumeinfluss, Vorausschau, +1 K von „Deckel/Laufzeit“; Quiet: Quiet-Freigabe, Deckel/Laufzeit): je Zeit hat genau eine Regel die Größe (laufender Vorschlag oder übernommener Wert); keine zweite Regel schlägt daneben oder dagegen vor. Quiet: eine übernommene Stufe weicht nur einem Notfall (Raum ≥ notK unter Minimum oder Heizstab-Nähe), frühestens notfallMin (10 min) nach der Übernahme (Regel-Review B4; vorher 60 min). Leistung (seit 14.10., Heizregelung): eine Leistungsänderung zur Zeit – läuft ein Quiet-Vorschlag, wartet Comfort (zuerst Quiet: der Quiet-Deckel bindet auch Comfort, 13.10. 21:00 Comfort/Quiet 3: 17 Hz); läuft ein Heizregelungs-Vorschlag oder steht Comfort der Regel, schlägt der Effizienz-Deckel nicht vor'},
@@ -201,6 +201,19 @@ var ENGINE = (function () {
         }
     }
 
+    // ------------------------------------------------------------------ Abtauwetter (Winterpaket 16.10.2026, Forum LEISHA_WISSEN 6.2/6.3, (b) 2-5)
+    // Fuehlerwert der WP (TOP14) von abtauAtMin (-5 °C) bis unter abtauAtMax (10 °C; Pseudoabtauungen bis 9 °C, nie ueber 10 °C: 4011622, 3456847, 4466101) UND
+    // (OWM-Feuchte >= abtauRhMin 80 % ODER Rohr aussen <= abtauRohrC 0 °C). Ohne Feuchte und Rohrwert: wie bis 15.10. der Bereich bis abtauAtOhne (4 °C).
+    function abtauWetter(d, L) {
+        var o = {ja: false, txt: '', feucht: false, rohr: false};
+        if (!have(d.at)) { o.txt = 'Außentemperatur unbekannt'; return o; }
+        var inAT = d.at >= L.abtauAtMin && d.at < L.abtauAtMax;
+        o.feucht = have(d.rh) && d.rh >= L.abtauRhMin; o.rohr = have(d.pipeOut) && d.pipeOut <= L.abtauRohrC;
+        var ohne = !have(d.rh) && !have(d.pipeOut);
+        o.ja = inAT && (o.feucht || o.rohr || (ohne && d.at <= L.abtauAtOhne));
+        o.txt = 'Außen (WP) ' + de(d.at, 0) + ' °C' + (o.feucht ? ', Feuchte ' + de(d.rh, 0) + ' %' : '') + (o.rohr ? ', Rohr außen ' + de(d.pipeOut, 0) + ' °C' : '') + (ohne ? ' (ohne Feuchte und Rohrwert)' : '');
+        return o;
+    }
     // Laufzeit strecken (v2): Takt ist belegt, wenn der letzte Lauf ueber den Vorlauf abschaltete (Stopp-Art) und kuerzer als kurzerLaufMin war, oder bei
     // mindestens starts3h Starts in 3 h. Die Vorhersage "Abschaltgrenze in <= 45 min" (v1) loest nicht mehr aus (Replay 07.-12.10.: unzuverlaessig bei >= 22 Hz).
     // v4 (Regel-Review LS-7): Takt aus der entprellten Takt-Messung (mehr als startsTagWarn Starts in 24 h oder mehr als kurzAnteilWarn kurze Laeufe bei >= 4 Laeufen)
@@ -285,10 +298,27 @@ var ENGINE = (function () {
     // Zielstufe der Freigabe (Bedarf): die naechste niedrigere Stufe, deren Deckel genug Mehrleistung zulaesst (mehrHz) - mit 60 min Daten (Nutzerentscheidung) oder,
     // ohne Daten, nach der Messtabelle DECKEL (ohneDatenSchrittweise, vorlaeufig); ein Notfall ohne Daten und die Heizstab-Naehe gehen direkt auf Quiet 0.
     // Eine tiefere Stufe mit Daten nur, wenn ihr COP um mehr als copTol besser ist. Nachts nicht unter nachtQuietMin (ausser Heizstab-Naehe).
+    // Abtauwetter (Quiet-Freigabe v5, Winterpaket 16.10.2026, Forum (b) 4, 3458786): im Lauf nur stufenweise 3 -> 2 -> 1 -> 0, je Vorschlag eine wirksame Stufe (die naechste
+    // niedrigere, deren Deckel mindestens mehrHz ueber dem jetzigen liegt; Stufen mit gleichem Deckel bringen keinen Sprung und werden uebersprungen), bei Heizstab-Naehe zwei.
+    // Ohne 60 min Daten gilt die Messtabelle (DECKEL), keine tiefere Stufe wegen besserem COP. Mindestabstand zwischen zwei Stufen: Sperre "abtausprung" (stufeMin).
+    function zielStufe(d, c, B, cur, need, nm, o) {
+        var n = B && B.heizstab ? 2 : 1, kap = need, st = [];
+        for (var z = d.q - 1; z >= 0 && st.length < n; z--) {
+            if (nm !== null && z < nm && !(B && B.heizstab)) { break; }
+            var cz = deckelOf(d, z);
+            if (have(cz.hz) && have(kap) && cz.hz >= kap) { st.push({q: z, hz: z === 0 ? Q0_HZ : cz.hz, quelle: z === 0 ? 'ohne Deckel' : cz.quelle}); kap = (z === 0 ? Q0_HZ : cz.hz) + c.mehrHz; }
+        }
+        o.stufig = true;
+        if (!st.length) { o.ziel = null; o.warum = 'Abtauwetter: keine wirksame nächste Stufe' + (nm !== null ? ' (nachts nicht unter Quiet ' + nm + ')' : ''); return o; }
+        var z1 = st[st.length - 1]; o.ziel = z1.q; o.stufen = st.length;
+        o.warum = 'Abtauwetter (' + d.abtauW.txt + '): stufenweise ' + (st.length > 1 ? 'zwei Stufen (Heizstab-Nähe) ' : '') + 'Quiet ' + d.q + ' → ' + st.map(function (x) { return x.q; }).join(' → ') + (z1.q === 0 ? ' (ohne Deckel)' : ' (deckelt bei ' + de(z1.hz, 0) + ' Hz, ' + z1.quelle + ')');
+        return o;
+    }
     function zielFrei(d, c, B) {
         var tc = d.tc || taktCfg(null), cur = deckelOf(d, d.q), need = have(cur.hz) ? cur.hz + c.mehrHz : null, o = {ziel: 0, warum: '', kand: [], cur: cur}, nm = nachtMin(d, c);
+        if (d.abtauW && d.abtauW.ja && d.running) { return zielStufe(d, c, B, cur, need, nm, o); }
         if (B && B.heizstab) { o.warum = 'Heizstab-Nähe: volle Leistung'; return o; }
-        var ok = [], gr = [], first = null, notfall = !!(B && B.notfall), stufen = c.ohneDatenSchrittweise === 1 && (!notfall || !!d.abtauLage);   // Abtauwetter: auch im Notfall schrittweise (kein Frequenzsprung, Forum F6-a)
+        var ok = [], gr = [], first = null, notfall = !!(B && B.notfall), stufen = c.ohneDatenSchrittweise === 1 && !notfall;   // Abtauwetter: zielStufe (oben)
         for (var z = d.q - 1; z >= 1; z--) {
             if (nm !== null && z < nm) { gr.push('Quiet ' + z + ': nachts nicht unter Quiet ' + nm); continue; }
             var k = kombOf(d, z), cz = deckelOf(d, z);
@@ -343,8 +373,9 @@ var ENGINE = (function () {
         var tc = d.tc || taktCfg(null), band = have(d.at) ? bandOf(d.at) : null, mod = modusOf(d.hc), o = {band: band, mod: mod, cur: null, kand: [], ziel: null, warum: ''};
         if (!have(d.q) || band === null) { o.warum = 'Außentemperatur oder Quiet-Stufe unbekannt'; return o; }
         if (mod === '?') { o.warum = 'Heizregelung unbekannt (keine Daten je Modus)'; return o; }
-        var cur = kombOf(d, d.q), gr = []; o.cur = cur;
-        for (var z = d.q + 1; z <= 3 && !o.ziel; z++) {
+        var cur = kombOf(d, d.q), gr = [], zMax = (d.abtauW && d.abtauW.ja && d.running) ? Math.min(3, d.q + 1) : 3; o.cur = cur;   // Deckel/Laufzeit v7 (Winterpaket): bei Abtauwetter nur eine Stufe hoeher
+        if (zMax < 3) { o.stufig = true; }
+        for (var z = d.q + 1; z <= zMax && !o.ziel; z++) {
             var k = kombOf(d, z), cz = deckelOf(d, z);
             if (k.min < tc.copMinMin) { k.warum = 'Quiet ' + z + ': ' + Math.round(k.min) + ' von ' + tc.copMinMin + ' min Daten'; }
             else if (!have(cz.hz) || cz.hz >= c.hzTakt) { k.warum = 'Quiet ' + z + ' deckelt nicht (bis ' + de(cz.hz, 0) + ' Hz' + (cz.quelle === 'Mindestfrequenz' ? ', Mindestfrequenz bei Frost' : '') + ')'; }
@@ -352,8 +383,16 @@ var ENGINE = (function () {
             else { k.deckel = cz.hz; o.ziel = k; }
             o.kand.push(k); if (!o.ziel) { gr.push(k.warum); }
         }
-        if (!o.ziel) { o.warum = 'keine Zielstufe aus den Daten (' + mod + ', ' + band + ' °C): ' + gr.join('; '); }
+        if (!o.ziel) { o.warum = 'keine Zielstufe aus den Daten (' + mod + ', ' + band + ' °C): ' + gr.join('; ') + (o.stufig ? ' (Abtauwetter: nur Quiet ' + zMax + ', stufenweise)' : ''); }
         return o;
+    }
+    // +1 K in der Pause ist ein Startbefehl (Winterpaket 16.10.2026; Forum 3969412, 4131809, 3935020: eine Soll-Anhebung umgeht die Einschaltschwelle; eigene Messung 11.10. 19:10):
+    // nur gewollt, wenn ein Bedarfsraum unter seinem Minimum liegt UND die Pause schon startPauseMin dauert; die Kaltstart-Sperre bei Abtauwetter (<= 4 °C) prueft "abtausprung"
+    function startGewollt(d, c) {
+        var L = d.raum, bed = (L && !L.keine && L.bedL) ? L.bedL : [], p = d.pauseNow, r0 = bed[0] ? bed[0].r : null;
+        var ok = !!r0 && have(p) && p >= c.startPauseMin - 1e-9;
+        return {ok: ok, raum: r0, p: p, t: 'Start gewollt: ' + (r0 ? r0.name + ' ' + de(r0.min - r0.t, 1) + ' K unter Minimum' : 'Bedarfsraum') + ', Pause seit ' + de(p, 0) + ' min (mindestens ' + c.startPauseMin + '): +1 K startet die Wärmepumpe',
+                tn: 'Pause: +1 K wäre ein Startbefehl (Soll-Anhebung umgeht die Einschaltschwelle) – nur mit Bedarfsraum unter Minimum und Pause ≥ ' + c.startPauseMin + ' min (' + (!r0 ? 'kein Bedarfsraum unter Minimum' : (have(p) ? 'Pause erst ' + de(p, 0) + ' min' : 'Pausenbeginn unbekannt')) + '), sonst erst im Lauf'};
     }
     // Schwelle des Effizienz-Deckels (v5): ohne Takt hzHoch (28 Hz), mit belegtem Takt hzTakt (22 Hz); bei Frost mindestens Mindestfrequenz + 3 Hz (keine Stufe deckelt darunter)
     function hzSchwelle(d, c, takt) {
@@ -373,9 +412,9 @@ var ENGINE = (function () {
     // ------------------------------------------------------------------ Regelwerk als Daten. Jede Schwelle: Standard, Einheit, Herkunft (Messung / Nutzerregel / ANNAHME)
     var RULES = [
         {
-            id: 'quiet_freigabe', ver: 4, kachel: 'Quiet-Freigabe', kurz: 'Quiet-Freigabe', name: 'Quiet-Freigabe (Leistung freigeben)', art: 'befehl', groesse: 'quiet', richtung: 'mehr_leistung', prio: 1, basis: 'quiet_freigabe|v2',
-            zweck: 'Hält der Quiet-Deckel den Verdichter fest, obwohl ein echter Bedarf besteht (Raum unter Minimum oder auf dem Weg dorthin, Heizstab-Nähe, Boost von Hand, seit v3 auch Abtau-Rückstand in Efficiency), wird die Leistung freigegeben: auf die nächste Stufe, deren Deckel genug Mehrleistung zulässt (Daten je Heizregelung × Quiet × Außenband), bei Heizstab-Nähe und ohne Daten auf Quiet 0. Ein Vorlauf unter Soll allein ist kein Bedarf (v1 löste auch bei „Sollvorlauf in diesem Lauf noch nicht erreicht“ aus, also bei jedem langsamen Anlauf). Zurück auf die vorherige Stufe, sobald der Bedarf gedeckt ist. v3 (14.10.2026, Forum 189605): Deckel nie unter der Mindestfrequenz der Außentemperatur (Frost 25/35 Hz); bei Abtauwetter keine Freigabe, die den Verdichter nach langem Niedriglauf um 8 Hz oder mehr anhebt (Pseudo-Abtauung), außer bei Heizstab-Nähe. v4 (15.10.2026, Entscheidung 5): ein Raum mit eigener Nachheizung (Einstellung „eigene Nachheizung“ der Karte Räume, Standard nur Kinderzimmer oben mit Radiator-Relais und Heizlüfter) ist kein Bedarf (Replay 07.–15.10.: der Bedarf „Raum unter Minimum“ kam fast nur aus Kinderzimmer oben); für den Rückweg zählt er weiter (gedeckt erst, wenn auch er Minimum + 0,3 K erreicht).',
-            eingaenge: ['Quiet-Stufe', 'Verdichterfrequenz und Deckel je Stufe (Messung, Takt-Messung, Mindestfrequenz je Außentemperatur)', 'Soll-/Ist-Vorlauf', 'Rücklauf und Ziel-Spreizung (Heat_Delta)', 'Laufzeit', 'Räume (gültig, eigenes Band, Verlauf)', 'Heizstab (Heater_On_Outdoor_Temp, Heater_Start_Delta)', 'Soll von Hand gegen Heizkurve', 'Abtauen (Ende, Rückstand danach)', 'Daten je Heizregelung × Quiet × Außenband (Takt-Messung)'],
+            id: 'quiet_freigabe', ver: 5, kachel: 'Quiet-Freigabe', kurz: 'Quiet-Freigabe', name: 'Quiet-Freigabe (Leistung freigeben)', art: 'befehl', groesse: 'quiet', richtung: 'mehr_leistung', prio: 1, basis: 'quiet_freigabe|v2',
+            zweck: 'Hält der Quiet-Deckel den Verdichter fest, obwohl ein echter Bedarf besteht (Raum unter Minimum oder auf dem Weg dorthin, Heizstab-Nähe, Boost von Hand, seit v3 auch Abtau-Rückstand in Efficiency), wird die Leistung freigegeben: auf die nächste Stufe, deren Deckel genug Mehrleistung zulässt (Daten je Heizregelung × Quiet × Außenband), bei Heizstab-Nähe und ohne Daten auf Quiet 0. Ein Vorlauf unter Soll allein ist kein Bedarf (v1 löste auch bei „Sollvorlauf in diesem Lauf noch nicht erreicht“ aus, also bei jedem langsamen Anlauf). Zurück auf die vorherige Stufe, sobald der Bedarf gedeckt ist. v3 (14.10.2026, Forum 189605): Deckel nie unter der Mindestfrequenz der Außentemperatur (Frost 25/35 Hz); bei Abtauwetter keine Freigabe, die den Verdichter nach langem Niedriglauf um 8 Hz oder mehr anhebt (Pseudo-Abtauung), außer bei Heizstab-Nähe. v4 (15.10.2026, Entscheidung 5): ein Raum mit eigener Nachheizung (Einstellung „eigene Nachheizung“ der Karte Räume, Standard nur Kinderzimmer oben mit Radiator-Relais und Heizlüfter) ist kein Bedarf (Replay 07.–15.10.: der Bedarf „Raum unter Minimum“ kam fast nur aus Kinderzimmer oben); für den Rückweg zählt er weiter (gedeckt erst, wenn auch er Minimum + 0,3 K erreicht). v5 (16.10.2026, Winterpaket, Forum LEISHA_WISSEN (b) 3/4/6): bei Abtauwetter (WP-Außentemperatur −5 bis unter 10 °C und Feuchte ≥ 80 % oder Rohr außen ≤ 0 °C) öffnet die Freigabe im Lauf nur stufenweise (3 → 2 → 1 → 0, je Vorschlag die nächste wirksame Stufe, bei Heizstab-Nähe zwei) mit mindestens 30 min Abstand zwischen zwei Stufen (Expansionsventil: höchstens 30 Halbschritte je 90 s, ~2,5 h bis eingeschwungen, +6 Hz ok, +10 Hz nicht: 4549934, 4886674, 4553013); nach dem Abtauen bleibt Efficiency (Heizregelung v3), den Abtau-Rückstand holt die Freigabe stufenweise auf. Beendet die Anlage Quiet selbst (Flüster-Priorität „Leistung“: Wasser 30 min 5 K unter Soll, 3469566), meldet die Maschine „Anlage hat Quiet beendet“ und gibt 30 min nichts weiter frei.',
+            eingaenge: ['Quiet-Stufe', 'Verdichterfrequenz und Deckel je Stufe (Messung, Takt-Messung, Mindestfrequenz je Außentemperatur)', 'Soll-/Ist-Vorlauf', 'Rücklauf und Ziel-Spreizung (Heat_Delta)', 'Laufzeit', 'Räume (gültig, eigenes Band, Verlauf)', 'Heizstab (Heater_On_Outdoor_Temp, Heater_Start_Delta)', 'Soll von Hand gegen Heizkurve', 'Abtauen (Ende, Rückstand danach)', 'Daten je Heizregelung × Quiet × Außenband (Takt-Messung)', 'Abtauwetter: OWM-Feuchte, Rohr außen (Outside_Pipe_Temp)', 'Quiet-Senkungen ohne Befehl (Anlage beendet Quiet selbst)'],
             sperren: ['anlauf', 'daten', 'stoerung', 'mqtt_sperre', 'abtauen', 'warmwasser', 'sanftanlauf', 'laufbeginn', 'heizgrenze_aus', 'regler', 'vorrang', 'gegenrichtung', 'abstand', 'tageslimit', 'abkuehlzeit', 'takt', 'abtausprung'],
             befehl: {name: 'SetQuietMode', topic: 'panasonic_heat_pump/commands/SetQuietMode'},
             schwellen: [
@@ -397,7 +436,7 @@ var ENGINE = (function () {
                 {key: 'hartHz', std: 17, einheit: 'Hz', herkunft: 'harter Deckel: die Stufe hält höchstens 17 Hz (Quiet 3 immer, Quiet 2 ab 7 °C; Messung 07.–13.10.)'},
                 {key: 'vorsorgeH', std: 6, einheit: 'h', herkunft: 'Kälte-Vorsorge: OWM-Vorhersage der nächsten 6 h (am Messwert verankert), damit der Vorschlag am Abend kommt und nicht erst in der Nacht, in der niemand klickt (Regel-Review B4); ANNAHME'},
                 {key: 'boostBedarf', std: 1, einheit: 'ja/nein', herkunft: 'Boost von Hand (Soll über der Heizkurve) zählt als Bedarf: 1 = ja (Nutzer vorläufig, 13.10.)'},
-                {key: 'abtauNachMin', std: 30, einheit: 'min', herkunft: 'Abtau-Rückstand (v3): bis 30 min nach dem Ende einer Abtauung zählt ein Vorlauf-Rückstand in Efficiency als Bedarf. Forum 189605: Efficiency hält nach dem Abtauen ~20 min niedrige Frequenz (L5 25 Hz, 4582615; L7 4095732), das Haus kühlte in Abtauserien aus (4096011), Comfort fährt hoch. Die ersten 10 min sperrt „Abtauen“ (Forum F6-c: 10–15 min keine Eingriffe); ANNAHME'},
+                {key: 'abtauNachMin', std: 30, einheit: 'min', herkunft: 'Abtau-Rückstand (v3): bis 30 min nach dem Ende einer Abtauung zählt ein Vorlauf-Rückstand in Efficiency als Bedarf. Forum 189605: Efficiency hält nach dem Abtauen ~20 min niedrige Frequenz (L5 25 Hz, 4582615; L7 4095732), das Haus kühlte in Abtauserien aus (4096011). Seit v5 (Winterpaket) nur noch für die Quiet-Freigabe (stufenweise), nicht mehr für Comfort (Abtauspirale 4554672). Die ersten 10 min sperrt „Abtauen“ (Forum F6-c: 10–15 min keine Eingriffe); ANNAHME'},
                 {key: 'abtauRueckK', std: 3, einheit: 'K', herkunft: 'Abtau-Rückstand: Vorlauf mindestens 3 K unter Soll (Abtauen senkt den Vorlauf um 8–15 K: Forum L5 37 → 22 °C, 4288323; die Anlage startet bei Soll −3,25 K neu, Messung 07.–13.10.); ANNAHME, ohne eigene Abtau-Daten'},
                 {key: 'ohneDatenSchrittweise', std: 1, einheit: 'ja/nein', herkunft: 'ohne 60 min Daten einer tieferen Stufe: 1 = schrittweise nach der Messtabelle DECKEL, ein Notfall (Heizstab-Nähe, Raum ≥ 0,3 K unter Minimum) direkt Quiet 0; 0 = immer Quiet 0 (Nutzer vorläufig, 13.10.)'},
                 {key: 'nachtQuietMin', std: -1, einheit: 'Stufe', herkunft: 'Lärmgrenze nachts: die Freigabe geht nachts nicht unter diese Stufe (außer bei Heizstab-Nähe); −1 = aus (Nutzer vorläufig, 13.10.: keine Lärmgrenze)'},
@@ -447,9 +486,9 @@ var ENGINE = (function () {
             }
         },
         {
-            id: 'quiet_strecken', ver: 6, kachel: 'Deckel/Laufzeit', kurz: 'Deckel/Laufzeit', name: 'Effizienz-Deckel und Laufzeit (Quiet höher oder Heizkurve +1 K)', art: 'befehl', groesse: 'quiet', richtung: 'weniger_leistung', prio: 2,
+            id: 'quiet_strecken', ver: 7, kachel: 'Deckel/Laufzeit', kurz: 'Deckel/Laufzeit', name: 'Effizienz-Deckel und Laufzeit (Quiet höher oder Heizkurve +1 K)', art: 'befehl', groesse: 'quiet', richtung: 'weniger_leistung', prio: 2,
             basis: 'quiet_strecken|v5', basisKurve: 'quiet_strecken|v4|kurve',
-            zweck: 'Zwei Hebel, gewählt nach Lage. Quiet höher (Effizienz-Deckel): läuft der Verdichter ohne Bedarf mit 28 Hz oder mehr – bei belegtem Takt schon ab 22 Hz – (vor allem in den ersten 3 h eines Laufs bei Mildwetter), deckelt die niedrigste Stufe, die laut Messdaten unter 22 Hz hält. v5 (14.10.2026): Nach der COP-Korrektur (+80 W im Lauf, Forum 189605) ist der COP-Vorteil bei 22–27 Hz nicht mehr belegt (−0,3…+4,8 % gegen 16–17 Hz, roh −3…−7 %: das Vorzeichen hängt an der Korrektur), ab 28 Hz bleibt er bei jeder Korrektur zwischen 0 und 80 W negativ (−3 % korrigiert, −5…−15 % roh); 22–27 Hz deckelt die Regel deshalb nur noch, wenn Takt belegt ist (dann zählt die längere Laufzeit). Bei Frost deckelt keine Stufe unter die Mindestfrequenz (≤ −4 °C 25 Hz, ≤ −10 °C 35 Hz, Forum 4593782/4596796): die Schwelle steigt dort auf Mindestfrequenz + 3 Hz. Quiet senkt am Minimum außerdem den Lüfter (−60…−110 U/min, −10…−16 W; ein COP-Unterschied ist dort nicht messbar). Heizkurve +1 K (Laufzeit): läuft der Verdichter schon unter 22 Hz und ist Takt belegt, hilft Quiet nicht; +1 K hebt Abschalt- und Startschwelle (längere Läufe, kürzere Pausen) und kostet Strom, deshalb nur, wenn der geschätzte Nutzen (vermiedene Starts) die Kosten übersteigt. Beide Hebel nie gleichzeitig aus einem Vorschlag. v6 (15.10.2026, Paket 2): ein Raum mit Sonnenfenster in der Sonne (wie Raumeinfluss v5) zählt für +1 K nicht als „über der Bandmitte“ und beendet ein übernommenes +1 K nicht.',
+            zweck: 'Zwei Hebel, gewählt nach Lage. Quiet höher (Effizienz-Deckel): läuft der Verdichter ohne Bedarf mit 28 Hz oder mehr – bei belegtem Takt schon ab 22 Hz – (vor allem in den ersten 3 h eines Laufs bei Mildwetter), deckelt die niedrigste Stufe, die laut Messdaten unter 22 Hz hält. v5 (14.10.2026): Nach der COP-Korrektur (+80 W im Lauf, Forum 189605) ist der COP-Vorteil bei 22–27 Hz nicht mehr belegt (−0,3…+4,8 % gegen 16–17 Hz, roh −3…−7 %: das Vorzeichen hängt an der Korrektur), ab 28 Hz bleibt er bei jeder Korrektur zwischen 0 und 80 W negativ (−3 % korrigiert, −5…−15 % roh); 22–27 Hz deckelt die Regel deshalb nur noch, wenn Takt belegt ist (dann zählt die längere Laufzeit). Bei Frost deckelt keine Stufe unter die Mindestfrequenz (≤ −4 °C 25 Hz, ≤ −10 °C 35 Hz, Forum 4593782/4596796): die Schwelle steigt dort auf Mindestfrequenz + 3 Hz. Quiet senkt am Minimum außerdem den Lüfter (−60…−110 U/min, −10…−16 W; ein COP-Unterschied ist dort nicht messbar). Heizkurve +1 K (Laufzeit): läuft der Verdichter schon unter 22 Hz und ist Takt belegt, hilft Quiet nicht; +1 K hebt Abschalt- und Startschwelle (längere Läufe, kürzere Pausen) und kostet Strom, deshalb nur, wenn der geschätzte Nutzen (vermiedene Starts) die Kosten übersteigt. Beide Hebel nie gleichzeitig aus einem Vorschlag. v6 (15.10.2026, Paket 2): ein Raum mit Sonnenfenster in der Sonne (wie Raumeinfluss v5) zählt für +1 K nicht als „über der Bandmitte“ und beendet ein übernommenes +1 K nicht. v7 (16.10.2026, Winterpaket): bei Abtauwetter (−5 bis unter 10 °C, Feuchte ≥ 80 % oder Rohr außen ≤ 0 °C) deckelt Quiet höher nur stufenweise (eine Stufe je Vorschlag); +1 K in der Pause ist ein Startbefehl (Soll-Anhebung umgeht die Einschaltschwelle, Forum 3969412/4131809, 11.10. 19:10) und kommt nur, wenn ein Start gewollt ist (Bedarfsraum unter Minimum, Pause ≥ 20 min, keine Kaltstart-Sperre bei Abtauwetter ≤ 4 °C), sonst nur im Lauf.',
             eingaenge: ['Quiet-Stufe', 'Heizregelung', 'Verdichterfrequenz', 'Rücklauf-Rückstand', 'Räume (Bedarf, Verlauf, Luft im Band)', 'Außentemperatur', 'letzte Läufe (Dauer, Stopp-Art), Pausen, Starts', 'Daten je Heizregelung × Quiet × Außenband (Takt-Messung: Minuten, COP, gehaltener Deckel)', 'Verschiebung der Anlage (TOP27) und Eigentümer (Arbitrierung)'],
             sperren: ['anlauf', 'daten', 'stoerung', 'mqtt_sperre', 'abtauen', 'warmwasser', 'sanftanlauf', 'laufbeginn', 'heizgrenze_aus', 'regler', 'vorrang', 'gegenrichtung', 'abstand', 'tageslimit', 'abkuehlzeit', 'takt', 'heizstab', 'abtausprung'],
             befehl: {name: 'SetQuietMode', topic: 'panasonic_heat_pump/commands/SetQuietMode'},
@@ -471,7 +510,7 @@ var ENGINE = (function () {
                 {key: 'startWh', std: 15, einheit: 'Wh', herkunft: 'ein Start kostet 7–12 Wh (Review 09.10.) plus Pumpenspitze 4–10 Wh (2900 U/min für 11–16 min); ANNAHME'},
                 {key: 'kurveWK', std: 8.5, einheit: 'W/K', herkunft: 'Strom +8,5 W je K Vorlauf während des Laufs (Strommodell 08.10.); Mehrwärme in die Räume nicht eingerechnet; ANNAHME'},
                 {key: 'laufVlK', std: 1.0, einheit: 'K', herkunft: '+1 K im Lauf nur, wenn der Vorlauf schon mindestens 1,0 K über dem Soll liegt: dann steigt nur die Stoppschwelle; darunter löste +1 K bei Quiet 0 einen Hochlauf aus (11.10. 03:10: 16,5 → 22–23 Hz, +48 % Strom; Regel-Review Abschnitt 2). Vorher 0,5 K: bei +0,25 K nach einem natürlichen +1-K-Sprung lief Quiet 0 schon kurz auf 20 Hz (13.10. 02:20), +1 K wirkt erst im nächsten 5-min-Takt (Regel-Review R2)'},
-                {key: 'pauseVlK', std: -2, einheit: 'K', herkunft: '+1 K in der Pause nur, wenn der Vorlauf über Soll −2 K liegt: läge er nach +1 K bei ≤ neuer Soll −3,25…−3,5 K, startete die Anlage sofort (10.10. 18:20, 11.10. 19:10; Regel-Review Abschnitt 2) und die Pause würde nur kürzer'},
+                {key: 'startPauseMin', std: 20, einheit: 'min', herkunft: 'v7 (Winterpaket 16.10.2026): +1 K in der Pause ist ein Startbefehl – eine Soll-Anhebung umgeht die Einschaltschwelle (Forum 3969412, 4131809, 3935020; eigene Messung 11.10. 19:10, 10.10. 18:20). Deshalb in der Pause nur, wenn ein Start gewollt ist: Bedarfsraum unter Minimum und Pause seit mindestens 20 min (keine Verkürzung einer frischen Pause; Takt) und keine Kaltstart-Sperre bei Abtauwetter (≤ 4 °C, Sperre „abtausprung“); dann heißt der Vorschlag „startet die Wärmepumpe“. Bis v6: in der Pause nur bei Vorlauf über Soll −2 K (kein sofortiger Start); ANNAHME'},
                 {key: 'haltMin', std: 10, einheit: 'min', herkunft: 'wie Quiet-Freigabe'},
                 {key: 'proTag', std: 3, einheit: 'Vorschläge', herkunft: 'ANNAHME (v3: 2; ein Effizienz-Deckel je Lauf bei 3–5 Läufen am Tag)'},
                 {key: 'gueltigMin', std: 30, einheit: 'min', herkunft: 'ANNAHME'},
@@ -515,7 +554,7 @@ var ENGINE = (function () {
                 }
                 var NK = nutzenKurve(d, c), warm = null;                              // waermster Raum relativ zur Bandmitte (Regel-Review LS-5: +1 K ist sonst Gegenspieler zu Raumeinfluss −1 K)
                 d.rooms.forEach(function (r) { if (r.active && r.valid && !r.sonne && have(r.max) && have(r.min) && (warm === null || r.t - (r.min + r.max) / 2 > warm.t - (warm.min + warm.max) / 2)) { warm = r; } });   // v6: ein Raum mit Sonnenfenster in der Sonne zaehlt nicht als warm
-                var luft = warm ? (warm.min + warm.max) / 2 - warm.t : null, sollNeu = have(d.soll) ? d.soll + 1 : null, vlS = have(d.vl) && have(d.soll) ? d.vl - d.soll : null;
+                var luft = warm ? (warm.min + warm.max) / 2 - warm.t : null, sollNeu = have(d.soll) ? d.soll + 1 : null, vlS = have(d.vl) && have(d.soll) ? d.vl - d.soll : null, SG = startGewollt(d, c);
                 // +1 K auch in der Pause (hebt die Startschwelle; bei Laeufen unter 25 min gaebe es im Lauf nach Startphase und Haltezeit keine Gelegenheit)
                 var cond2 = [
                     {k: 'takt', kz: 'Takt belegt', t: 'Takt belegt (' + (taktTxt.join(', ') || 'kurzer Lauf oder viele Starts') + ')', tn: 'kein Takt belegt: ' + lr + ', ' + d.starts3h + ' Start' + (d.starts3h === 1 ? '' : 's') + ' in 3 h', ok: takt},
@@ -523,20 +562,21 @@ var ENGINE = (function () {
                     {k: 'verschiebung', kz: 'Verschiebung', t: 'Verschiebung steht auf 0 K', tn: 'Verschiebung steht auf ' + sg(d.shift, 0) + ' K', ok: d.shift === 0},
                     {k: 'luft', kz: 'Räume', t: 'kein Raum über der Bandmitte', tn: warm ? warm.name + ' ' + de(-luft, 1) + ' K über der Bandmitte' : 'Raumlage unbekannt', ok: have(luft) && luft >= -1e-9, ist: r2(luft), soll: 0, op: '>=', u: 'K', dyn: true},
                     d.running ? {k: 'vorlauf', kz: 'Vorlauf', t: 'Vorlauf mindestens ' + de(c.laufVlK, 1) + ' K über Soll (nur die Stoppschwelle steigt)', tn: 'Vorlauf ' + sg(vlS, 2) + ' K zum Soll: +1 K löste einen Hochlauf aus', ok: have(vlS) && vlS >= c.laufVlK, ist: r2(vlS), soll: c.laufVlK, op: '>=', u: 'K', dyn: true}
-                              : {k: 'vorlauf', kz: 'Vorlauf', t: 'Vorlauf über Soll ' + sg(c.pauseVlK, 0) + ' K (kein sofortiger Start)', tn: 'Vorlauf ' + sg(vlS, 2) + ' K zum Soll: +1 K startete den Verdichter sofort', ok: have(vlS) && vlS > c.pauseVlK, ist: r2(vlS), soll: c.pauseVlK, op: '>=', u: 'K', dyn: true},
+                              : {k: 'start', kz: 'Start gewollt', t: SG.t, tn: SG.tn, ok: SG.ok},   // v7 (Winterpaket): +1 K in der Pause ist ein Startbefehl
                     {k: 'nutzen', kz: 'Nutzen > Kosten', t: 'Nutzen ≥ Kosten (' + NK.txt + ')', tn: 'Nutzen kleiner als Kosten: ' + NK.txt, ok: NK.ok}
                 ];
-                return {cond: cond2, halt: c.haltMin, wert: 1, von: d.shift, groesse: 'shift', hebel: 'shift', dir: 'soll_hoch', befehl: RULE.quiet_strecken.hebel.shift, maxDauerMin: c.maxDauerKurveMin,
-                        erwartung: 'Soll-Vorlauf +1 K binnen 6 min (5-min-Raster); Lauf länger (Annahme +' + c.laufPlusMin + ' min), Pause kürzer (Annahme −' + c.pauseMinusMin + ' min), Strom +' + de(c.kurveWK, 1) + ' W im Lauf; Wirkung nicht gemessen (Messaufgabe)',
+                return {cond: cond2, halt: c.haltMin, wert: 1, von: d.shift, groesse: 'shift', hebel: 'shift', dir: 'soll_hoch', befehl: RULE.quiet_strecken.hebel.shift, maxDauerMin: c.maxDauerKurveMin, startBefehl: !d.running,
+                        erwartung: d.running ? 'Soll-Vorlauf +1 K binnen 6 min (5-min-Raster); Lauf länger (Annahme +' + c.laufPlusMin + ' min), Pause kürzer (Annahme −' + c.pauseMinusMin + ' min), Strom +' + de(c.kurveWK, 1) + ' W im Lauf; Wirkung nicht gemessen (Messaufgabe)'
+                                             : 'startet die Wärmepumpe: Soll-Vorlauf +1 K binnen 6 min, die Soll-Anhebung umgeht die Einschaltschwelle (Forum 3969412, 4131809; 11.10. 19:10), danach Lauf mit 1 K höherer Stoppschwelle; Strom +' + de(c.kurveWK, 1) + ' W im Lauf',
                         rueckweg: 'Automatisch zurück auf 0 K bei Heizstab-Nähe, wenn ein Raum mehr als ' + de(d.notK, 1) + ' K über die Bandmitte steigt (nicht durch Sonne im Raum mit Sonnenfenster), wenn ' + c.kurveTaktZyklen + ' Läufe ohne Takt endeten, spätestens nach ' + de(c.maxDauerKurveMin / 60, 0) + ' h.',
-                        was: 'Heizkurve 0 → +1 K (Soll-Vorlauf ' + de(d.soll, 0) + ' → ' + de(sollNeu, 0) + ' °C, Laufzeit)',
-                        warum: 'Takt: ' + taktTxt.join(', ') + '; Verdichter bei ' + de(d.hz, 0) + ' Hz, Quiet deckelt nichts mehr; ' + NK.txt};
+                        was: 'Heizkurve 0 → +1 K (Soll-Vorlauf ' + de(d.soll, 0) + ' → ' + de(sollNeu, 0) + ' °C, Laufzeit' + (d.running ? '' : '; startet die Wärmepumpe') + ')',
+                        warum: 'Takt: ' + taktTxt.join(', ') + '; ' + (d.running ? 'Verdichter bei ' + de(d.hz, 0) + ' Hz, Quiet deckelt nichts mehr' : SG.t) + '; ' + NK.txt};
             }
         },
         {
-            id: 'raum_offset', ver: 5, kachel: 'Raumeinfluss', kurz: 'Raumeinfluss ±1 K', name: 'Raumeinfluss (Heizkurve ±1 K)', art: 'befehl', groesse: 'shift', richtung: 'verschiebung', prio: 3,
+            id: 'raum_offset', ver: 6, kachel: 'Raumeinfluss', kurz: 'Raumeinfluss ±1 K', name: 'Raumeinfluss (Heizkurve ±1 K)', art: 'befehl', groesse: 'shift', richtung: 'verschiebung', prio: 3,
             basis: 'raum_offset|v3', basisMinus: 'raum_offset|v5|minus',
-            zweck: 'Räume wirken nur als langsamer, kleiner Offset auf die Heizkurve (Lambda-Prinzip). Seit v3 (14.10.2026) entscheidet die Regel selbst aus den Räumen (eigenes Komfortband, geglätteter Wert, Verlauf per Regression, Lüften ausgefiltert, Werte bis 6 h alt, weil die Shelly nur bei Änderung melden); der Raumvorschlag der Phase 2 ist nur noch Vergleichskennzahl. +1 K nur bei Bedarf (ein Raum unter Minimum, der sich nicht erholt; seit v4 (15.10.2026, Entscheidung 5) nie aus einem Raum mit eigener Nachheizung (Einstellung „eigene Nachheizung“ der Karte Räume, Standard nur Kinderzimmer oben mit Radiator-Relais und Heizlüfter), bis v3 Kinderzimmer oben nur bei offenem Radiator-Relais; ein solcher Raum zählt weiter für −1 K, den Rückweg von −1 K und den Hinweis Wärmeverteilung), −1 K bei Überschuss (alle Räume mit Reserve über Minimum, einer über Maximum oder alle über der Bandmitte), bevorzugt in der Pause oder bei Vorlauf ≤ Soll, damit auch im Dauerlauf (kalte Nächte 600–970 min ohne Pause). Höchstens 1 K je Befehl. Ein Raum über Maximum und einer unter Minimum ist ein Wärmeverteilungsproblem: dann keine Verschiebung, sondern ein eigener Hinweis (hydraulischer Abgleich/Thermostatventile). Seit v5 (15.10.2026, Paket 2) zählt ein Raum mit Sonnenfenster (Einstellung „Sonnenfenster“ der Karte Räume, Standard Wohnzimmer mit Südwestfenster) nicht als Überschuss für −1 K, solange Sonne anliegt (11–18 Uhr, PV ≥ 20 % der Spitze der letzten 7 Tage oder Bewölkung unter 50 %) und er in den letzten 60 min bei stehender Wärmepumpe oder fallendem Vorlauf gestiegen ist; für Bedarf, Reserve und den Hinweis Wärmeverteilung zählt er immer. Zurück auf 0 K mit Hysterese, wenn der Bedarf gedeckt bzw. die Reserve verbraucht ist, spätestens nach 6 h; seit v5 ruht die Frist von +1 K, solange der Bedarf besteht (höchstens 24 h, dann Hinweis „Heizkurve/Kaltpunkt prüfen“). Stellt nur die Verschiebung, nicht die Heizregelung; Teil der Verschiebungs-Arbitrierung mit Vorausschau und +1 K von „Deckel/Laufzeit“.',
+            zweck: 'Räume wirken nur als langsamer, kleiner Offset auf die Heizkurve (Lambda-Prinzip). Seit v3 (14.10.2026) entscheidet die Regel selbst aus den Räumen (eigenes Komfortband, geglätteter Wert, Verlauf per Regression, Lüften ausgefiltert, Werte bis 6 h alt, weil die Shelly nur bei Änderung melden); der Raumvorschlag der Phase 2 ist nur noch Vergleichskennzahl. +1 K nur bei Bedarf (ein Raum unter Minimum, der sich nicht erholt; seit v4 (15.10.2026, Entscheidung 5) nie aus einem Raum mit eigener Nachheizung (Einstellung „eigene Nachheizung“ der Karte Räume, Standard nur Kinderzimmer oben mit Radiator-Relais und Heizlüfter), bis v3 Kinderzimmer oben nur bei offenem Radiator-Relais; ein solcher Raum zählt weiter für −1 K, den Rückweg von −1 K und den Hinweis Wärmeverteilung), −1 K bei Überschuss (alle Räume mit Reserve über Minimum, einer über Maximum oder alle über der Bandmitte), bevorzugt in der Pause oder bei Vorlauf ≤ Soll, damit auch im Dauerlauf (kalte Nächte 600–970 min ohne Pause). Höchstens 1 K je Befehl. Ein Raum über Maximum und einer unter Minimum ist ein Wärmeverteilungsproblem: dann keine Verschiebung, sondern ein eigener Hinweis (hydraulischer Abgleich/Thermostatventile). Seit v5 (15.10.2026, Paket 2) zählt ein Raum mit Sonnenfenster (Einstellung „Sonnenfenster“ der Karte Räume, Standard Wohnzimmer mit Südwestfenster) nicht als Überschuss für −1 K, solange Sonne anliegt (11–18 Uhr, PV ≥ 20 % der Spitze der letzten 7 Tage oder Bewölkung unter 50 %) und er in den letzten 60 min bei stehender Wärmepumpe oder fallendem Vorlauf gestiegen ist; für Bedarf, Reserve und den Hinweis Wärmeverteilung zählt er immer. Zurück auf 0 K mit Hysterese, wenn der Bedarf gedeckt bzw. die Reserve verbraucht ist, spätestens nach 6 h; seit v5 ruht die Frist von +1 K, solange der Bedarf besteht (höchstens 24 h, dann Hinweis „Heizkurve/Kaltpunkt prüfen“). Stellt nur die Verschiebung, nicht die Heizregelung; Teil der Verschiebungs-Arbitrierung mit Vorausschau und +1 K von „Deckel/Laufzeit“. v6 (16.10.2026, Winterpaket, Forum LEISHA_WISSEN (b) 1): +1 K in der Pause ist ein Startbefehl (die Soll-Anhebung umgeht die Einschaltschwelle: 3969412, 4131809, 3935020; eigene Messung 11.10. 19:10) – in der Pause nur, wenn ein Start gewollt ist (Bedarfsraum unter Minimum UND Pause ≥ 20 min UND keine Kaltstart-Sperre bei Abtauwetter ≤ 4 °C); der Vorschlag heißt dann „startet die Wärmepumpe“. Sonst +1 K nur im Lauf.',
             eingaenge: ['Räume (Wert, Alter, eigenes Band, Verlauf, Lüften)', 'Raum-Einstellung „eigene Nachheizung“ (Kinderzimmer oben: Radiator-Relais und Heizlüfter, Tab Dashboard)', 'Raum-Einstellung „Sonnenfenster“ (Wohnzimmer) mit PV-Leistung (Venus), OWM-Bewölkung, Uhrzeit, Verdichter und Vorlauf der letzten 60 min', 'Verschiebung an der Anlage (TOP27) und Eigentümer (Arbitrierung)', 'Soll-Vorlauf, Heizkurve, natürliche Sollsprünge', 'Vorlauf, Rücklauf, Verdichter (Lauf/Pause)', 'Wirkzeit Raum (gemessen, sonst Annahme)', 'Raumvorschlag Phase 2 (nur Vergleich)'],
             sperren: ['anlauf', 'daten', 'stoerung', 'mqtt_sperre', 'abtauen', 'warmwasser', 'sanftanlauf', 'heizgrenze_aus', 'regler', 'vorrang', 'gegenrichtung', 'abstand', 'tageslimit', 'abkuehlzeit', 'takt', 'heizstab', 'abtausprung'],
             befehl: {name: 'SetZ1HeatRequestTemperature', topic: 'panasonic_heat_pump/commands/SetZ1HeatRequestTemperature'},
@@ -558,6 +598,7 @@ var ENGINE = (function () {
                 {key: 'lueftSperreMin', std: 60, einheit: 'min', herkunft: 'nach einem Lüftungssturz 60 min kein Bedarf aus diesem Raum; ANNAHME'},
                 {key: 'lueftKh', std: 1.0, einheit: 'K/h', herkunft: 'fällt ein Raum (Regression über 2 h) mit 1 K/h oder schneller, ist das kein Heizmangel (Auskühlen in der Pause 0,2–0,5 K/h), sondern Lüften oder offene Tür: kein Bedarf (Replay 09.10. 14:27: Wohnzimmer −2,3 K/h im geglätteten Wert); ANNAHME'},
                 {key: 'kurveRuhigMin', std: 10, einheit: 'min', herkunft: 'nicht im selben 5-min-Takt schreiben wie die Kurve: 10 min nach einem natürlichen Sollsprung warten (Regel-Review RE-2; 54 Sollwechsel in 5,3 Tagen, alle auf Minute ≡ 0 mod 5, 19 Abstände < 30 min)'},
+                {key: 'startPauseMin', std: 20, einheit: 'min', herkunft: 'v6 (Winterpaket 16.10.2026): +1 K in der Pause ist ein Startbefehl (Soll-Anhebung umgeht die Einschaltschwelle, Forum 3969412, 4131809, 3935020; eigene Messung 11.10. 19:10 und 10.10. 18:20: Start sofort). In der Pause deshalb nur als bewusster Start: Bedarfsraum unter Minimum UND Pause seit mindestens 20 min UND keine Kaltstart-Sperre bei Abtauwetter (≤ 4 °C, Sperre „abtausprung“); sonst nur im Lauf; ANNAHME'},
                 {key: 'laufMinusK', std: 0, einheit: 'K', herkunft: '−1 K im Lauf nur bei Vorlauf ≤ Soll + 0 K: danach höchstens +1 K über dem neuen Soll, im ungünstigsten Fall (natürlicher Sollsprung −1 K an der Rundungsgrenze) +2 K; gemessen 07.–13.10.: nach −1 K kein Stopp bis +2,25 K (18 von 18), Stopp ab +2,5 K nach 11–14 min. In Dauerläufen (≥ 300 min, ab Minute 30) lag der Vorlauf in 54 % der Minuten höchstens 1 K über Soll (Regel-Review RE-1). Sonst in der Pause'},
                 {key: 'abtauAtC', std: 3, einheit: '°C', herkunft: 'Regel-Review RE-6: unter 3 °C −1 K nur, wenn der Rücklauf mindestens rlMinC bleibt (Servicehandbuch J: Heizstab beim Abtauen ab Wassereintritt < 27 °C; Forum: die Leisha schaltet den Heizstab dafür nicht mehr zu, 4185332/4879325 – vorsorglich)'},
                 {key: 'rlMinC', std: 28, einheit: '°C', herkunft: 'Rücklauf mindestens 28 °C für −1 K unter abtauAtC (RE-6); ANNAHME'},
@@ -576,7 +617,7 @@ var ENGINE = (function () {
                 {key: 'sonneWolkenMax', std: 50, einheit: '%', herkunft: 'Sonne liegt an (ohne PV-Wert oder als zweites Zeichen): OWM-Bewölkung unter 50 %; ANNAHME'},
                 {key: 'sonneAnstiegK', std: 0.1, einheit: 'K', herkunft: 'Sonnenfenster: der Raum stieg in den letzten 60 min um mindestens 0,1 K (geglätteter Wert), obwohl der Verdichter mindestens 30 von 60 min stand oder der Vorlauf um mindestens 0,5 K fiel (15.10.: Wohnzimmer 16–20 Uhr 23,6 → 24,75 °C bei stehender Wärmepumpe); gilt 60 min nach dem letzten solchen Anstieg; ANNAHME'}
             ],
-            erwartung: '+1 K: Soll-Vorlauf +1 K binnen 6 min (5-min-Raster); in der Pause startet der Verdichter sofort, wenn der Vorlauf dann bei ≤ neuer Soll −3,25 K liegt (10.10. 18:20, 11.10. 19:10), im Lauf steigt die Stoppschwelle (bei Quiet 0 und Vorlauf unter Soll Hochlauf, 11.10. 03:10: +48 % Strom); Strom +2,5–3 % (8,5 W/K). −1 K: Startschwelle 1 K tiefer (Start bei Soll −3,25 K mit ~9 min Verzug, gemessen), Pause länger, Lauf endet 1 K früher. Raumwirkung: Wirkzeit-Messung, solange sie fehlt nicht gemessen.',
+            erwartung: '+1 K: Soll-Vorlauf +1 K binnen 6 min (5-min-Raster); in der Pause ist +1 K ein Startbefehl (Soll-Anhebung umgeht die Einschaltschwelle, Forum 3969412/4131809; 10.10. 18:20, 11.10. 19:10) und kommt nur als gewollter Start, im Lauf steigt die Stoppschwelle (bei Quiet 0 und Vorlauf unter Soll Hochlauf, 11.10. 03:10: +48 % Strom); Strom +2,5–3 % (8,5 W/K). −1 K: Startschwelle 1 K tiefer (Start bei Soll −3,25 K mit ~9 min Verzug, gemessen), Pause länger, Lauf endet 1 K früher. Raumwirkung: Wirkzeit-Messung, solange sie fehlt nicht gemessen.',
             rueckweg: 'Automatisch zurück auf 0 K: +1 K, sobald die Bedarfsräume 30 min am Stück ≥ Minimum + 0,3 K liegen (frühestens nach der Wirkzeit); −1 K sofort bei einem Raum unter Minimum oder wenn der knappste Raum 15 min unter Minimum + 0,2 K liegt; spätestens nach 6 h (+1 K: die Frist ruht, solange der Bedarf besteht, höchstens 24 h, dann Hinweis „Heizkurve/Kaltpunkt prüfen“); „Zurücksetzen“ jederzeit.',
             prognose: {p: 0.7, h: [60, 120, 240], text: 'Ohne +1 K bleibt ein Bedarfsraum unter seinem Minimum'},
             prognoseMinus: {p: 0.7, h: [120, 240, 360], text: 'Ohne −1 K bleibt das Haus überheizt (Reserve über Minimum, ein Raum über Maximum oder alle über der Bandmitte; seit v5 kein Raum mit Sonnenfenster in der Sonne als Auslöser)'},
@@ -596,6 +637,8 @@ var ENGINE = (function () {
                     {k: 'stabil', kz: up ? 'Bedarf stabil' : 'Überschuss stabil', t: (up ? 'Bedarf' : 'Überschuss') + ' seit mindestens ' + c.stabilMin + ' min', tn: (up ? 'Bedarf' : 'Überschuss') + ' erst seit ' + stab + ' von ' + c.stabilMin + ' min (' + L.code + ')', ok: stab >= c.stabilMin, ist: stab, soll: c.stabilMin, op: '>=', u: 'min', dyn: true},
                     {k: 'kurve', kz: 'Kurve ruhig', t: 'kein natürlicher Sollsprung in den letzten ' + c.kurveRuhigMin + ' min', tn: 'natürlicher Sollsprung um ' + hhmm(d.kurveChg) + ' (nicht im selben 5-min-Takt schreiben wie die Kurve)', ok: ruhig || !!rs.prop}   // nur fuer den Zeitpunkt des Vorschlags
                 ];
+                var SG = up && !d.running && d.zustand !== 'heizgrenze' ? startGewollt(d, c) : null;   // v6 (Winterpaket): +1 K in der Pause = Startbefehl (im Heizgrenze-Aus sperrt "heizgrenze_aus")
+                if (SG) { cond.push({k: 'start', kz: 'Start gewollt', t: SG.t, tn: SG.tn, ok: SG.ok}); }
                 if (!up) {
                     cond.push({k: 'untergrenze', kz: 'Soll-Vorlauf neu', t: 'Soll-Vorlauf bleibt mindestens ' + de(c.minVlC, 0) + ' °C', tn: 'Untergrenze: Soll-Vorlauf würde ' + de(sollNeu, 0) + ' °C (mindestens ' + de(c.minVlC, 0) + ' °C)', ok: have(sollNeu) && sollNeu >= c.minVlC - 1e-9, ist: r2(sollNeu), soll: c.minVlC, op: '>=', u: '°C', dyn: true});
                     if (d.running) { cond.push({k: 'vorlauf', kz: 'Vorlauf ≤ Soll', t: 'Vorlauf höchstens ' + sg(c.laufMinusK, 1) + ' K zum Soll (sonst in der Pause)', tn: 'Vorlauf ' + sg(vlS, 2) + ' K zum Soll: −1 K erst in der Pause oder bei Vorlauf ≤ Soll (danach ' + sg(have(vlS) ? vlS + 1 : null, 2) + ' K über dem neuen Soll)', ok: have(vlS) && vlS <= c.laufMinusK + 1e-9, ist: r2(vlS), soll: c.laufMinusK, op: '<=', u: 'K', dyn: true}); }
@@ -604,15 +647,15 @@ var ENGINE = (function () {
                 var bed = up ? L.bedL.map(function (x) { return x.r.id; }) : [], lead = up ? (L.bedL[0] ? L.bedL[0].r.name : '') : (L.ueberA[0] ? L.ueberA[0].r.name : (L.warmst ? L.warmst.r.name : ''));
                 var wz = wirkzeit(d, up ? 1 : -1, c), p2 = d.korr && have(num(d.korr.v)) ? ' · Phase 2: ' + sg(num(d.korr.v), 0) + ' K' : '';
                 var erw = up ? (d.running ? 'Soll-Vorlauf +1 K binnen 6 min; im Lauf steigt die Stoppschwelle um 1 K (Lauf länger)' + (have(vlS) && vlS < 0.5 && d.q === 0 ? ', bei Quiet 0 und Vorlauf unter dem neuen Soll fährt der Verdichter hoch (11.10. 03:10: +48 % Strom)' : '')
-                                         : 'Soll-Vorlauf +1 K binnen 6 min; in der Pause startet der Verdichter ' + (have(vlS) && vlS - 1 <= -START.sollK ? 'sofort (Vorlauf dann ' + sg(vlS - 1, 2) + ' K zum neuen Soll; gemessen 10.10. 18:20, 11.10. 19:10)' : '~1 K früher (Startschwelle Soll −3,25 K)'))
+                                         : 'startet die Wärmepumpe: Soll-Vorlauf +1 K binnen 6 min, die Soll-Anhebung umgeht die Einschaltschwelle (Forum 3969412, 4131809; gemessen 10.10. 18:20, 11.10. 19:10), danach Lauf mit 1 K höherer Stoppschwelle')
                               : (d.running ? 'Soll-Vorlauf −1 K binnen 6 min; Vorlauf danach ' + sg(have(vlS) ? vlS + 1 : null, 2) + ' K über dem neuen Soll: kein Stopp erwartet (gemessen bis +2,25 K: 18 von 18)'
                                            : 'Soll-Vorlauf −1 K binnen 6 min; Startschwelle 1 K tiefer, die Pause wird länger (Start bei Soll −3,25 K, Verzug ~' + de(d.startM ? d.startM.verzug : START.verzugStd, 0) + ' min, gemessen), der nächste Lauf endet 1 K früher');
                 erw += '; Strom ' + (up ? '+' : '−') + '2,5–3 % (8,5 W/K); Raumwirkung ' + (wz.gemessen ? 'nach ~' + de(wz.min, 0) + ' min (Wirkzeit gemessen)' : 'nicht gemessen (Annahme ' + de(wz.min, 0) + ' min)');
-                return {cond: cond, halt: 0, wert: ziel, von: d.shift, dir: up ? 'soll_hoch' : 'soll_runter', lead: lead, bed: bed, hart: komfortNot(d, up ? 1 : -1), maxDauerMin: c.maxDauerMin,
+                return {cond: cond, halt: 0, wert: ziel, von: d.shift, dir: up ? 'soll_hoch' : 'soll_runter', lead: lead, bed: bed, hart: komfortNot(d, up ? 1 : -1), maxDauerMin: c.maxDauerMin, startBefehl: !!SG,
                         sprungHz: up && d.running && have(vlS) && vlS < 0.5 ? (d.hc === 0 ? 15 : (d.q === 0 ? 6 : 0)) : null,          // +1 K mit Hochlauf: Efficiency/Quiet 0 gemessen +6 Hz (11.10. 03:10), Comfort faehrt auf 30-35 Hz
                         erwartung: erw,
-                        was: 'Heizkurve ' + sg(d.shift, 0) + ' → ' + sg(ziel, 0) + ' K (Soll-Vorlauf ' + de(d.soll, 0) + ' → ' + de(sollNeu, 0) + ' °C)',
-                        warum: (up ? 'Bedarf' : 'Überschuss') + ' seit ' + stab + ' min: ' + L.code + (d.running ? '' : ' · Pause') + p2};
+                        was: 'Heizkurve ' + sg(d.shift, 0) + ' → ' + sg(ziel, 0) + ' K (Soll-Vorlauf ' + de(d.soll, 0) + ' → ' + de(sollNeu, 0) + ' °C)' + (SG ? '; startet die Wärmepumpe' : ''),
+                        warum: (up ? 'Bedarf' : 'Überschuss') + ' seit ' + stab + ' min: ' + L.code + (d.running ? '' : (SG ? ' · Pause seit ' + de(SG.p, 0) + ' min: +1 K startet die Wärmepumpe (Soll-Anhebung umgeht die Einschaltschwelle)' : ' · Pause')) + p2};
             }
         },
         {
@@ -676,17 +719,17 @@ var ENGINE = (function () {
             }
         },
         {
-            id: 'heizregelung', ver: 2, kachel: 'Heizregelung', kurz: 'Heizregelung', name: 'Heizregelung (Comfort/Efficiency)', art: 'befehl', groesse: 'hc', richtung: 'mehr_leistung', prio: 4,
-            basis: 'heizregelung|v1', basisMinus: 'heizregelung|v1|eff',
-            zweck: 'Stellt die Heizregelung (SetHeatingControl 0 = Comfort, 1 = Efficiency). Ziel ist Efficiency, solange alle Räume mit Reserve im Band liegen, kein Heizstab-Risiko besteht und kein Abtau-Rückstand aufzuholen ist. Der Unterschied liegt nur in den trägen Phasen (Messung 07.–14.10.): Comfort fährt nach dem Start sofort 30–35 Hz, Efficiency bleibt bei 16–17 Hz und geht erst ab Laufminute 39–46 zeitweise auf 21–26 Hz; nach dem Abtauen hält Efficiency ~20 min niedrig (Forum 189605: L5 4582615, L7 4095732), Comfort fährt hoch. Bei 16–17 Hz mitten im Lauf ändert ein Wechsel die Frequenz nicht (12.10. 18:28, 13.10. 07:07), nur die Pumpe (Comfort→Efficiency 1750 → 2850–2900 U/min, kein Stopp). Comfort kostet beim Hochlauf COP (ab 28 Hz korrigiert −3 %, roh −5…−15 % gegen 16–17 Hz). Deshalb Comfort nur bei echtem Komfortbedarf (wie Quiet-Freigabe v3: Raum unter Minimum oder auf dem Weg dorthin, Heizstab-Nähe, Abtau-Rückstand, Boost von Hand), solange Efficiency träge ist (Anlaufphase bis Laufminute 45, nach dem Abtauen, Heizstab-Nähe), Vorlauf und Rücklauf Rückstand haben und der Quiet-Deckel den Hochlauf zulässt – bindet der Deckel, zuerst die Quiet-Freigabe (eine Leistungsänderung zur Zeit). Zurück nach Efficiency, wenn der Bedarf 15 min gedeckt ist (Hysterese), spätestens nach 4 h, in beiden Fällen erst in der Pause (im Lauf springt die Pumpe auf 2850–2900 U/min; die Kosten von Comfort entstehen erst beim nächsten Start). Steht Comfort ohne Regel (von Hand), schlägt sie Efficiency vor, sobald der Bedarf 15 min gedeckt ist, der Wechsel von Hand mindestens 2 h zurückliegt, der Quiet-Deckel den Comfort-Hochlauf überhaupt zulässt und der gemessene COP von Efficiency nicht mehr als 10 % unter Comfort liegt. Kein Wechsel in der Startphase; Sperre „Frequenzsprung bei Abtauwetter“ (Pseudo-Abtauung nach langem Niedriglauf). v2 (15.10.2026, Entscheidung 5): Bedarf wie Quiet-Freigabe v4, ein Raum mit eigener Nachheizung ist kein Comfort-Bedarf; für „Bedarf gedeckt“ zählt er weiter.',
-            eingaenge: ['Heizregelung (Heating_Control) und Wechsel von Hand', 'Verdichterfrequenz, Laufzeit, Lauf/Pause', 'Soll-/Ist-Vorlauf, Rücklauf und Ziel-Spreizung', 'Bedarf wie Quiet-Freigabe v4 (Räume ohne eigene Nachheizung, Verlauf, Heizstab-Nähe, Abtau-Rückstand, Boost)', 'Quiet-Stufe und Deckel je Stufe', 'Heizstab (Heater_On_Outdoor_Temp, Heater_Start_Delta, Heater_Delay_Time)', 'Abtauen (Ende)', 'Räume (Reserve über Minimum)'],
+            id: 'heizregelung', ver: 3, kachel: 'Heizregelung', kurz: 'Heizregelung', name: 'Heizregelung (Comfort/Efficiency)', art: 'befehl', groesse: 'hc', richtung: 'mehr_leistung', prio: 4,
+            basis: 'heizregelung|v3', basisMinus: 'heizregelung|v1|eff',
+            zweck: 'Stellt die Heizregelung (SetHeatingControl 0 = Comfort, 1 = Efficiency). Ziel ist Efficiency, solange alle Räume mit Reserve im Band liegen, kein Heizstab-Risiko besteht und kein Abtau-Rückstand aufzuholen ist. Der Unterschied liegt nur in den trägen Phasen (Messung 07.–14.10.): Comfort fährt nach dem Start sofort 30–35 Hz, Efficiency bleibt bei 16–17 Hz und geht erst ab Laufminute 39–46 zeitweise auf 21–26 Hz; nach dem Abtauen hält Efficiency ~20 min niedrig (Forum 189605: L5 4582615, L7 4095732), Comfort fährt hoch. Bei 16–17 Hz mitten im Lauf ändert ein Wechsel die Frequenz nicht (12.10. 18:28, 13.10. 07:07), nur die Pumpe (Comfort→Efficiency 1750 → 2850–2900 U/min, kein Stopp). Comfort kostet beim Hochlauf COP (ab 28 Hz korrigiert −3 %, roh −5…−15 % gegen 16–17 Hz). Deshalb Comfort nur bei echtem Komfortbedarf (wie Quiet-Freigabe v3: Raum unter Minimum oder auf dem Weg dorthin, Heizstab-Nähe, Abtau-Rückstand, Boost von Hand), solange Efficiency träge ist (Anlaufphase bis Laufminute 45, nach dem Abtauen, Heizstab-Nähe), Vorlauf und Rücklauf Rückstand haben und der Quiet-Deckel den Hochlauf zulässt – bindet der Deckel, zuerst die Quiet-Freigabe (eine Leistungsänderung zur Zeit). Zurück nach Efficiency, wenn der Bedarf 15 min gedeckt ist (Hysterese), spätestens nach 4 h, in beiden Fällen erst in der Pause (im Lauf springt die Pumpe auf 2850–2900 U/min; die Kosten von Comfort entstehen erst beim nächsten Start). Steht Comfort ohne Regel (von Hand), schlägt sie Efficiency vor, sobald der Bedarf 15 min gedeckt ist, der Wechsel von Hand mindestens 2 h zurückliegt, der Quiet-Deckel den Comfort-Hochlauf überhaupt zulässt und der gemessene COP von Efficiency nicht mehr als 10 % unter Comfort liegt. Kein Wechsel in der Startphase; Sperre „Frequenzsprung bei Abtauwetter“ (Pseudo-Abtauung nach langem Niedriglauf). v2 (15.10.2026, Entscheidung 5): Bedarf wie Quiet-Freigabe v4, ein Raum mit eigener Nachheizung ist kein Comfort-Bedarf; für „Bedarf gedeckt“ zählt er weiter. v3 (16.10.2026, Winterpaket, Forum LEISHA_WISSEN (b) 2/3): kein Comfort-Vorschlag binnen 30 min nach dem Abtauende (Comfort fährt nach dem Abtauen sofort hoch, der Verdampfer ist nach 5 min wieder bereift: Abtauspirale 4554672, 4537905), keiner in den ersten 45 Laufminuten bei WP-Außentemperatur ≤ 4 °C (Comfort-Kaltstart: die L fährt dann unabhängig vom Soll mit 67–68 Hz an, Rohr −20 °C, Abtauung nach 35 min: 4005690, 3474343, 4006429) und bei Abtauwetter (−5 bis unter 10 °C, Feuchte ≥ 80 % oder Rohr außen ≤ 0 °C) nur bei Heizstab-Nähe – alles über die Sperre „Frequenzsprung bei Abtauwetter oder Kaltstart“. Der Auslöser „Efficiency träge nach dem Abtauen“ (Abtau-Rückstand als Comfort-Bedarf) entfällt: nach dem Abtauen bleibt Efficiency, die Quiet-Freigabe darf stufenweise öffnen. Rückweg nach Efficiency unverändert (in der Pause).',
+            eingaenge: ['Heizregelung (Heating_Control) und Wechsel von Hand', 'Verdichterfrequenz, Laufzeit, Lauf/Pause', 'Soll-/Ist-Vorlauf, Rücklauf und Ziel-Spreizung', 'Bedarf wie Quiet-Freigabe v4 (Räume ohne eigene Nachheizung, Verlauf, Heizstab-Nähe, Abtau-Rückstand, Boost)', 'Quiet-Stufe und Deckel je Stufe', 'Heizstab (Heater_On_Outdoor_Temp, Heater_Start_Delta, Heater_Delay_Time)', 'Abtauen (Ende)', 'Räume (Reserve über Minimum)', 'Abtauwetter: OWM-Feuchte, Rohr außen (Outside_Pipe_Temp), WP-Außentemperatur'],
             sperren: ['anlauf', 'daten', 'stoerung', 'mqtt_sperre', 'abtauen', 'warmwasser', 'laufbeginn', 'vorrang', 'gegenrichtung', 'abstand', 'tageslimit', 'abkuehlzeit', 'takt', 'abtausprung'],
             befehl: {name: 'SetHeatingControl', topic: 'panasonic_heat_pump/commands/SetHeatingControl'},
             schwellen: [
                 {key: 'laufMin', std: 15, einheit: 'min', herkunft: 'kein Wechsel in der Startphase (Auftrag 14.10.): Pumpenspitze der Startroutine 11–16 min nach jedem Start (Messung 07.–13.10.); Comfort davor brächte nichts, was nicht schon ein Start in Comfort brächte'},
                 {key: 'heizstabVorlaufMin', std: 5, einheit: 'min', herkunft: 'wie Quiet-Freigabe: bei Heizstab-Nähe endet die Startphase Heater_Delay_Time − 5 min − Haltezeit (hier Laufminute 7), der Vorschlag kommt 5 min vor der Heizstab-Freigabe; ANNAHME'},
                 {key: 'haltHeizstabMin', std: 3, einheit: 'min', herkunft: 'Heizstab-Nähe: kurze Haltezeit (wie Quiet-Freigabe); ANNAHME'},
-                {key: 'traegeMin', std: 45, einheit: 'min', herkunft: 'Efficiency träge: Comfort nur bis Laufminute 45 – Efficiency hielt nach dem Start 16–17 Hz und ging erst ab Laufminute 39–46 zeitweise auf 21–26 Hz (5 von 7 längeren Läufen, 07.–13.10.); danach regelt sie bei Rückstand selbst hoch (Boost 10.10. Laufminute 68, Efficiency: Quiet 3 → 0, 29 Hz nach 1 min, 34 Hz nach 2 min). Ausnahmen: Abtau-Rückstand und Heizstab-Nähe; ANNAHME'},
+                {key: 'traegeMin', std: 45, einheit: 'min', herkunft: 'Efficiency träge: Comfort nur bis Laufminute 45 – Efficiency hielt nach dem Start 16–17 Hz und ging erst ab Laufminute 39–46 zeitweise auf 21–26 Hz (5 von 7 längeren Läufen, 07.–13.10.); danach regelt sie bei Rückstand selbst hoch (Boost 10.10. Laufminute 68, Efficiency: Quiet 3 → 0, 29 Hz nach 1 min, 34 Hz nach 2 min). Ausnahme: Heizstab-Nähe (bis v2 auch der Abtau-Rückstand, seit v3 nicht mehr: Abtauspirale); ANNAHME'},
                 {key: 'traegeHz', std: 21, einheit: 'Hz', herkunft: 'Efficiency träge = Verdichter höchstens 21 Hz (bei Frost höchstens Mindestfrequenz + 1 Hz, 25/35 Hz ab −4/−10 °C, Forum 189605 F1-a): alle 21 Efficiency-Starts 08.–14.10. mit 16–17 Hz bis Laufminute 15 (davon 9 mit Quiet 0, dort bis Laufminute 30 höchstens 20 Hz), zeitweise 21–26 Hz; Comfort-Starts sofort 30–35 Hz (12.10. 21:32: 35 Hz bei 6 °C, 13.10. 11:58: 31 Hz bei 13 °C)'},
                 {key: 'mehrHz', std: 3, einheit: 'Hz', herkunft: 'Quiet-Deckel lässt den Hochlauf zu: Quiet 0 oder Deckel der Stufe mindestens 3 Hz über der jetzigen Frequenz (wie Quiet-Freigabe); sonst bindet der Deckel auch Comfort (13.10. 21:00 Comfort/Quiet 3: 17 Hz; 16:29 Comfort/Quiet 2: 21 Hz) → zuerst die Quiet-Freigabe'},
                 {key: 'vlRueckK', std: 1.5, einheit: 'K', herkunft: 'Vorlauf mindestens 1,5 K unter Soll (wie Quiet-Freigabe): ohne Rückstand ändert Comfort die Frequenz nicht (12.10. 18:28 und 13.10. 07:07 Efficiency → Comfort bei 16 Hz am Soll: 16,6 → 16,6 Hz); ANNAHME'},
@@ -696,7 +739,10 @@ var ENGINE = (function () {
                 {key: 'rueckRlK', std: 0.5, einheit: 'K', herkunft: 'Bedarf gedeckt: Rücklauf höchstens 0,5 K unter Soll (wie Quiet-Freigabe); ANNAHME'},
                 {key: 'komfortK', std: 0.3, einheit: 'K', herkunft: 'Efficiency nur mit Reserve: alle Räume (Wert bis 6 h alt) mindestens 0,3 K über Minimum (wie notK); ANNAHME'},
                 {key: 'heizstabHystK', std: 1, einheit: 'K', herkunft: 'kein Heizstab-Risiko: Außen mindestens Heater_On_Outdoor_Temp + heaterMarginK (2 K) + 1 K, solange Comfort steht (Hysterese wie der Heizregelungs-Hinweis; die alte Warnung flackerte bei 4,0 °C, 74 Ereignisse in 6 Tagen); ANNAHME, keine Frostdaten'},
-                {key: 'abtauNachMin', std: 30, einheit: 'min', herkunft: 'nach dem Abtauen 30 min kein Wechsel nach Efficiency: Comfort holt den Abtau-Rückstand auf (Abtau-Rückstand als Bedarf wie Quiet-Freigabe v3: 30 min, Vorlauf ≥ 3 K unter Soll; Forum 189605 4582615, 4095732, 4096011); ANNAHME, ohne eigene Abtau-Daten'},
+                {key: 'abtauNachMin', std: 30, einheit: 'min', herkunft: 'nach dem Abtauen 30 min kein Comfort-Vorschlag (v3, Winterpaket: Comfort springt nach dem Abtauen auf 50–68 Hz, der Verdampfer ist nach 5 min wieder bereift, Abtauspirale 4554672, 4537905, 4230879) und – wie bisher – kein Wechsel nach Efficiency (Rückweg unverändert); ANNAHME, ohne eigene Abtau-Daten'},
+                {key: 'kaltstartAtC', std: 4, einheit: '°C', herkunft: 'Kaltstart (v3): bei WP-Außentemperatur ≤ 4 °C kein Comfort in den ersten kaltstartMin Laufminuten. Die L fährt im Comfort bei ≤ +4 °C unabhängig vom Soll mit der Band-Höchstfrequenz an (L7 67–68 Hz, gemessen 76 Hz, Rohr −20 °C, Abtauung nach 35 min: 4005690, 4005591, 3474343); Sprungstelle 4/5 °C (4515271); ein sanfter Start halbiert den Strom (4006429). Eigene Messung: kein Start unter 4 °C bis 16.10.'},
+                {key: 'kaltstartMin', std: 45, einheit: 'min', herkunft: 'Kaltstart (v3): Comfort bleibt bis zum Ziel 20–45 min oben (4005690); danach gilt ohnehin traegeMin (Laufminute 45). ANNAHME'},
+                {key: 'heizstabVorrang', std: 0, einheit: 'ja/nein', herkunft: 'v3 (Winterpaket): 0 = Heizstab-Nähe übergeht nur die Abtauwetter-Sperre (Comfort bei Abtauwetter nur bei Heizstab-Nähe), nicht „30 min nach dem Abtauen“ und nicht den Kaltstart (Auftrag 16.10. wörtlich); 1 = Heizstab-Nähe übergeht auch diese beiden (Abwägung Heizstab gegen Abtauspirale; Zwilling-Vergleich im Bericht winterpaket/BERICHT.md); Nutzerentscheidung offen'},
                 {key: 'copTol', std: 0.10, einheit: 'Anteil', herkunft: 'Veto gegen Efficiency: kein Vorschlag nach Efficiency, wenn ihr COP bei derselben Quiet-Stufe und im selben Außenband mehr als 10 % unter dem von Comfort liegt (nur wenn beide copMinMin Minuten haben, Nutzerentscheidung 13.10.2026; wie das COP-Veto von Deckel/Laufzeit). Stand 14.10.: Comfort Quiet 0 bei 3…11 °C 7–12 % über Efficiency (je 2,3 h, stabile Minuten ab Laufminute 15, korrigiert; nicht belastbar: Tageszeit, Durchfluss 13,6 gegen 15,1 l/min, Pth ±10 %)'},
                 {key: 'nurPause', std: 1, einheit: 'ja/nein', herkunft: 'Wechsel nach Efficiency (Vorschlag und Rückweg) nur in der Pause: im Lauf springt die Pumpe in ≤ 1 min von 1750 auf 2850–2900 U/min, Durchfluss 13,4 → 23,0 l/min (08.10. 10:03, 12.10. 22:01), über dem Wunsch des Nutzers (~19 l/min wegen Geräuschen an den Heizkörpern); die Kosten von Comfort entstehen erst beim nächsten Start (Hochlauf 30–35 Hz), mitten im Lauf bei 16–17 Hz ändert der Modus die Frequenz nicht. 0 = auch im Lauf; ANNAHME'},
                 {key: 'handRuheMin', std: 120, einheit: 'min', herkunft: 'nach einem Wechsel von Hand (Heizregelung-Schalter) 2 h kein Vorschlag zurück, außer Notfall (Heizstab-Nähe, Raum ≥ 0,3 K unter Minimum): der Nutzer schaltete 08.–13.10. siebenmal selbst (08.10. 10:02, 12.10. 18:26 und 22:00, 13.10. 07:06, 15:29, 15:40, 22:43); kein Pendeln gegen den Nutzer; ANNAHME'},
@@ -717,13 +763,13 @@ var ENGINE = (function () {
                 if (d.hc === 0 && AH && AH.applied && AH.applied.rule === 'heizregelung' && AH.applied.w === 0) { return {inaktiv: 'Comfort (Heizregelung) steht; zurück auf Efficiency über den Rückweg'}; }   // kein zweiter Weg zurueck neben dem Rueckweg
                 var hand = H.hand && H.hand.w === d.hc && now - H.hand.t < c.handRuheMin * MIN ? H.hand : null;          // Wechsel von Hand auf den jetzigen Modus: 2 h Ruhe (ausser Notfall)
                 if (d.hc === 1) {
-                    if (!B.ja) { return {inaktiv: 'Efficiency ohne Bedarf'}; }                     // Normalzustand: kurz (Datensatzgroesse; Efficiency ist das Ziel)
+                    if (!B.jaHc) { return {inaktiv: B.ja ? 'Efficiency nach dem Abtauen: kein Comfort (Abtauspirale); den Abtau-Rückstand holt die Quiet-Freigabe stufenweise auf' : 'Efficiency ohne Bedarf'}; }   // Normalzustand: kurz (Datensatzgroesse; Efficiency ist das Ziel); v3: Abtau-Rueckstand ist kein Comfort-Bedarf
                     var lm = H.lm, cap = H.cap || {}, zHz = d.q === 0 ? Q0_HZ : (have(cap.hz) ? cap.hz : null);
                     var cond = [
                         {k: 'lauf', kz: 'Verdichter läuft', t: 'Verdichter läuft', tn: 'Verdichter steht (' + zTxt(d.zustand) + ')', ok: d.running},
                         {k: 'laufMin', kz: 'Laufzeit', t: 'Lauf seit mindestens ' + lm + ' min', tn: 'Startphase: Lauf erst ' + de(d.runMin, 0) + ' von ' + lm + ' min', ok: d.runMin >= lm, ist: r2(d.runMin), soll: lm, op: '>=', u: 'min', dyn: true},
-                        {k: 'bedarf', kz: 'Bedarf', t: B.ja ? 'Bedarf: ' + B.txt : 'Bedarf (Raum unter Minimum oder auf dem Weg dorthin, Heizstab-Nähe, Abtau-Rückstand, Boost von Hand)', tn: 'kein Bedarf: ' + (B.keinTxt || '–'), ok: !!B.ja},
-                        {k: 'traege', kz: 'Efficiency träge', t: 'Efficiency träge: Verdichter höchstens ' + H.traegeHz + ' Hz ' + (B.abtau ? 'nach dem Abtauen' : (B.heizstab ? 'bei Heizstab-Nähe' : 'bis Laufminute ' + c.traegeMin)),
+                        {k: 'bedarf', kz: 'Bedarf', t: B.jaHc ? 'Bedarf: ' + B.txtHc : 'Bedarf (Raum unter Minimum oder auf dem Weg dorthin, Heizstab-Nähe, Boost von Hand)', tn: 'kein Bedarf: ' + (B.keinTxt || '–'), ok: !!B.jaHc},
+                        {k: 'traege', kz: 'Efficiency träge', t: 'Efficiency träge: Verdichter höchstens ' + H.traegeHz + ' Hz ' + (B.heizstab ? 'bei Heizstab-Nähe' : 'bis Laufminute ' + c.traegeMin),
                          tn: !have(d.hz) || d.hz > H.traegeHz ? 'Verdichter bei ' + de(d.hz, 0) + ' Hz (Efficiency regelt schon hoch)' : 'Laufminute ' + de(d.runMin, 0) + ': Efficiency regelt ab Laufminute ' + c.traegeMin + ' selbst hoch', ok: !!H.traege},
                         {k: 'deckel', kz: 'Quiet-Deckel', t: d.q === 0 ? 'Quiet 0: kein Deckel' : 'Quiet ' + d.q + ' lässt bis ' + de(cap.hz, 0) + ' Hz zu', tn: 'Quiet ' + d.q + ' deckelt bei ' + de(cap.hz, 0) + ' Hz: zuerst die Quiet-Freigabe', ok: !!H.capOk},
                         {k: 'vlRueck', kz: 'Vorlauf-Rückstand', t: 'Vorlauf mindestens ' + de(c.vlRueckK, 1) + ' K unter Soll', tn: 'Vorlauf ' + rueckTxt(d.vlRueck) + ' (Schwelle ' + de(c.vlRueckK, 1) + ' K darunter)', ok: have(d.vlRueck) && d.vlRueck >= c.vlRueckK, ist: r2(d.vlRueck), it: rueckTxt(d.vlRueck), soll: c.vlRueckK, op: '>=', u: 'K', dyn: true},
@@ -734,7 +780,7 @@ var ENGINE = (function () {
                             sprungHz: have(zHz) && have(d.hz) ? zHz - d.hz : null,                    // Sperre "Frequenzsprung bei Abtauwetter": Comfort faehrt auf 30-35 Hz (unter Quiet 1/2 bis zum Deckel)
                             erwartung: 'Comfort fährt sofort hoch: Verdichter mindestens ' + de(have(d.hz) ? d.hz + 6 : null, 0) + ' Hz binnen 5 min (bis ' + (d.q === 0 ? '30–35 Hz' : de(cap.hz, 0) + ' Hz, Deckel Quiet ' + d.q) + '), elektrische Leistung +100 W oder mehr; Vorlauf holt den Rückstand in Minuten auf statt nach Laufminute 39–46 (Comfort-Starts 12.10. 21:32 und 13.10. 11:58: 31–35 Hz, Soll −1 K nach 2–6 min; Wechsel im Lauf mit Rückstand nicht gemessen); Pumpe bleibt ΔT-geregelt; COP ab 28 Hz korrigiert −3 % gegen 16–17 Hz',
                             was: 'Heizregelung Efficiency → Comfort',
-                            warum: 'Efficiency hält ' + de(d.hz, 0) + ' Hz bei Vorlauf ' + de(d.vlRueck, 1) + ' K und Rücklauf ' + de(d.rlRueck, 1) + ' K unter Soll, Lauf ' + de(d.runMin, 0) + ' min, ' + (d.q === 0 ? 'Quiet 0' : 'Quiet ' + d.q + ' bis ' + de(cap.hz, 0) + ' Hz') + '; Bedarf: ' + B.txt};
+                            warum: 'Efficiency hält ' + de(d.hz, 0) + ' Hz bei Vorlauf ' + de(d.vlRueck, 1) + ' K und Rücklauf ' + de(d.rlRueck, 1) + ' K unter Soll, Lauf ' + de(d.runMin, 0) + ' min, ' + (d.q === 0 ? 'Quiet 0' : 'Quiet ' + d.q + ' bis ' + de(cap.hz, 0) + ' Hz') + '; Bedarf: ' + B.txtHc};
                 }
                 // Comfort ohne Regel (von Hand oder vor dem Einspielen): Efficiency, sobald der Bedarf gedeckt ist (Ziel Efficiency)
                 var gk = H.atNah === null ? 'Heizstab-Grenze unbekannt (Heater_On_Outdoor_Temp fehlt)' : 'Außen ' + de(d.at, 0) + ' °C: Heizstab-Nähe (Efficiency erst ab Heater_On_Outdoor_Temp + ' + de(H.grenzeK, 0) + ' K)';
@@ -795,7 +841,10 @@ var ENGINE = (function () {
                     quietHaltMin: 60, quietGegenMin: 240,             // Quiet-Arbitrierung (Quiet-Freigabe, Deckel/Laufzeit), wie die Verschiebung (ANNAHME)
                     hcHaltMin: 60, hcGegenMin: 240,                   // Heizregelung (Comfort/Efficiency, 14.10.2026): wie Quiet (ANNAHME)
                     notfallMin: 10,                                   // Quiet-Notfall (Heizstab-Naehe, Raum >= notK unter Minimum) ueberbrueckt Mindestabstand, Wartezeit, Vorrang und Gegenrichtung nach 10 min (Regel-Review B4; ANNAHME)
-                    abtauAtMin: -5, abtauAtMax: 4, abtauNiedrigMin: 60, abtauNiedrigHz: 20, sprungHz: 8};   // Frequenzsprung bei Abtauwetter (Forum 189605 F6-a, 4540566/4230252/4581423; ANNAHME)
+                    abtauAtMin: -5, abtauAtMax: 10, abtauNiedrigMin: 60, abtauNiedrigHz: 20, sprungHz: 8,   // Frequenzsprung bei Abtauwetter (Forum 189605 F6-a, 4540566/4230252/4581423; Winterpaket 16.10.2026: bis unter 10 °C, 4011622/3456847/4466101)
+                    abtauRhMin: 80, abtauRohrC: 0, abtauAtOhne: 4,    // Abtauwetter: Feuchte (OWM) >= 80 % oder Rohr aussen (Outside_Pipe_Temp) <= 0 °C; ohne beide Werte wie bisher bis 4 °C (ANNAHME)
+                    stufeMin: 30,                                     // Quiet-Freigabe bei Abtauwetter: Mindestabstand zwischen zwei Stufen (EEV ~2,5 h zum Einschwingen, 4886674; Vorschlag des Nutzers 30 min)
+                    anlQK: 5, anlQMin: 25, anlQSperreMin: 30};        // Anlage beendet Quiet selbst (Fluester-Prioritaet "Leistung": Wasser 30 min 5 K unter Soll, 3469566): Rueckstand >= anlQK - 0,5 K seit anlQMin min; danach 30 min keine Freigabe
     function thermoK(cfg) { var c = cfg && cfg.rules && cfg.rules.quiet_strecken; return c && have(c.thermoStoppK) ? c.thermoStoppK : 2.75; }
     // Bedarf fuer die Quiet-Stufe (Quiet-Freigabe v2; fuer "Deckel/Laufzeit" ein Ausschlussgrund): Raum unter Minimum, Raum faellt auf das Minimum zu (Prognose),
     // Heizstab-Naehe, Boost von Hand. Ein Vorlauf unter Soll allein ist kein Bedarf.
@@ -846,6 +895,8 @@ var ENGINE = (function () {
         o.abtau = !!(d.running && d.hc === 1 && S.defrostEnd && !d.defrost && d.now - S.defrostEnd <= c.abtauNachMin * MIN && have(d.vlRueck) && d.vlRueck >= c.abtauRueckK);
         if (o.abtau) { parts.push('Abtau-Rückstand (Abtauen bis ' + hhmm(S.defrostEnd) + ', Vorlauf ' + de(d.vlRueck, 1) + ' K unter Soll; Efficiency hält danach ~20 min niedrig)'); }
         o.ja = parts.length > 0; o.txt = parts.join(', ');
+        o.jaHc = !!(o.raum || o.trend || o.heizstab || o.boost);                        // Comfort-Bedarf (Heizregelung v3, Winterpaket 16.10.2026): ohne den Abtau-Rueckstand (nach dem Abtauen bleibt Efficiency, die Quiet-Freigabe oeffnet stufenweise)
+        o.txtHc = parts.filter(function (x) { return x.indexOf('Abtau-Rückstand') !== 0; }).join(', ');
         if (!o.ja && o.eigen.length) { o.keinTxt = o.eigen.map(function (r) { return r.name; }).join(', ') + ' unter Minimum, aber eigene Nachheizung; sonst ' + o.keinTxt; }
         o.notfall = o.heizstab || !!(rb && rb.t <= rb.min - d.notK);
         return o;
@@ -916,14 +967,14 @@ var ENGINE = (function () {
         o.hochOk = d.q === 0 || (have(o.cap.hz) && o.cap.hz >= c.hochHz);                     // Comfort kann ueberhaupt hochfahren (sonst kostet Comfort nichts: kein Effizienz-Gewinn durch Efficiency)
         var mh = have(d.at) ? minHzAt(d, d.at).hz : null;                                        // Frost: Efficiency haelt dann die Mindestfrequenz (25/35 Hz, Forum F1-a)
         o.traegeHz = have(mh) ? Math.max(c.traegeHz, mh + 1) : c.traegeHz;
-        o.traege = !!(d.running && have(d.hz) && d.hz <= o.traegeHz && (d.runMin < c.traegeMin || B.abtau || B.heizstab));
+        o.traege = !!(d.running && have(d.hz) && d.hz <= o.traegeHz && (d.runMin < c.traegeMin || B.heizstab));   // v3 (Winterpaket 16.10.2026): "Efficiency traege nach dem Abtauen" ist kein Ausloeser mehr (Abtauspirale)
         o.rueck = have(d.vlRueck) && d.vlRueck >= c.vlRueckK && have(d.rlRueck) && d.rlRueck >= c.rlRueckK;
         // COP-Veto gegen Efficiency (Daten je Heizregelung x Quiet x Aussenband, Takt-Messung): nur wenn beide Modi copMinMin Minuten haben
         var band = have(d.at) ? bandOf(d.at) : null, tc = d.tc || taktCfg(null), kq = have(d.q) ? d.q : '?';
         var aC = band && d.copSum ? d.copSum['Comfort|' + kq + '|' + band] : null, aE = band && d.copSum ? d.copSum['Efficiency|' + kq + '|' + band] : null;
         o.copC = aC && aC[2] >= tc.copMinMin && aC[0] > 0 ? aC[1] / aC[0] : null; o.copE = aE && aE[2] >= tc.copMinMin && aE[0] > 0 ? aE[1] / aE[0] : null; o.copBand = band;
         o.copVeto = have(o.copC) && have(o.copE) && o.copE < o.copC * (1 - c.copTol);
-        o.lage = (d.hc === 1 && B.ja && o.traege && o.capOk && o.rueck && d.runMin >= o.lm) ? 1 : ((d.hc === 0 && o.deckMin >= c.rueckMin && o.hochOk && !o.copVeto && (!d.running || c.nurPause !== 1)) ? -1 : 0);
+        o.lage = (d.hc === 1 && B.jaHc && o.traege && o.capOk && o.rueck && d.runMin >= o.lm) ? 1 : ((d.hc === 0 && o.deckMin >= c.rueckMin && o.hochOk && !o.copVeto && (!d.running || c.nurPause !== 1)) ? -1 : 0);
         o.hand = S.hcHandT ? {t: S.hcHandT, w: S.hcHandW} : null;
         return o;
     }
@@ -1221,6 +1272,8 @@ var ENGINE = (function () {
         d.rooms = (inp.rooms || []).map(function (r) { return {id: r.id, name: r.name || r.id, t: num(r.t), age: num(r.age), min: num(r.min), max: num(r.max), valid: !!r.valid && have(num(r.t)), active: r.active !== false, eigen: r.eigeneHeizung === true, sf: r.sonnenfenster === true}; });   // eigen: Raum mit eigener Nachheizung (OPT_cfg.rooms[].eigeneHeizung): kein Bedarf fuer das ganze Haus
         d.pv = (have(num(inp.pv)) && num(inp.pv) >= 0 && num(inp.pv) <= 60000) ? num(inp.pv) : null;                // PV-Leistung W (Venus, OPT_plan_in.pvNow; Sonnenfenster)
         d.wolken = (have(num(inp.wolken)) && num(inp.wolken) >= 0 && num(inp.wolken) <= 100) ? num(inp.wolken) : null;  // OWM-Bewoelkung % (frisch)
+        d.rh = (have(num(inp.rh)) && num(inp.rh) >= 0 && num(inp.rh) <= 100) ? num(inp.rh) : null;                 // OWM-Feuchte % (frisch; Abtauwetter, Winterpaket 16.10.2026)
+        d.pipeOut = (have(num(inp.pipeOut)) && num(inp.pipeOut) > -60 && num(inp.pipeOut) < 60) ? num(inp.pipeOut) : null;   // Outside_Pipe_Temp (Rohr aussen; -128 = kein Fuehler)
         d.roomsActive = d.rooms.filter(function (r) { return r.active; }).length;
         d.roomsValid = d.rooms.filter(function (r) { return r.active && r.valid; }).length;
         d.roomBelow = d.rooms.filter(function (r) { return r.active && r.valid && have(r.min) && r.t < r.min; }).sort(function (a, b) { return (a.t - a.min) - (b.t - b.min); });
@@ -1264,13 +1317,15 @@ var ENGINE = (function () {
         var rm0 = (d.running && R.on && R.start) ? (now - R.start) / MIN : 0;
         if (d.fresh) { S.niedrigSeit = (d.running && have(d.hz) && d.hz <= cfg.locks.abtauNiedrigHz && !num(inp.defrost)) ? (S.niedrigSeit || (rm0 >= 2 ? now : 0)) : 0; }
         d.niedrigSeit = S.niedrigSeit || 0;
-        d.abtauLage = !!(d.niedrigSeit && now - d.niedrigSeit >= cfg.locks.abtauNiedrigMin * MIN && have(d.at) && d.at >= cfg.locks.abtauAtMin && d.at <= cfg.locks.abtauAtMax);   // Abtauwetter nach langem Niedriglauf
+        d.abtauW = abtauWetter(d, cfg.locks);                                            // Abtauwetter (Winterpaket 16.10.2026): -5 bis unter 10 °C und Feuchte >= 80 % oder Rohr aussen <= 0 °C
+        d.abtauLage = !!(d.niedrigSeit && now - d.niedrigSeit >= cfg.locks.abtauNiedrigMin * MIN && d.abtauW.ja);   // Abtauwetter nach langem Niedriglauf
         S.starts = S.starts.filter(function (t) { return now - t <= 24 * 60 * MIN; });
         S.runs = S.runs.filter(function (r) { return now - r[0] <= 48 * 60 * MIN; }).slice(-20);
         d.runMin = (d.running && R.on && R.start) ? (now - R.start) / MIN : 0;
         d.lastRunMin = S.runs.length ? S.runs[S.runs.length - 1][1] : null;
         d.lastRunThermo = S.runs.length ? S.runs[S.runs.length - 1][2] === 1 : false;      // aeltere Zustaende ohne Stopp-Art: unbekannt = kein Takt-Beleg
         d.lastPauseMin = have(S.lastPause) ? S.lastPause : null;
+        d.pauseNow = (!d.running && S.lastStop) ? (now - S.lastStop) / MIN : null;          // Minuten seit dem letzten Stopp (+1 K in der Pause = Startbefehl, Winterpaket 16.10.2026)
         d.starts3h = S.starts.filter(function (t) { return now - t <= 3 * 60 * MIN; }).length;
         // Sollvorlauf erreicht: 3 min am Stueck >= Soll -1 K, ab Minute 15, nicht bei Abtauen/Warmwasser; ein Sollsprung nach oben (>= 1 K) setzt zurueck
         if (d.running && have(d.soll)) {
@@ -1306,6 +1361,18 @@ var ENGINE = (function () {
                 if (ap0 && ap0.rule === AQ.owner && ap0.w === d.qFrom && sgnOf(d.q - d.qFrom) === sgnOf(ap0.w - ap0.von)) { AQ.applied.von0 = have(ap0.von0) ? ap0.von0 : ap0.von; AQ.applied.ts0 = ap0.ts0 || ap0.ts; }
             }
         }
+        // Winterpaket 16.10.2026: jede Quiet-Senkung (Stufenabstand der Freigabe bei Abtauwetter) und "Anlage hat Quiet beendet" (Fluester-Prioritaet "Leistung":
+        // die Anlage beendet Quiet selbst, wenn das Wasser 30 min 5 K unter Soll liegt, Forum 3469566): Quiet sinkt ohne Vorschlag einer Regel, waehrend Vor- oder
+        // Ruecklauf seit anlQMin min mindestens anlQK - 0,5 K unter Soll liegen. Danach anlQSperreMin keine weitere Freigabe (Sperre "abtausprung"), kein "verpasst".
+        var rk = Math.max(have(d.vlRueck) ? d.vlRueck : -99, have(d.rlRueck) ? d.rlRueck : -99), LQ = cfg.locks;
+        if (d.fresh) { S.q5Seit = (d.running && rk >= LQ.anlQK - 0.5) ? (S.q5Seit || now) : 0; }
+        d.anlQNeu = false;
+        if (d.qChanged && have(d.qFrom) && d.q < d.qFrom) {
+            S.qDownT = now; S.qDownVon = d.qFrom;
+            if (!d.qBy && S.q5Seit && now - S.q5Seit >= LQ.anlQMin * MIN) { S.anlQ = {t: now, von: d.qFrom, zu: d.q, k: r2(rk), seit: S.q5Seit}; d.anlQNeu = true; }
+        }
+        if (d.qChanged && S.anlQ && d.q > d.qFrom && d.q === S.anlQ.von && !d.qBy && now - S.anlQ.t <= 6 * 60 * MIN) { S.anlQ.wieder = now; d.anlQWieder = true; }   // Anlage nimmt Quiet wieder auf (bei 3 K Unterschreitung, 3469566)
+        d.anlQ = S.anlQ || null;
         // Heizregelung (14.10.2026): Wechsel erkennen; uebernimmt die Anlage den laufenden Vorschlag der Regel "Heizregelung", gehoert der Modus ihr (applied).
         // Jeder andere Wechsel ist "von Hand" (Schalter im Dashboard, Bediengeraet), ausser dem Rueckweg einer Uebernahme der Regel (zurueck auf ihren Ausgangswert).
         d.hcChanged = false;
@@ -1375,8 +1442,24 @@ var ENGINE = (function () {
             if (id === 'daten' && !d.fresh) { add(id, have(num(inp.hpAge)) ? 'letzte Meldung vor ' + de(num(inp.hpAge), 0) + ' min' : 'keine Meldung'); }
             if (id === 'mqtt_sperre' && num(inp.block) === 1) { add(id); }
             if (id === 'stoerung' && d.err) { add(id, d.err + (/H23/i.test(d.err) ? ': Kältemittelfühler Innengerät, L-spezifisch' : '')); }
-            if (id === 'abtausprung' && e && have(e.sprungHz) && e.sprungHz >= L.sprungHz && !e.heizstab && have(d.at) && d.at >= L.abtauAtMin && d.at <= L.abtauAtMax && d.niedrigSeit && now - d.niedrigSeit >= L.abtauNiedrigMin * MIN) {
-                add(id, 'Außen ' + de(d.at, 0) + ' °C, seit ' + mins(now - d.niedrigSeit) + ' min höchstens ' + L.abtauNiedrigHz + ' Hz, Sprung ~' + de(e.sprungHz, 0) + ' Hz: Pseudo-Abtauung möglich');
+            if (id === 'abtausprung' && e) {                                               // Winterpaket 16.10.2026: Abtauwetter bis unter 10 °C mit Feuchte/Rohr, Stufen, Comfort, Startbefehl, Anlage beendet Quiet
+                var AW = d.abtauW || {ja: false, txt: ''}, hsN = !!e.heizstab, cH = cfg.rules.heizregelung || {};
+                var frei = g === 'quiet' && have(e.wert) && have(d.q) && e.wert < d.q, comfort = g === 'hc' && e.wert === 0, plusLauf = e.dir === 'soll_hoch' && have(e.sprungHz) && e.sprungHz > 0;
+                if (have(e.sprungHz) && e.sprungHz >= L.sprungHz && !hsN && AW.ja && d.niedrigSeit && now - d.niedrigSeit >= L.abtauNiedrigMin * MIN) {
+                    add(id, 'Abtauwetter: ' + AW.txt + ', seit ' + mins(now - d.niedrigSeit) + ' min höchstens ' + L.abtauNiedrigHz + ' Hz, Sprung ~' + de(e.sprungHz, 0) + ' Hz: Pseudo-Abtauung möglich');
+                } else if (frei && AW.ja && d.running && S.qDownT && now - S.qDownT < L.stufeMin * MIN) {
+                    add(id, 'Abtauwetter: Quiet nur stufenweise, zuletzt ' + hhmm(S.qDownT) + ' gesenkt (Quiet ' + S.qDownVon + ' → ' + d.q + '), nächste Stufe frühestens ' + hhmm(S.qDownT + L.stufeMin * MIN) + ' (Expansionsventil)', S.qDownT + L.stufeMin * MIN);
+                } else if ((frei || comfort || plusLauf) && !hsN && S.anlQ && now - S.anlQ.t < L.anlQSperreMin * MIN) {
+                    add(id, 'Anlage hat Quiet um ' + hhmm(S.anlQ.t) + ' selbst beendet (Flüster-Priorität „Leistung“): bis ' + hhmm(S.anlQ.t + L.anlQSperreMin * MIN) + ' keine weitere Freigabe', S.anlQ.t + L.anlQSperreMin * MIN);
+                } else if (comfort && !(hsN && cH.heizstabVorrang === 1) && (d.defrost || (S.defrostEnd && now - S.defrostEnd < cH.abtauNachMin * MIN))) {
+                    add(id, d.defrost ? 'Abtauen läuft: danach ' + cH.abtauNachMin + ' min kein Comfort (Abtauspirale)' : 'Abtauen bis ' + hhmm(S.defrostEnd) + ': bis ' + hhmm(S.defrostEnd + cH.abtauNachMin * MIN) + ' kein Comfort (Abtauspirale)', d.defrost ? null : S.defrostEnd + cH.abtauNachMin * MIN);
+                } else if (comfort && !(hsN && cH.heizstabVorrang === 1) && have(d.at) && d.at <= cH.kaltstartAtC && d.running && d.runMin < cH.kaltstartMin) {
+                    add(id, 'Kaltstart: Außen (WP) ' + de(d.at, 0) + ' °C, Lauf ' + de(d.runMin, 0) + ' von ' + cH.kaltstartMin + ' min: Comfort führe mit der Höchstfrequenz an', S.run.start + cH.kaltstartMin * MIN);
+                } else if (comfort && AW.ja && !hsN) {
+                    add(id, 'Abtauwetter: ' + AW.txt + ': Comfort nur bei Heizstab-Nähe');
+                } else if (e.startBefehl && AW.ja && have(d.at) && d.at <= cH.kaltstartAtC) {
+                    add(id, 'Kaltstart bei Abtauwetter: ' + AW.txt + ': +1 K in der Pause wäre ein Startbefehl');
+                }
             }
             if (id === 'abtauen' && (d.defrost || (S.defrostEnd && now - S.defrostEnd < L.afterDefrostMin * MIN))) { add(id, d.defrost ? 'läuft' : 'noch ' + Math.ceil((S.defrostEnd + L.afterDefrostMin * MIN - now) / MIN) + ' min', d.defrost ? null : S.defrostEnd + L.afterDefrostMin * MIN); }
             if (id === 'warmwasser' && (d.dhw || (S.dhwEnd && now - S.dhwEnd < L.afterDhwMin * MIN))) { add(id, d.dhw ? 'läuft' : 'noch ' + Math.ceil((S.dhwEnd + L.afterDhwMin * MIN - now) / MIN) + ' min', d.dhw ? null : S.dhwEnd + L.afterDhwMin * MIN); }
@@ -1613,7 +1696,41 @@ var ENGINE = (function () {
                 if (H.length >= c.deckelHaltMin) { var held = Math.min.apply(null, H.map(function (h) { return h[1]; })); C[5] = have(C[5]) ? Math.max(C[5], held) : held; }
             } else { T.hh = []; }
         } else { T.hh = []; }
+        abzugStep(T, x, at, pel, pth, now, c);
         return T;
+    }
+    // Abtau-Abzug (Winterpaket 16.10.2026, Forum LEISHA_WISSEN 6.1/10, (b) 8): Waerme waehrend Defrosting_State und beim Wiederaufheizen danach ist keine Nutzwaerme
+    // (der interne Zaehler bucht die Abtauwaerme sogar positiv, L5 4074654, 4752841). Je Tag und Aussenband alle Laufminuten ohne Warmwasser, getrennt nach
+    // normal / Abtauen / Wiederaufheizen (bis der Vorlauf wieder ABZ.wdK unter dem Wert vor dem Abtauen liegt, hoechstens ABZ.wdMaxMin): [Abtauungen, Wh el, Wh th] je Art
+    // und Minuten. "COP korrigiert um Abtauen" = Waerme der normalen Laufminuten / Strom aller Laufminuten (Strom korrigiert wie die COP-Matrix). Nur Kennzahl und Anzeige.
+    var ABZ = {wdK: 0.5, wdMaxMin: 30};
+    function abzugStep(T, x, at, pel, pth, now, c) {
+        var df = !!num(x.defrost), vlx = plausV('vl', x.vl), neuDf = false;
+        if (!T.abT || typeof T.abT !== 'object') { T.abT = {}; }
+        if (df && !T.dfOn) { T.dfOn = true; T.dfVor = have(T.vlPrev) ? T.vlPrev : vlx; neuDf = true; }
+        else if (!df && T.dfOn) { T.dfOn = false; T.wdBis = now + ABZ.wdMaxMin * MIN; T.wdZiel = have(T.dfVor) ? T.dfVor - ABZ.wdK : null; }
+        var art = df ? 1 : ((T.wdBis && now <= T.wdBis && (!have(vlx) || !have(T.wdZiel) || vlx < T.wdZiel)) ? 2 : 0);
+        if (!df && art === 0) { T.wdBis = 0; }
+        if (!df && have(vlx)) { T.vlPrev = vlx; }
+        if (!(T.on === true || df) || num(x.dhw) || !have(at) || !have(pel)) { return; }
+        var dk = ymd(now), D = T.abT[dk];
+        if (!D) { D = T.abT[dk] = {}; var keep = Object.keys(T.abT).sort().slice(-c.copTage); Object.keys(T.abT).forEach(function (kk) { if (keep.indexOf(kk) < 0) { delete T.abT[kk]; } }); }
+        var b = bandOf(at), A = D[b] = D[b] || [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];      // [Abtauungen, el0, th0, el1, th1, el2, th2, min0, min1, min2]
+        if (neuDf) { A[0]++; }
+        A[1 + art * 2] += pel / 60; A[2 + art * 2] += (have(pth) ? pth : 0) / 60; A[7 + art]++;
+    }
+    // {Band: {n, min, minAb, minWd, copOhne, copMit, abzug, abKWh (Waerme beim Abtauen, Vorzeichen wie gemeldet), wdKWh (Wiederaufheizen), elAbKWh}} ueber copTage Tage (kw wie copSumme; fehlt kw: Standard 80 W je Laufminute) und 'alle' (Summe)
+    function abtauKennzahl(T, c, now, kw) {
+        c = taktCfg(c); kw = kwOf(kw);
+        var D = (T && T.abT) || {}, von = have(now) ? ymd(now - (c.copTage - 1) * 24 * 60 * MIN) : '', sum = {}, out = {};
+        Object.keys(D).forEach(function (dk) { if (dk < von) { return; } Object.keys(D[dk]).forEach(function (b) { var a = D[dk][b], o = sum[b] = sum[b] || [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], g = sum.alle = sum.alle || [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]; for (var i = 0; i < 10; i++) { o[i] += a[i]; g[i] += a[i]; } }); });
+        Object.keys(sum).forEach(function (b) {
+            var a = sum[b], el0 = a[1] + a[7] * kw / 60, el = el0 + a[3] + a[5] + (a[8] + a[9]) * kw / 60;
+            var copO = el0 > 0 ? a[2] / el0 : null, copM = el > 0 ? a[2] / el : null;
+            out[b] = {n: a[0], min: a[7] + a[8] + a[9], minAb: a[8], minWd: a[9], copOhne: have(copO) ? r2(copO) : null, copMit: have(copM) ? r2(copM) : null,
+                      abzug: have(copO) && have(copM) && copO > 0 ? r2(1 - copM / copO) : null, abKWh: r2(a[4] / 1000), wdKWh: r2(a[6] / 1000), elAbKWh: r2((el - el0) / 1000)};
+        });
+        return out;
     }
     function quantil(a, p) { var v = a.slice().sort(function (x, y) { return x - y; }); if (!v.length) { return null; } var i = (v.length - 1) * p, lo = Math.floor(i), hi = Math.ceil(i); return v[lo] + (v[hi] - v[lo]) * (i - lo); }
     // [[Band-Untergrenze, 10-%-Quantil W th, n, monoton W th, Segment, Mindestfrequenz Hz]]; monoton = laufendes Minimum von warm nach kalt (stooklijn), seit 14.10.2026 getrennt je
@@ -1659,10 +1776,10 @@ var ENGINE = (function () {
     // Nachladen (13.10.): S.takt einmalig aus quiet-YYYY-MM.csv (Vormonat, laufender Monat) fuellen, damit Starts, Mindestleistung und COP sofort die vorhandenen
     // Tage zeigen. Rein: die Huelle liest die Dateien stueckweise (nur ganze Zeilen) und uebergibt den Text. Spalten und Minutenraster wie tools/engine_replay.buildInputs
     // (je Minute die letzte Zeile, Alter = Abstand zu ihr); mehrere Kopfzeilen-Versionen; Zeilen mit falscher Spaltenzahl oder rueckwaerts laufender Zeit entfallen.
-    var NL_SPALTEN = {hz: 'verdichter_hz', at: 'aussen', pel: 'leistung_el_w', pth: 'leistung_th_heisha_w', q: 'quiet_aktuell', hc: 'heizregelung', defrost: 'defrost', dhw: 'warmwasser', rl: 'ist_rl', soll: 'soll_vl', dT: 'spreizung_ziel'};
+    var NL_SPALTEN = {hz: 'verdichter_hz', at: 'aussen', pel: 'leistung_el_w', pth: 'leistung_th_heisha_w', q: 'quiet_aktuell', hc: 'heizregelung', defrost: 'defrost', dhw: 'warmwasser', rl: 'ist_rl', soll: 'soll_vl', dT: 'spreizung_ziel', vl: 'ist_vl'};
     function nlNeu(dateien, now) { return {laeuft: true, dateien: dateien, i: 0, pos: 0, kopf: null, prev: null, gridT: 0, zeilen: 0, minuten: 0, von: null, start: now}; }
     function nlZeit(s) { var m = /^(\d{4})-(\d\d)-(\d\d) (\d\d):(\d\d):(\d\d)/.exec(s); return m ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime() : null; }
-    function nlEmit(T, nl, t, c) { var p = nl.prev; nl.minuten++; return taktStep(T, {t: t, hpAge: (t - p.t) / MIN, hz: p.hz, at: p.at, pel: p.pel, pth: p.pth, q: p.q, hc: p.hc, defrost: p.defrost, dhw: p.dhw, rl: p.rl, soll: p.soll, dT: p.dT}, c); }
+    function nlEmit(T, nl, t, c) { var p = nl.prev; nl.minuten++; return taktStep(T, {t: t, hpAge: (t - p.t) / MIN, hz: p.hz, at: p.at, pel: p.pel, pth: p.pth, q: p.q, hc: p.hc, defrost: p.defrost, dhw: p.dhw, rl: p.rl, soll: p.soll, dT: p.dT, vl: p.vl}, c); }
     function nlZeilen(T, text, c) {
         var nl = T.nl, L = String(text || '').split('\n');
         for (var i = 0; i < L.length; i++) {
@@ -1823,7 +1940,7 @@ var ENGINE = (function () {
 
     // ------------------------------------------------------------------ Schnappschuss fuer den Datensatz (gerundet; reicht zum Nachspielen)
     var SNAP_KEYS = ['hpAge', 'hz', 'vl', 'rl', 'soll', 'dT', 'pel', 'pth', 'flow', 'pump', 'q', 'qPrio', 'hc', 'at', 'defrost', 'dhw', 'ss', 'rt', 'shift', 'heatMode', 'z1Sensor',
-                     'heaterI', 'heaterE', 'htrOnAT', 'htrStartDelta', 'htrDelay', 'heatOffAT', 'sollKurve', 'block', 'otherQ', 'otherShift', 'kzRad', 'err', 'pipeIn', 'kurve', 'pv', 'wolken'];   // err/pipeIn/kurve seit 14.10.2026, pv/wolken seit 15.10.2026 (Sonnenfenster)
+                     'heaterI', 'heaterE', 'htrOnAT', 'htrStartDelta', 'htrDelay', 'heatOffAT', 'sollKurve', 'block', 'otherQ', 'otherShift', 'kzRad', 'err', 'pipeIn', 'kurve', 'pv', 'wolken', 'rh', 'pipeOut'];   // err/pipeIn/kurve seit 14.10.2026, pv/wolken seit 15.10.2026 (Sonnenfenster), rh/pipeOut seit 16.10.2026 (Abtauwetter)
     function snapshot(inp) {
         var o = {};
         SNAP_KEYS.forEach(function (k) { var v = inp[k]; if (v === undefined || v === null || v === '') { return; } o[k] = typeof v === 'number' ? r2(v) : v; });
@@ -1915,6 +2032,11 @@ var ENGINE = (function () {
         hwStep(S, 'rohr', rohrBed, rohrBed ? 'Leitungstemperatur Innengerät ' + de(d.pipeIn, 1) + ' °C (unter ' + HW.rohrWarnC + ' °C): mögliche Vorstufe zu H23 (Forum 189605: 4693147)' : '', 5, 30, now, ev);
         var KFo = kurvenform(S, cfg);
         hwStep(S, 'kurvenform', !!KFo.hinweis, KFo.hinweis || '', 0, 0, now, ev);
+        // Winterpaket 16.10.2026: Anlage hat Quiet selbst beendet (Fluester-Prioritaet "Leistung", Forum 3469566) – Ereignis und Hinweis fuer anlQSperreMin; die Quiet-Freigabe
+        // gibt so lange nichts weiter frei (Sperre "abtausprung", entschuldigt: kein "verpasst"); nimmt die Anlage Quiet wieder auf, ein eigenes Ereignis
+        var AQx = S.anlQ, aqBed = !!(AQx && now - AQx.t < cfg.locks.anlQSperreMin * MIN);
+        hwStep(S, 'anlage_quiet', aqBed, aqBed ? 'Anlage hat Quiet beendet: Quiet ' + AQx.von + ' → ' + AQx.zu + ' um ' + hhmm(AQx.t) + ' ohne Befehl, Vor-/Rücklauf seit ' + mins(AQx.t - AQx.seit) + ' min ' + de(AQx.k, 1) + ' K unter Soll (Flüster-Priorität „Leistung“, Forum 3469566); bis ' + hhmm(AQx.t + cfg.locks.anlQSperreMin * MIN) + ' keine weitere Freigabe' : '', 0, 0, now, ev, 'optimierer_anlage');
+        if (d.anlQWieder && AQx) { ev.push(['optimierer_anlage', 'anlage_quiet: Anlage hat Quiet ' + AQx.von + ' um ' + hhmm(now) + ' wieder aufgenommen (Flüster-Priorität „Leistung“: bei 3 K Unterschreitung, 3469566)']); }
         // aktueller Vorschlag: Befehle vor Hinweisen, dann nach Prioritaet
         var act = RULES.filter(function (R) { return S.rules[R.id].prop; }).sort(function (a, b) { return (a.art === b.art ? 0 : (a.art === 'befehl' ? -1 : 1)) || a.prio - b.prio; });
         var prop = act.length ? S.rules[act[0].id].prop : null;
@@ -1965,6 +2087,8 @@ var ENGINE = (function () {
         if (d.raum && !d.raum.keine) { rec.abl.raum = d.raum.dir; if (d.raum.sonneL.length) { rec.abl.sonne = d.raum.sonneL.map(function (y) { return y.r.id; }); } }   // v5: Raeume mit Sonnenfenster in der Sonne                              // Raumeinfluss v3: Lage (+1 Bedarf, -1 Ueberschuss, 0) im Datensatz
         if (have(d.hc) && d.hcL && d.hcL.lage) { rec.abl.hc = d.hcL.lage; }                                   // Heizregelung: Lage +1 (Comfort-Bedarf in Efficiency) bzw. -1 (Comfort ohne Bedarf, Efficiency moeglich), nur wenn nicht 0
         if (d.hc === 0 && d.hcL && d.hcL.deckMin > 0) { rec.abl.hc_deck = Math.floor(d.hcL.deckMin); }          // in Comfort: Minuten "Bedarf gedeckt"
+        if (d.abtauW && d.abtauW.ja) { rec.abl.aw = 1; }                                                        // Winterpaket 16.10.2026: Abtauwetter (-5 bis unter 10 °C, Feuchte >= 80 % oder Rohr <= 0 °C)
+        if (d.anlQNeu) { rec.abl.anl_q = [d.anlQ.von, d.anlQ.zu]; }                                             // Anlage hat Quiet selbst beendet (Fluester-Prioritaet "Leistung")
         return {S: S, d: d, res: res, prop: prop, rec: rec, ev: ev, scores: sc, ende: ende, halten: halten, locks: locks, hc: hcInfo,
                 deckel: dq ? {q: d.q, hz: dq.hz, quelle: dq.quelle} : null, hinweise: hinweisListe(S), stoerung: d.err ? {code: d.err, seit: (S.hw && S.hw.stoerung && S.hw.stoerung.seit) || now} : null};
     }
@@ -2101,7 +2225,7 @@ var ENGINE = (function () {
         if (rule === 'heizregelung') {                                               // Vergleichslage: Comfort-Bedarf bzw. Comfort ohne Bedarf (ohne Haltezeit, ohne Wechsel von Hand)
             var Hc = d.hcL; if (!Hc || !have(d.hc)) { return null; }
             if (hebel === 'minus') { return (d.hc === 0 && Hc.deck) ? {dir: 'weniger_leistung', hzS: c.hochHz} : null; }
-            return (d.hc === 1 && d.running && d.runMin >= Hc.lm && d.bedQ && d.bedQ.ja && Hc.traege && Hc.capOk && Hc.rueck) ? {dir: 'mehr_leistung'} : null;
+            return (d.hc === 1 && d.running && d.runMin >= Hc.lm && d.bedQ && d.bedQ.jaHc && Hc.traege && Hc.capOk && Hc.rueck) ? {dir: 'mehr_leistung'} : null;   // v3: Comfort-Bedarf ohne Abtau-Rueckstand
         }
         if (rule === 'vorausschau') {                                                // Vergleichslage (v2): Vorhersage zeigt mindestens die halbe Schwelle Milderung, alle Raeume gueltig im Band (unabhaengig vom Gate)
             var dk = d.vsDk, act = d.rooms.filter(function (x) { return x.active; });
@@ -2739,6 +2863,7 @@ var ENGINE = (function () {
     return {VER: VER, SCORE_VER: SCORE_VER, RULES: RULES, RULE: RULE, LOCKS: LOCKS, LOCK_CFG: LOCK_CFG, SCORE: SCORE, WHITELIST: WHITELIST, APPLY: APPLY,
             brier: brier, hPunkte: hPunkte, vorschau: vorschau, bedarfK: bedarfK, VS_LIM: VS_LIM, PLAUS: PLAUS, tagesgang: tagesgang, defaults: defaults, mergeCfg: mergeCfg, newState: newState, fixState: fixState, step: step, report: report, STILLGELEGT: STILLGELEGT, UEB: UEB, uebStep: uebStep, uebSumme: uebSumme, HCW: HCW, hcHinweis: hcHinweis, TAKT: TAKT, TAKT_SCHWELLEN: TAKT_SCHWELLEN, taktCfg: taktCfg, taktNew: taktNew, taktStep: taktStep, taktKennzahlen: taktKennzahlen, mindestLeistung: mindestLeistung, copSumme: copSumme, copTabelle: copTabelle, COP_KORR: COP_KORR, copKw: copKw, pelKorr: pelKorr, korrTxt: korrTxt, bandOf: bandOf, modusOf: modusOf, nlNeu: nlNeu, nlZeilen: nlZeilen, nlEnde: nlEnde, HG: HG, heizgrenzeBeob: heizgrenzeBeob, LAG: LAG, lagMessen: lagMessen, lagStep: lagStep, KB: KB, kbTag: kbTag, kbStep: kbStep, snapshot: snapshot, unsnap: unsnap,
             checksum: checksum, newApply: newApply, applyRequest: applyRequest, applyTick: applyTick, fortsetzung: fortsetzung, gOfCmd: gOfCmd, iso: iso, ymd: ymd, zielDeckel: zielDeckel, zielFrei: zielFrei, deckelOf: deckelOf, deckelTab: deckelTab, DECKEL: DECKEL,
+            abtauKennzahl: abtauKennzahl, abtauWetter: abtauWetter, startGewollt: startGewollt, ABZ: ABZ, zielStufe: zielStufe,
             bedarfQ: bedarfQ, raumTrend: raumTrend, komfortSicher: komfortSicher, nutzenKurve: nutzenKurve, kindOf: kindOf, kaltQ: kaltQ, zielKalt: zielKalt, nachtMin: nachtMin, HL: HL, hochlaufSumme: hochlaufSumme,
             hhmm: hhmm, isoWeek: isoWeek, de: de, sg: sg,
             raumLage: raumLage, raumVerlauf: raumVerlauf, raumEnde: raumEnde, kurvenform: kurvenform, KF: KF, p2Summe: p2Summe, startModell: startModell, START: START, MINHZ: MINHZ, minHzOf: minHzOf, minHzTab: minHzTab,

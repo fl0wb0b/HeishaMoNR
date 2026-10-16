@@ -33,7 +33,7 @@ const PARAM = {
     // Verdichter
     hzMin: [16.5, 'Hz', 'M', 'Minimum 16–17 Hz (wechselnd) bei 1–15 °C'],
     hzMinFrost: [[[-10, 35], [-4, 25]], 'Hz', 'F', 'Mindestfrequenz L5: ab ≤ −4 °C 25 Hz, ab ≤ −10 °C 35 Hz, unabhängig vom Flüstermodus (4596796, 4593782, 4593801)'],
-    hzMaxTab: [[[-4, 59], [-3, 52], [5, 35], [11, 34], [13, 31], [15, 30]], 'Hz', 'M/F', 'Höchstfrequenz je AT: M Comfort/Quiet 0 35 Hz bei 6 °C, 31 Hz bei 13 °C, Boost 33–34 Hz bei 11 °C; F L5 +5 °C 35 Hz, +10 °C 30 Hz (4132106, 4134403), 52 Hz über −4 °C, 59 Hz ab −4 °C (4132106 M, 4132035 V/E)'],
+    hzMaxTab: [[[-4, 52], [4, 48], [9, 35], [99, 30]], 'Hz', 'F/M', 'Höchstfrequenz je WP-AT in Stufen (Winterpaket 16.10.2026, LEISHA_WISSEN (a)): ≤ −4 °C 52 Hz, −3…+4 °C 48 Hz (vorläufig; L5 48 Hz nach nächtlicher Abschaltung bei 2 °C 4517558, „5er 48 Hz bei +4 °C“ 4103634 niedrig), 5…9 °C 35 Hz (M: 35 Hz bei 6 °C; F 4132106), ab 10 °C 30 Hz (F L5 4134403; M 31–34 Hz bei 11–13 °C liegt knapp darüber); Sprungstelle 4/5 °C (L7 4515271); bis 15.10. linear interpoliert'],
     spike: [[33, 24], 'Hz', 'M', 'Startspitze Laufminute 0/1 (Median 32 Starts), unabhängig von Quiet (F L7 4187405: „Startspike trotzdem 34 Hz“)'],
     capQ3: [17, 'Hz', 'M', 'Quiet 3 hält 16–17 Hz (1–14 °C)'],
     capQ2kalt: [21, 'Hz', 'M', 'Quiet 2 bis 20–21 Hz bei 1–4 °C (12.10., 168 min)'],
@@ -76,6 +76,8 @@ const PARAM = {
     pumpeJeL: [117, 'U/min je l/min', 'M', 'Comfort → Efficiency: 1750 → 2870 U/min bei 13,4 → 23 l/min'],
     // Lüfter (nur Ausgabe)
     fanQ: [[330, 270, 270, 220], 'U/min', 'M', 'Lüfter am Minimum je Quiet 0/1/2/3 (Median; Forum L5 4504115 ähnlich)'],
+    fanKalt: [[110, 105, 105, 100], 'U/min', 'M', 'Lüfterstufe bei WP-AT ≤ fanKaltAtC: +110 (Q0) … +100 (Q3) U/min am Minimum (eigene Auswertung quiet-2026-10.csv 07.–15.10.: Q0 330 → 420–450, Q3 220 → 330–340 U/min bei 2–4 °C; L7 „Turbofan“ 490–540 U/min unter +4 °C 4903887, 4877511)'],
+    fanKaltAtC: [4, '°C', 'M/F', 'Lüfterstufe ab WP-AT ≤ 4 °C (eigene Messung; L7 Sprungstelle 4/5 °C 4515271)'],
     fanJeHz: [8, 'U/min je Hz', 'M', 'Lüfter-Zunahme je Hz über dem Minimum'],
     // Wasserkreis (Training: Simulation gegen Vor-/Rücklauf)
     cw: [0.55, 'kWh/K', 'M', 'Wärmespeicher Wasser + Heizkörper'],
@@ -104,18 +106,25 @@ const PARAM = {
     pipeTauMin: [3, 'min', 'A', 'Zeitkonstante des Rohrfühlers'],
     pipeSprungK: [0.7, 'K/Hz', 'F/A', 'Pseudo-Abtauung: Frequenzsprung über +30 % des langsamen Mittels senkt das Rohr (L5 4540566: 1 → −16 °C; L7 4230252; Schwelle 4868882 V)'],
     pipeSprungAnteil: [0.3, '–', 'F', 'gefährlicher Sprung ab etwa +30 % (4868882, V)'],
-    pipeSlowMin: [30, 'min', 'A', 'Zeitkonstante des langsamen Frequenzmittels (träges Expansionsventil, F 4368657 E)'],
+    pipeSprungHz: [8, 'Hz', 'F', 'oder ab +8 Hz absolut über dem langsamen Mittel, je nachdem was zuerst greift: „+6 Hz meist ohne Einbruch, +10 Hz eher nicht“ (L7 4553013, 4868882); Winterpaket 16.10.2026'],
+    pipeSlowMin: [120, 'min', 'F/A', 'Zeitkonstante des langsamen Frequenzmittels = träges Expansionsventil: es öffnet höchstens 30 Halbschritte je 90 s und schließt nach einem Start mit kleiner Frequenz über ~2 h (Kältekreis eingeschwungen nach ~2 h 25 min: L7 4886674, 4549934, 4538558); Spanne 90–120 min, bis 15.10. 30 min (A)'],
     // Abtauen (keine eigenen Daten: Herkunft F/H/A)
-    abtauAtMax: [5, '°C', 'H', 'Abtau-Logik nur bei niedriger Außentemperatur (Handbuch J 15.2.2; Force-Defrost-Grenze 5 °C)'],
-    abtauLinie: [[-13.5, 0.6], '°C', 'F/A', 'Auslöser Rohr < a + b·(AT + 9): Anker „OutsidePipe 2 min unter −13/−14 °C bei −9 °C“ (4600685 E), Linie der L ~5 K höher als im Handbuch (4890839, 4371449)'],
+    abtauAtMax: [10, '°C', 'F', 'Abtau-Auslöser bis WP-AT unter 10 °C: Pseudoabtauungen bis 9 °C (L9 nach FM-Selbstabschaltung 4011622; 7 °C 4230815; 6 °C 3456847), über 10 °C nie (4466101); bis 15.10. 5 °C (Handbuch J Force-Defrost-Grenze)'],
+    abtauLinie: [[0.9, -6, -22.5, -5], '°C', 'H/F', 'Auslöser Rohr < min(d; max(c; a·WP-AT + b)) = Handbuchlinie y = 0,9·AT − 11 (begrenzt −27,5…−6 °C, Handbuch J 15.2.2, 3585656, 3585691) + 5 K, weil die L bis zu 5–6 K über der Linie auslöst (4371449, 4472442, 4890839); obere Grenze real −5 °C (Abtauung schon bei Rohr −6 °C, 4137878). Anker: −9 °C → −14,1 °C (4600685 ✓), 0 °C → −6 °C (3971807 ✓); bis 15.10. −13,5 + 0,6·(AT + 9)'],
     abtauHaltMin: [3, 'min', 'H', 'Rohr 3 min am Stück unter der Linie (Handbuch J 15.2.2)'],
     abtauMinHeizMin: [35, 'min', 'H/F', 'Heizzeit seit der letzten Abtauung > 35 min (Handbuch J; L7 4613622)'],
     abtauDauerMin: [8, 'min', 'F', 'L5: 8 min (4288323); J ~9 min (4598540), Handbuch max. 9,5 min'],
-    abtauWaermeKWh: [0.5, 'kWh', 'A', 'Wärmeentzug aus dem Heizwasser je Abtauung (im Forum nicht beziffert)'],
+    abtauWaermeKWh: [0.5, 'kWh', 'F/A', 'Wärmeentzug aus dem Heizwasser je Abtauung, Spanne 0,3–1,6 kWh: 1,6 kWh im Januar-Extrem, „sonst deutlich weniger“ (L7 3810731); 300 l × 2 K ≈ 0,7 kWh (4076731); WMZ ≤ 1 kWh für 3 Abtauungen (4084491); [J] Richtwert 0,4 kWh (4075412). 0,5 kWh = unteres Drittel (Heizkörper ohne Puffer). Der interne Wärmezähler bucht die Abtauwärme positiv (L5 4074654, 4752841): im Zwilling zählt Heat_Energy_Production beim Abtauen positiv, die Wärme des Wasserkreises (Heat_Power_Production_Extra) negativ'],
     abtauHz: [58, 'Hz', 'F', 'Abtauen bei ~58 Hz (L5 4092731, L7 4548650)'],
     abtauPelW: [1000, 'W', 'A', 'Stromaufnahme beim Abtauen (TOP16)'],
     nachAbtauEffMin: [20, 'min', 'F', 'Efficiency hält nach dem Abtauen ~20 min niedrige Frequenz (L5 4582615, L7 4095732)'],
     nachAbtauComfortHz: [50, 'Hz', 'F', 'nach dem Abtauen startet die L5 normalerweise mit ~50 Hz (4542523); hier 3 min, gedeckelt durch die Höchstfrequenz'],
+    startHochAtC: [4, '°C', 'F', 'Comfort-Kaltstart: bei WP-AT ≤ +4 °C fährt die L im Comfort unabhängig vom Soll mit hoher Frequenz an (L7 4005690, 4005591, 3474343, 3456847)'],
+    startHochHz: [67, 'Hz', 'F', 'Frequenz des Comfort-Kaltstarts: L7 67–68 Hz (gemessen bis 76 Hz, 620 U/min Lüfter, Heißgas ~80 °C, Rohr −20 °C, danach Abtauung; 4005690, 3474343); L5 unbekannt (48 Hz nach nächtlicher Abschaltung bei 2 °C, 4517558) – Auftrag Winterpaket: 67 Hz; nicht über den Quiet-Deckel (Quiet 1–3)'],
+    startHochBisK: [1, 'K', 'F/A', 'Comfort-Kaltstart bleibt oben, bis der Vorlauf Soll − 1 K erreicht (20–45 min bis zum Ziel, 4005690)'],
+    startHochMaxMin: [45, 'min', 'F/A', 'Comfort-Kaltstart höchstens 45 min (4005690: 20–45 min)'],
+    atExtVersatz: [0, 'K', 'F/A', 'externer Panasonic-Fühler: bei AT < 2 °C bewertet die Steuerung ihn zu warm (2–3 K über dem internen, L7/L9 4557101, 4716238, 4890713, 4890839). WP-AT = Physik-AT + v, v = 0 ab atExtAbC, linear bis atExtVersatz bei 0 °C und darunter; vorläufig 0 (messen: LEISHA (c) 3)'],
+    atExtAbC: [2, '°C', 'F', 'ab dieser AT liest der externe Fühler richtig (4716238)'],
     eisRate: [0.02, '1/(min·K)', 'A', 'Vereisung je min und K (Taupunkt − Rohr), wirkt als Rohrabsenkung 1 K je Einheit; kalibriert auf den Forum-Anker'],
     eisAnker: [[0, 90, 90], '°C, %, min', 'F/A', 'Kalibrieranker: bei 0 °C, 90 % Feuchte und Mindestlast Abtauung alle ~90 min (L5 gedämmt „worst case ~90 min“ 4879325 E; L9 0,8 °C 94 %: 35 min und 1:40 h 4132154)'],
     eisSchmelzJeK: [0.02, '1/(min·K)', 'A', 'Abbau der Vereisung im Stillstand je K über 0 °C'],
@@ -124,7 +133,7 @@ const PARAM = {
     hsFrei: [1, '0/1', 'M', 'heizstab_raum_frei = 1 im Protokoll; ob der Heizstab an der Anlage wirklich freigegeben ist, ist offen (L ab Werk aus, F 3957497)'],
     hsOnAT: [0, '°C', 'M', 'Heater_On_Outdoor_Temp 0 °C'],
     hsStartK: [-3, 'K', 'M', 'Heater_Start_Delta −3 K'],
-    hsStopK: [-1, 'K', 'A', 'Aus bei Vorlauf ≥ Soll − 1 K (Hysterese 2 K wie im Forum-Beispiel 4581693; Heater_Stop_Delta nicht im Protokoll)'],
+    hsStopK: [-2, 'K', 'H/F', 'Aus bei Vorlauf ≥ Soll − 2 K: Werkseinstellung Heizstab Aus −2 K (Handbuch J Z. 7049–7075), L7-Besitzer −5 °C / 30 min / Ein −4 K / Aus −2 K (4580843); Heater_Stop_Delta (TOP98) seit 15.10. im Protokoll; bis 15.10. −1 K (A)'],
     hsDelayMin: [15, 'min', 'M', 'Heater_Delay_Time 15 min nach Thermo-Ein'],
     hsPumpeMin: [9, 'min', 'H', 'nach 9 min Pumpenlauf (Handbuch J 14.6.1)'],
     hsSperreMin: [20, 'min', 'H', '20 min seit dem letzten Aus (Handbuch J 14.6.1)'],
@@ -141,7 +150,10 @@ function lerp(x, x0, y0, x1, y1) { return x1 === x0 ? y0 : y0 + (y1 - y0) * (x -
 function tab(T, x) { if (x <= T[0][0]) { return T[0][1]; } for (let i = 1; i < T.length; i++) { if (x <= T[i][0]) { return lerp(x, T[i - 1][0], T[i - 1][1], T[i][0], T[i][1]); } } return T[T.length - 1][1]; }
 function kurveSoll(P, at) { const k = P.kurve; if (at <= k[0]) { return k[3]; } if (at >= k[1]) { return k[2]; } return k[3] + (k[2] - k[3]) * (at - k[0]) / (k[1] - k[0]); }
 function hzMinAt(P, at) { for (let i = 0; i < P.hzMinFrost.length; i++) { if (at <= P.hzMinFrost[i][0]) { return P.hzMinFrost[i][1]; } } return P.hzMin; }
-function hzMaxAt(P, at) { return tab(P.hzMaxTab, at); }
+function stufe(T, x) { for (let i = 0; i < T.length; i++) { if (x <= T[i][0]) { return T[i][1]; } } return T[T.length - 1][1]; }
+function hzMaxAt(P, at) { return stufe(P.hzMaxTab, at); }                        // Winterpaket: Stufen statt Interpolation (Sprungstelle 4/5 °C)
+function atWP(P, at) { const v = P.atExtVersatz || 0; return v ? at + v * Math.max(0, Math.min(1, (P.atExtAbC - at) / Math.max(0.1, P.atExtAbC))) : at; }   // WP-AT aus der Physik-AT (externer Fühler)
+function abtauLinieAt(P, at) { const L = P.abtauLinie; return Math.min(L[3], Math.max(L[2], L[0] * at + L[1])); }
 function capOf(P, q, at) {
     const mn = hzMinAt(P, at), mx = hzMaxAt(P, at);
     let c = q === 0 ? mx : (q === 1 ? P.capQ1 : (q === 2 ? (at < P.capQ2grenze ? P.capQ2kalt : P.capQ2warm) : P.capQ3));
@@ -154,7 +166,7 @@ function pelOf(P, hz, at, rl) {                                                 
     const g = 1 - P.pelFrostAnteil * (1 - frostFaktor(P, at));
     return Math.max(80, P.pel0 + hz * (P.pelHz + P.pelRL * rl + P.pelAT * at) * g);
 }
-function fanOf(P, q, hz) { return hz > 0 ? P.fanQ[Math.max(0, Math.min(3, q))] + P.fanJeHz * Math.max(0, hz - P.hzMin) : 0; }
+function fanOf(P, q, hz, at) { const qq = Math.max(0, Math.min(3, q)); return hz > 0 ? P.fanQ[qq] + (at !== undefined && at !== null && at <= P.fanKaltAtC ? P.fanKalt[qq] : 0) + P.fanJeHz * Math.max(0, hz - P.hzMin) : 0; }   // at = WP-AT (Lüfterstufe ≤ 4 °C)
 function taupunkt(at, rh) { if (rh === null || rh === undefined || !(rh > 0)) { return -99; } const a = 17.62, b = 243.12, g = Math.log(Math.min(100, rh) / 100) + a * at / (b + at); return b * g / (a - g); }
 function flowEffOf(P, rt) { const f = P.flowEff; if (rt < f[0]) { return P.flowComfort; } if (rt < f[2]) { return f[1]; } if (rt < f[3]) { return lerp(rt, f[2], f[1], f[3], P.flowComfort); } return P.flowComfort; }
 function qrad(P, tw, tr) { const d = tw - tr; return d > 0 ? P.krad * Math.pow(d, P.nrad) * Math.max(0.2, 1 - (P.kv || 0) * (tr - P.tvRef)) : 0; }   // kW, tr = schneller Raumknoten an den Heizkörpern
@@ -187,11 +199,13 @@ function neu(P, init) {
 // c = {at, soll, vl, q, hc, rt, nachAbtau, comfortAb}; gibt {hz, lvl, ab} zurück (lvl = gehaltene Anhebung über dem Minimum, ab = Comfort hat schon abgeregelt)
 function regler(P, lvl, c) {
     const mn = hzMinAt(P, c.at), cap = capOf(P, c.q, c.at), e = c.vl - c.soll;
+    const hoch = c.hc === 0 && c.startHoch ? (c.q > 0 ? Math.max(mn, Math.min(P.startHochHz, cap)) : P.startHochHz) : null;   // Comfort-Kaltstart ≤ 4 °C (F 4005690): hohe Frequenz bis Soll − 1 K, höchstens 45 min
     if (c.rt < P.spike.length) {                                                  // Startspitze (unabhängig von Quiet)
         const sp = P.spike[c.rt];
         const lv = c.hc === 0 && e < P.regSenkK ? Math.max(0, cap - mn) : 0;
-        return {hz: Math.max(sp, mn + lv), lvl: lv, ab: false};
+        return {hz: Math.max(sp, mn + lv, hoch || 0), lvl: lv, ab: false};
     }
+    if (hoch !== null) { return {hz: hoch, lvl: Math.max(0, cap - mn), ab: false}; }
     if (c.nachAbtau < 3 && c.hc === 0) { return {hz: Math.max(mn, Math.min(P.nachAbtauComfortHz, hzMaxAt(P, c.at))), lvl: Math.max(0, cap - mn), ab: false}; }
     let ab = !!c.comfortAb;
     if (e >= P.regSenkK) { lvl = Math.max(0, lvl - P.regAbHzMin); ab = true; }
@@ -211,7 +225,8 @@ function regler(P, lvl, c) {
 // E = {t, at, rh, pv (kW PV als Sonnenmaß), shift, q, hc, sollHand (optional), th (optional: gemessenes Hausmittel statt Modell)}
 function schritt(S0, E, P) {
     const S = Object.assign({}, S0, {raeume: Object.assign({}, S0.raeume), rf: Object.assign({}, S0.rf), n: Object.assign({}, S0.n)});
-    const at = E.at, atI = Math.round(at), q = E.q === undefined || E.q === null ? 3 : E.q, hc = E.hc === undefined || E.hc === null ? 1 : E.hc, shift = E.shift || 0;
+    // at = Physik-AT (Haus, Kältekreis), aw/atI = WP-AT (Fühler: Kurve, Bänder, Abtau-Linie, Heizstab; Winterpaket: atExtVersatz)
+    const at = E.at, aw = atWP(P, at), atI = Math.round(aw), q = E.q === undefined || E.q === null ? 3 : E.q, hc = E.hc === undefined || E.hc === null ? 1 : E.hc, shift = E.shift || 0;
     // 1. Soll (5-min-Raster)
     if (S.soll === null || E.sollHand !== undefined && E.sollHand !== null || E.t - S.sollT >= P.sollRasterMin * MIN) {
         S.soll = E.sollHand !== undefined && E.sollHand !== null ? E.sollHand : Math.ceil(kurveSoll(P, atI) - 1e-9) + shift;
@@ -239,32 +254,35 @@ function schritt(S0, E, P) {
             const verzug = S.hgNeu < P.hgStartMin + P.startVerzugMin ? P.hgStartMin : P.startVerzugMin;
             if (S.pauseMin >= P.minPauseMin && ((S.startZ >= verzug && S.hgNeu >= P.hgStartMin) || (S.hgNeu === P.hgStartMin && S.startZ > 0))) { start = true; }
         }
-        if (start) { S.modus = 'lauf'; S.rt = 0; S.lvl = 0; S.ab = false; S.hzSlow = hzMinAt(P, atI); S.startZ = 0; S.n.starts++; }
+        if (start) { S.modus = 'lauf'; S.rt = 0; S.lvl = 0; S.ab = false; S.hzSlow = hzMinAt(P, atI); S.startZ = 0; S.n.starts++; S.startHoch = hc === 0 && atI <= P.startHochAtC; if (S.startHoch) { S.n.kaltstarts = (S.n.kaltstarts || 0) + 1; } }
     }
     const lauf = S.modus === 'lauf', pumpe = S.modus !== 'aus';
     // 4. Abtauen und Verdichter
     let hz = 0;
     if (lauf) {
         if (S.abtau > 0) { hz = P.abtauHz; }
-        else { const r = regler(P, S.lvl, {at: atI, soll: soll, vl: S.vl, q: q, hc: hc, rt: S.rt, nachAbtau: S.nachAbtau, comfortAb: S.ab}); hz = r.hz; S.lvl = r.lvl; S.ab = r.ab; }
+        else {
+            if (S.startHoch && (hc !== 0 || S.rt >= P.startHochMaxMin || (S.rt >= P.spike.length && S.vl >= soll - P.startHochBisK))) { S.startHoch = false; }
+            const r = regler(P, S.lvl, {at: atI, soll: soll, vl: S.vl, q: q, hc: hc, rt: S.rt, nachAbtau: S.nachAbtau, comfortAb: S.ab, startHoch: S.startHoch}); hz = r.hz; S.lvl = r.lvl; S.ab = r.ab;
+        }
     }
     // 5. Rohr außen, Vereisung, Abtau-Auslöser
     const td = taupunkt(at, E.rh);
     let pthW = 0, pelW = 0, abtauJetzt = S.abtau > 0;
     const rlAlt = S.rl;
     if (lauf && !abtauJetzt) { pthW = pthOf(P, hz, at, S.vl - soll); pelW = pelOf(P, hz, at, rlAlt); }
-    const sprung = lauf && !abtauJetzt && S.rt >= P.spike.length ? Math.max(0, hz - (1 + P.pipeSprungAnteil) * S.hzSlow) : 0;
+    const sprung = lauf && !abtauJetzt && S.rt >= P.spike.length ? Math.max(0, hz - Math.min((1 + P.pipeSprungAnteil) * S.hzSlow, S.hzSlow + (P.pipeSprungHz || 1e9))) : 0;   // +30 % oder +8 Hz, was zuerst greift (4553013)
     let pipeZiel;
     if (abtauJetzt) { pipeZiel = Math.max(at, 0) + 8; }                         // A: Rohr wird beim Abtauen erwärmt
-    else if (lauf) { pipeZiel = at - (P.pipe0 + P.pipeQ * Math.max(0, pthW - pelW) / 1000 * 300 / Math.max(150, fanOf(P, q, hz))) - P.pipeSprungK * sprung - S.eis; }
+    else if (lauf) { pipeZiel = at - (P.pipe0 + P.pipeQ * Math.max(0, pthW - pelW) / 1000 * 300 / Math.max(150, fanOf(P, q, hz, atI))) - P.pipeSprungK * sprung - S.eis; }
     else { pipeZiel = at; }
     S.pipe = S.pipe === null ? pipeZiel : S.pipe + (pipeZiel - S.pipe) * Math.min(1, 1 / P.pipeTauMin);
     if (lauf && !abtauJetzt) {
         if (S.pipe < 0 && S.pipe < td) { S.eis += P.eisRate * (td - S.pipe); }
         S.heizMin++;
-        const linie = P.abtauLinie[0] + P.abtauLinie[1] * (at + 9);
-        S.abZ = (at <= P.abtauAtMax && S.pipe < linie) ? S.abZ + 1 : 0;
-        if (S.heizMin > P.abtauMinHeizMin && (S.abZ >= P.abtauHaltMin || (P.forceDefrostAuto && at < 5 && S.heizMin >= 180))) {
+        const linie = abtauLinieAt(P, aw);                                          // Winterpaket: min(−5; max(−22,5; 0,9·WP-AT − 6)), bis WP-AT unter 10 °C
+        S.abZ = (aw < P.abtauAtMax && S.pipe < linie) ? S.abZ + 1 : 0;
+        if (S.heizMin > P.abtauMinHeizMin && (S.abZ >= P.abtauHaltMin || (P.forceDefrostAuto && aw < 5 && S.heizMin >= 180))) {
             S.abtau = P.abtauDauerMin; S.abZ = 0; S.n.abtau++; hz = P.abtauHz; abtauJetzt = true; S.pipe = at;
         }
         if (!abtauJetzt && S.rt >= P.spike.length) { S.hzSlow += (hz - S.hzSlow) / P.pipeSlowMin; }
@@ -275,10 +293,10 @@ function schritt(S0, E, P) {
     if (abtauJetzt) { pthW = -P.abtauWaermeKWh * 1000 * 60 / P.abtauDauerMin; pelW = P.abtauPelW; }
     // 6. Heizstab (Handbuch J 14.6.1 mit den Einstellungen der Anlage)
     if (S.hs) {
-        if (!lauf || at > P.hsOnAT + 2 || S.vl >= soll + P.hsStopK || (abtauJetzt && !P.hsBeimAbtauen)) { S.hs = 0; S.hsAus = 0; }
+        if (!lauf || aw > P.hsOnAT + 2 || S.vl >= soll + P.hsStopK || (abtauJetzt && !P.hsBeimAbtauen)) { S.hs = 0; S.hsAus = 0; }
     } else {
         S.hsAus++;
-        if (P.hsFrei && lauf && at < P.hsOnAT && S.rt >= P.hsDelayMin && S.rt >= P.hsPumpeMin && S.vl < soll + P.hsStartK && S.hsAus >= P.hsSperreMin && (!abtauJetzt || P.hsBeimAbtauen)) { S.hs = 1; }
+        if (P.hsFrei && lauf && aw < P.hsOnAT && S.rt >= P.hsDelayMin && S.rt >= P.hsPumpeMin && S.vl < soll + P.hsStartK && S.hsAus >= P.hsSperreMin && (!abtauJetzt || P.hsBeimAbtauen)) { S.hs = 1; }
     }
     if (S.hs) { S.n.hsMin++; }
     // 7. Pumpe
@@ -314,14 +332,14 @@ function schritt(S0, E, P) {
     const pelTop16 = lauf ? pelW : (pumpe ? P.pelPauseW : P.pelAusW);
     const odd = Math.floor(E.t / MIN) % 2;
     const hzOut = hz > 0 ? (Math.abs(hz - Math.floor(hz) - 0.5) < 1e-9 ? (odd ? Math.ceil(hz) : Math.floor(hz)) : Math.round(hz)) : 0;
-    const fan = lauf && !abtauJetzt ? Math.round(fanOf(P, q, hz)) : 0;
+    const fan = lauf && !abtauJetzt ? Math.round(fanOf(P, q, hz, atI)) : 0;
     const A = {
         t: E.t, modus: abtauJetzt ? 'abtauen' : (S.modus === 'aus' ? 'heizgrenze' : S.modus), start: start, stopp: stopp,
         hz: hz, vl: vl, rl: rl, tw: S.tw, th: S.th, soll: soll, sollKurve: kurveSoll(P, atI), pth: pthKW * 1000, pelRoh: pelTop16, pelKorr: pelTop16 + (lauf ? P.pelKorrW : 0), pelHs: S.hs * P.hsKW * 1000,
-        qrad: qr, qh: hk.qh, tr: S.tr, flow: flow, pipe: S.pipe, eis: S.eis, td: td, hs: S.hs, rt: S.rt, raeume: Object.assign({}, S.raeume),
+        qrad: qr, qh: hk.qh, tr: S.tr, flow: flow, pipe: S.pipe, eis: S.eis, td: td, hs: S.hs, rt: S.rt, raeume: Object.assign({}, S.raeume), rh: E.rh, atWP: aw,
         hp: {                                                                       // Feldnamen wie HeishaMon (OPT_hp, ohne TOP-Präfix)
             Main_Outlet_Temp: r4(vl), Main_Inlet_Temp: r4(rl), Z1_Water_Target_Temp: soll, Main_Target_Temp: soll, Compressor_Freq: hzOut, Heat_Energy_Consumption: Math.round(pelTop16),
-            Heat_Energy_Production: Math.max(0, Math.round(pthKW * 1000)), Heat_Power_Production_Extra: Math.round(pthKW * 1000), Pump_Flow: Math.round(flow * 10) / 10,
+            Heat_Energy_Production: abtauJetzt ? Math.round(Math.abs(pthW)) : Math.max(0, Math.round(pthKW * 1000)), Heat_Power_Production_Extra: Math.round(pthKW * 1000), Pump_Flow: Math.round(flow * 10) / 10,
             Pump_Speed: pumpe && flow > 0.5 ? Math.round(P.pumpe0 + P.pumpeJeL * (flow - P.flowPause)) : 0, Fan1_Motor_Speed: fan, Outside_Temp: atI, Outside_Pipe_Temp: Math.round(S.pipe),
             Defrosting_State: abtauJetzt ? 1 : 0, Quiet_Mode_Level: q, Heating_Control: hc, Z1_Heat_Request_Temp: shift, Internal_Heater_State: S.hs, External_Heater_State: 0,
             Heater_On_Outdoor_Temp: P.hsOnAT, Heater_Start_Delta: P.hsStartK, Heater_Delay_Time: P.hsDelayMin, Heating_Off_Outdoor_Temp: P.heizgrenzeEinstellung, Heat_Delta: 3,
@@ -348,7 +366,8 @@ function zuEngine(A, raumCfg, P, extra) {
         pth: h.Heat_Power_Production_Extra, flow: h.Pump_Flow, pump: h.Pump_Speed, q: h.Quiet_Mode_Level, qPrio: h.Quiet_Mode_Priority, hc: h.Heating_Control, at: h.Outside_Temp,
         defrost: h.Defrosting_State, dhw: 0, ss: 0, rt: h.Compressor_Operating_Time, shift: h.Z1_Heat_Request_Temp, heatMode: 0, z1Sensor: 0, heaterI: h.Internal_Heater_State, heaterE: 0,
         htrOnAT: h.Heater_On_Outdoor_Temp, htrStartDelta: h.Heater_Start_Delta, htrDelay: h.Heater_Delay_Time, heatOffAT: h.Heating_Off_Outdoor_Temp,
-        sollKurve: A.sollKurve, block: 0, otherQ: null, otherShift: null, kzRad: 1, rooms: rooms, korr: null, err: h.Error, pipeIn: null, kurve: P.kurve.slice()}, extra);
+        sollKurve: A.sollKurve, block: 0, otherQ: null, otherShift: null, kzRad: 1, rooms: rooms, korr: null, err: h.Error, pipeIn: null, kurve: P.kurve.slice(),
+        pipeOut: h.Outside_Pipe_Temp, rh: A.rh !== undefined && A.rh !== null ? Math.round(A.rh) : null}, extra);   // Winterpaket: Abtauwetter (Rohr aussen, OWM-Feuchte)
 }
 
-module.exports = {PARAM, standard, herkunft, mitWerten, neu, schritt, simuliere, regler, zuEngine, kurveSoll, hzMinAt, hzMaxAt, capOf, pthOf, pelOf, fanOf, frostFaktor, taupunkt, flowEffOf, qrad, trAus, heizkreis, raumWert, hausSchritt, MIN, CP, DT};
+module.exports = {PARAM, standard, herkunft, mitWerten, neu, schritt, simuliere, regler, zuEngine, kurveSoll, hzMinAt, hzMaxAt, atWP, abtauLinieAt, capOf, pthOf, pelOf, fanOf, frostFaktor, taupunkt, flowEffOf, qrad, trAus, heizkreis, raumWert, hausSchritt, MIN, CP, DT};

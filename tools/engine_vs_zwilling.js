@@ -3,7 +3,7 @@
 // und „sofort“ (jeder Befehlsvorschlag wird sofort per Klick übernommen: applyRequest/applyTick wie in engine_sim frostSim/hcFrost, Whitelist, 6 Befehle/Tag, Rückweg).
 // Ausgabe je Szenario: kWh Strom (TOP16 + 80 W) und Heizstab, kWh Wärme, Starts, Läufe < 60 min, Komfortverletzungen je Raum, Abtauungen, Heizstab-Minuten,
 // Vorschläge/Befehle je Regel. Das ist ein MODELL (Zwilling, im Winter aus Forum/Handbuch/Annahmen), keine Messung.
-// Usage: node tools/engine_vs_zwilling.js <wp_params.json> [--szenario frost|abtau|mild|woche|alle] [--md Datei] [--json Datei] [--q 3] [--hc 1] [--set ua=0.141,hsFrei=0]
+// Usage: node tools/engine_vs_zwilling.js <wp_params.json> [--szenario frost|abtau|mild|woche|alle] [--md Datei] [--json Datei] [--q 3] [--hc 1] [--set ua=0.141,hsFrei=0] [--regel heizregelung.heizstabVorrang=1]
 //        node tools/engine_sim.js <flows.json> --zwilling <wp_params.json> [--szenario …]   (gleicher Ablauf; flows.json wird dort nur auf Existenz geprüft)
 'use strict';
 process.env.TZ = process.env.TZ_SIM || 'Europe/Berlin';
@@ -40,7 +40,7 @@ function lauf(P, szName, modus, opts) {
     opts = opts || {};
     const sz = SZENARIEN[szName], t0 = new Date(sz.start[0], sz.start[1], sz.start[2], 0, 0).getTime(), N = sz.tage * 1440;
     const anl = {q: opts.q !== undefined ? opts.q : 3, hc: opts.hc !== undefined ? opts.hc : 1, sh: 0};
-    const cfg = E.defaults();
+    const cfg = opts.cfg ? E.mergeCfg(opts.cfg) : E.defaults();                            // --regel regel.schwelle=wert (Winterpaket: Varianten der Maschine gegen denselben Zwilling)
     // Einschwingen: 1 Tag Zwilling allein mit dem Wetter des ersten Tages
     let ZS = Z.neu(P, {modus: 'pause', th: 21.3, tw: 28, raeume: {ki_oben: 23, ki_unten: 21.3, schlaf: 21, wohn: 22.5}});
     for (let i = 0; i < 1440; i++) { const w = wetter(sz, i % 1440); ZS = Z.schritt(ZS, {t: t0 - (1440 - i) * MIN, at: w.at, rh: w.rh, pv: w.pv, q: anl.q, hc: anl.hc, shift: 0}, P).S; }
@@ -108,6 +108,7 @@ function cli(argv) {
     let gesetzt = '';
     if (arg('--set')) { arg('--set').split(',').forEach(kv => { const [k, v] = kv.split('='); if (!(k in P)) { throw new Error('unbekannter Parameter ' + k); } P[k] = JSON.parse(v); gesetzt += ', ' + k + ' = ' + v; }); }
     if (arg('--q') !== null) { opts.q = Number(arg('--q')); } if (arg('--hc') !== null) { opts.hc = Number(arg('--hc')); }
+    if (arg('--regel')) { opts.cfg = {rules: {}}; arg('--regel').split(',').forEach(kv => { const [k, v] = kv.split('='), [r, sw] = k.split('.'); if (!E.RULE[r]) { throw new Error('unbekannte Regel ' + r); } (opts.cfg.rules[r] = opts.cfg.rules[r] || {})[sw] = Number(v); gesetzt += ', Maschine ' + k + ' = ' + v; }); }
     const R = vergleich(P, namen, opts);
     const md = markdown(R, meta + gesetzt + ', Ausgang Quiet ' + (opts.q !== undefined ? opts.q : 3) + ', Heizregelung ' + ((opts.hc !== undefined ? opts.hc : 1) === 1 ? 'Efficiency' : 'Comfort') + ', Maschine ' + E.VER);
     if (arg('--md')) { fs.writeFileSync(arg('--md'), md); }
