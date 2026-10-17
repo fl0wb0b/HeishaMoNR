@@ -70,17 +70,24 @@ V13_ZUSATZ = "<style>\n" + "\n".join([
     "body.nr-dashboard-theme md-card.nr-dashboard-template left{display:block;color:var(--ds-mute);font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;padding-top:8px}",
     "body.nr-dashboard-theme md-card[node-id=\"719e11414721599e\"]{display:none !important}",
 ]) + "\n</style>"
-NEU = V12.replace("Design-System v1.2 (18.10.2026", "Design-System v1.3 (18.10.2026") + V13_ZUSATZ
+V13 = V12.replace("Design-System v1.2 (18.10.2026", "Design-System v1.3 (18.10.2026") + V13_ZUSATZ
+V14_ZUSATZ = "<style>\n" + "\n".join([
+    "/* v1.4: Betrieb > Schieberegler-Beschriftungen (1 Einheit breite Textwidgets) duerfen ueberlaufen; Effizienz-Ueberschriften (<hr> + Text) als Abschnittstitel */",
+    ",".join("body.nr-dashboard-theme md-card[node-id=\"%s\"]" % i for i in ("dc6b3a3d39fd9593", "0a5194a2ae53226f", "ee5c4cc82116fb3a")) + "{overflow:visible !important;z-index:2}",
+    ",".join("body.nr-dashboard-theme md-card[node-id=\"%s\"] p.label" % i for i in ("dc6b3a3d39fd9593", "0a5194a2ae53226f", "ee5c4cc82116fb3a")) + "{overflow:visible;white-space:nowrap;font-size:12.5px}",
+    ",".join("body.nr-dashboard-theme md-card[node-id=\"%s\"]" % i for i in ("b40c0f3e82728c9d", "6cce5b6bd4157c5b", "23aa1aeed6d15e49", "68cd36d3c50eaef1")) + "{color:var(--ds-mute);font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;padding-top:6px}",
+]) + "\n</style>"
+NEU = V13.replace("Design-System v1.3 (18.10.2026", "Design-System v1.4 (18.10.2026") + V14_ZUSATZ
 
 def main():
     a = sys.argv[1:]; revert = "--revert" in a; out = a[a.index("--out") + 1]
     d = json.load(open(a[0], encoding="utf-8")); fl = d["flows"]; k = next(n for n in fl if n["id"] == KOPF_ID)
     assert k["type"] == "ui_template" and k.get("templateScope") == "global"
     if not revert:
-        assert k["format"] in (ALT, V1, V11, V12), "Ausgangsstand weicht ab (ui_optik_kopf nicht auf dem Stand vom 14.10., v1, v1.1 oder v1.2)"
+        assert k["format"] in (ALT, V1, V11, V12, V13), "Ausgangsstand weicht ab (ui_optik_kopf nicht auf einem bekannten Stand)"
         k["format"] = NEU
     else:
-        assert k["format"] in (NEU, V12, V11, V1), "nicht gepatcht"
+        assert k["format"] in (NEU, V13, V12, V11, V1), "nicht gepatcht"
         k["format"] = ALT
     json.dump(d, open(out, "w", encoding="utf-8"), ensure_ascii=False)
     print("rev", d["rev"], "->", out, "(CSS", len(k["format"]), "Zeichen)")
