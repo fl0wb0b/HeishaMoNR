@@ -30,10 +30,10 @@ ENV TZ=Europe/Berlin \
 
 WORKDIR /app
 COPY tools/engine_core.js tools/engine_replay.js tools/replay_tag.js tools/wp_zwilling.js tools/wp_training.js \
-     tools/wp_training_nacht.py tools/kennzahlen_tag.py /app/tools/
+     tools/wp_training_nacht.py tools/kennzahlen_tag.py tools/cop_eta.js /app/tools/
 COPY docker/optimizer-tools/ot.py /app/ot.py
 RUN chown -R root:root /app && chmod -R a+rX,go-w /app && python3 -c "import ast,sys; [ast.parse(open(f).read(), f) for f in sys.argv[1:]]" /app/ot.py /app/tools/*.py \
- && node --check /app/tools/replay_tag.js && node --check /app/tools/wp_training.js
+ && node --check /app/tools/replay_tag.js && node --check /app/tools/wp_training.js && node --check /app/tools/cop_eta.js
 
 USER 10001:10001
 VOLUME ["/ergebnis"]

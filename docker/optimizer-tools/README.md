@@ -16,6 +16,7 @@ Alles ist deterministisch. Im Container läuft **kein Sprachmodell** und es gibt
 | Zeit (Europe/Berlin) | Schritt | Tag | Dauer N100 (geschätzt, PC × 3) |
 |---|---|---|---|
 | 06:40 | Training | heute (Daten bis 06:40, Test = letzte 4 Kalendertage) | 1,5 min (8 Tage Daten) … 4,5 min (21 Tage) |
+| danach | Gütegrad des Ziel-COP (`cop_eta`, cop-ziel 17.10.2026) | heute, Fenster 21 Tage | 2–3 s (PC 0,7 s) |
 | danach | Replay | gestern, Einschwingen 7 Tage (zweimal: Live-Eingänge und nur Protokolle) | 30–40 s |
 | danach | Kennzahlen | gestern | 2–4 s |
 | danach | Sicherung | Monatsdateien des laufenden Monats (bis zum 7. auch des Vormonats) | 1–3 s |
@@ -36,6 +37,7 @@ letzter-lauf.log                Protokoll des letzten Laufs (wie stdout)
 training/wp_params_<tag>.json   Parameter des Zwillings (120 Tage behalten)
 training/wp_training.md         Bericht mit Güte und Drift-Tabelle (je Lauf überschrieben)
 training/letzter.json           Kurzfassung des letzten Trainings
+training/cop_eta.json           Gütegrad eta, dT_verd (Rohr außen), Spreizung je Außenband, Frequenzfaktor je Hz-Bereich, Abtau-Anteil (Format 1; opt_nas liest es -> OPT_cop_eta)
 replay/<tag>.md                 Replay-Bericht des Tages (120 Tage behalten)
 replay/<tag>.json               Zusammenfassung: Status-Minuten, Vorschläge, Punkte, Abgleich mit live, Raumfühler-Lücken
 kennzahlen/<tag>.json           Fakten (Schlüssel wie im Beobachter), Läufe, Lücken, Abtauungen, Befunde
@@ -58,9 +60,10 @@ Wird nach jedem Lauf und beim Start des Dienstes neu geschrieben (atomar: erst `
 | `ok` | `true`, wenn `fehler` leer ist |
 | `fehler` | Liste: gescheiterte Schritte (`training: …`), Daten älter als 30 min, Datenordner nicht lesbar |
 | `hinweise` | Liste, setzt `ok` nicht auf `false`: auffällige Drift, Ampel gelb, Lücken im Minutenprotokoll, Raumfühler > 120 min ungültig |
-| `letzter_lauf` | `art` (nacht/alles/…), `beginn`, `ende`, **`dauer_s`**, `ok`, `speicher_spitze_mb`, `schritte.{training,replay,kennzahlen,sicherung}` je `{ok, rc, dauer_s, fehler, tag}` |
+| `letzter_lauf` | `art` (nacht/alles/…), `beginn`, `ende`, **`dauer_s`**, `ok`, `speicher_spitze_mb`, `schritte.{training,cop_eta,replay,kennzahlen,sicherung}` je `{ok, rc, dauer_s, fehler, tag}` |
 | `dienst` | `gestartet`, `zeitplan`, `naechster_lauf` |
 | `training` | `tag`, `ok`, **`ampel`** (`gruen`/`gelb`/`rot`), `ampel_grenzen`, **`guete_test`** (TOP16 W, Wasserkreis K, Pause min), `guete_test_vorher`, **`drift`** `{gegen, auffaellig, liste, werte}`, `datei` |
+| `cop_eta` | `datei`, `erstellt`, `tag`, `kalibrierminuten`, `eta` je Band, `abtauungen` (Kurzfassung von `training/cop_eta.json`; `null` vor dem ersten Lauf) |
 | `replay` | `tag`, `datei`, `minuten`, `vorschlaege`, `punkte_eintraege`, **`guete`** (unten) |
 | `replay.guete` | `bewertbar` (bool), `prozent` (Status gleich live über die bewertbaren Regeln; **`null`, wenn nicht bewertbar**), `grund` (warum nicht), `nicht_bewertbar` (Regel-IDs), `regeln.<id>` `{bewertbar, prozent, minuten, grund}`, `eingang_live_minuten` |
 | `kennzahlen` | `tag`, Strom/Wärme kWh, COP, kWh/Kh, Abweichung 7 Tage, Komfort, Läufe, Starts, Abtauungen, Heizstab, Außen-Mittel, Befunde |

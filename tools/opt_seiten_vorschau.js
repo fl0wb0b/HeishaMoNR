@@ -11,6 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 const PRE = require('./engine_ui_preview.js');
+const MIN_V = 60000;
 const [flowsFile, dumpFile, outDir, dataDir] = process.argv.slice(2);
 if (!flowsFile || !dumpFile || !outDir) { console.error('Usage: node tools/opt_seiten_vorschau.js <flows.json> <ui_dump.json> <ausgabe-ordner> [datenordner]'); process.exit(2); }
 const flows = JSON.parse(fs.readFileSync(flowsFile, 'utf8')), NB = {};
@@ -84,7 +85,7 @@ Array.prototype.forEach.call(document.querySelectorAll('.tplsrc'), function (h) 
 const PAGES = [['a5be8588.b8fbc8', 'Übersicht', 'uebersicht', null], ['opt_ui_tab', 'Optimierung', 'optimierung', null], ['opt_eng_ui_tab', 'Optimierer', 'optimierer', 'B'], ['opt_eng_ui_tab', 'Optimierer', 'optimierer_vorschlag', 'A'],
                ['opt_ui_tab_data', 'Daten & Güte', 'daten', null], ['opt_ui_tab_plan', 'Wärmefahrplan', 'waermefahrplan', null], ['opt_ui_tab_quiet', 'Quiet-Messwerte', 'quiet', null]];
 // Karten der Entscheidungsmaschine: Nachrichten wie opt_engine sie schickt ({payload: V.card} usw.), aus dem Replay der Protokolle im Datenordner
-const ENG_KIND = {opt_t_eng_prop: 'card', opt_t_eng_rules: 'rules', opt_t_eng_score: 'score', opt_t_eng_mess: 'mess', opt_t_eng_log: 'log'};
+const ENG_KIND = {opt_t_eng_prop: 'card', opt_t_eng_rules: 'rules', opt_t_eng_score: 'score', opt_t_eng_mess: 'mess', opt_t_eng_log: 'log', opt_t_eng_cop: 'cop'};
 const SNAP = (dataDir && flows.some(n => ENG_KIND[n.id])) ? PRE.snapshots(dataDir) : null;
 // Optional: Karte "Entscheidungen" aus einem echten Zustand (OPT_ENG_STATE=<engine-state.json> von der NAS, nur gelesen), z. B. mit Episoden stillgelegter Regeln
 if (SNAP && process.env.OPT_ENG_STATE) {
@@ -92,6 +93,14 @@ if (SNAP && process.env.OPT_ENG_STATE) {
     const tEnd = Math.max.apply(null, (V.ep || []).map(e => e.t1).concat([0]));
     Object.keys(SNAP).forEach(k => { SNAP[k].log = {rows: VW.logRows(V, tEnd, 12)}; });
     console.log('Entscheidungen aus ' + process.env.OPT_ENG_STATE + ' (' + (V.ep || []).length + ' Episoden)');
+}
+// Karte "Stromzähler" (cop-ziel 17.10.2026): optimizer_sim fuehrt opt_zaehler nicht aus; die Vorschau zeigt einen nachgebildeten Shelly (Drei Kanäle, WP 395 W bei TOP16 317 W,
+// 24 h im Lauf +92 W) mit gefuellter Form, damit die groesste Fassung der Karte geprueft wird
+if (!MSG.opt_t_zaehler && flows.some(n => n.id === 'opt_t_zaehler')) {
+    const ZL = require('./zaehler_core.js'), t0 = new Date(2026, 9, 17, 9, 0).getTime(), c = {topic: 'shelly3em63g3-a0b1c2d3e4f5', broker: 'venus', klemme_wp: 0, klemme_heizstab: 1, klemme_sonstiges: 2, quelle: 'heishamon'}, Z = ZL.neu();
+    ZL.lies(Z, c.topic + '/events/rpc', {method: 'NotifyFullStatus', params: {'em1:0': {act_power: 395, voltage: 231}, 'em1:1': {act_power: 0}, 'em1:2': {act_power: 64}, 'em1data:0': {total_act_energy: 18450}, 'em1data:1': {total_act_energy: 0}}}, t0, c);
+    for (let i = 0; i < 300; i++) { ZL.minute(Z, {t: t0 - (300 - i) * MIN_V, ok: true, wpW: i % 3 ? 395 : 40, rohW: 395, top16: i % 3 ? 303 : 34, lauf: i % 3 !== 0, heizstab: 0, korrW: 80}, c); }
+    MSG.opt_t_zaehler = {payload: ZL.karte(ZL.stand(Z, t0 + 20000, c, 0), ZL.vergleich(Z, t0, 80), c, t0, {top16: 317, lauf: true, korrW: 80})};
 }
 const PAD = PRE.PAD;
 // Kern-Gruppen (nicht opt_*) zeichnet die Vorschau nicht nach, sondern als Platzhalter in ihrer live gemessenen Hoehe (Titel + Inhalt, 1920 px, 14.10.2026)

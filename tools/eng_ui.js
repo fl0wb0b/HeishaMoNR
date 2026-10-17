@@ -1,9 +1,9 @@
 /* Darstellung der Seite "Optimierer" (Entscheidungsmaschine) als HTML-Text: reine Funktionen, vom Generator in die fuenf Dashboard-Vorlagen eingebettet,
  * in tools/engine_sim.js geprueft und in tools/engine_ui_preview.js zu einer statischen Vorschau gerendert.
- *   optEngUi.html(kind, P)              -> HTML einer Karte (kind: 'card' | 'rules' | 'score' | 'mess' | 'log'), P = Nutzlast aus ENGVIEW.build
+ *   optEngUi.html(kind, P)              -> HTML einer Karte (kind: 'card' | 'rules' | 'score' | 'mess' | 'log' | 'cop' | 'zaehler'), P = Nutzlast aus ENGVIEW.build bzw. opt_zaehler
  *   optEngUi.mount(el, kind, P, scope)  -> zeichnet in ein Element, Knoepfe schicken nur Aktion + ID + Pruefsumme, Diagramm ueber optChart */
 (function (root) {
-    var VER = 7;                                                                  // 4: Vorschlag mit Befehl/Zielwert/Begruendung/Wirkung/Rueckweg offen, Karte "Messwerte & Lernen"; 5: Räume und Wächter (raumeinfluss-v3); 6: UI-Optik (Schrift, Kontrast, Platzhalter statt fast leerem Punkte-Diagramm); 7: fünf Regelkacheln (Heizregelung)
+    var VER = 8;                                                                  // 8: Karten „COP: Ziel und Ist“ und „Stromzähler“ (cop-ziel 17.10.2026); 4: Vorschlag mit Befehl/Zielwert/Begruendung/Wirkung/Rueckweg offen, Karte "Messwerte & Lernen"; 5: Räume und Wächter (raumeinfluss-v3); 6: UI-Optik (Schrift, Kontrast, Platzhalter statt fast leerem Punkte-Diagramm); 7: fünf Regelkacheln (Heizregelung)
     if (root.optEngUi && root.optEngUi.v === VER) { return; }
     var U = {v: VER};
     function esc(s) { return String(s === undefined || s === null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
@@ -60,6 +60,11 @@
         '.oe table.oe-cop{width:auto;min-width:60%}.oe-cop th,.oe-cop td{text-align:right;white-space:nowrap;padding:5px 12px}.oe-cop th:first-child,.oe-cop td:first-child{text-align:left;color:#455a64}' +
         '.oe-cop td b{font-weight:600;font-size:14px}.oe-cop td i{font-style:normal;font-size:12px;color:#546e7a;margin-left:5px}' +
         '.oe-cop td.oe-grau{color:#546e7a}.oe-cop td.oe-grau b{font-weight:normal}.oe .oe-cop td.oe-best{background:#e6f4ea;color:#1b5e20}' +
+        '.oe table.oe-cz td,.oe table.oe-cz th{text-align:right;white-space:nowrap}.oe table.oe-cz td:first-child,.oe table.oe-cz th:first-child{text-align:left}.oe-cz td i{font-style:normal;font-size:12px;color:#546e7a;margin-left:6px}' +
+        '.oe table.oe-cz tr.oe-rw>td{background:#fff3e0;color:#8a4b00}' +
+        '.oe-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px 12px;align-items:end}.oe-form label{display:flex;flex-direction:column;gap:3px;font-size:12.5px;color:#546e7a;min-width:0}' +
+        '.oe-form input[type=text],.oe-form select{font:inherit;font-size:14px;color:#263238;padding:5px 6px;border:1px solid #b0bec5;border-radius:4px;background:#fff;min-width:0;width:100%;box-sizing:border-box}' +
+        '.oe-form .oe-inv{display:flex;gap:10px;align-items:center;font-size:14px;color:#263238;min-height:32px}.oe-form .oe-inv label{flex-direction:row;align-items:center;gap:4px;color:#263238;font-size:14px}.oe-form .oe-wide{grid-column:1/-1}' +
         '.oe-ch0{display:flex;flex-wrap:wrap;gap:8px;align-items:center;border:1px dashed #b0bec5;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:13px;color:#546e7a}' +
         '</style>';
 
@@ -149,6 +154,28 @@
                '<div class="oe-sec">Lernen</div>' + kpis(P.lern) +
                ((P.raum || []).length ? '<div class="oe-sec">Räume und Wächter</div>' + kpis(P.raum) : '');
     }
+    // ---------------------------------------------------------------- Karte "COP: Ziel und Ist" (Seite Optimierer) und "Stromzähler" (Daten & Güte), cop-ziel 17.10.2026
+    function copZ(P) {
+        if (!P || P.leer) { return kpis((P && P.info) || []) + '<div class="oe-row" style="margin-top:8px">' + chip('sammelt', 'mute') + '</div>'; }
+        var t = '<table class="oe-cz"><tr><th>Posten</th>' + (P.spalten || []).map(function (s) { return '<th>' + esc(s) + '</th>'; }).join('') + '</tr>' + (P.zeilen || []).map(function (z) {
+            return '<tr' + (z.warn ? ' class="oe-rw"' : '') + tt(z.title) + '><td>' + esc(z.name) + '</td>' + z.zellen.map(function (c) { return '<td' + tt(c.t) + '>' + esc(c.v) + (c.p ? '<i>' + esc(c.p) + '</i>' : '') + '</td>'; }).join('') + '</tr>';
+        }).join('') + '</table>';
+        return kpis(P.kpi) + '<div class="oe-sec">Posten · kWh Strom und Anteil</div>' + t + '<div class="oe-sec">Grundlage</div>' + kpis(P.info);
+    }
+    function opt(v, cur, txt) { return '<option value="' + esc(v) + '"' + (String(v) === String(cur) ? ' selected' : '') + '>' + esc(txt) + '</option>'; }
+    function zform(F) {
+        var K = function (n, cur, leer) { return '<select data-f="' + n + '">' + (leer ? opt('', cur === null || cur === undefined ? '' : cur, '–') : '') + [0, 1, 2].map(function (i) { return opt(i, cur === null || cur === undefined ? '' : cur, String(i + 1)); }).join('') + '</select>'; };
+        var inv = F.invertieren || [false, false, false];
+        return '<div class="oe-form">' +
+            '<label class="oe-wide">MQTT-Name<input type="text" data-f="topic" value="' + esc(F.topic || '') + '" title="z. B. shelly3em63g3-xxxxxxxxxxxx/status/em:0 oder nur der Gerätename (Topic-Präfix)"></label>' +
+            '<label>Broker<select data-f="broker">' + opt('venus', F.broker, 'Venus 192.168.5.11') + opt('nas', F.broker, 'NAS 10.10.10.128') + '</select></label>' +
+            '<label>Profil<select data-f="profil">' + opt('auto', F.profil, 'erkennen') + opt('triphase', F.profil, 'Drehstrom (em:0)') + opt('monophase', F.profil, 'drei Kanäle (em1:0–2)') + '</select></label>' +
+            '<label>Klemme Wärmepumpe' + K('klemme_wp', F.klemme_wp, false) + '</label><label>Klemme Heizstab' + K('klemme_heizstab', F.klemme_heizstab, true) + '</label><label>Klemme Sonstiges' + K('klemme_sonstiges', F.klemme_sonstiges, true) + '</label>' +
+            '<label>Invertieren<span class="oe-inv">' + [0, 1, 2].map(function (i) { return '<label><input type="checkbox" data-f="inv' + i + '"' + (inv[i] ? ' checked' : '') + '>' + (i + 1) + '</label>'; }).join('') + '</span></label>' +
+            '<label>Strom für COP<select data-f="quelle" title="Standard HeishaMon (TOP16 + Korrektur); Zähler erst nach zwei Tagen Vergleich">' + opt('heishamon', F.quelle, 'HeishaMon') + opt('zaehler', F.quelle, 'Zähler') + '</select></label>' +
+            '</div><div class="oe-btns"><button data-a="zaehler_speichern">Speichern</button></div>';
+    }
+    function zaehler(P) { return '<div class="oe-row">' + (P.status || []).map(function (s) { return chip(s.t, s.c, s.title); }).join('') + '</div><div style="margin-top:10px">' + kpis(P.kpi) + '</div><div class="oe-sec">Einrichtung</div>' + zform(P.form || {}); }
     // ---------------------------------------------------------------- Karte 5: Entscheidungen (Episoden)
     function log(P) {
         var rows = P.rows || [];
@@ -158,7 +185,7 @@
                    r.steps.map(function (s) { return chip(s[0], s[1]); }).join('<span class="arr">›</span>') + (r.was ? ' <span class="oe-was2">' + esc(r.was) + '</span>' : '') + '</td><td class="e">' + (r.offen ? chip('läuft', 'ok') : esc(r.ende)) + '</td></tr>';
         }).join('') + '</table>';
     }
-    U.html = function (kind, P) { P = P || {}; return '<div class="oe">' + (kind === 'card' ? card(P) : kind === 'rules' ? rules(P) : kind === 'score' ? score(P) : kind === 'mess' ? mess(P) : log(P)) + '</div>'; };
+    U.html = function (kind, P) { P = P || {}; return '<div class="oe">' + (kind === 'card' ? card(P) : kind === 'rules' ? rules(P) : kind === 'score' ? score(P) : kind === 'mess' ? mess(P) : kind === 'cop' ? copZ(P) : kind === 'zaehler' ? zaehler(P) : log(P)) + '</div>'; };
     U.chartSpec = function (P) {
         return {t0: P.t0, t1: P.now, panels: [{h: 110, zero: true, series: (P.series || []).map(function (s) { return {n: s.n, c: s.c, k: 'step', w: 1.8, dg: 1, u: 'Punkte', d: s.d}; })}]};
     };
@@ -170,7 +197,14 @@
                 if (!cs || cs.getAttribute('data-v') !== String(VER)) { var st = document.createElement('div'); st.innerHTML = U.css.replace('<style>', '<style id="oe_css" data-v="' + VER + '">'); if (cs) { cs.parentNode.replaceChild(st.firstChild, cs); } else { document.head.appendChild(st.firstChild); } }
             }
             var open = el.__oeOpen = el.__oeOpen || {};
+            if (kind === 'zaehler' && el.__zf && P.form) { P = Object.assign({}, P, {form: Object.assign({}, P.form, el.__zf)}); }   // angefangene Eingabe bleibt beim Neuzeichnen (jede Minute) stehen
             el.innerHTML = U.html(kind, P);
+            var formWerte = function () {
+                var o = {}; Array.prototype.forEach.call(el.querySelectorAll('[data-f]'), function (x) { var f = x.getAttribute('data-f'); if (/^inv\d$/.test(f)) { (o.invertieren = o.invertieren || [false, false, false])[+f.slice(3)] = !!x.checked; } else { o[f] = x.value; } });
+                ['klemme_wp', 'klemme_heizstab', 'klemme_sonstiges'].forEach(function (k) { if (o[k] !== undefined) { o[k] = o[k] === '' ? null : Number(o[k]); } });
+                return o;
+            };
+            Array.prototype.forEach.call(el.querySelectorAll('[data-f]'), function (x) { var mk = function () { el.__zf = formWerte(); }; x.addEventListener('input', mk); x.addEventListener('change', mk); });
             Array.prototype.forEach.call(el.querySelectorAll('details[data-k]'), function (d) { var k = d.getAttribute('data-k'); if (open[k]) { d.open = true; } d.addEventListener('toggle', function () { open[k] = d.open; }); });
             Array.prototype.forEach.call(el.querySelectorAll('button[data-a]'), function (b) {
                 b.addEventListener('click', function () {
@@ -180,6 +214,7 @@
                     else if (a === 'verwerfen' && P.prop) { scope.send({topic: 'verwerfen', payload: {id: P.prop.id}}); }
                     else if (a === 'zuruecksetzen') { scope.send({topic: 'zuruecksetzen', payload: {}}); }
                     else if (a === 'sperren') { scope.send({topic: 'sperren', payload: {}}); }
+                    else if (a === 'zaehler_speichern') { scope.send({topic: 'zaehler_speichern', payload: formWerte()}); el.__zf = null; }
                 });
             });
             var ch = el.querySelector('#oe_chart');

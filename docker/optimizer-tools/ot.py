@@ -3,9 +3,10 @@
 
 Befehle (docker compose run --rm optimizer-tools <befehl> [--tag JJJJ-MM-TT]):
   dienst      Standard: Zeitplan (ZEITPLAN, Standard 06:40) und danach jeweils „nacht“; holt einen verpassten Lauf nach (NACHHOLEN=1)
-  nacht       Training (Tag = heute), Replay (gestern), Kennzahlen (gestern), Sicherung der Protokolle, dann status.json
+  nacht       Training (Tag = heute), Gütegrad des Ziel-COP (cop_eta, heute), Replay (gestern), Kennzahlen (gestern), Sicherung der Protokolle, dann status.json
   alles       wie nacht, dazu Kennzahlen aller Tage und Replays der fehlenden Tage (höchstens 31) nachrechnen (Erstinstallation)
-  training    nur Training des Anlagen-Zwillings
+  training    nur Training des Anlagen-Zwillings (mit cop_eta)
+  cop_eta     nur Gütegrad, dT_verd und Frequenzfaktor des Ziel-COP -> /ergebnis/training/cop_eta.json (cop-ziel 17.10.2026)
   replay      nur Replay der Entscheidungsmaschine für einen Tag (Standard: gestern)
   kennzahlen  nur Tageskennzahlen (Standard: gestern; --alle für alle Tage)
   sicherung   nur die Sicherung der Protokolle nach /ergebnis/sicherung (tar.gz, Allowlist, SICHERUNG_TAGE Tage)
@@ -41,7 +42,7 @@ AUFBEWAHREN_TAGE = int(os.environ.get("AUFBEWAHREN_TAGE", "120"))
 SICHERUNG_TAGE = int(os.environ.get("SICHERUNG_TAGE", "120"))                 # tägliche Archive so lange behalten ...
 SICHERUNG_MONATSERSTE = os.environ.get("SICHERUNG_MONATSERSTE", "1") == "1"   # ... das Archiv vom 1. jedes Monats (enthält den Vormonat komplett) unbegrenzt
 SICHERUNG_VORMONAT_TAGE = 7                                                   # Monatsdateien des Vormonats bis zum 7. mitsichern
-TIMEOUT = {"training": 1200, "replay": 600, "kennzahlen": 600, "sicherung": 600}   # Sekunden je Schritt (N100: Training ~1–5 min, Replay ~30 s, Kennzahlen ~5 s, Sicherung ~10 s)
+TIMEOUT = {"training": 1200, "cop_eta": 300, "replay": 600, "kennzahlen": 600, "sicherung": 600}   # Sekunden je Schritt (N100: Training ~1–5 min, Replay ~30 s, Kennzahlen ~5 s, Sicherung ~10 s)
 STATUS_FORMAT = 2                                                             # Aufbau von status.json, siehe README „status.json“
 # Ergebnisordner auf der NAS: Unterordner im Node-RED-Datenvolume; einmalig anzulegen (ohne root, als node-red):
 ANLEGEN_HILFE = "docker exec node_red-node-red-1 sh -c 'mkdir -p /data/optimizer-tools && chmod 2775 /data/optimizer-tools'"
@@ -165,6 +166,11 @@ def tag_arg(argv, standard):
 
 def cmd_training(tag):
     return [sys.executable, os.path.join(TOOLS, "wp_training_nacht.py"), "--daten", DATEN, "--ergebnis", ERGEBNIS, "--tag", tag.isoformat(), "--node", "node"]
+
+
+def cmd_cop_eta(tag):
+    """cop-ziel 17.10.2026: Guetegrad/dT_verd/Frequenzfaktor des Ziel-COP aus dem 21-Tage-Fenster -> /ergebnis/training/cop_eta.json (opt_nas liest es)."""
+    return ["node", os.path.join(TOOLS, "cop_eta.js"), "--daten", DATEN, "--ergebnis", ERGEBNIS, "--tag", tag.isoformat(), "--tage", "21"]
 
 
 def cmd_replay(tag):
@@ -323,6 +329,9 @@ def baue_status(lauf=None, dienst=None):
             hinweise.append("Training: %d Parameter mit auffälliger Drift" % S["training"]["drift"]["auffaellig"])
         if S["training"]["ampel"] == "gelb":
             hinweise.append("Training: Güte gelb (Grenze überschritten)")
+    ce = lies_json(os.path.join(ERGEBNIS, "training", "cop_eta.json"))   # cop-ziel 17.10.2026: Guetegrad des Ziel-COP (Datei liest opt_nas direkt)
+    S["cop_eta"] = {"datei": "training/cop_eta.json", "erstellt": ce.get("erstellt"), "tag": ce.get("tag"), "kalibrierminuten": ce.get("kalibrierminuten"),
+                    "eta": {b: (x or {}).get("v") for b, x in (ce.get("eta") or {}).items()}, "abtauungen": (ce.get("abtau") or {}).get("n")} if ce else None
     S["replay"], S["kennzahlen"] = None, None
     luecken = {"frische": datenfrische(), "minutenprotokoll": None, "raumfuehler": None}
     for art in ("replay", "kennzahlen"):                          # jüngster Replay- und Kennzahlen-Tag
@@ -413,6 +422,8 @@ def lauf(art, argv):
     plan = []
     if art in ("nacht", "alles", "training"):
         plan.append(("training", cmd_training(tag or heute())))
+    if art in ("nacht", "alles", "training", "cop_eta"):
+        plan.append(("cop_eta", cmd_cop_eta(tag or heute())))
     if art in ("nacht", "alles", "replay"):
         plan.append(("replay", cmd_replay(tag - dt.timedelta(days=1) if (tag and art != "replay") else (tag or gestern))))
     if art in ("nacht", "alles", "kennzahlen"):
@@ -600,7 +611,7 @@ def main(argv):
             print("Fehler: Sicherung: %s" % e, flush=True)
             return 1
         return 0
-    if befehl in ("nacht", "alles", "training", "replay", "kennzahlen", "sicherung"):
+    if befehl in ("nacht", "alles", "training", "cop_eta", "replay", "kennzahlen", "sicherung"):
         signal.signal(signal.SIGTERM, beende)
         return lauf(befehl, argv[2:])
     if befehl == "status":

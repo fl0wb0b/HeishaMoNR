@@ -1199,7 +1199,7 @@ var ENGINE = (function () {
     }
     function hinweisListe(S) { var H = S.hw || {}; return Object.keys(H).filter(function (k) { return H[k].an; }).map(function (k) { return {id: k, seit: H[k].seit, text: H[k].txt}; }); }
     function defaults() {
-        var c = {locks: JSON.parse(JSON.stringify(LOCK_CFG)), rules: {}, takt: taktCfg(null), cop: {pelKorrW: COP_KORR.pelKorrW}};
+        var c = {locks: JSON.parse(JSON.stringify(LOCK_CFG)), rules: {}, takt: taktCfg(null), cop: {pelKorrW: COP_KORR.pelKorrW}, zaehler: {quelle: 'heishamon'}};
         RULES.forEach(function (r) { var o = {}; r.schwellen.forEach(function (s) { o[s.key] = s.std; }); c.rules[r.id] = o; });
         return c;
     }
@@ -1210,6 +1210,8 @@ var ENGINE = (function () {
             if (over.rules) { Object.keys(c.rules).forEach(function (id) { var o = over.rules[id]; if (o) { Object.keys(c.rules[id]).forEach(function (k) { if (have(num(o[k]))) { c.rules[id][k] = num(o[k]); } }); } }); }
             if (over.takt) { c.takt = taktCfg(over.takt); }
             if (over.cop) { c.cop.pelKorrW = copKw(over); }                                                 // COP-Korrektur (ausserhalb 0..200 W: Standard)
+            if (over.zaehler && over.zaehler.quelle === 'zaehler') { c.zaehler.quelle = 'zaehler'; }        // Strom vom Zaehler (Shelly) statt TOP16 + Korrektur (cop-ziel 17.10.2026, Standard heishamon)
+            if (over.copZiel && typeof over.copZiel === 'object') { c.copZiel = over.copZiel; }              // Gütegrad/dT_verd/Frequenz/Abtau aus cop_eta.json (Container, nur lesen; czParam prueft die Werte)
             if ([1, 2, 3, 4].indexOf(num(over.sv)) >= 0) { c.sv = num(over.sv); }                         // Bewertungsregeln v1 ... v4 nachrechnen (nur Replay/Tests)
         }
         return c;
@@ -1637,6 +1639,7 @@ var ENGINE = (function () {
     function kwOf(kw) { return (have(kw) && kw >= COP_KORR.minW && kw <= COP_KORR.maxW) ? kw : COP_KORR.pelKorrW; }        // fehlt kw: Standard (korrigiert); 0 = roh
     function pelKorr(pel, laeuft, kw) { return (have(pel) && laeuft) ? pel + kwOf(kw) : pel; }                              // eine Minute: Rohwert + Korrektur nur im Lauf
     function korrTxt(kw) { return 'intern +' + de(kwOf(kw), 0) + ' W korrigiert'; }
+    function zqOf(cfg) { return !!(cfg && cfg.zaehler && cfg.zaehler.quelle === 'zaehler'); }                             // Strom vom Zaehler gewaehlt (Teil B cop-ziel)
     // Beobachtete Heizgrenze (Idee st03psn/heat-pump-hero advisor.py _record_heating_limit, MIT): Aussentemperatur beim Ende jedes Laufs >= 30 min, Mittel der letzten 7 Tage.
     // Nur Kennzahl (Gegenprobe zur Regel "Heizgrenze"); Auswahlverzerrung: nur lange Laeufe zaehlen.
     var HG = {laufMin: 30, tage: 7};
@@ -1688,6 +1691,8 @@ var ENGINE = (function () {
             if (!D) { D = T.copT[dk] = {}; var keep = Object.keys(T.copT).sort().slice(-c.copTage); Object.keys(T.copT).forEach(function (kk) { if (keep.indexOf(kk) < 0) { delete T.copT[kk]; } }); }
             var ck = modusOf(hc) + '|' + (have(q) ? q : '?') + '|' + bandOf(at), C = D[ck] = D[ck] || [0, 0, 0, 0, 0];
             C[0] += pel / 60; C[1] += pth / 60; C[2]++; C[3] = (C[3] || 0) + hz; C[4] = Math.max(C[4] || 0, hz);   // Wh el, Wh th, Minuten, Summe Hz, hoechste Hz
+            var zwx = num(x.zw), zax = num(x.zAge);                                      // Zaehler (cop-ziel 17.10.2026): C[6] Wh Zaehler, C[7] Minuten mit Zaehler, C[8] Wh TOP16 in diesen Minuten (roh)
+            if (have(zwx) && zwx >= 0 && have(zax) && zax <= 5) { C[6] = (C[6] || 0) + zwx / 60; C[7] = (C[7] || 0) + 1; C[8] = (C[8] || 0) + pel / 60; if (C[5] === undefined) { C[5] = null; } }
             // gelernter Quiet-Deckel (C[5]): hoechste Frequenz, die deckelHaltMin Minuten am Stueck gehalten wurde, erst deckelNachQMin nach einem Quiet-Wechsel
             if (!T.qT || now - T.qT >= c.deckelNachQMin * MIN) {
                 var H = T.hh = Array.isArray(T.hh) ? T.hh : [], lh = H[H.length - 1];
@@ -1760,15 +1765,15 @@ var ENGINE = (function () {
     // {Schluessel "Modus|Quiet|Band": [Wh el korrigiert, Wh th, Minuten, Summe Hz, hoechste Hz, gehaltene Hz (Deckel), Wh el roh]} ueber die letzten copTage Tage.
     // copT speichert den Rohwert (TOP16); jede Minute dort ist eine stabile Laufminute (Verdichter laeuft), deshalb kommt je Minute kw/60 Wh dazu (COP_KORR).
     // kw fehlt: cfg-Standard (80 W); kw = 0: Rohwerte (Vergleich, Tests).
-    function copSumme(T, c, now, kw) {
+    function copSumme(T, c, now, kw, zq) {                                           // zq = true: Strom vom Zaehler (Minuten ohne Zaehler: TOP16 + kw)
         c = taktCfg(c); kw = kwOf(kw);
         var out = {}, D = (T && T.copT) || {}, ks = Object.keys(D).sort(), von = have(now) ? ymd(now - (c.copTage - 1) * 24 * 60 * MIN) : '';
-        ks.forEach(function (dk) { if (dk < von) { return; } Object.keys(D[dk]).forEach(function (k) { var a = D[dk][k], o = out[k] = out[k] || [0, 0, 0, 0, null, null, 0]; o[0] += a[0] + a[2] * kw / 60; o[6] += a[0]; o[1] += a[1]; o[2] += a[2]; o[3] += a[3] || 0; if (have(a[4])) { o[4] = o[4] === null ? a[4] : Math.max(o[4], a[4]); } if (have(a[5])) { o[5] = o[5] === null ? a[5] : Math.max(o[5], a[5]); } }); });
+        ks.forEach(function (dk) { if (dk < von) { return; } Object.keys(D[dk]).forEach(function (k) { var a = D[dk][k], o = out[k] = out[k] || [0, 0, 0, 0, null, null, 0]; o[0] += zq ? (a[6] || 0) + a[0] - (a[8] || 0) + (a[2] - (a[7] || 0)) * kw / 60 : a[0] + a[2] * kw / 60; o[6] += a[0]; o[1] += a[1]; o[2] += a[2]; o[3] += a[3] || 0; if (have(a[4])) { o[4] = o[4] === null ? a[4] : Math.max(o[4], a[4]); } if (have(a[5])) { o[5] = o[5] === null ? a[5] : Math.max(o[5], a[5]); } }); });
         return out;
     }
-    function copTabelle(T, c, now, kw) {                                           // [[Modus, Quiet, Band, COP, Minuten]] ab copMinMin Minuten je Kombination (Nutzerentscheidung 13.10.2026); COP korrigiert (kw wie copSumme)
+    function copTabelle(T, c, now, kw, zq) {                                           // [[Modus, Quiet, Band, COP, Minuten]] ab copMinMin Minuten je Kombination (Nutzerentscheidung 13.10.2026); COP korrigiert (kw wie copSumme)
         c = taktCfg(c);
-        var S = copSumme(T, c, now, kw);
+        var S = copSumme(T, c, now, kw, zq);
         return Object.keys(S).map(function (k) { var a = S[k], p = k.split('|'); return [p[0], p[1], p[2], a[0] > 0 ? r2(a[1] / a[0]) : null, a[2]]; })
             .filter(function (r) { return r[4] >= c.copMinMin && r[3] !== null; })
             .sort(function (a, b) { var ia = BAENDER.map(function (x) { return x[2]; }).indexOf(a[2]), ib = BAENDER.map(function (x) { return x[2]; }).indexOf(b[2]); return ia - ib || (a[0] < b[0] ? -1 : (a[0] > b[0] ? 1 : (a[1] < b[1] ? -1 : (a[1] > b[1] ? 1 : 0)))); });
@@ -1806,6 +1811,195 @@ var ENGINE = (function () {
         if (nl.prev) { while (nl.gridT <= nl.prev.t) { T = nlEmit(T, nl, nl.gridT, c); nl.gridT += MIN; } }
         T.nl = {laeuft: false, fertig: now, zeilen: nl.zeilen || 0, minuten: nl.minuten || 0, von: nl.von || null, bis: nl.prev ? nl.prev.t : null, dateien: (nl.dateien || []).length};
         return T;
+    }
+
+    // ------------------------------------------------------------------ COP: Ziel und Ist mit Ursachenzerlegung (cop-ziel 17.10.2026, nur Kennzahl und Anzeige, keine Regel)
+    // Ziel-COP je Laufminute = eta(Band) x Carnot(Soll-Vorlauf, Aussen + Sonne, dT_verd) x Abtaufaktor(Aussen, Feuchte) x Frequenzfaktor(Mindestfrequenz bei dieser Aussentemperatur).
+    // Carnot = T_kond / (T_kond - T_verd), T_kond = Vorlauf + kondK, T_verd = Aussen - dT_verd (log-auswertung/cop_physik.md). Grundlage ist der SOLL-Vorlauf (was die Heizkurve
+    // verlangt, TOP42 inkl. Verschiebung): ein Vorlauf ueber Soll (Ueberschwingen vor dem Stopp) wird damit ein eigener Posten statt im Ziel zu verschwinden.
+    // Ist-COP = Nutzwaerme (HeishaMon) / Strom (TOP16 + COP_KORR im Lauf; mit cfg.zaehler.quelle = 'zaehler' und frischem Zaehler der Zaehlerstrom). Nutzwaerme: Waerme der
+    // Laufminuten ohne Abtauen und Wiederaufheizen (der interne Zaehler bucht Abtauwaerme positiv, Forum 4074654, 4752841; wie die Kachel "COP mit Abtau-Abzug").
+    // Zerlegung je Minute: Strom Ist - Strom Ziel (= Nutzwaerme / Ziel-COP) = Summe der Posten. Laufminute: Verhaeltnis Ziel/Ist als Produkt der Faktoren (Vorlauf gegen Soll,
+    // Frequenz ueber Minimum, Spreizung, erwartetes Abtauen, Rest), Strom-Differenz anteilig nach den Logarithmen verteilt (exakt additiv); Startminuten (die ersten startMin
+    // Minuten nach einem Start) ganz "Startspitzen"; Abtau- und Wiederaufheiz-Minuten ganz "Abtauen" (abzueglich der im Ziel erwarteten Abtauung); Stillstand ganz "Stillstandsstrom".
+    var CZ = {ver: 1, kondK: 2.5, dTverd: 4.5, startMin: 10, minAusMin: 3, laufStabilMin: 25, wdK: 0.5, wdMaxMin: 30, maxAgeMin: 5, zMaxAlterMin: 5, stunden: 48, tage: 35,
+              eta: {'< 4': 0.52, '4…8': 0.50, '8…11': 0.48, '≥ 11': 0.45},
+              sprRef: 2.1, sprJeK: 0.01,
+              hzBins: [[16, 17], [18, 20], [21, 25], [26, 30], [31, 35], [36, 45], [46, 150]],
+              freq: {'18-20': 0.993, '21-25': 1},                                          // Messung 07.–17.10. (cop_eta.js): 18–20 Hz 579 min, 21–25 Hz 350 min (1,011, auf 1 begrenzt); darueber < 120 min
+              freqMinN: 120, freqAbHz: 25, freqJeHz: 0.01, freqMin: 0.7,
+              abtau: {aMax: 0.10, atVoll: 2, atNull: 4, rhVoll: 85, rhMin: 60, rhFaktorMin: 0.3},
+              sonne: {vonH: 10, bisH: 16, anteil: 0.3, voll: 0.6, kMin: 1, kMax: 2, tage: 7, spitzeMinW: 1000}};
+    var CZ_PARAM = [
+        {key: 'eta', std: '0,52 / 0,50 / 0,48 / 0,45', einheit: '–', herkunft: 'Gütegrad je Außenband < 4 / 4–8 / 8–11 / ≥ 11 °C aus 6 500 stationären Minuten 07.–17.10. (16–20 Hz, Lauf ≥ 25 min, Strom +80 W, dT_verd 4,5 K; cop_physik.md); nachts neu aus cop_eta.json (Container, 16–17 Hz, Lauf ≥ 25 min, ohne Sonne)'},
+        {key: 'kondK', std: CZ.kondK, einheit: 'K', herkunft: 'T_kond = Vorlauf + 2,5 K (cop_physik.md)'},
+        {key: 'dTverd', std: CZ.dTverd, einheit: 'K', herkunft: 'T_verd = Außen − dT_verd; je Band der Median Außen − Rohr außen in den Kalibrierminuten (cop_eta.json, ab 60 Minuten mit Fühler), sonst 4,5 K (gemessen 3,7–4,5 K am Minimum, cop_physik.md)'},
+        {key: 'sprRef', std: CZ.sprRef, einheit: 'K', herkunft: 'Band-Mittel der Spreizung Vorlauf − Rücklauf am Minimum (Messung 07.–17.10.: 2,05–2,17 K), nachts je Band aus cop_eta.json'},
+        {key: 'sprJeK', std: CZ.sprJeK, einheit: '1/K', herkunft: 'Spreizung +1 K bei gleichem Vorlauf ≈ +1 % COP (cop_physik.md)'},
+        {key: 'freq', std: '18–20 Hz 0,993 · 21–25 Hz 1', einheit: '–', herkunft: 'Frequenzfaktor aus den eigenen Minuten (Lauf ≥ 25 min, ohne Sonne) gegen 16–17 Hz, ab 120 Minuten je Bereich, höchstens 1 (Hochlauf wärmt Speichermasse); ohne Daten 1 − 1 %/Hz über 25 Hz (ANNAHME aus Abschnitt 19: „ab 28 Hz −3 %“)'},
+        {key: 'abtau.aMax', std: CZ.abtau.aMax, einheit: '–', herkunft: 'Abtaufaktor 1 − aMax · g(AT) · h(Feuchte): g = 1 bis 2 °C, linear auf 0 bei 4 °C, darüber 1 (Forum L5: bei 3 °C mit 25 Hz ohne Abtauung, bei 2 °C alle ~1,5 h, 4066690; eigene Daten 07.–17.10.: keine Abtauung bei 1–9 °C); h = 1 ab 85 %, 0,3 bis 60 % (ANNAHME), ohne Feuchte 1. aMax 10 % = cop_physik (< 2 °C Abtauen −10 %, Forum 5–15 % bei 10–30 Abtauungen/Tag); kalibriert aus den Abtauminuten (cop_eta.json), sobald 5 Abtauungen im Fenster liegen'},
+        {key: 'sonne', std: '10–16 Uhr, PV ≥ 30 % der 7-Tage-Spitze: +1…+2 K', einheit: 'K', herkunft: 'ANNAHME: Außengerät in Südsonne, Fühler im Schatten (Fühler − OWM +2,6 K bei Sonne, ALGORITHMUS 2); +1 K ab 30 %, +2 K ab 60 % der Spitze. Prüfung: Rest in Sonnenminuten gegen ohne Sonne (Replay, später Zwilling/Messung)'},
+        {key: 'startMin', std: CZ.startMin, einheit: 'min', herkunft: 'Startspitzen: die ersten 10 Laufminuten nach einem Start (Pause ≥ 3 min) zählen ganz als Posten'},
+        {key: 'wdMaxMin', std: CZ.wdMaxMin, einheit: 'min', herkunft: 'Wiederaufheizen nach dem Abtauen bis Vorlauf wieder 0,5 K unter dem Wert davor, höchstens 30 min (wie ABZ der Takt-Messung)'}
+    ];
+    var CZ_POSTEN = [['abtau', 'Abtauen'], ['start', 'Startspitzen'], ['freq', 'Frequenz über Minimum'], ['vl', 'Vorlauf über Soll'], ['spr', 'Rücklauf/Spreizung'], ['stand', 'Stillstandsstrom'], ['rest', 'Rest (unerklärt)']];
+    var CZ_HERKUNFT = {abtau: 'Minuten mit Defrosting_State und Wiederaufheizen danach (ganz), abzüglich der im Ziel erwarteten Abtauung (Abtaufaktor)', start: 'die ersten 10 Laufminuten je Start: Strom über Wärme ÷ Ziel-COP',
+                       freq: 'Frequenzfaktor der Ist-Frequenz gegen den der Mindestfrequenz bei dieser Außentemperatur', vl: 'Carnot mit Ist-Vorlauf gegen Soll-Vorlauf (über Soll = Verlust, unter Soll = Gewinn)',
+                       spr: 'Spreizung Vorlauf − Rücklauf gegen das Band-Mittel (1 %/K)', stand: 'Strom im Stillstand (Pumpe, Standby), nur im Tageswert', rest: 'Abweichung des gemessenen COP vom Modell (Gütegrad, Messfehler, Sonne-Annahme, Übergänge)'};
+    function czBand(at) { return kfBand(at); }
+    function carnot(vl, atE, dT, kondK) { var tk = vl + kondK + 273.15, tv = atE - dT + 273.15; return tk - tv >= 3 ? tk / (tk - tv) : tk / 3; }
+    function czBin(hz) { var B = CZ.hzBins; for (var i = 0; i < B.length; i++) { if (hz <= B[i][1] + 0.5) { return B[i]; } } return B[B.length - 1]; }
+    function czKey(b) { return b[0] + '-' + b[1]; }
+    // Parameter: Standard (CZ) <- cfg.copZiel (cop_eta.json des Containers ueber OPT_cop_eta, nur gueltige Werte) ; Quelle des Stroms aus cfg.zaehler.quelle
+    function czParam(cfg) {
+        var o = (cfg && cfg.copZiel) || {}, P = {eta: {}, dT: {}, spr: {}, freq: {}, aMax: CZ.abtau.aMax, herkunft: {eta: 'Startwert', dT: 'Standard', freq: 'Messung 07.–17.10.', abtau: 'Standard'},
+                 quelle: (cfg && cfg.zaehler && cfg.zaehler.quelle === 'zaehler') ? 'zaehler' : 'heishamon', kw: copKw(cfg), stand: o.erstellt || null};
+        var ok = function (v, lo, hi) { v = num(v); return have(v) && v >= lo && v <= hi ? v : null; };
+        var etaN = 0;
+        KF.baender.forEach(function (b) {
+            var k = b[2], e = o.eta && o.eta[k], t = o.dTverd && o.dTverd[k], s = o.sprRef && o.sprRef[k];
+            var ev = ok(e && typeof e === 'object' ? e.v : e, 0.25, 0.75), tv = ok(t && typeof t === 'object' ? t.v : t, 1, 10), sv = ok(s && typeof s === 'object' ? s.v : s, 0.5, 8);
+            P.eta[k] = ev !== null ? ev : CZ.eta[k]; if (ev !== null) { etaN++; }
+            P.dT[k] = (ev !== null && tv !== null) ? tv : CZ.dTverd;                                   // dT_verd gehoert zu dem eta, mit dem es kalibriert wurde
+            P.spr[k] = sv !== null ? sv : CZ.sprRef;
+        });
+        if (etaN) { P.herkunft.eta = 'cop_eta.json ' + (o.erstellt || ''); P.herkunft.dT = 'Rohr außen (cop_eta.json)'; }
+        CZ.hzBins.forEach(function (b) { var k = czKey(b), f = o.freq && o.freq[k]; var fv = ok(f && typeof f === 'object' ? f.v : f, CZ.freqMin, 1); P.freq[k] = fv !== null ? fv : (have(CZ.freq[k]) ? CZ.freq[k] : null); });
+        if (o.freq && typeof o.freq === 'object') { P.herkunft.freq = 'cop_eta.json'; }
+        var am = ok(o.abtau && typeof o.abtau === 'object' ? o.abtau.aMax : null, 0, 0.4); if (am !== null) { P.aMax = am; P.herkunft.abtau = 'kalibriert (cop_eta.json)'; }
+        return P;
+    }
+    function czFreq(P, hz) {                                                         // Frequenzfaktor: 1 bis 17 Hz; je Bereich gemessen (P.freq) oder 1 − freqJeHz je Hz ueber freqAbHz
+        if (!have(hz) || hz <= 17.5) { return 1; }
+        var b = czBin(hz), f = P.freq[czKey(b)];
+        if (have(f)) { return f; }
+        var mid = Math.min(hz, (b[0] + b[1]) / 2);
+        return Math.max(CZ.freqMin, 1 - CZ.freqJeHz * Math.max(0, mid - CZ.freqAbHz));
+    }
+    function czAbtau(P, at, rh) {                                                    // Abtaufaktor (1 = kein erwartetes Abtauen)
+        var A = CZ.abtau, g = at <= A.atVoll ? 1 : (at >= A.atNull ? 0 : (A.atNull - at) / (A.atNull - A.atVoll));
+        var h = !have(rh) ? 1 : (rh >= A.rhVoll ? 1 : (rh <= A.rhMin ? A.rhFaktorMin : A.rhFaktorMin + (1 - A.rhFaktorMin) * (rh - A.rhMin) / (A.rhVoll - A.rhMin)));
+        return 1 - P.aMax * g * h;
+    }
+    function czSonne(Z, t, pv) {                                                     // AT-Aequivalent der Sonne (K): ANNAHME, siehe CZ_PARAM
+        var C = CZ.sonne, h = new Date(t).getHours(), sp = 0;
+        Object.keys((Z && Z.pv) || {}).forEach(function (k) { sp = Math.max(sp, Z.pv[k]); });
+        if (h < C.vonH || h >= C.bisH || !have(pv) || sp < C.spitzeMinW) { return 0; }
+        var a = pv / sp; if (a < C.anteil - 1e-9) { return 0; }
+        return C.kMin + (C.kMax - C.kMin) * Math.max(0, Math.min(1, (a - C.anteil) / (C.voll - C.anteil)));
+    }
+    function czNew() { return {ver: CZ.ver, on: null, t0: 0, start: false, stopT: 0, prevT: 0, dfOn: false, dfVor: null, vlPrev: null, wdBis: 0, wdZiel: null, pv: {}, h: {}, d: {}, letzte: null}; }
+    // Eine Minute bewerten (rein, aendert nichts): d = {t, hz, vl, rl, soll, at, pel, pth, defrost, dhw, heater, rh, pv, zw (Zaehler W ohne Heizstab), zAge (min), hpAge}; S = Zustand S.cz
+    // (Lauf seit, Start, Wiederaufheizen, PV-Spitze). Ergebnis {art, e, q, ez, cz, cist, eHM, eZ, quelle, rueckfall, band, f: Faktoren, p: Posten (Wh)}.
+    function copZiel(d, cfg, S) {
+        var P = czParam(cfg), Z = S || czNew(), t = d.t, hz = plausV('hz', d.hz), at = plausV('at', d.at), pel = plausV('pel', d.pel), pth = plausV('pth', d.pth);
+        var vl = plausV('vl', d.vl), rl = plausV('rl', d.rl), soll = plausV('soll', d.soll), age = num(d.hpAge), df = !!num(d.defrost);
+        var m = {art: 'keine', e: 0, q: 0, ez: 0, cz: null, cist: null, eHM: null, eZ: null, quelle: 'heishamon', rueckfall: false, band: have(at) ? czBand(at) : null, f: {}, p: {}, sonneK: 0};
+        if (!have(hz) || !have(age) || age > CZ.maxAgeMin) { return m; }
+        var lauf = hz > 0 || df, zA = num(d.zAge), zw = num(d.zw), zFrisch = have(zw) && zw >= 0 && have(zA) && zA <= CZ.zMaxAlterMin;
+        m.eHM = have(pel) ? (pel + (lauf ? P.kw : 0)) / 60 : null; m.eZ = zFrisch ? zw / 60 : null;
+        m.quelle = P.quelle === 'zaehler' && zFrisch ? 'zaehler' : 'heishamon'; m.rueckfall = P.quelle === 'zaehler' && !zFrisch;
+        var e = m.quelle === 'zaehler' ? m.eZ : m.eHM;
+        if (num(d.dhw)) { m.art = 'ww'; m.e = e || 0; return m; }
+        if (num(d.heater)) { m.art = 'heizstab'; m.e = e || 0; return m; }
+        if (!have(e)) { return m; }
+        m.e = e;
+        if (df) { m.art = 'abtau'; m.p.abtau = e; return m; }
+        if (Z.wdBis && t <= Z.wdBis) { m.art = 'wieder'; m.p.abtau = e; m.qWd = have(pth) && pth > 0 ? pth / 60 : 0; return m; }
+        if (!lauf) { m.art = 'stand'; m.p.stand = e; return m; }
+        var lm = Z.t0 ? (t - Z.t0) / MIN : null;
+        m.art = (Z.start && have(lm) && lm < CZ.startMin) ? 'start' : 'normal';
+        var q = have(pth) && pth > 0 ? pth / 60 : 0;
+        if (!have(at) || !have(soll) || !have(vl) || q <= 0) { if (m.art === 'start') { m.p.start = e; } else { m.art = 'ohne'; m.p.rest = e; } return m; }   // Lauf ohne Waerme/Messwerte: ganz Start bzw. Rest
+        var b = czBand(at), eta = P.eta[b], dT = P.dT[b], sk = czSonne(Z, t, num(d.pv)), atE = at + sk;
+        var cS = carnot(soll, atE, dT, CZ.kondK), fAb = czAbtau(P, at, num(d.rh)), fMin = czFreq(P, minHzTab(at).hz);
+        var cz = eta * cS * fAb * fMin, cist = q / e, ez = q / cz, dE = e - ez;
+        m.q = q; m.ez = ez; m.cz = cz; m.cist = cist; m.sonneK = sk;
+        m.f = {eta: eta, dT: dT, carnot: cS, abtau: fAb, fmin: fMin};
+        if (m.art === 'start') { m.p.start = dE; return m; }
+        var cI = carnot(vl, atE, dT, CZ.kondK), fHz = czFreq(P, hz), spr = have(rl) ? vl - rl : null;
+        var fSp = have(spr) ? Math.max(0.8, Math.min(1.2, 1 + CZ.sprJeK * (spr - P.spr[b]))) : 1;
+        var L = Math.log(cz / cist), w = Math.abs(L) > 1e-9 ? dE / L : e;
+        var l = {vl: -Math.log(cI / cS), freq: -Math.log(fHz / fMin), spr: -Math.log(fSp), abtau: Math.log(fAb)};
+        l.rest = L - l.vl - l.freq - l.spr - l.abtau;
+        Object.keys(l).forEach(function (k) { m.p[k] = w * l[k]; });
+        m.f.vlIst = cI; m.f.hz = fHz; m.f.spr = fSp; m.f.sprK = spr;
+        return m;
+    }
+    function czLeer() { return {e: 0, q: 0, ez: 0, eHM: 0, eZ: 0, nZ: 0, eHMz: 0, min: {}, p: {}, abIst: 0, abErw: 0, vlPlus: 0, vlMinus: 0, starts: 0, abtauungen: 0, qWd: 0, eWW: 0, eHS: 0,
+                                sonne: {min: 0, e: 0, q: 0, ez: 0, rest: 0}, ohne: {min: 0, e: 0, q: 0, ez: 0, rest: 0}, rueckfall: 0, quelle: {}}; }
+    function czBuche(B, m) {
+        B.min[m.art] = (B.min[m.art] || 0) + 1;
+        if (m.art === 'ww') { B.eWW += m.e; return; }
+        if (m.art === 'heizstab') { B.eHS += m.e; return; }
+        B.e += m.e; B.q += m.q; B.ez += m.ez; B.quelle[m.quelle] = (B.quelle[m.quelle] || 0) + 1; if (m.rueckfall) { B.rueckfall++; }
+        if (have(m.eHM)) { B.eHM += m.eHM; } if (have(m.eZ)) { B.eZ += m.eZ; B.nZ++; if (have(m.eHM)) { B.eHMz += m.eHM; } }
+        Object.keys(m.p).forEach(function (k) { B.p[k] = (B.p[k] || 0) + m.p[k]; });
+        if (m.art === 'abtau' || m.art === 'wieder') { B.abIst += m.e; if (m.qWd) { B.qWd += m.qWd; } }
+        if (m.art === 'normal') {
+            B.abErw += m.p.abtau || 0; if ((m.p.vl || 0) > 0) { B.vlPlus += m.p.vl; } else { B.vlMinus += m.p.vl || 0; }
+            var X = m.sonneK > 0 ? B.sonne : B.ohne; X.min++; X.e += m.e; X.q += m.q; X.ez += m.ez; X.rest += m.p.rest || 0;
+        }
+    }
+    function czStd(t) { return ymd(t) + ' ' + p2(new Date(t).getHours()); }
+    // Zustand fortschreiben (Lauf, Start, Abtauen, Wiederaufheizen, PV-Spitze), Minute bewerten, in Stunde und Tag buchen. Gibt die Minute zurueck.
+    function copZielStep(S, d, cfg) {
+        var Z = S.cz = (S.cz && typeof S.cz === 'object' && S.cz.ver === CZ.ver && S.cz.h) ? S.cz : czNew(), t = d.t;
+        var hz = plausV('hz', d.hz), age = num(d.hpAge), df = !!num(d.defrost), vl = plausV('vl', d.vl);
+        if (have(num(d.pv)) && num(d.pv) >= 0) { var dk0 = ymd(t); Z.pv[dk0] = Math.max(Z.pv[dk0] || 0, Math.round(num(d.pv))); Object.keys(Z.pv).sort().slice(0, -CZ.sonne.tage).forEach(function (k) { delete Z.pv[k]; }); }
+        var frisch = have(hz) && have(age) && age <= CZ.maxAgeMin;
+        if (frisch) {
+            var lauf = hz > 0 || df;
+            if (lauf && Z.on !== true) {                                              // Pause kuerzer als minAusMin: derselbe Lauf; erster Lauf nach Datenbeginn: kein Start (Beginn unbekannt)
+                var kurz = Z.on === false && Z.stopT > 0 && t - Z.stopT < CZ.minAusMin * MIN && Z.t0;
+                if (!kurz) { Z.t0 = t; Z.start = Z.on === false && Z.stopT > 0; if (Z.start) { Z.nStart = true; } }
+                Z.on = true;
+            }
+            else if (!lauf && Z.on !== false) { Z.stopT = t; Z.on = false; }                    // Stillstand seit (auch der erste beobachtete: danach zaehlt ein Lauf ab minAusMin als Start)
+            if (df && !Z.dfOn) { Z.dfOn = true; Z.dfVor = have(Z.vlPrev) ? Z.vlPrev : vl; Z.nDf = true; }
+            else if (!df && Z.dfOn) { Z.dfOn = false; Z.wdBis = t + CZ.wdMaxMin * MIN; Z.wdZiel = have(Z.dfVor) ? Z.dfVor - CZ.wdK : null; }
+            if (!df && Z.wdBis && (t > Z.wdBis || (have(vl) && have(Z.wdZiel) && vl >= Z.wdZiel))) { Z.wdBis = 0; }
+            if (!df && have(vl)) { Z.vlPrev = vl; }
+        }
+        var m = copZiel(d, cfg, Z);
+        if (m.art !== 'keine') {
+            var hk = czStd(t), dk = ymd(t), H = Z.h[hk] = Z.h[hk] || czLeer(), D = Z.d[dk] = Z.d[dk] || czLeer();
+            [H, D].forEach(function (B) { czBuche(B, m); if (Z.nStart) { B.starts++; } if (Z.nDf) { B.abtauungen++; } });
+            Z.nStart = false; Z.nDf = false;
+            Object.keys(Z.h).sort().slice(0, -CZ.stunden).forEach(function (k) { delete Z.h[k]; });
+            Object.keys(Z.d).sort().slice(0, -CZ.tage).forEach(function (k) { delete Z.d[k]; });
+        }
+        Z.letzte = {t: t, art: m.art, cz: have(m.cz) ? r2(m.cz) : null, cist: have(m.cist) ? r2(m.cist) : null, quelle: m.quelle, rueckfall: m.rueckfall, sonneK: m.sonneK};
+        return m;
+    }
+    // Zusammenfassung eines Buckets (oder mehrerer): mitStand = Stillstandsstrom einrechnen (Tag), sonst nur Heizbetrieb (Stunde)
+    function czAgg(L, mitStand) {
+        var B = czLeer(); (L || []).forEach(function (x) {
+            ['e', 'q', 'ez', 'eHM', 'eZ', 'nZ', 'eHMz', 'abIst', 'abErw', 'vlPlus', 'vlMinus', 'starts', 'abtauungen', 'qWd', 'eWW', 'eHS', 'rueckfall'].forEach(function (k) { B[k] += x[k] || 0; });
+            Object.keys(x.min || {}).forEach(function (k) { B.min[k] = (B.min[k] || 0) + x.min[k]; }); Object.keys(x.p || {}).forEach(function (k) { B.p[k] = (B.p[k] || 0) + x.p[k]; });
+            Object.keys(x.quelle || {}).forEach(function (k) { B.quelle[k] = (B.quelle[k] || 0) + x.quelle[k]; });
+            ['sonne', 'ohne'].forEach(function (s) { Object.keys(B[s]).forEach(function (k) { B[s][k] += (x[s] && x[s][k]) || 0; }); });
+        });
+        var st = B.p.stand || 0, e = B.e - (mitStand ? 0 : st), ez = B.ez, q = B.q, dE = e - ez;
+        var o = {e: r2(e / 1000), ez: r2(ez / 1000), q: r2(q / 1000), cist: e > 0 && q > 0 ? r2(q / e) : null, cz: ez > 0 ? r2(q / ez) : null, min: B.min, starts: B.starts, abtauungen: B.abtauungen,
+                 lauf: (B.min.normal || 0) + (B.min.start || 0) + (B.min.ohne || 0), quelle: B.quelle, rueckfall: B.rueckfall, eWW: r2(B.eWW / 1000), eHS: r2(B.eHS / 1000), posten: [],
+                 abIst: r2(B.abIst / 1000), abErw: r2(-B.abErw / 1000), vlPlus: r2(B.vlPlus / 1000), vlMinus: r2(B.vlMinus / 1000), dE: r2(dE / 1000),
+                 eHMz: B.nZ ? r2(B.eHMz / 1000) : null, eZ: B.nZ ? r2(B.eZ / 1000) : null, nZ: B.nZ,
+                 sonne: {min: B.sonne.min, rest: B.sonne.e > 0 ? r2(B.sonne.rest / B.sonne.e * 100) : null}, ohneSonne: {min: B.ohne.min, rest: B.ohne.e > 0 ? r2(B.ohne.rest / B.ohne.e * 100) : null}};
+        o.diff = have(o.cz) && have(o.cist) && o.cz > 0 ? r2((q / ez - q / e) / (q / ez) * 100) : null;               // % unter dem Ziel (negativ: besser als das Ziel)
+        var k = e > 0 && ez > 0 ? q / (e * ez) : 0;                                                              // COP-Punkte je Wh: cz − cist = q (e − ez) / (e ez)
+        CZ_POSTEN.forEach(function (x) {
+            if (x[0] === 'stand' && !mitStand) { return; }
+            var v = B.p[x[0]] || 0;
+            o.posten.push({id: x[0], name: x[1], kwh: r2(v / 1000), pct: e > 0 ? r2(v / e * 100) : null, cop: r2(k * v), herkunft: CZ_HERKUNFT[x[0]]});
+        });
+        o.rest = e > 0 ? r2((B.p.rest || 0) / e * 100) : null;
+        return o;
+    }
+    function copZielSumme(S, now) {                                                  // {stunde (letzte volle Stunde), heute, gestern, tage: [[Tag, Zusammenfassung]], letzte}
+        var Z = (S && S.cz) || czNew(), h0 = czStd(now - 60 * MIN), dk = ymd(now), dg = ymd(now - 24 * 60 * MIN);
+        return {stunde: Z.h[h0] ? czAgg([Z.h[h0]], false) : null, stundeKey: h0, heute: Z.d[dk] ? czAgg([Z.d[dk]], true) : null, gestern: Z.d[dg] ? czAgg([Z.d[dg]], true) : null,
+                tage: Object.keys(Z.d).sort().map(function (k) { return [k, czAgg([Z.d[k]], true)]; }), letzte: Z.letzte};
     }
 
     // ------------------------------------------------------------------ Wirkzeit und Heizkurven-Bias (E, nur Auswertung/Anzeige, keine Regel; 13.10.2026)
@@ -1940,7 +2134,7 @@ var ENGINE = (function () {
 
     // ------------------------------------------------------------------ Schnappschuss fuer den Datensatz (gerundet; reicht zum Nachspielen)
     var SNAP_KEYS = ['hpAge', 'hz', 'vl', 'rl', 'soll', 'dT', 'pel', 'pth', 'flow', 'pump', 'q', 'qPrio', 'hc', 'at', 'defrost', 'dhw', 'ss', 'rt', 'shift', 'heatMode', 'z1Sensor',
-                     'heaterI', 'heaterE', 'htrOnAT', 'htrStartDelta', 'htrDelay', 'heatOffAT', 'sollKurve', 'block', 'otherQ', 'otherShift', 'kzRad', 'err', 'pipeIn', 'kurve', 'pv', 'wolken', 'rh', 'pipeOut'];   // err/pipeIn/kurve seit 14.10.2026, pv/wolken seit 15.10.2026 (Sonnenfenster), rh/pipeOut seit 16.10.2026 (Abtauwetter)
+                     'heaterI', 'heaterE', 'htrOnAT', 'htrStartDelta', 'htrDelay', 'heatOffAT', 'sollKurve', 'block', 'otherQ', 'otherShift', 'kzRad', 'err', 'pipeIn', 'kurve', 'pv', 'wolken', 'rh', 'pipeOut', 'zw', 'zh', 'zAge'];   // err/pipeIn/kurve seit 14.10.2026, pv/wolken seit 15.10.2026 (Sonnenfenster), rh/pipeOut seit 16.10.2026 (Abtauwetter)
     function snapshot(inp) {
         var o = {};
         SNAP_KEYS.forEach(function (k) { var v = inp[k]; if (v === undefined || v === null || v === '') { return; } o[k] = typeof v === 'number' ? r2(v) : v; });
@@ -1968,7 +2162,9 @@ var ENGINE = (function () {
         track(S, d, inp, cfg);
         if (!(S.takt && S.takt.nl && S.takt.nl.laeuft)) { S.takt = taktStep(S.takt, inp, cfg.takt); }     // waehrend des Nachladens fuehrt die Datei, nicht die Live-Eingabe
         d.takt = taktKennzahlen(S.takt, now, cfg.takt);
-        d.copKw = copKw(cfg); d.tc = cfg.takt; d.copSum = copSumme(S.takt, cfg.takt, now, d.copKw);   // Daten je Heizregelung x Quiet x Band (COP korrigiert): Zielstufen und Deckel der Quiet-Regeln
+        d.copKw = copKw(cfg); d.tc = cfg.takt; d.copSum = copSumme(S.takt, cfg.takt, now, d.copKw, zqOf(cfg));
+        d.cz = copZielStep(S, {t: now, hz: inp.hz, vl: inp.vl, rl: inp.rl, soll: inp.soll, at: inp.at, pel: inp.pel, pth: inp.pth, defrost: inp.defrost, dhw: inp.dhw, heater: inp.heaterI,
+                               rh: d.rh, pv: d.pv, zw: inp.zw, zAge: inp.zAge, hpAge: inp.hpAge}, cfg);                      // COP: Ziel und Ist mit Zerlegung (nur Kennzahl, cop-ziel 17.10.2026)   // Daten je Heizregelung x Quiet x Band (COP korrigiert): Zielstufen und Deckel der Quiet-Regeln
         lagStep(S, d, now); kbStep(S, d, now);                                          // Wirkzeit und Heizkurven-Bias (nur Auswertung)
         d.T = S.takt; d.lag = S.lag && S.lag.res ? S.lag.res : null; d.startM = startModell(S, now);   // Mindestfrequenz (gelernt), Wirkzeit, Startschwelle
         S.raum3 = (S.raum3 && typeof S.raum3 === 'object') ? S.raum3 : {bed: [], deckSeit: 0, resSeit: 0};
@@ -2868,7 +3064,9 @@ var ENGINE = (function () {
             hhmm: hhmm, isoWeek: isoWeek, de: de, sg: sg,
             raumLage: raumLage, raumVerlauf: raumVerlauf, raumEnde: raumEnde, kurvenform: kurvenform, KF: KF, p2Summe: p2Summe, startModell: startModell, START: START, MINHZ: MINHZ, minHzOf: minHzOf, minHzTab: minHzTab,
             binKeyOf: binKeyOf, hzSchwelle: hzSchwelle, HW: HW, errCode: errCode, hinweisListe: hinweisListe, wirkzeit: wirkzeit, Q0_HZ: Q0_HZ,
-            hcLage: hcLage, hcEnde: hcEnde, hcTxt: hcTxt};
+            hcLage: hcLage, hcEnde: hcEnde, hcTxt: hcTxt,
+            CZ: CZ, CZ_PARAM: CZ_PARAM, CZ_POSTEN: CZ_POSTEN, CZ_HERKUNFT: CZ_HERKUNFT, czParam: czParam, carnot: carnot, czFreq: czFreq, czAbtau: czAbtau, czSonne: czSonne, czBand: czBand, czNew: czNew,
+            copZiel: copZiel, copZielStep: copZielStep, copZielSumme: copZielSumme, czAgg: czAgg, zqOf: zqOf, kfBand: kfBand};
 })();
 if (typeof module !== 'undefined' && module.exports) { module.exports = ENGINE; }
 // == ENGINE-CORE-ENDE ==

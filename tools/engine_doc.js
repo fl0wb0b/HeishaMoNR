@@ -23,6 +23,10 @@ function tabellen() {
     });
     L.push('', '### Takt-Messung (Schwellen, `cfg.takt`)', '', '| Schwelle | Standard | Einheit | Herkunft |', '|---|---|---|---|');
     E.TAKT_SCHWELLEN.forEach(s => L.push('| `' + s.key + '` | ' + String(s.std).replace('.', ',') + ' | ' + s.einheit + ' | ' + esc(s.herkunft) + ' |'));
+    L.push('', '### COP: Ziel und Ist (Parameter, `cfg.copZiel` aus cop_eta.json)', '', '| Parameter | Standard | Einheit | Herkunft |', '|---|---|---|---|');
+    E.CZ_PARAM.forEach(s => L.push('| `' + s.key + '` | ' + String(s.std).replace('.', ',') + ' | ' + s.einheit + ' | ' + esc(s.herkunft) + ' |'));
+    L.push('', '| Posten | Herkunft |', '|---|---|');
+    E.CZ_POSTEN.forEach(x => L.push('| ' + x[1] + ' (`' + x[0] + '`) | ' + esc(E.CZ_HERKUNFT[x[0]]) + ' |'));
     L.push('', '### Sperren, die jede Regel erbt', '', '| Sperre | Text | Herkunft |', '|---|---|---|');
     E.LOCKS.forEach(l => L.push('| `' + l.id + '` | ' + esc(l.text) + ' | ' + esc(l.herkunft) + ' |'));
     L.push('', '*Sperr-Parameter (Standard):* ' + Object.keys(E.LOCK_CFG).map(k => '`' + k + '` ' + String(E.LOCK_CFG[k]).replace('.', ',')).join(' · '));

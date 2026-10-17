@@ -37,6 +37,9 @@ RAEUME = [("ki_oben", "Kinderzimmer oben"), ("ki_unten", "Kinderzimmer unten"), 
 # je nach Last (Beitrag 4545989), L5 bei 16/17 Hz 390 W Shelly (4597230, wir sehen 341-363 W), L7 Energie -14,6 % bei Waerme nur -2,7 % (4145844).
 PEL_KORR_W = 80                                 # ANNAHME zwischen 40 und 90 W; nur bei laufendem Verdichter (verdichter_hz > 0) addiert
 KORR_TXT = "Strom intern +%d W korrigiert" % PEL_KORR_W
+# Stromzaehler (cop-ziel 17.10.2026): mit config.json "zaehler": {"quelle": "zaehler"} kommt der Strom jeder Minute aus der Spalte zaehler_wp_w (Shelly, ohne Heizstab),
+# Minuten ohne Zaehlerwert (leer = Zaehler fehlt oder aelter als 5 min) weiter TOP16 + PEL_KORR_W. Standard "heishamon": alles wie bisher.
+QUELLE = "heishamon"
 CSV_SPALTEN_ZUSATZ = ["energie.waerme_kwh", "energie.cop", "laeufe.anzahl", "pausen.anzahl", "pausen.mittel_min", "abtau.anzahl", "abtau.minuten",
                       "abtau.pseudo_verdacht", "abtau.mild_sonne_anzahl", "daten.minutenzeilen", "daten.luecken_ueber_10min", "daten.groesste_luecke_min",
                       "maschine.datensaetze", "maschine.vorschlaege", "punkte.datensaetze", "befunde.warnung", "befunde.hinweis"]
@@ -55,6 +58,8 @@ def zahl(x):
 
 def pel(r, korr=True):
     """Elektrische Leistung der Minute in W: TOP16, bei laufendem Verdichter + PEL_KORR_W (korr=False: Rohwert)."""
+    if korr and QUELLE == "zaehler" and zahl(r.get("zaehler_wp_w")) is not None:
+        return zahl(r.get("zaehler_wp_w"))
     p = zahl(r.get("leistung_el_w"))
     if p is None:
         return None
@@ -135,6 +140,7 @@ def zusammenfassung(d, tag):
     # Zustaende, Laeufe, Pausen (Gewicht = Minuten bis zur naechsten Zeile, hoechstens 10)
     minuten = {"lauf": 0.0, "pause": 0.0, "heizgrenze": 0.0, "?": 0.0}
     el = el_roh = th = 0.0
+    el_z = z_min = 0.0
     segs = []
     for i, r in enumerate(Q):
         w = min(10.0, ((Q[i + 1]["_t"] - r["_t"]).total_seconds() / 60) if i + 1 < len(Q) else 1.0)
@@ -143,7 +149,12 @@ def zusammenfassung(d, tag):
         p = pel(r)
         if p is not None:
             el += p * w / 60000
-            el_roh += pel(r, False) * w / 60000
+            pr = pel(r, False)
+            el_roh += (pr if pr is not None else 0) * w / 60000
+        zw = zahl(r.get("zaehler_wp_w"))
+        if zw is not None:
+            el_z += zw * w / 60000
+            z_min += w
         if z == "lauf":
             pt = zahl(r.get("leistung_th_heisha_w"))
             if pt is None:
@@ -175,6 +186,11 @@ def zusammenfassung(d, tag):
     F["energie.strom_kwh_roh"] = round(el_roh, 2)
     F["energie.cop_roh"] = round(th / el_roh, 2) if el_roh > 0.05 else None
     F["energie.korr_w"] = PEL_KORR_W
+    if z_min > 0:                                    # nur mit Zaehler (sonst unveraendert wie der Beobachter)
+        F["energie.strom_kwh_zaehler"] = round(el_z, 2)
+        F["energie.zaehler_min"] = round(z_min)
+    if QUELLE == "zaehler":
+        F["energie.quelle"] = "zaehler"
     # Verdichter, Quiet, Soll, Aussentemperatur
     hz_lauf = [(zahl(r.get("verdichter_hz")), zahl(r.get("verdichter_laufzeit_min")), zahl(r.get("quiet_aktuell"))) for r in Q if zustand(r) == "lauf"]
     nach_start = [h for h, rt, q in hz_lauf if h is not None and (rt is None or rt >= 2)]
@@ -805,6 +821,12 @@ def main(argv=None):
         return 2
     ordner = os.path.join(a.ergebnis, "kennzahlen")
     os.makedirs(ordner, exist_ok=True)
+    global QUELLE
+    try:                                             # nur zaehler.quelle aus config.json (Einstellung des Nutzers, keine Geheimnisse)
+        with open(os.path.join(a.daten, "config.json"), encoding="utf-8") as f:
+            QUELLE = "zaehler" if ((json.load(f) or {}).get("zaehler") or {}).get("quelle") == "zaehler" else "heishamon"
+    except (OSError, ValueError, AttributeError):
+        QUELLE = "heishamon"
     daten = Daten(a.daten)
     if a.alle:
         tage = [x for x in daten.tage_mit_daten(daten.monate_vorhanden()) if KENNZAHL_AB <= x <= tag]

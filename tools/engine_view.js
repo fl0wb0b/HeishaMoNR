@@ -3,7 +3,7 @@
 // Wird vom Generator hinter den Kern in opt_engine eingebettet und in tools/engine_sim.js sowie tools/engine_ui_preview.js direkt getestet.
 //   ENGVIEW.track(V, res, rules, now)   Episoden fuer die Karte "Entscheidungen": je Regel ein Eintrag von "alle Bedingungen erfuellt" (wartet,
 //                                       gesperrt, Vorschlag) bis zum Ende; Dauerzustaende ("prueft", "ruht") erzeugen keine Zeilen
-//   ENGVIEW.build(o)                    -> {card, rules, score, mess, log}
+//   ENGVIEW.build(o)                    -> {card, rules, score, mess, log, cop}
 var ENGVIEW = (function (E) {
     var MIN = 60000;
     var STAGE = {wartet: 1, gesperrt: 2, abgelaufen: 3, vorschlag: 3, hinweis: 3};
@@ -134,9 +134,9 @@ var ENGVIEW = (function (E) {
     }
 
     // ---------------------------------------------------------------- Karte "Messwerte & Lernen"
-    function copMatrix(TK, tc, now, kw) {                                             // Zeilen = Aussenband, Spalten = vorhandene Kombinationen Modus x Quiet ("?" zaehlt nicht); COP mit Stromkorrektur (kw, E.COP_KORR)
+    function copMatrix(TK, tc, now, kw, zq) {                                         // Zeilen = Aussenband, Spalten = vorhandene Kombinationen Modus x Quiet ("?" zaehlt nicht); COP mit Stromkorrektur (kw, E.COP_KORR) bzw. Zaehlerstrom (zq)
         kw = E.copKw({cop: {pelKorrW: kw}});
-        var S = E.copSumme(TK, tc, now, kw), bands = [], cols = {}, rows = {}, x0;
+        var S = E.copSumme(TK, tc, now, kw, zq), bands = [], cols = {}, rows = {}, x0;
         for (x0 = -40; x0 <= 45; x0++) { if (bands.indexOf(E.bandOf(x0)) < 0) { bands.push(E.bandOf(x0)); } }       // Reihenfolge der Baender aus dem Kern (kalt -> warm)
         Object.keys(S).forEach(function (k) {
             var p = k.split('|'); if (p.length !== 3 || (p[0] !== 'Comfort' && p[0] !== 'Efficiency') || !/^[0-3]$/.test(p[1])) { return; }
@@ -159,7 +159,7 @@ var ENGVIEW = (function (E) {
             return {band: b + ' °C', zellen: zellen};
         });
         return {spalten: sp.map(function (k) { var x = k.split('|'); return x[0] + ' Q' + x[1]; }), zeilen: zeilen, minMin: tc.copMinMin, kw: kw,
-                title: 'COP = Wärme ÷ Strom, Strom ' + E.korrTxt(kw) + ': TOP16 untertreibt im Lauf (Pumpe, Lüfter, Elektronik fehlen; Forum 189605, L5 70–90 W unter Shelly); nur Laufminuten, im Stillstand roh'};
+                title: 'COP = Wärme ÷ Strom, Strom ' + (zq ? 'vom Zähler (Shelly), Minuten ohne Zähler ' : '') + E.korrTxt(kw) + ': TOP16 untertreibt im Lauf (Pumpe, Lüfter, Elektronik fehlen; Forum 189605, L5 70–90 W unter Shelly); nur Laufminuten, im Stillstand roh'};
     }
     function messBuild(S, now, cfg, plan) {
         var tc = cfg.takt || E.taktCfg(null), TK = S.takt || {}, nl = TK.nl || null, laedt = !!(nl && nl.laeuft);
@@ -215,7 +215,47 @@ var ENGVIEW = (function (E) {
             lern.push({k: 'Lern-Gate heute', v: '–', chip: 'keine Daten', c: 'mute'}, {k: 'Bedarfsmodell Drift', v: '–', chip: 'keine Daten', c: 'mute'});
         }
         lern.push(wz(LG && LG.auf, 'Wirkzeit Raum ↑'), wz(LG && LG.ab, 'Wirkzeit Raum ↓'), kb);
-        return {takt: takt, ml: ml, mlLeer: laedt ? 'lädt' : 'sammelt', cop: laedt ? null : copMatrix(TK, tc, now, kw), lern: lern, raum: raumKacheln(S, now, cfg)};
+        return {takt: takt, ml: ml, mlLeer: laedt ? 'lädt' : 'sammelt', cop: laedt ? null : copMatrix(TK, tc, now, kw, E.zqOf(cfg)), lern: lern, raum: raumKacheln(S, now, cfg)};
+    }
+    // ---------------------------------------------------------------- Karte "COP: Ziel und Ist" (cop-ziel 17.10.2026): Ist gegen Ziel je letzter Stunde / heute / gestern, Posten, Gütegrad-Stand
+    function chipDiff(d) { return !have(d) ? {t: '–', c: 'mute'} : (d <= 5 ? {t: (d > 0 ? '−' : '+') + E.de(Math.abs(d), 1) + ' %', c: 'ok'} : (d <= 15 ? {t: '−' + E.de(d, 1) + ' %', c: 'warn'} : {t: '−' + E.de(d, 1) + ' %', c: 'bad'})); }
+    function tsOfIso(s) { var m = /^(\d{4})-(\d\d)-(\d\d)[ T](\d\d):(\d\d)/.exec(String(s || '')); return m ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]).getTime() : null; }
+    function copBuild(S, now, cfg) {
+        var Z = E.copZielSumme(S || {}, now), P = E.czParam(cfg), kw = E.copKw(cfg), h0 = new Date(now - 60 * MIN).getHours();
+        var strom = function (A) { var q = A ? A.quelle || {} : {}, z = q.zaehler || 0, h = q.heishamon || 0; return z && !h ? 'Zähler' : (z ? 'Zähler ' + Math.round(100 * z / (z + h)) + ' % der Minuten' : 'TOP16 + ' + E.de(kw, 0) + ' W'); };
+        var tip = function (A, name) {
+            if (!A) { return name + ': keine Daten'; }
+            return name + ': Wärme ' + E.de(A.q, 2) + ' kWh, Strom ' + E.de(A.e, 2) + ' kWh (' + strom(A) + '), Strom bei Ziel-COP ' + E.de(A.ez, 2) + ' kWh · ' + A.lauf + ' Laufminuten, ' + A.starts + ' Starts, ' + A.abtauungen + ' Abtauungen' +
+                   (A.min.stand ? ', Stillstand ' + A.min.stand + ' min' : '') + (A.eWW ? ' · Warmwasser ' + E.de(A.eWW, 2) + ' kWh (nicht enthalten)' : '') + (A.eHS ? ' · Heizstab ' + E.de(A.eHS, 2) + ' kWh (nicht enthalten)' : '') +
+                   (A.rueckfall ? ' · ' + A.rueckfall + ' min Rückfall auf HeishaMon (Zähler älter als ' + E.CZ.zMaxAlterMin + ' min)' : '') + (A.nZ ? ' · Zähler ' + E.de(A.eZ, 2) + ' kWh gegen TOP16 + ' + E.de(kw, 0) + ' W ' + E.de(A.eHMz, 2) + ' kWh in ' + A.nZ + ' min' : '');
+        };
+        var kpi = function (A, k) {
+            var c = chipDiff(A ? A.diff : null);
+            return {k: k, v: A && have(A.cist) ? E.de(A.cist, 2) + ' / ' + E.de(A.cz, 2) : '–', s: 'Ist / Ziel', chip: A && have(A.diff) ? c.t : null, c: c.c, title: tip(A, k) + ' · Ziel = Gütegrad × Carnot(Soll-Vorlauf, Außen) × Abtau- × Frequenzfaktor; Differenz bis 5 % ok, bis 15 % Warnung'};
+        };
+        var spalten = [['Letzte Stunde', Z.stunde], ['Heute', Z.heute], ['Gestern', Z.gestern]], zeilen = [];
+        E.CZ_POSTEN.forEach(function (x) {
+            var zellen = spalten.map(function (sp) { var A = sp[1], p = A ? A.posten.filter(function (y) { return y.id === x[0]; })[0] : null; return p ? {kwh: p.kwh, pct: p.pct, cop: p.cop} : null; });
+            var rest = x[0] === 'rest', zeig = rest || zellen.some(function (z) { return z && z.kwh > 0.004; });
+            if (!zeig) { return; }
+            var warn = rest && zellen.some(function (z) { return z && have(z.pct) && Math.abs(z.pct) > 5; });
+            var extra = x[0] === 'vl' && Z.heute ? ' · heute über Soll ' + E.de(Z.heute.vlPlus, 2) + ' kWh, unter Soll ' + E.de(Z.heute.vlMinus, 2) + ' kWh' : (x[0] === 'abtau' && Z.heute ? ' · heute Abtauen ' + E.de(Z.heute.abIst, 2) + ' kWh, im Ziel erwartet ' + E.de(Z.heute.abErw, 2) + ' kWh' : '');
+            zeilen.push({name: x[1], warn: warn, title: E.CZ_HERKUNFT[x[0]] + extra, zellen: zellen.map(function (z, i) {
+                return !z || (!rest && z.kwh <= 0.004) ? {v: '–', p: ''} : {v: E.de(z.kwh, 2), p: E.de(z.pct, 1) + ' %', t: spalten[i][0] + ': ' + E.de(z.kwh, 2) + ' kWh = ' + E.de(z.pct, 1) + ' % des Stroms, ' + E.sg(-z.cop, 2) + ' COP-Punkte'};
+            })});
+        });
+        var et = E.CZ.hzBins, etaTs = tsOfIso(P.stand), alterH = etaTs ? (now - etaTs) / 3600000 : null;
+        var etaTxt = E.KF.baender.map(function (b) { return E.de(P.eta[b[2]], 2); }).join(' · ');                                       // je Band < 4 / 4…8 / 8…11 / ≥ 11 °C (Untertext)
+        var eta = {k: 'Gütegrad η', v: etaTxt, chip: etaTs ? (alterH <= 26 ? 'nachts kalibriert' : 'veraltet') : 'Startwerte', c: etaTs ? (alterH <= 26 ? 'ok' : 'warn') : 'mute',
+                   s: '< 4 · 4…8 · 8…11 · ≥ 11 °C · ' + (etaTs ? 'Stand ' + dm(etaTs) + ' ' + hm(etaTs) + ', ' + (alterH < 48 ? E.de(alterH, 0) + ' h alt' : E.de(alterH / 24, 0) + ' Tage alt') : 'cop_physik, dT_verd ' + E.de(E.CZ.dTverd, 1) + ' K'),
+                   title: 'dT_verd je Band ' + E.KF.baender.map(function (b) { return b[2] + ' °C ' + E.de(P.dT[b[2]], 1) + ' K'; }).join(' · ') + ' (' + P.herkunft.dT + ') · Spreizung je Band ' + E.KF.baender.map(function (b) { return E.de(P.spr[b[2]], 2); }).join('/') + ' K · Frequenzfaktor ' +
+                          et.map(function (b) { return b[0] + '–' + b[1] + ' Hz ' + E.de(E.czFreq(P, b[0] === 16 ? 16 : (b[0] + Math.min(b[1], 60)) / 2), 3); }).join(', ') + ' (' + P.herkunft.freq + ') · Abtauen aMax ' + E.de(P.aMax * 100, 0) + ' % (' + P.herkunft.abtau + ') · Sonne +1…+2 K (Annahme)' +
+                          (Z.heute && Z.heute.sonne.min ? ' · Rest heute in Sonnenminuten ' + E.de(Z.heute.sonne.rest, 1) + ' % (' + Z.heute.sonne.min + ' min), ohne Sonne ' + E.de(Z.heute.ohneSonne.rest, 1) + ' %' : '')};
+        var L = Z.letzte, zq = E.zqOf(cfg), quelle = {k: 'Strom', v: zq ? (L && L.rueckfall ? 'HeishaMon (Rückfall)' : 'Zähler') : 'TOP16 + ' + E.de(kw, 0) + ' W', chip: zq ? (L && L.rueckfall ? 'Zähler fehlt' : 'Zähler') : 'HeishaMon', c: zq ? (L && L.rueckfall ? 'bad' : 'ok') : 'mute',
+                      s: L && have(L.cz) ? 'jetzt Ziel ' + E.de(L.cz, 2) + (have(L.cist) ? ' · Ist ' + E.de(L.cist, 2) : '') : (L ? ({stand: 'Stillstand', ww: 'Warmwasser', heizstab: 'Heizstab', abtau: 'Abtauen', wieder: 'Wiederaufheizen', keine: 'keine Daten'}[L.art] || L.art) : '–'),
+                      title: zq ? 'Strom vom Zähler (OPT_cfg.zaehler.quelle = zaehler); ist der Zähler älter als ' + E.CZ.zMaxAlterMin + ' min, rechnet die Karte mit TOP16 + ' + E.de(kw, 0) + ' W' : 'Strom = TOP16 (Heat_Energy_Consumption) + ' + E.de(kw, 0) + ' W im Lauf, roh im Stillstand (Umschalten auf den Zähler: Daten & Güte, Stromzähler)'};
+        return {kpi: [kpi(Z.stunde, 'Letzte Stunde ' + p2(h0) + '–' + p2((h0 + 1) % 24) + ' Uhr'), kpi(Z.heute, 'Heute'), kpi(Z.gestern, 'Gestern')], spalten: spalten.map(function (s) { return s[0]; }), zeilen: zeilen, info: [eta, quelle],
+                leer: !Z.heute && !Z.gestern && !Z.stunde};
     }
     // Raeume und Waechter (14.10.2026): Raumlage des Raumeinflusses v3, Waermeverteilung, Kurvenform, Vergleich Phase 2, Startschwelle, Mindestfrequenz, Stoerung, Dornroeschenschlaf
     function raumKacheln(S, now, cfg) {
@@ -310,9 +350,9 @@ var ENGVIEW = (function (E) {
                     reife: r.art === 'befehl' ? {n: ok, m: r.kriterien.length, reif: r.reif} : null, krit: r.kriterien.map(function (k) { return [k.kurz, k.ok ? 1 : 0, k.text]; })};
         });
         var score = {now: now, t0: t0, series: series, tiles: tiles, sv: sv};
-        return {card: card, rules: {rules: rules}, score: score, mess: messBuild(S, now, cfg, o.plan || null), log: {rows: logRows(o.V || {}, now, 12)}};
+        return {card: card, rules: {rules: rules}, score: score, mess: messBuild(S, now, cfg, o.plan || null), log: {rows: logRows(o.V || {}, now, 12)}, cop: copBuild(S, now, cfg)};
     }
-    return {track: track, build: build, logRows: logRows, copMatrix: copMatrix, messBuild: messBuild, raumKacheln: raumKacheln, zielTxt: zielTxt, knopfOf: knopfOf, COL: COL, CHIP: CHIP};
+    return {track: track, build: build, logRows: logRows, copMatrix: copMatrix, copBuild: copBuild, chipDiff: chipDiff, messBuild: messBuild, raumKacheln: raumKacheln, zielTxt: zielTxt, knopfOf: knopfOf, COL: COL, CHIP: CHIP};
 })(typeof ENGINE !== 'undefined' ? ENGINE : require('./engine_core.js'));
 if (typeof module !== 'undefined' && module.exports) { module.exports = ENGVIEW; }
 // == ENGINE-VIEW-ENDE ==

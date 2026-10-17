@@ -1,6 +1,6 @@
 # Optimierer: Entscheidungsmaschine, Punktesystem, Ein-Klick-Übernahme, Bonsai-Beobachter
 
-Stand 16.10.2026, Branch `winterpaket` (**Winterpaket**: Abtauwetter bis unter 10 °C, kein Comfort nach dem Abtauen/beim Kaltstart, Quiet stufenweise, +1 K in der Pause als Startbefehl, „Anlage hat Quiet beendet“, COP mit Abtau-Abzug, Zwilling-Parameter: Abschnitt 24; Änderungen gegenüber 12.10.: Abschnitt 13; Seite „Optimierer“ und Klickweg: Abschnitt 14; Seiten: Abschnitte 15–16; Quiet-Freigabe v2 und Deckel/Laufzeit v4: Abschnitt 17, zweiter Review-Durchgang: 17.9; **Review-Paket** (Wärmefahrplan als Vorschau, Heizgrenze-Hinweis stillgelegt, Vorausschau nur −1 K, Messaufgabe gestrichen, Quiet-Wächter nur Messung): Abschnitt 18; COP-Korrektur: Abschnitt 19; **Raumeinfluss v3, Forum 189605** (Mindestfrequenz, Startschwelle, Abtauen, H23, Dornröschenschlaf, Effizienz-Deckel ab 28 Hz): Abschnitt 20; **Regel „Heizregelung“** (Comfort/Efficiency mit Übernahme per Klick, Whitelist `SetHeatingControl` 0/1): Abschnitt 21; **Gebäudemodell v3 und eigene Nachheizung** (Entscheidungen 2 und 5, 15.10.): Abschnitt 22). **Alles ist Shadow.** Die Maschine rechnet jede Minute aus, was sie schalten *würde*, und schreibt das auf. Sie sendet nichts. Der einzige Sendeweg ist ein Klick des Betreibers auf „Übernehmen“. Dieser Weg wird gesperrt ausgeliefert.
+Stand 17.10.2026, Branch `cop-ziel` (**COP: Ziel und Ist, Stromzähler**: Abschnitt 25; **Winterpaket**: Abtauwetter bis unter 10 °C, kein Comfort nach dem Abtauen/beim Kaltstart, Quiet stufenweise, +1 K in der Pause als Startbefehl, „Anlage hat Quiet beendet“, COP mit Abtau-Abzug, Zwilling-Parameter: Abschnitt 24; Änderungen gegenüber 12.10.: Abschnitt 13; Seite „Optimierer“ und Klickweg: Abschnitt 14; Seiten: Abschnitte 15–16; Quiet-Freigabe v2 und Deckel/Laufzeit v4: Abschnitt 17, zweiter Review-Durchgang: 17.9; **Review-Paket** (Wärmefahrplan als Vorschau, Heizgrenze-Hinweis stillgelegt, Vorausschau nur −1 K, Messaufgabe gestrichen, Quiet-Wächter nur Messung): Abschnitt 18; COP-Korrektur: Abschnitt 19; **Raumeinfluss v3, Forum 189605** (Mindestfrequenz, Startschwelle, Abtauen, H23, Dornröschenschlaf, Effizienz-Deckel ab 28 Hz): Abschnitt 20; **Regel „Heizregelung“** (Comfort/Efficiency mit Übernahme per Klick, Whitelist `SetHeatingControl` 0/1): Abschnitt 21; **Gebäudemodell v3 und eigene Nachheizung** (Entscheidungen 2 und 5, 15.10.): Abschnitt 22). **Alles ist Shadow.** Die Maschine rechnet jede Minute aus, was sie schalten *würde*, und schreibt das auf. Sie sendet nichts. Der einzige Sendeweg ist ein Klick des Betreibers auf „Übernehmen“. Dieser Weg wird gesperrt ausgeliefert.
 
 ## 1. Kurzfassung
 
@@ -431,6 +431,31 @@ Tabellen aus dem Regelwerk, erzeugt mit `node tools/engine_doc.js`. Die Sim prü
 | `deckelHaltMin` | 5 | min | gelernter Quiet-Deckel: eine Frequenz zählt erst, wenn die Stufe sie 5 min am Stück gehalten hat (Messung 09.10. 01:22–01:24: Quiet 3 lief bei 4 °C ohne Rückstand 3 min mit 20 Hz, vermutlich Ölrückführung; solche Spitzen zählen nicht; ANNAHME) |
 | `startsTagWarn` | 12 | Starts | Anzeige „Takt“ ab mehr als 12 Starts in 24 h (Richtwert HeatPump Hero, docs/optimization.md) |
 | `kurzAnteilWarn` | 0,25 | Anteil | Anzeige „Takt“ ab mehr als 25 % kurzen Läufen bei mindestens 4 Läufen (Richtwert HeatPump Hero; dort „kurz“ = unter 10 min, bei uns unter 60 min) |
+
+### COP: Ziel und Ist (Parameter, `cfg.copZiel` aus cop_eta.json)
+
+| Parameter | Standard | Einheit | Herkunft |
+|---|---|---|---|
+| `eta` | 0,52 / 0,50 / 0,48 / 0,45 | – | Gütegrad je Außenband < 4 / 4–8 / 8–11 / ≥ 11 °C aus 6 500 stationären Minuten 07.–17.10. (16–20 Hz, Lauf ≥ 25 min, Strom +80 W, dT_verd 4,5 K; cop_physik.md); nachts neu aus cop_eta.json (Container, 16–17 Hz, Lauf ≥ 25 min, ohne Sonne) |
+| `kondK` | 2,5 | K | T_kond = Vorlauf + 2,5 K (cop_physik.md) |
+| `dTverd` | 4,5 | K | T_verd = Außen − dT_verd; je Band der Median Außen − Rohr außen in den Kalibrierminuten (cop_eta.json, ab 60 Minuten mit Fühler), sonst 4,5 K (gemessen 3,7–4,5 K am Minimum, cop_physik.md) |
+| `sprRef` | 2,1 | K | Band-Mittel der Spreizung Vorlauf − Rücklauf am Minimum (Messung 07.–17.10.: 2,05–2,17 K), nachts je Band aus cop_eta.json |
+| `sprJeK` | 0,01 | 1/K | Spreizung +1 K bei gleichem Vorlauf ≈ +1 % COP (cop_physik.md) |
+| `freq` | 18–20 Hz 0,993 · 21–25 Hz 1 | – | Frequenzfaktor aus den eigenen Minuten (Lauf ≥ 25 min, ohne Sonne) gegen 16–17 Hz, ab 120 Minuten je Bereich, höchstens 1 (Hochlauf wärmt Speichermasse); ohne Daten 1 − 1 %/Hz über 25 Hz (ANNAHME aus Abschnitt 19: „ab 28 Hz −3 %“) |
+| `abtau.aMax` | 0,1 | – | Abtaufaktor 1 − aMax · g(AT) · h(Feuchte): g = 1 bis 2 °C, linear auf 0 bei 4 °C, darüber 1 (Forum L5: bei 3 °C mit 25 Hz ohne Abtauung, bei 2 °C alle ~1,5 h, 4066690; eigene Daten 07.–17.10.: keine Abtauung bei 1–9 °C); h = 1 ab 85 %, 0,3 bis 60 % (ANNAHME), ohne Feuchte 1. aMax 10 % = cop_physik (< 2 °C Abtauen −10 %, Forum 5–15 % bei 10–30 Abtauungen/Tag); kalibriert aus den Abtauminuten (cop_eta.json), sobald 5 Abtauungen im Fenster liegen |
+| `sonne` | 10–16 Uhr, PV ≥ 30 % der 7-Tage-Spitze: +1…+2 K | K | ANNAHME: Außengerät in Südsonne, Fühler im Schatten (Fühler − OWM +2,6 K bei Sonne, ALGORITHMUS 2); +1 K ab 30 %, +2 K ab 60 % der Spitze. Prüfung: Rest in Sonnenminuten gegen ohne Sonne (Replay, später Zwilling/Messung) |
+| `startMin` | 10 | min | Startspitzen: die ersten 10 Laufminuten nach einem Start (Pause ≥ 3 min) zählen ganz als Posten |
+| `wdMaxMin` | 30 | min | Wiederaufheizen nach dem Abtauen bis Vorlauf wieder 0,5 K unter dem Wert davor, höchstens 30 min (wie ABZ der Takt-Messung) |
+
+| Posten | Herkunft |
+|---|---|
+| Abtauen (`abtau`) | Minuten mit Defrosting_State und Wiederaufheizen danach (ganz), abzüglich der im Ziel erwarteten Abtauung (Abtaufaktor) |
+| Startspitzen (`start`) | die ersten 10 Laufminuten je Start: Strom über Wärme ÷ Ziel-COP |
+| Frequenz über Minimum (`freq`) | Frequenzfaktor der Ist-Frequenz gegen den der Mindestfrequenz bei dieser Außentemperatur |
+| Vorlauf über Soll (`vl`) | Carnot mit Ist-Vorlauf gegen Soll-Vorlauf (über Soll = Verlust, unter Soll = Gewinn) |
+| Rücklauf/Spreizung (`spr`) | Spreizung Vorlauf − Rücklauf gegen das Band-Mittel (1 %/K) |
+| Stillstandsstrom (`stand`) | Strom im Stillstand (Pumpe, Standby), nur im Tageswert |
+| Rest (unerklärt) (`rest`) | Abweichung des gemessenen COP vom Modell (Gütegrad, Messfehler, Sonne-Annahme, Übergänge) |
 
 ### Sperren, die jede Regel erbt
 
@@ -1603,3 +1628,53 @@ Lesart: Die Zeilen „alter Kern, neuer Zwilling“ gegen „neu“ zeigen die W
 - **Tests:** engine_sim 417 OK (Flow + replay_data_1610), 329 OK ohne Flow; neu Abschnitt (w) w1–w8 und Hülle (Feuchte/Rohr); angepasst h2/h3, Arbitrierung, Kälte-Szenario, Versionen. optimizer_sim 595 OK (Spalte druck_bar, PLAN_VER 14, Abtau-Abzug). wp_zwilling_test 43 OK mit Training auf replay_data_1610. Die kalibrierte Prüfung „Entscheidung 5“ rechnet bis 15.10. 19:00 (Datensatz `replay_data_1510`).
 - **Vorschau** Optimierer, Optimierer mit Vorschlag, Daten & Güte, Optimierung, Übersicht bei 1024/1920/2560: 15 × OK.
 - **Geänderte Knoten** (Generator gegen live 8321543, beide mit `--uebernahme-knoten-aktiv`): `opt_apply`, `opt_engine`, `opt_plan`, `opt_quiet` (nur `func`), nichts neu, nichts entfernt; `opt_apply_mqtt` bleibt aktiv.
+
+## 25. COP: Ziel und Ist mit Ursachenzerlegung, Stromzähler Shelly 3EM-63 Gen3 (17.10.2026, Branch `cop-ziel`)
+
+Nur Kennzahl und Anzeige: keine Regel liest die neuen Werte, der Kern (`COP_calculated`, Weitergabe an Venus/VRM) bleibt unverändert. Replay 07.–17.10. alt (main 03306e8) gegen neu: 0 Minuten mit anderem Status, Grund oder Vorschlag, Punkte und Ereignisse identisch.
+
+### 25.1 Ziel-COP und Zerlegung (`engine_core.js`: `copZiel`, `copZielStep`, `copZielSumme`, `czAgg`)
+
+- **Ziel je Laufminute** = η(Band) · Carnot(**Soll-Vorlauf**, Außen + Sonne, dT_verd) · Abtaufaktor(Außen, Feuchte) · Frequenzfaktor(Mindestfrequenz bei dieser Außentemperatur); Carnot = T_kond/(T_kond − T_verd), T_kond = VL + 2,5 K, T_verd = AT − dT_verd. Grundlage ist der Soll-Vorlauf (TOP42, was die Heizkurve samt Verschiebung verlangt): ein Ist-Vorlauf über Soll (Überschwingen vor dem Stopp) ist damit ein eigener Posten, statt im Ziel zu verschwinden.
+- **dT_verd** je Band = Median Außen − Rohr außen in den Kalibrierminuten (cop_eta.json), sonst 4,5 K. Nicht je Minute: sonst wanderten Frequenz- und Vereisungsverluste (Rohr fällt) ins Ziel.
+- **Ist** = Nutzwärme (HeishaMon, ohne Abtau- und Wiederaufheizminuten) ÷ Strom (TOP16 + 80 W im Lauf, roh im Stillstand; mit `zaehler.quelle = zaehler` und frischem Zähler der Zählerstrom). Warmwasser und Heizstab-Minuten zählen nicht (nur Info-kWh).
+- **Zerlegung** Strom Ist − Strom Ziel (Ziel = Nutzwärme ÷ Ziel-COP) je Minute, exakt additiv: Laufminuten über die Logarithmen der Faktoren (Vorlauf gegen Soll, Frequenz über Minimum, Spreizung gegen Band-Mittel 1 %/K, erwartetes Abtauen, Rest); Startminuten (erste 10 nach einer Pause ≥ 3 min) ganz „Startspitzen“; Abtau- und Wiederaufheizminuten ganz „Abtauen“ abzüglich der im Ziel erwarteten Abtauung; Stillstand „Stillstandsstrom“ (nur im Tageswert). COP-Punkte je Posten = Nutzwärme ÷ (Strom Ist · Strom Ziel) · Posten (summieren sich zu Ziel − Ist).
+- Zustand `S.cz` (48 Stunden, 35 Tage), Buchung in `step()` nach der Takt-Messung, ohne Wirkung auf die Regeln.
+- **Startwerte** η 0,52/0,50/0,48/0,45 (cop_physik, dT 4,5 K); **nachts** `cop_eta.json` des Containers (Schritt `cop_eta`, `tools/cop_eta.js`, 21 Tage, Minuten mit Lauf ≥ 25 min, 16–17 Hz, ohne Sonne), gelesen von `opt_nas` → `OPT_cop_eta` → `cfg.copZiel` der Maschine (ungültige Werte verworfen, fehlt die Datei: Startwerte).
+- **Frequenzfaktor aus den Daten** (Lauf ≥ 25 min, ohne Sonne, gegen 16–17 Hz): 18–20 Hz 0,987 (563 min), 21–25 Hz 0,999 (308 min); 26–30 Hz nur 30 min (0,94), 31–35 Hz 44 min (1,14, Hochlauf), darüber keine Daten → Annahme 1 − 1 %/Hz über 25 Hz. Mit TOP16 + 80 W ist bis 25 Hz kein Wirkungsgradverlust messbar.
+- **Abtaufaktor** 1 − 10 % · g(AT) · h(Feuchte), g = 1 bis 2 °C, 0 ab 4 °C; h = 1 ab 85 %, 0,3 bis 60 %. Kalibriert, sobald 5 Abtauungen im Fenster liegen (Strom der Abtau-/Wiederaufheizminuten gegen das Erwartete). 07.–17.10.: 0 Abtauungen, erwartet 0,72 kWh.
+- **Sonne (ANNAHME)** 10–16 Uhr, PV ≥ 30 % der 7-Tage-Spitze: AT-Äquivalent +1 K, ab 60 % +2 K. Prüfung im Replay: Rest in 699 Sonnenminuten +5,0 % gegen +0,4 % ohne Sonne – die Annahme ist durch die Daten bisher **nicht gestützt** (der Rest entspricht etwa den angenommenen +1,5 K).
+
+**Replay 07.–17.10.** (`node tools/cop_ziel_replay.js <daten> --eta auto`, η vorher auf denselben Daten kalibriert wie der Container: 0,507/0,488/0,462/0,442, dT 3/3/3/4 K):
+
+| Tag | Ø AT | Lauf min | Starts | Strom kWh | Wärme kWh | COP Ist | COP Ziel | unter Ziel | Abtauen kWh | Startspitzen kWh | Frequenz über Minimum kWh | Vorlauf über Soll kWh | Rücklauf/Spreizung kWh | Stillstandsstrom kWh | Rest (unerklärt) kWh | Rest % | Rest Sonne % |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 07.10. | 12,8 | 127 | 1 | 0,81 | 4,53 | 5,57 | 5,74 | 2,9 % | 0,00 | 0,00 | 0,00 | 0,01 | 0,00 | 0,02 | 0,00 | −0,5 | – |
+| 08.10. | 11,6 | 579 | 3 | 4,02 | 20,18 | 5,01 | 5,35 | 6,3 % | 0,00 | 0,02 | 0,00 | 0,03 | 0,00 | 0,13 | 0,08 | 2,0 | 7,5 (68 min) |
+| 09.10. | 7,9 | 1120 | 4 | 8,12 | 37,68 | 4,64 | 5,09 | 8,8 % | 0,00 | 0,12 | 0,00 | 0,28 | 0,00 | 0,19 | 0,12 | 1,5 | 14,6 (89 min) |
+| 10.10. | 11,0 | 800 | 7 | 6,15 | 30,01 | 4,88 | 5,33 | 8,5 % | 0,00 | 0,14 | 0,07 | 0,00 | 0,00 | 0,32 | 0,00 | −0,0 | 9,0 (71 min) |
+| 11.10. | 9,6 | 992 | 5 | 7,52 | 35,98 | 4,79 | 5,31 | 9,9 % | 0,00 | 0,12 | 0,01 | 0,20 | 0,00 | 0,26 | 0,16 | 2,1 | 0,4 (104 min) |
+| 12.10. | 6,4 | 1155 | 3 | 9,35 | 43,00 | 4,60 | 4,58 | −0,3 % | −0,37 | 0,07 | 0,04 | 0,22 | −0,02 | 0,17 | −0,14 | −1,5 | −1,5 (166 min) |
+| 13.10. | 8,5 | 1045 | 3 | 8,22 | 38,47 | 4,68 | 4,80 | 2,6 % | −0,29 | 0,05 | 0,02 | 0,19 | −0,01 | 0,18 | 0,07 | 0,8 | 3,9 (17 min) |
+| 14.10. | 12,1 | 749 | 4 | 5,37 | 27,34 | 5,09 | 5,46 | 6,8 % | 0,00 | 0,04 | 0,00 | 0,14 | −0,01 | 0,25 | −0,06 | −1,2 | – |
+| 15.10. | 8,0 | 1148 | 3 | 8,59 | 39,37 | 4,58 | 4,96 | 7,6 % | −0,06 | 0,07 | 0,02 | 0,23 | 0,00 | 0,12 | 0,28 | 3,3 | 7,9 (174 min) |
+| 16.10. | 9,9 | 820 | 2 | 6,10 | 28,58 | 4,68 | 4,97 | 5,8 % | 0,00 | 0,04 | 0,00 | 0,11 | −0,01 | 0,25 | −0,04 | −0,7 | −14,1 (10 min) |
+| 17.10. | 10,0 | 411 | 2 | 2,85 | 14,40 | 5,05 | 5,44 | 7,2 % | 0,00 | 0,03 | 0,00 | 0,08 | 0,00 | 0,10 | 0,00 | 0,0 | – |
+| **gesamt** | | 8946 | 37 | 67,12 | 319,54 | 4,76 | 5,06 | 6,0 % | −0,72 | 0,71 | 0,16 | 1,47 | −0,04 | 1,98 | 0,47 | 0,7 | 5,0 (699 min) |
+
+Karte **„COP: Ziel und Ist“** (Seite Optimierer, Gruppe `opt_g_eng_cop`, 17 breit, Reihenfolge 8, Ausgang 7 von `opt_engine`): Ist/Ziel für die letzte volle Stunde, heute und gestern mit Chip (≤ 5 % ok, ≤ 15 % Warnung, darüber Fehler), Posten mit kWh und Anteil (nur Posten > 0, Rest immer, hervorgehoben über 5 %), Gütegrad-Stand (Startwerte / nachts kalibriert / veraltet) und Stromquelle. `opt_nas` zeigt die Zeile „COP-Gütegrad η“.
+
+### 25.2 Stromzähler Shelly 3EM-63 Gen3 (`tools/zaehler_core.js`, `opt_zaehler`)
+
+- **Nur lesen:** zwei `mqtt in` mit dynamischem Abo (`opt_mqtt_zl_v` Venus-Broker, `opt_mqtt_zl_n` NAS-Broker; nur der gewählte abonniert), kein Sendeknoten. Abos beim Start, nach dem Speichern und alle 10 min, solange 5 min nichts kam.
+- **Profile:** Drehstrom `em:0` (`a_/b_/c_act_power`, `voltage`, `current`, `aprt_power`) + `emdata:0` (`*_total_act_energy`, `*_ret_`); drei Kanäle `em1:0–2` (`act_power` …) + `em1data:0–2` (`total_act_energy`). Quellen `<präfix>/status/<komponente>` (volle Komponente) und `<präfix>/events/rpc` (NotifyStatus mit Teilfeldern, NotifyFullStatus). Profil „erkennen“ nimmt, was kommt.
+- **Konfiguration** `OPT_cfg.zaehler` (config.json, keine Geheimnisse): `topic`, `broker` (venus|nas), `profil`, `klemme_wp` (0–2), `klemme_heizstab`, `klemme_sonstiges` (0–2 oder null), `invertieren` je Klemme, `quelle` (heishamon|zaehler, Standard heishamon). Eingabe in der Karte „Stromzähler (Shelly 3EM-63)“ auf Daten & Güte (Form, Speichern schreibt nur den Schlüssel `zaehler`; Ereignis `optimierer_zaehler`).
+- **`OPT_zaehler`** {wp_w (ohne Heizstab), heizstab_w, sonst_w, kwh_wp, kwh_heizstab, ts, alter, ok, …}; ok = Meldung höchstens 5 min alt. Negativer WP-Wert ohne Invertieren: Hinweis „Vorzeichen prüfen“, Wert 0.
+- **Heizstab** mit eigener Klemme exakt; ohne: Sprungerkennung an Internal_Heater_State (3 Minuten vor/nach, Verdichter gleich, 0,5–9,5 kW), Median der letzten 9 Sprünge, bis dahin **Annahme 3 kW** (Herkunft in der Karte).
+- **Protokolle:** `quiet-*.csv` und `optimizer-v2-*.csv` hinten `zaehler_wp_w`, `zaehler_heizstab_w`; `plan-actuals-*.csv` hinten `ist_strom_zaehler_kwh`, `ist_zaehler_min`; Zustand `zaehler-state.json` (Heizstab-Sprünge, 24-h-Vergleich, ohne Messwerte).
+- **Vergleich** je Minute Zähler gegen TOP16 + Korrektur, gleitend 24 h, getrennt Lauf/Stillstand; ab 120 Laufminuten „Korrektur gemessen +x W statt Annahme 80 W“.
+- **Umschaltung** `quelle = zaehler` (Schalter der Form, nur nach Go): Ist-COP und Zerlegung, COP-Matrix (Takt-Messung speichert Zähler-Wh zusätzlich, `copSumme(…, zq)`), Anzeigen in `opt_quiet`/`opt_eval` (`pelQ`), Kennzahlen des Containers (`kennzahlen_tag.py` liest `zaehler_wp_w`, Fakt `energie.quelle`) nutzen den Zählerstrom; TOP16 bleibt als Vergleichsspalte. Ausfall (älter als 5 min): Rückfall auf TOP16 + 80 W mit Ereignis und Chip. Unverändert: Kern-COP, Wärmefahrplan-Modell, Kennzahl „Überheizt“, Quiet-Kennfeld.
+
+### 25.3 Tests
+
+`tools/cop_ziel_sim.js [flows] [daten]`: Minutenmodell, exakte Zerlegung, Start/Abtauen/Wiederaufheizen, Zählerquelle und Ausfall, Kalibrierung (synthetisch, η wiedergefunden), beide Shelly-Profile, NotifyStatus, Vorzeichen, Heizstab-Sprung, 24-h-Vergleich, Form, Hülle `opt_zaehler` (Abos, Speichern, Umschalten, Ausfall-/Wieder-Ereignis), Karten, Replay, Kennzahlen mit Zählerspalte.

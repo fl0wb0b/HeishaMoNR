@@ -154,11 +154,22 @@ PLAN = {"hddRefC": 15, "uaKwPerK": 0.15, "gainKw": 0.3, "priorDays": 2, "lernMin
 # stays raw). Stored values stay raw; every COP/power the optimizer computes or shows adds the correction when reading. Single source: OPT_cfg.cop.pelKorrW
 # (config.json may override, 0..200 W; the engine gets the same value through mergeCfg).
 COP = {"pelKorrW": 80}
+# Stromzaehler Shelly 3EM-63 Gen3 (cop-ziel 17.10.2026): Standard der Konfiguration OPT_cfg.zaehler (config.json "zaehler", Eingabe auf Daten & Guete). quelle 'heishamon' =
+# alles wie bisher; 'zaehler' nur nach Go des Nutzers (zwei Tage Vergleich). Klemmen 0-2 = Phase a/b/c (em:0) bzw. Kanal em1:0-2; null = keine.
+ZAEHLER_STD = {"quelle": "heishamon", "broker": "venus", "topic": "", "profil": "auto", "klemme_wp": 0, "klemme_heizstab": None, "klemme_sonstiges": None, "invertieren": [False, False, False]}
+ZAEHLER_MAX_ALTER_MIN = 5
 # JS snippet: the correction in W from OPT_cfg (falls back to the default above), used by opt_quiet, opt_plan, opt_eval, opt_hist
 COP_KW_JS = ("var COP_KW = (function () { var v = Number(((typeof cfg !== 'undefined' && cfg && cfg.cop) || {}).pelKorrW); "
              "return (isFinite(v) && v >= 0 && v <= 200) ? v : " + str(COP["pelKorrW"]) + "; })();   // COP-Korrektur: + W je Laufminute (TOP16 untertreibt, Forum 189605)\n"
              "function pelK(p, lauf) { return (p !== null && p !== undefined && isFinite(p) && lauf) ? p + COP_KW : p; }\n"
-             "var KORR_TXT = 'intern +' + COP_KW + ' W korrigiert';")
+             "var KORR_TXT = 'intern +' + COP_KW + ' W korrigiert';\n"
+             # Stromzaehler (cop-ziel 17.10.2026): OPT_cfg.zaehler.quelle = 'zaehler' und OPT_zaehler hoechstens 5 min alt -> Zaehlerstrom (ohne Heizstab) statt TOP16 + Korrektur;
+             # sonst (Standard 'heishamon', Ausfall) pelQ = pelK. Nur Anzeige und Zaehlerspalten; gespeicherte Rohwerte bleiben.
+             "var ZQ = (function () { var z = global.get('OPT_zaehler'), q = (((typeof cfg !== 'undefined' && cfg && cfg.zaehler) || {}).quelle === 'zaehler'), "
+             "fr = !!(z && typeof z.ts === 'number' && Date.now() - z.ts <= " + str(ZAEHLER_MAX_ALTER_MIN) + " * 60000 && typeof z.wp_w === 'number' && isFinite(z.wp_w)); "
+             "return {gewaehlt: q, frisch: fr, aktiv: q && fr, w: fr ? z.wp_w : null, hs: fr && typeof z.heizstab_w === 'number' ? z.heizstab_w : null, alter: z && typeof z.ts === 'number' ? (Date.now() - z.ts) / 60000 : null}; })();   // Stromzaehler (cop-ziel)\n"
+             "function pelQ(p, lauf) { return ZQ.aktiv ? ZQ.w : pelK(p, lauf); }\n"
+             "var ZQ_TXT = ZQ.aktiv ? 'Zähler (Shelly)' : (ZQ.gewaehlt ? 'Zähler gewählt, Rückfall auf ' + KORR_TXT + (ZQ.alter !== null ? ' (Zähler ' + Math.round(ZQ.alter) + ' min alt)' : ' (kein Zähler)') : KORR_TXT);")
 
 
 def js(code):
@@ -170,6 +181,7 @@ def js(code):
                 .replace("__QUIET__", json.dumps(QUIET, ensure_ascii=False))
                 .replace("__PLAN__", json.dumps(PLAN, ensure_ascii=False))
                 .replace("__COP__", json.dumps(COP))
+                .replace("__ZAEHLER__", json.dumps(ZAEHLER_STD))
                 .replace("__COPKW__", COP_KW_JS)
                 .replace("__EIGEN__", EIGEN_JS))
 
@@ -185,6 +197,7 @@ var d = {
     quiet: __QUIET__,
     plan: __PLAN__,
     cop: __COP__,                                    // COP-Korrektur: W, die TOP16 im Lauf fehlen (Forum 189605, Annahme 80 W)
+    zaehler: __ZAEHLER__,                            // Stromzaehler Shelly 3EM-63 Gen3 (cop-ziel 17.10.2026): Topic, Broker, Klemmen, Quelle (Standard heishamon)
     energy: {vrmMaxAgeH: 4, evccMaxAgeH: 6, batteryInstance: 278,
              tariff: {buy: [['00:00', '05:00', 0.21], ['05:00', '24:00', 0.31]], sell: 0.06, source: 'VRM Dynamic ESS (fester HT/NT-Tarif)'},       // Kaufpreis EUR/kWh je Zeitfenster, Verkaufspreis
              battery: {capacityKwh: 43, maxChargeKw: 12, maxDischargeKw: 12, costEurKwh: 0.01}, grid: {importKw: 32, exportKw: 32}},          // Werte aus VRM Dynamic ESS (fuer spaetere Phasen)
@@ -928,6 +941,7 @@ var pth = pthHs !== null ? pthHs : pthCalc;
 var copNow = (running && pel !== null && pel > 100 && pth !== null) ? pth / pel : null;      // Rohwert (Protokollspalte cop_momentan, Kennfeld)
 __COPKW__
 var pelKNow = pelK(pel, running), copNowK = (running && pel !== null && pel > 100 && pth !== null) ? pth / pelKNow : null;    // korrigiert (Anzeige, Spalte cop_momentan_korr)
+var pelQNow = pelQ(pel, running), copQNow = (running && pelQNow !== null && pelQNow > 100 && pth !== null) ? pth / pelQNow : null;   // Anzeige: Zaehler (falls gewaehlt und frisch), sonst wie pelKNow
 var qNow = num(G('TOP18_Quiet_Mode_Level'));
 var rt = num(G('compressor_runtime')), rtLast = num(G('compressor_last_runtime')), startsToday = num(G('Starts_Today'));
 var defrost = num(G('TOP26_Defrosting_State')) === 1, dhw = num(G('TOP20_ThreeWay_Valve_State')) === 1;
@@ -1149,9 +1163,9 @@ var rows = [
     ['Rücklauffehler (Soll-RL − Ist-RL)', rlErr !== null ? sg(rlErr, 1, 'K') + (rlErr >= 0 ? ' (RL unter Soll)' : ' (RL über Soll)') : '–', ''],
     ['Spreizung Ist / Ziel', f(spread, 1) + ' / ' + f(zDelta, 1, 'K'), ''],
     ['Verdichter', running ? f(freq, 0, 'Hz') + ' · seit ' + Math.round(rt || 0) + ' min' : 'steht (letzter Lauf ' + f(rtLast, 0, 'min') + ')', ''],
-    ['Leistung elektrisch', f(pelKNow, 0, 'W'), '', running ? KORR_TXT + ' (TOP16 ' + f(pel, 0, 'W') + ')' : 'Stillstand: TOP16 roh'],
+    ['Leistung elektrisch', f(pelQNow, 0, 'W'), '', ZQ.aktiv ? 'Zähler (Shelly) · TOP16 ' + f(pel, 0, 'W') + ', ' + KORR_TXT + ' ' + f(pelKNow, 0, 'W') : (running ? ZQ_TXT + ' (TOP16 ' + f(pel, 0, 'W') + ')' : 'Stillstand: TOP16 roh' + (ZQ.gewaehlt ? ' · ' + ZQ_TXT : ''))],
     ['Leistung thermisch', pth !== null ? f(pth, 0, 'W') + (pthHs !== null ? ' (HeishaMon)' : ' (berechnet)') : '–', ''],
-    ['COP', copNowK !== null ? f(copNowK, 1) : '–', '', 'Wärme ÷ Strom, Strom ' + KORR_TXT + (copNow !== null ? ' (roh ' + f(copNow, 1) + ')' : '')],
+    ['COP', copQNow !== null ? f(copQNow, 1) : '–', '', 'Wärme ÷ Strom, Strom ' + ZQ_TXT + (copNow !== null ? ' (roh ' + f(copNow, 1) + (ZQ.aktiv && copNowK !== null ? ', ' + KORR_TXT + ' ' + f(copNowK, 1) : '') + ')' : '')],
     ['Flow · Pumpe (nur Beobachtung)', f(flw, 1, 'l/min') + ' · ' + (HP.Pump_Duty ? f(HP.Pump_Duty.v, 0) : '–') + ' / ' + (HP.Pump_Speed ? f(HP.Pump_Speed.v, 0, 'U/min') : '–'), ''],
     ['Kinderzimmer oben', 'Radiator ' + (kzRad === '' ? '–' : (kzRad ? 'an' : 'aus')) + ' · Heizlüfter ' + (kzFanOnline === 0 ? 'offline' : (kzFanOn === '' ? '–' : (kzFanOn ? 'an' + (kzFanW !== null ? ' (' + f(kzFanW, 0, 'W') + ')' : '') : 'aus'))), ''],
     ['Taktung', 'heute ' + f(startsToday, 0) + ' Starts · Ø Lauf 24 h ' + (meanRun !== null ? f(meanRun, 0, 'min') : '–') + ' (' + runs24.length + ')', cycleBad ? 'warn' : ''],
@@ -1252,7 +1266,7 @@ if (!qs.lastLog || now - qs.lastLog >= MS_MIN - 1000) {
                 'zustand', 'shift_anlage', 'kz_radiator_an', 'kz_heizluefter_an', 'kz_heizluefter_w', 'kz_heizluefter_online',
                 'leistung_el_korr_w', 'cop_momentan_korr', 'cop_korr_w', 'rohr_aussen',          // 14.10.2026 (nur angehaengt): Strom/COP mit Korrektur und ihre Konstante; Outside_Pipe_Temp fuer die Abtau-Kennzahl des Beobachters
                 'heizstab_stop_delta', 'verdampfer_aus', 'heissgas', 'hochdruck', 'expansionsventil', 'rohr_innen',
-                'druck_bar'];   // Winterpaket 16.10.2026 (nur angehaengt): Water_Pressure; der Sensor zaehlt bei laufender Pumpe den Foerderdruck mit (~0,5 bar bei 4250 U/min), statisch nur bei Pumpe 0 (pumpe_speed) gueltig – Auswertung spaeter (Beobachter/Kennzahlen); Paket 2 (15.10.2026, nur angehaengt): Heater_Stop_Delta (TOP98), Eva_Outlet_Temp, Discharge_Temp, High_Pressure, Expansion_Valve, Inside_Pipe_Temp (Winter: Verdampfer/Ueberhitzung, Forum Expansionsventil)
+                'druck_bar', 'zaehler_wp_w', 'zaehler_heizstab_w'];   // cop-ziel 17.10.2026 (nur angehaengt): Stromzaehler Shelly (Waermepumpe ohne Heizstab, Heizstab), leer ohne frischen Zaehler; Winterpaket 16.10.2026 (nur angehaengt): Water_Pressure; der Sensor zaehlt bei laufender Pumpe den Foerderdruck mit (~0,5 bar bei 4250 U/min), statisch nur bei Pumpe 0 (pumpe_speed) gueltig – Auswertung spaeter (Beobachter/Kennzahlen); Paket 2 (15.10.2026, nur angehaengt): Heater_Stop_Delta (TOP98), Eva_Outlet_Temp, Discharge_Temp, High_Pressure, Expansion_Valve, Inside_Pipe_Temp (Winter: Verdampfer/Ueberhitzung, Forum Expansionsventil)
     var hv = function (n) { return HP[n] && typeof HP[n].v === 'number' ? HP[n].v : null; };
     // Review-Paket 13.10.2026: Spalten der gestrichenen Quiet-Empfehlung, des Kontrolltests und des Eskalationswaechters bleiben im Kopf (Leser nach Spaltenname), Werte leer
     var vals2 = [iso, qNow, '', '', '', '', '', '', '', c(solVL), c(istVL), c(solRL), c(istRL), c(rlErr), c(qs.errS),
@@ -1264,7 +1278,7 @@ if (!qs.lastLog || now - qs.lastLog >= MS_MIN - 1000) {
                  zustandNow, c(shiftHpNow), kzRad, kzFanOn, c(kzFanW), kzFanOnline,
                  c(pelKNow), c(copNowK), COP_KW, c(hv('Outside_Pipe_Temp')),
                  c(hv('Heater_Stop_Delta')), c(hv('Eva_Outlet_Temp')), c(hv('Discharge_Temp')), c(hv('High_Pressure')), c(hv('Expansion_Valve')), c(hv('Inside_Pipe_Temp')),
-                 c(hv('Water_Pressure'))];
+                 c(hv('Water_Pressure')), c(ZQ.w), c(ZQ.hs)];
     var file = '/data/optimizer/quiet-' + month + '.csv', head = cols.join(',');
     var needHead = true;
     if (flow.get('qHead') === month + '|' + head) { needHead = false; }
@@ -1634,12 +1648,13 @@ var ROOMS = cfg.rooms || [];
 // ---------- Ist-Werte je 15-Minuten-Slot (Grundlage fuer den spaeteren Vergleich) und je Tag (Lernen des Waermebedarfs)
 var s0 = Math.floor(now / Q15) * Q15, dtH = pl.lastTs ? Math.min(now - pl.lastTs, 3 * MS_MIN) / H : 0;
 pl.lastTs = now;
-function newAcc(t) { return {windS: 0, windN: 0, clS: 0, clN: 0, owS: 0, owN: 0, toS: 0, toN: 0, tcS: 0, tcN: 0, s: t, n: 0, atS: 0, atN: 0, pvS: 0, pvN: 0, thH: 0, elH: 0, thA: 0, elA: 0, dhwMin: 0, runMin: 0, defrosts: 0, hzS: 0, hzN: 0, defMin: 0, defEl: 0, defTh: 0, spS: 0, spN: 0, vdS: 0, vdN: 0, puS: 0, puN: 0, hc: null, elAK: 0, elHK: 0, kw: COP_KW}; }   // elAK/elHK: Strom mit COP-Korrektur; kw fehlt = Slot von einer aelteren Version begonnen (korrigierte Spalten bleiben leer)
+function newAcc(t) { return {windS: 0, windN: 0, clS: 0, clN: 0, owS: 0, owN: 0, toS: 0, toN: 0, tcS: 0, tcN: 0, s: t, n: 0, atS: 0, atN: 0, pvS: 0, pvN: 0, thH: 0, elH: 0, thA: 0, elA: 0, dhwMin: 0, runMin: 0, defrosts: 0, hzS: 0, hzN: 0, defMin: 0, defEl: 0, defTh: 0, spS: 0, spN: 0, vdS: 0, vdN: 0, puS: 0, puN: 0, hc: null, elAK: 0, elHK: 0, kw: COP_KW, elZ: 0, zMin: 0}; }   // elAK/elHK: Strom mit COP-Korrektur; kw fehlt = Slot von einer aelteren Version begonnen (korrigierte Spalten bleiben leer)
 function fillAcc(a) { ['windS', 'windN', 'clS', 'clN', 'owS', 'owN', 'toS', 'toN', 'tcS', 'tcN'].forEach(function (k) { if (a[k] === undefined) { a[k] = 0; } }); return a; }       // Zustand aus einem aelteren Stand (Deploy ohne Neustart) um neue Zaehler ergaenzen
 function fillDay(d) { ['s', 'sN', 'wk', 'wN', 'khW', 'owN', 'wkW', 'wwN', 'wkT', 'wTN', 'wkWT', 'wwTN', 'lgN', 'dhwM', 'defM', 'gapM', 'engM', 'unpM', 'tiS', 'tiN', 'khI', 'kiN', 'khIW', 'kiwN', 'wkI', 'wiN', 'wkIW', 'wiwN'].forEach(function (k) { if (d[k] === undefined) { d[k] = 0; } }); if (!d.r0) { d.r0 = {}; } if (!d.rl) { d.rl = {}; } return d; }
 function priceAt(slots, t) { if (!Array.isArray(slots)) { return null; } for (var i = 0; i < slots.length; i++) { if (slots[i][0] <= t && slots[i][1] > t) { return slots[i][2]; } } return null; }
 var roomIds = ROOMS.map(function (r) { return r.id; });
-var ACT_K = ['ist_strom_korr_kwh', 'ist_strom_heizen_korr_kwh', 'ist_cop_korr', 'ist_cop_korr_w'];        // 14.10.2026 (nur angehaengt): Strom/COP mit COP-Korrektur und ihre Konstante; ist_strom_kwh/ist_cop bleiben roh (TOP16)
+var ACT_K = ['ist_strom_korr_kwh', 'ist_strom_heizen_korr_kwh', 'ist_cop_korr', 'ist_cop_korr_w'];
+var ACT_Z = ['ist_strom_zaehler_kwh', 'ist_zaehler_min'];                                   // cop-ziel 17.10.2026 (nur angehaengt, nur plan-actuals): Strom vom Zaehler (ohne Heizstab, Lauf und Stillstand) und Minuten mit frischem Zaehler        // 14.10.2026 (nur angehaengt): Strom/COP mit COP-Korrektur und ihre Konstante; ist_strom_kwh/ist_cop bleiben roh (TOP16)
 var ACT_COLS = ['ist_aussen', 'ist_pv_w', 'ist_preis', 'ist_cop', 'ist_waerme_kwh', 'ist_strom_kwh', 'ist_abtauungen', 'ist_ww_min', 'ist_verdichter_min', 'ist_hz', 'ist_quiet_stufe', 'ist_soc', 'ist_waerme_gesamt_kwh', 'ist_strom_heizen_kwh', 'ist_abtau_min', 'ist_abtau_strom_kwh', 'ist_abtau_waerme_kwh', 'ist_spreizung', 'ist_vl_abweichung', 'ist_pumpe_u_min', 'ist_heizregelung']
     .concat(roomIds.map(function (id) { return 'ist_raum_' + id; }))
     .concat(['ist_wind_ms', 'ist_bewoelkung_pct', 'ist_aussen_owm', 'ist_aussen_regel', 'ist_t_custom']);       // Fahrplan v2: Wind, Bewoelkung, OWM-Temperatur, Regelwert T_outside, eigener Fuehler (nur anhaengen)
@@ -1685,7 +1700,8 @@ if (pl.acc && pl.acc.s !== s0) {                                                
             pl.bias.rows.push({day: stamp(a.s).slice(0, 10), d: actual.at - actual.owm, f: biasFeat(new Date(a.s).getHours(), actual.wind, actual.pv, actual.cl)});
             if (pl.bias.rows.length > 2100) { pl.bias.rows.shift(); }
         }
-        out[1] = csvOut('/data/optimizer/plan-actuals-' + mo + '.csv', 'slot_start,' + ACT_COLS.concat(ACT_K).join(','), [stamp(a.s) + ',' + aVals.concat(kVals).join(',')]);
+        var zVals = a.zMin ? [c(a.elZ, 3), String(a.zMin)] : ['', ''];
+        out[1] = csvOut('/data/optimizer/plan-actuals-' + mo + '.csv', 'slot_start,' + ACT_COLS.concat(ACT_K).concat(ACT_Z).join(','), [stamp(a.s) + ',' + aVals.concat(kVals).concat(zVals).join(',')]);
         // Vergleich: was wurde damals (vor ca. 0/1/3/6/12/24 h) prognostiziert, was ist tatsaechlich passiert. Kopf unveraendert (Leser nach Spaltenname);
         // seit PLAN_VER 11 (Review-Paket) bleiben Preis, Plan, Kosten, Strafen, Reserve, Attraktivitaet, Empfehlung, Offset und Quiet leer
         var EV_COLS = ['vorlauf_soll_h', 'vorlauf_ist_h', 'plan_zeit', 'prog_aussen', 'prog_feuchte', 'prog_cop', 'prog_preis', 'prog_pv_w', 'prog_bedarf_kwh', 'plan_waerme_kwh', 'prog_kosten_ct_kwh', 'prog_defrost_risiko', 'prog_taupunkt', 'prog_kosten_basis_ct_kwh', 'prog_strafe_defrost_ct_kwh', 'prog_strafe_unsicher_ct_kwh', 'prog_reserve_hinten_kwh', 'prog_reserve_vorn_kwh',
@@ -1729,6 +1745,7 @@ if (running) { acc.runMin++; acc.hzS += freq; acc.hzN++; }
 var thW = (running && pth !== null) ? pth : 0, elW = (running && pel !== null) ? pel : 0, elWK = (running && pel !== null) ? pelK(pel, true) : 0;      // elWK: mit COP-Korrektur (nur im Lauf)
 if (defrost) { var thRawA = hpv('Heat_Power_Production_Extra'); thW = (thRawA !== null && thRawA > -30000 && thRawA < 30000) ? thRawA : 0; }       // Abtauen: echter Waermeentzug (negativ), nicht aus Restwaerme gerechnet
 acc.thA += thW * dtH / 1000; acc.elA += elW * dtH / 1000; if (ok(acc.kw)) { acc.elAK += elWK * dtH / 1000; }
+if (ZQ.frisch && !dhw) { acc.elZ = (acc.elZ || 0) + ZQ.w * dtH / 1000; acc.zMin = (acc.zMin || 0) + 1; }
 if (running && !dhw && !defrost) { acc.thH += thW * dtH / 1000; acc.elH += elW * dtH / 1000; if (ok(acc.kw)) { acc.elHK += elWK * dtH / 1000; } }
 if (dhw) { acc.dhwMin++; }
 if (defrost) {                                                                                  // Abtauen: Dauer, Strom, Waermeentzug (HeishaMon-Wert mit Vorzeichen)
@@ -2311,6 +2328,7 @@ var rtc = G('F_RTC'), rtcCorr = (rtc && rtc.z1) ? num(rtc.z1.correction_value) :
 var shiftFinal = num(G('SHIFT_Final')), target = num(G('TOP42_Z1_Water_Target_Temp'));
 var inl = num(G('TOP5_Main_Inlet_Temp')), outl = num(G('TOP6_Main_Outlet_Temp')), pw = num(G('TOP16_Heat_Energy_Consumption')), cop = num(G('COP_HEAT'));
 var pwK = pelK(pw, freq > 0), copK = (freq > 0 && cop !== null && pw !== null && pw > 0) ? cop * pw / pwK : null;     // COP-Korrektur (Anzeige und Spalten leistung_korr_w/cop_korr)
+var pwQ = pelQ(pw, freq > 0), copQ = (freq > 0 && cop !== null && pw !== null && pw > 0 && pwQ !== null && pwQ > 0) ? cop * pw / pwQ : null;     // Anzeige: Zaehler (falls gewaehlt und frisch), sonst wie pwK
 var HPe = G('OPT_hp') || {}, hcV = (HPe.Heating_Control && typeof HPe.Heating_Control.v === 'number') ? HPe.Heating_Control.v : null;
 var hcHm = function (ts) { return new Date(ts).toLocaleTimeString('de-DE', {hour: '2-digit', minute: '2-digit'}); };
 var rowsWp = [
@@ -2323,7 +2341,7 @@ var rowsWp = [
     ['Vorlauf / Rücklauf', f(outl, 1) + ' / ' + f(inl, 1, '°C'), ''],
     ['Verdichter', f(freq, 0, 'Hz'), ''],
     // COP-Korrektur (nur Anzeige hier): Strom = TOP16 + COP_KW im Lauf, COP = Kern-COP x TOP16 ÷ (TOP16 + COP_KW). Der Kern (COP_calculated -> panasonic/cop -> Venus/VRM) bleibt roh.
-    ['Leistung · COP', f(pwK, 0, 'W') + ' · ' + (copK !== null ? f(copK, 1) : '–'), '', freq > 0 ? 'Strom ' + KORR_TXT + ' (TOP16 ' + f(pw, 0, 'W') + ') · Kern-COP (Venus/VRM, roh) ' + f(cop, 1) : 'Stillstand: TOP16 roh'],
+    ['Leistung · COP', f(pwQ, 0, 'W') + ' · ' + (copQ !== null ? f(copQ, 1) : '–'), '', (freq > 0 || ZQ.aktiv ? 'Strom ' + ZQ_TXT + ' (TOP16 ' + f(pw, 0, 'W') + (ZQ.aktiv ? ', ' + KORR_TXT + ' ' + f(pwK, 0, 'W') : '') + ') · Kern-COP (Venus/VRM, roh) ' + f(cop, 1) : 'Stillstand: TOP16 roh')],
     ['Starts heute', f(num(G('Starts_Today')), 0), '']
 ];
 
@@ -2501,13 +2519,13 @@ if (!lastLog || (now - lastLog) >= cfg.log.intervalMin * 60000) {
                         'leistung_w', 'cop', 'defrost', 'warmwasser', 'sanftanlauf', 'zustand', 'starts_heute',
                         'regelung_an', 'korrektur_vorschlag', 'korrektur_angewendet', 'fuehrungsraum', 'waermeverteilung', 'regelung_grund', 'regelung_sperre', 'haltezeit_rest_min',
                         'aussen_1h', 'aussen_24h', 'aussen_historie_h', 'prog_24h_mittel', 'aussen_berechnet', 'kurve_soll_aktuell', 'kurve_soll_berechnet', 'verschiebung_aequivalent', 'vorlauf_untergrenze', 'heizregelung',
-                        'wetter_wind_ms', 'pv_w', 'aussen_t_outside', 't_outside_custom', 'leistung_korr_w', 'cop_korr', 'cop_korr_w']);     // 14.10.2026 (nur angehaengt): COP-Korrektur
+                        'wetter_wind_ms', 'pv_w', 'aussen_t_outside', 't_outside_custom', 'leistung_korr_w', 'cop_korr', 'cop_korr_w', 'zaehler_wp_w', 'zaehler_heizstab_w']);     // 14.10.2026 (nur angehaengt): COP-Korrektur; 17.10.2026: Stromzaehler
     vals = vals.concat([valids.length, heat ? heat.name : '', heat ? c(heat.dev) : '', over ? over.name : '', over ? c(over.dev) : '', tight ? c(tight.m) : '', tight ? tight.room.name : '',
                         c(target), c(shiftBase), c(rtcCorr), c(shiftFinal), c(outl), c(inl), c(freq), freq > 0 ? 1 : 0,
                         c(pw), c(freq > 0 ? cop : null), defrost ? 1 : 0, valve === 1 ? 1 : 0, ssOn ? 1 : 0, mode, c(num(G('Starts_Today'))),
                         ctRes.on ? 1 : 0, ctRes.cur, ctRes.applied, ctRes.lead, ctRes.distrib ? 1 : 0, String(ctRes.code).replace(/,/g, ';'), ctRes.locks.join(' + ').replace(/,/g, ';'), Math.ceil(ctRes.holdLeft / MS_MIN),
                         c(at1h), c(at24h), c(atSpanH), c(atFc24), c(atCalc), c(sollNow), c(sollCalc), c(shiftEq), ctRes.floorHit ? 1 : 0, hcV === null ? '' : hcV,
-                        c(wOk ? W.wind : null), c((G('OPT_plan_in') || {}).ts && now - G('OPT_plan_in').ts < 5 * MS_MIN ? G('OPT_plan_in').pvNow : null), c(num(G('T_outside'))), c(num(G('T_outside_custom'))), c(pwK), c(copK), COP_KW]);
+                        c(wOk ? W.wind : null), c((G('OPT_plan_in') || {}).ts && now - G('OPT_plan_in').ts < 5 * MS_MIN ? G('OPT_plan_in').pvNow : null), c(num(G('T_outside'))), c(num(G('T_outside_custom'))), c(pwK), c(copK), COP_KW, c(ZQ.w), c(ZQ.hs)]);
     var logFile = '/data/optimizer/optimizer-v2-' + month + '.csv', headLine = cols.join(',');
     out[4] = {filename: logFile, payload: (headerNeeded('logHead', logFile, headLine) ? headLine + '\n' : '') + vals.join(',') + '\n'};
     flow.set('lastLog', now);
@@ -2565,7 +2583,7 @@ GROUPS = [("opt_g_ch_wp", "Wärmepumpe · letzte 24 h", OPT_W, UI_TAB), ("opt_g_
           ("opt_g_opt", "Optimierung", OPT_W, UI_TAB_DATA),
           ("opt_g_wx", "Außen & Wetter", OPT_W, UI_TAB_DATA), ("opt_g_calc", "Berechnete Außentemperatur", OPT_W, UI_TAB_DATA), ("opt_g_quiet", "Leistung & Quiet (Shadow)", OPT_W, UI_TAB_DATA), ("opt_g_en", "Energie & Preise (nur Anzeige)", OPT_W, UI_TAB_DATA),
           ("opt_g_fq", "Prognosegüte (nur Anzeige)", OPT_W, UI_TAB_DATA), ("opt_g_wp", "Wärmepumpe", OPT_W, UI_TAB_DATA),
-          ("opt_g_nas", "Auswertung NAS (optimizer-tools)", OPT_W, UI_TAB_DATA)]
+          ("opt_g_nas", "Auswertung NAS (optimizer-tools)", OPT_W, UI_TAB_DATA), ("opt_g_zaehler", "Stromzähler (Shelly 3EM-63)", OPT_W, UI_TAB_DATA)]
 _ord = {}
 for gid, gname, gwidth, gtab in GROUPS:
     _ord[gtab] = _ord.get(gtab, 0) + 1
@@ -2770,9 +2788,20 @@ function dmhm(s) { var m = /^(\d{4})-(\d\d)-(\d\d)[ T](\d\d):(\d\d)/.exec(String
 function dauer(sek) { return !ok(sek) ? '–' : (sek < 120 ? Math.round(sek) + ' s' : f(sek / 60, 1) + ' min'); }
 var st = null, err = null;
 try { st = JSON.parse(String(fs.readFileSync(P, 'utf8'))); } catch (e) { err = (e && e.code === 'ENOENT') ? 'kein Lauf' : 'nicht lesbar'; }
+// cop-ziel 17.10.2026: Guetegrad des Ziel-COP aus dem naechtlichen Training (training/cop_eta.json, Format 1, nur lesen) -> OPT_cop_eta (die Maschine liest es, fehlt es: Startwerte)
+var CE = null, ceErr = null, PE = '/data/optimizer-tools/training/cop_eta.json';
+try { CE = JSON.parse(String(fs.readFileSync(PE, 'utf8'))); if (!CE || typeof CE !== 'object' || CE.format !== 1 || !CE.eta) { CE = null; ceErr = 'Format unbekannt'; } } catch (e) { CE = null; ceErr = (e && e.code === 'ENOENT') ? 'noch keins' : 'nicht lesbar'; }
+global.set('OPT_cop_eta', CE);
+var ceTs = CE ? tsOf(CE.erstellt) : null, ceAlt = ceTs !== null && now - ceTs > 26 * 60 * MS_MIN;
+var ceRow = CE ? ['COP-Gütegrad η', dmhm(CE.erstellt) + ' · ' + Object.keys(CE.eta).map(function (b) { var x = CE.eta[b] || {}; return b + ' ' + (ok(x.v) ? f(x.v, 2) : '–'); }).join(' · '), ceAlt ? 'veraltet' : 'ok', ceAlt ? 'warn' : 'ok',
+                  'dT_verd ' + Object.keys(CE.dTverd || {}).map(function (b) { return b + ' ' + f((CE.dTverd[b] || {}).v, 1) + ' K'; }).join(', ') + ' · ' + (CE.kalibrierminuten || 0) + ' Kalibrierminuten von ' + (CE.minuten || 0) +
+                  ' · Frequenz ' + Object.keys(CE.freq || {}).map(function (k) { var x = CE.freq[k] || {}; return k + ' Hz ' + (ok(x.v) ? f(x.v, 3) : 'Annahme') + ' (' + (x.n || 0) + ' min)'; }).join(', ') +
+                  ' · Abtauen: ' + ((CE.abtau && CE.abtau.quelle) || '–') + (CE.sonne && ok(CE.sonne.rest_prozent) ? ' · Rest in Sonnenminuten ' + f(CE.sonne.rest_prozent, 1) + ' % (' + CE.sonne.min + ' min)' : '')]
+                : ['COP-Gütegrad η', ceErr === 'noch keins' ? 'noch keins · Startwerte' : 'nicht lesbar · Startwerte', ceErr === 'noch keins' ? 'Startwerte' : 'Fehler', ceErr === 'noch keins' ? '' : 'fehler', PE + (ceErr === 'noch keins' ? ' fehlt (Container ohne Schritt cop_eta)' : ': ' + ceErr)];
 var rows = [];
 if (!st || typeof st !== 'object') {
     rows.push(['Letzter Lauf', err || 'nicht lesbar', err === 'kein Lauf' ? 'kein Lauf' : 'Fehler', err === 'kein Lauf' ? 'warn' : 'fehler', P + (err === 'kein Lauf' ? ' fehlt (Container optimizer-tools noch nicht gelaufen)' : ' ist kein gültiges JSON')]);
+    rows.push(ceRow);
     return {payload: {rows: rows}};
 }
 var fehler = Array.isArray(st.fehler) ? st.fehler : [], hinweise = Array.isArray(st.hinweise) ? st.hinweise : [];
@@ -2819,6 +2848,7 @@ if (SI) {
     rows.push(['Sicherung', dm(SI.tag) + ' · ' + f((SI.bytes || 0) / 1048576, 1) + ' MB', SI.geprueft === true ? (siAlt ? 'veraltet' : 'geprüft') : 'ungeprüft', SI.geprueft === true ? (siAlt ? 'warn' : 'ok') : 'fehler',
                (SI.dateien || 0) + ' Dateien, roh ' + f((SI.bytes_roh || 0) / 1048576, 1) + ' MB · ' + (SI.archive || 0) + ' Archive seit ' + dm(SI.aeltestes) + ', belegt ' + f(SI.belegt_mb, 1) + ' MB · SHA-256 ' + String(SI.sha256 || '–').slice(0, 16) + '…']);
 } else { rows.push(['Sicherung', 'noch keine', 'fehlt', 'warn', '']); }
+rows.push(ceRow);
 if (fehler.length) { rows.push(['Fehler', fehler.length + ' im letzten Lauf', 'Fehler', 'fehler', fehler.join(' · ')]); }
 return {payload: {rows: rows, stand: st.aktualisiert || '', hinweise: hinweise.length}};
 """
@@ -3104,14 +3134,14 @@ ENGINE_CORE_JS = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "
 ENGINE_WRAP_JS = r"""
 // ---------- Huelle der Entscheidungsmaschine (Shadow, schaltet NICHTS). Liest Anlagen- und Optimierer-Werte, ruft jede Minute den reinen Kern
 // ENGINE.step, schreibt decisions-YYYY-MM.jsonl (jede Auswertung), scores-YYYY-MM.jsonl (Punkte) und Ereignisse, baut die Seite "Optimierer".
-// Ausgaenge: 1 Vorschlag, 2 Regeln, 3 Punkte, 4 Entscheidungen, 5 Dateien, 6 Messwerte & Lernen. msg.topic "anzeige" (von der Uebernahme): nur die Anzeige neu aufbauen.
+// Ausgaenge: 1 Vorschlag, 2 Regeln, 3 Punkte, 4 Entscheidungen, 5 Dateien, 6 Messwerte & Lernen, 7 COP: Ziel und Ist. msg.topic "anzeige" (von der Uebernahme): nur die Anzeige neu aufbauen.
 var now = Date.now(), MIN = 60000;
 var G = function (k) { var v; try { v = global.get(k, 'file'); } catch (e) { v = undefined; } return v !== undefined ? v : global.get(k); };
 function num(v) { if (v === null || v === undefined || v === '' || typeof v === 'boolean') { return null; } v = Number(v); return isFinite(v) ? v : null; }
 function p2(x) { return (x < 10 ? '0' : '') + x; }
 function hm(ts) { return ts ? ENGINE.hhmm(ts) : '–'; }
 function dmhm(ts) { if (!ts) { return '–'; } var d = new Date(ts); return p2(d.getDate()) + '.' + p2(d.getMonth() + 1) + '. ' + ENGINE.hhmm(ts); }
-var CF = global.get('OPT_cfg') || {}, cfg = ENGINE.mergeCfg(Object.assign({}, CF.engine || {}, {cop: CF.cop || {}}));     // COP-Korrektur aus OPT_cfg.cop (eine Quelle)
+var CF = global.get('OPT_cfg') || {}, cfg = ENGINE.mergeCfg(Object.assign({}, CF.engine || {}, {cop: CF.cop || {}, zaehler: CF.zaehler || {}, copZiel: G('OPT_cop_eta') || undefined}));     // COP-Korrektur aus OPT_cfg.cop (eine Quelle); Stromquelle OPT_cfg.zaehler, Gütegrad aus cop_eta.json (opt_nas, nur lesen)
 var ST = flow.get('eng');
 if (!ST) {                                                                       // nach einem Neustart: Zustand aus der Datei (Faelle, Punkte, Zaehler), Zeitgeber neu
     var F0 = null;
@@ -3166,7 +3196,10 @@ if (PIe.ts && now - PIe.ts < 5 * MIN && num(PIe.pvNow) !== null) { inp.pv = num(
 if (WXe.ts && now - WXe.ts <= ((CF.weather && num(CF.weather.maxAgeMin)) || 60) * MIN && num(WXe.clouds) !== null) { inp.wolken = num(WXe.clouds); }
 // Winterpaket 16.10.2026: Abtauwetter (Sperre "abtausprung"): OWM-Feuchte (hoechstens weather.maxAgeMin alt) und Rohr aussen (Outside_Pipe_Temp, -128 = kein Fuehler)
 if (WXe.ts && now - WXe.ts <= ((CF.weather && num(CF.weather.maxAgeMin)) || 60) * MIN && num(WXe.rh) !== null) { inp.rh = num(WXe.rh); }
-var pipeO = hpSet('Outside_Pipe_Temp'); if (pipeO !== null && pipeO > -100) { inp.pipeOut = pipeO; }   // nur bei Aenderung gemeldet: letzter Wert gilt (wie die Einstellungen) bis 24 h
+var pipeO = hpSet('Outside_Pipe_Temp'); if (pipeO !== null && pipeO > -100) { inp.pipeOut = pipeO; }
+// cop-ziel 17.10.2026: Stromzaehler (opt_zaehler, OPT_zaehler; Waermepumpe ohne Heizstab, Heizstab) mit Alter; der Kern nutzt ihn nur bei cfg.zaehler.quelle = 'zaehler' und Alter <= 5 min
+var ZLx = global.get('OPT_zaehler') || {};
+if (typeof ZLx.ts === 'number' && now - ZLx.ts < 60 * MIN && num(ZLx.wp_w) !== null) { inp.zw = num(ZLx.wp_w); inp.zAge = (now - ZLx.ts) / MIN; if (num(ZLx.heizstab_w) !== null) { inp.zh = num(ZLx.heizstab_w); } }   // nur bei Aenderung gemeldet: letzter Wert gilt (wie die Einstellungen) bis 24 h
 // Vorausschau: OWM-Vorhersage und Gebaeudemodell des Waermefahrplans (Gate, coefActivate); Sonne/Wind nur bei aktivem Modell (sonst nicht in der Eingabe)
 var vsIn = null; try { vsIn = ENGINE.vorschau(G('OPT_weather'), G('OPT_plan'), G('OPT_plan_in'), at, now); } catch (e) { vsIn = null; }
 if (vsIn) { inp.vs = vsIn; }
@@ -3220,7 +3253,7 @@ flow.set('eng', ST);
 if (!ST.last) { return null; }
 // ---------- Anzeige (Karten-Daten aus ENGVIEW.build, gezeichnet in den Vorlagen mit optEngUi); Lernstand des Waermefahrplans aus OPT_plan (nur lesen)
 var V = ENGVIEW.build({now: now, last: ST.last, S: ST.S, V: ST.V, AP: global.get('OPT_apply') || {}, enabled: global.get('OPT_apply_enabled') === true, cfg: cfg, plan: G('OPT_plan') || null});
-return [{payload: V.card}, {payload: V.rules}, {payload: V.score}, {payload: V.log}, files.length ? files : null, {payload: V.mess}];
+return [{payload: V.card}, {payload: V.rules}, {payload: V.score}, {payload: V.log}, files.length ? files : null, {payload: V.mess}, {payload: V.cop}];
 """
 
 APPLY_WRAP_JS = r"""
@@ -3326,9 +3359,13 @@ upsert(comment("opt_c_eng", "Optimierer: Entscheidungsmaschine (Shadow, schaltet
 for _g in ENG_GROUPS:
     upsert(eng_template(_g[2], _g[0], _g[1], _g[4], eng_format(_g[3], _g[2], _g[3] == "score"), _g[5], [["opt_apply"]] if _g[3] == "card" else None))
 upsert(inject("opt_i_engine", "jede Minute", 60, 50, ["opt_engine"], 140, 2100))
-# Ausgaenge: 1 Vorschlag, 2 Regeln, 3 Punkte, 4 Entscheidungen, 5 Dateien, 6 Messwerte & Lernen (hinten angefuegt, damit die Dateien Ausgang 5 bleiben)
-upsert(fn("opt_engine", "Entscheidungsmaschine (Shadow)", ENGINE_CORE_JS + ENGINE_VIEW_JS + ENGINE_WRAP_JS.replace("__EIGEN__", EIGEN_JS), 6,
-          [["opt_t_eng_prop"], ["opt_t_eng_rules"], ["opt_t_eng_score"], ["opt_t_eng_log"], ["opt_f_eng"], ["opt_t_eng_mess"]], 440, 2100, FS))
+# Ausgaenge: 1 Vorschlag, 2 Regeln, 3 Punkte, 4 Entscheidungen, 5 Dateien, 6 Messwerte & Lernen, 7 COP: Ziel und Ist (hinten angefuegt, damit die Dateien Ausgang 5 bleiben)
+upsert(fn("opt_engine", "Entscheidungsmaschine (Shadow)", ENGINE_CORE_JS + ENGINE_VIEW_JS + ENGINE_WRAP_JS.replace("__EIGEN__", EIGEN_JS), 7,
+          [["opt_t_eng_prop"], ["opt_t_eng_rules"], ["opt_t_eng_score"], ["opt_t_eng_log"], ["opt_f_eng"], ["opt_t_eng_mess"], ["opt_t_eng_cop"]], 440, 2100, FS))
+# Karte "COP: Ziel und Ist" (cop-ziel 17.10.2026) auf der Seite Optimierer, gleich breit wie die anderen Karten (ENG_W), als letzte Gruppe (Reihenfolge 8 nach den beiden
+# Quiet-Karten): die Anordnung der fuenf Maschinenkarten und der Quiet-Karten bleibt, die neue Karte fuellt die kuerzere Spalte auf
+upsert({"id": "opt_g_eng_cop", "type": "ui_group", "name": "COP: Ziel und Ist", "tab": ENG_TAB, "order": 8, "disp": True, "width": ENG_W, "collapse": False, "className": ""})
+upsert(eng_template("opt_t_eng_cop", "opt_g_eng_cop", "COP: Ziel und Ist", 8, eng_format("cop", "opt_t_eng_cop"), 2200))
 upsert({"id": "opt_f_eng", "type": "file", "z": TAB, "name": "Entscheidungen, Punkte, Ereignisse", "filename": "filename", "filenameType": "msg", "appendNewline": False,
         "createDir": True, "overwriteFile": "false", "encoding": "utf8", "x": 760, "y": 2160, "wires": [[]]})
 # Uebernahme: Klick (Karte) und Takt alle 15 s -> opt_apply -> (1) mqtt out GESPERRT, (2) Meldung, (3) Protokoll, (4) Anzeige neu
@@ -3346,6 +3383,76 @@ _apply_out = {"id": "opt_apply_mqtt", "type": "mqtt out", "z": TAB, "name": "Üb
 if not APPLY_NODE_ACTIVE:
     _apply_out["d"] = True                      # deaktiviert: Node-RED legt den Knoten gar nicht an, nichts kann gesendet werden
 upsert(_apply_out)
+
+# ---------------------------------------------------------------- Stromzaehler Shelly 3EM-63 Gen3 (cop-ziel 17.10.2026): NUR LESEN (dynamische Abos, kein mqtt out), Karte auf "Daten & Güte"
+# opt_zaehler: Nachrichten des Shelly (Venus- oder NAS-Broker, je nach OPT_cfg.zaehler.broker) -> OPT_zaehler; jede Minute Vergleich mit TOP16 + Korrektur, Heizstab-Sprungerkennung,
+# Karte; Eingabe der Karte -> config.json "zaehler" (keine Geheimnisse). Abos: beim Start, nach dem Speichern und alle 10 min, solange 5 min nichts kam.
+ZAEHLER_CORE_JS = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "zaehler_core.js"), encoding="utf-8").read()
+ZAEHLER_WRAP_JS = r"""
+// ---------- Huelle Stromzaehler (NUR LESEN). Eingaenge: MQTT-Nachrichten des Shelly, 'init' (Start), 'tick' (jede Minute), 'zaehler_speichern' (Karte).
+// Ausgaenge: 1 Abo-Steuerung Venus-Broker, 2 Abo-Steuerung NAS-Broker, 3 Karte, 4 Meldung, 5 Ereignis (quiet-events)
+var now = Date.now(), MIN = 60000;
+var G = function (k) { var v; try { v = global.get(k, 'file'); } catch (e) { v = undefined; } return v !== undefined ? v : global.get(k); };
+function num(v) { if (v === null || v === undefined || v === '' || typeof v === 'boolean') { return null; } v = Number(v); return isFinite(v) ? v : null; }
+var cfg = global.get('OPT_cfg') || {}, c = ZAEHLER.cfgOf(cfg.zaehler);
+__COPKW__
+var Z = flow.get('zl');
+if (!Z) { try { Z = JSON.parse(fs.readFileSync('/data/optimizer/zaehler-state.json', 'utf8')); } catch (e) { Z = null; } Z = ZAEHLER.fix(Z); Z.k = [{}, {}, {}]; Z.n = 0; Z.letzte = 0; }   // Messwerte nie aus der Datei (nur Heizstab-Spruenge, 24-h-Vergleich)
+var t = String(msg.topic || ''), out = [null, null, null, null, null];
+var HP = G('OPT_hp') || {}, heizer = (HP.Internal_Heater_State && typeof HP.Internal_Heater_State.v === 'number' && now - HP.Internal_Heater_State.ts < 24 * 60 * MIN) ? HP.Internal_Heater_State.v : null;
+function abos(cc) {
+    var L = ZAEHLER.abos(cc).map(function (x) { return {topic: x, qos: 0}; }), un = {action: 'unsubscribe', topic: true};
+    out[0] = [un].concat(L.length && cc.broker === 'venus' ? [{action: 'subscribe', topic: L}] : []);
+    out[1] = [{action: 'unsubscribe', topic: true}].concat(L.length && cc.broker === 'nas' ? [{action: 'subscribe', topic: L}] : []);
+    Z.abo = {t: now, sig: cc.broker + '|' + ZAEHLER.abos(cc).join(',')};
+}
+function ereignis(text) { var mo = ENGINE_ISO(now).slice(0, 7), ef = '/data/optimizer/quiet-events-' + mo + '.csv', eh = ''; try { fs.readFileSync(ef, 'utf8'); } catch (e) { eh = 'zeit,ereignis,wechsel\n'; } out[4] = {filename: ef, payload: eh + ENGINE_ISO(now) + ',optimierer_zaehler,' + String(text).replace(/,/g, ';') + '\n'}; }
+function ENGINE_ISO(ts) { var d = new Date(ts), p = function (x) { return (x < 10 ? '0' : '') + x; }; return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()); }
+function karte(st) { return {payload: ZAEHLER.karte(st, ZAEHLER.vergleich(Z, now, COP_KW), c, now, {top16: num(G('TOP16_Heat_Energy_Consumption')), lauf: (num(G('compressor_frequency')) || 0) > 0, korrW: COP_KW})}; }
+if (t === 'init') { abos(c); out[2] = karte(ZAEHLER.stand(Z, now, c, heizer)); }
+else if (t === 'zaehler_speichern') {
+    var r = ZAEHLER.pruefe(msg.payload, cfg.zaehler);
+    if (r.fehler.length) { out[3] = {topic: 'Stromzähler', payload: r.fehler.join(' · ') + '. Nichts geändert.', highlight: 'red'}; }
+    else {
+        var alt = c; cfg.zaehler = r.cfg; global.set('OPT_cfg', cfg); c = ZAEHLER.cfgOf(r.cfg);
+        try {
+            var cfgFile = '/data/optimizer/config.json', sv = {};
+            try { sv = JSON.parse(fs.readFileSync(cfgFile, 'utf8')); } catch (e) { sv = {}; }
+            if (!sv || typeof sv !== 'object' || Array.isArray(sv)) { sv = {}; }
+            sv.zaehler = r.cfg; fs.mkdirSync('/data/optimizer', {recursive: true}); fs.writeFileSync(cfgFile, JSON.stringify(sv, null, 1));
+        } catch (e) { node.warn('Stromzähler: config.json nicht gespeichert: ' + e.message); }
+        abos(c);
+        out[3] = {topic: 'Stromzähler', payload: 'Gespeichert' + (alt.quelle !== c.quelle ? ' · Strom für COP jetzt ' + (c.quelle === 'zaehler' ? 'vom Zähler' : 'HeishaMon (TOP16 + Korrektur)') : '') + '.', highlight: ''};
+        ereignis('Einstellung: ' + (c.topic || 'kein MQTT-Name') + ' · Broker ' + c.broker + ' · Klemmen WP ' + (c.klemme_wp + 1) + ' Heizstab ' + (c.klemme_heizstab === null ? '–' : c.klemme_heizstab + 1) + ' · Quelle ' + c.quelle + (alt.quelle !== c.quelle ? ' (vorher ' + alt.quelle + ')' : ''));
+    }
+    out[2] = karte(ZAEHLER.stand(Z, now, c, heizer));
+}
+else if (t === 'tick') {
+    var st = ZAEHLER.stand(Z, now, c, heizer), fr = num(G('compressor_frequency'));
+    ZAEHLER.minute(Z, {t: now, ok: st.ok, wpW: st.wp_w, rohW: st.wp_roh_w, top16: num(G('TOP16_Heat_Energy_Consumption')), lauf: (fr || 0) > 0, heizstab: heizer, korrW: COP_KW}, c);
+    st = ZAEHLER.stand(Z, now, c, heizer); global.set('OPT_zaehler', st);
+    if (c.prefix && (!Z.abo || Z.abo.sig !== c.broker + '|' + ZAEHLER.abos(c).join(',') || ((!Z.letzte || now - Z.letzte > 5 * MIN) && now - Z.abo.t >= 10 * MIN))) { abos(c); }   // Abos nach Neustart/Deploy des mqtt-in erneuern
+    var weg = c.quelle === 'zaehler' && !st.ok;
+    if (weg && !Z.ausfall) { Z.ausfall = now; ereignis('Zähler ausgefallen (' + (st.alter === null ? 'keine Nachricht' : st.alter + ' min alt') + '): Rückfall auf TOP16 + ' + COP_KW + ' W'); }
+    else if (!weg && Z.ausfall) { if (c.quelle === 'zaehler') { ereignis('Zähler wieder da nach ' + Math.round((now - Z.ausfall) / MIN) + ' min'); } Z.ausfall = 0; }
+    if (!Z.saved || now - Z.saved >= 10 * MIN) { try { var Zs = Object.assign({}, Z, {k: [{}, {}, {}]}); fs.mkdirSync('/data/optimizer', {recursive: true}); fs.writeFileSync('/data/optimizer/zaehler-state.json', JSON.stringify(Zs)); Z.saved = now; } catch (e) { node.warn('zaehler-state.json: ' + e.message); } }
+    out[2] = karte(st);
+}
+else if (ZAEHLER.lies(Z, t, msg.payload, now, c)) { global.set('OPT_zaehler', ZAEHLER.stand(Z, now, c, heizer)); }
+flow.set('zl', Z);
+return out;
+"""
+upsert(comment("opt_c_zl", "Stromzähler Shelly 3EM-63 Gen3: nur lesen (dynamische Abos), Karte auf Daten & Güte · Strom für COP nur mit Schalter (Standard HeishaMon)", 380, 2520))
+for _zid, _zb, _zy in (("opt_mqtt_zl_v", BROKER, 2560), ("opt_mqtt_zl_n", "opt_broker_nas", 2620)):
+    upsert({"id": _zid, "type": "mqtt in", "z": TAB, "name": "Stromzähler (dynamisch)", "topic": "", "qos": "0", "datatype": "auto-detect", "broker": _zb,
+            "nl": False, "rap": True, "rh": 0, "inputs": 1, "x": 760, "y": _zy, "wires": [["opt_zaehler"]]})
+upsert({"id": "opt_i_zl_init", "type": "inject", "z": TAB, "name": "Abos beim Start", "props": [{"p": "payload"}, {"p": "topic", "vt": "str"}],
+        "repeat": "", "crontab": "", "once": True, "onceDelay": "8", "topic": "init", "payload": "", "payloadType": "date", "x": 140, "y": 2560, "wires": [["opt_zaehler"]]})
+upsert({"id": "opt_i_zl", "type": "inject", "z": TAB, "name": "jede Minute", "props": [{"p": "payload"}, {"p": "topic", "vt": "str"}],
+        "repeat": "60", "crontab": "", "once": True, "onceDelay": "35", "topic": "tick", "payload": "", "payloadType": "date", "x": 140, "y": 2620, "wires": [["opt_zaehler"]]})
+upsert(fn("opt_zaehler", "Stromzähler lesen (nur lesen)", ZAEHLER_CORE_JS + ZAEHLER_WRAP_JS.replace("__COPKW__", COP_KW_JS), 5,
+          [["opt_mqtt_zl_v"], ["opt_mqtt_zl_n"], ["opt_t_zaehler"], ["opt_ui_toast"], ["opt_f_qev"]], 440, 2590, FS))
+upsert(eng_template("opt_t_zaehler", "opt_g_zaehler", "Stromzähler", 6, eng_format("zaehler", "opt_t_zaehler"), 2590, [["opt_zaehler"]]))
 
 # ---------------------------------------------------------------- Anlagenschema (14.10.2026, Branch ui-schema): nur Anzeige, liest OPT_hp, schreibt nichts
 # Eine SVG-Karte der Leisha WH-WDG05LE5 (Monoblock R290, Zone 1 Heizkoerper, kein Warmwasser, kein Puffer, interner Heizstab, externer Aussenfuehler) mit
