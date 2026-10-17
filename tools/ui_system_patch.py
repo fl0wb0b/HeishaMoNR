@@ -62,17 +62,25 @@ V12_ZUSATZ = "<style>\n" + "\n".join([
     "var mo = new MutationObserver(function (ms) { ms.forEach(function (m) { if (m.type === 'characterData' || m.type === 'childList') { var n = m.target.nodeType === 3 ? m.target.parentNode : m.target; if (n && n.closest && n.closest('md-card.nr-dashboard-text p.value')) { fix(n.closest('p.value')); } else if (n && n.querySelectorAll) { sweep(n); } } }); });\n" \
     "function start() { sweep(document); mo.observe(document.body, {subtree: true, childList: true, characterData: true}); }\n" \
     "if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', start); } else { start(); } })();\n</script>"
-NEU = V11.replace("Design-System v1.1 (18.10.2026", "Design-System v1.2 (18.10.2026") + V12_ZUSATZ
+V12 = V11.replace("Design-System v1.1 (18.10.2026", "Design-System v1.2 (18.10.2026") + V12_ZUSATZ
+V13_ZUSATZ = "<style>\n" + "\n".join([
+    "/* v1.3: Schieberegler-Beschriftung (Kern setzt width:0), Abschnittstitel auch in verschachtelten Vorlagen, leere Kopfzeile Uebersicht > Heizen */",
+    "body.nr-dashboard-theme md-card.nr-dashboard-slider p.label{width:auto !important;min-width:72px}",
+    "body.nr-dashboard-theme md-card.nr-dashboard-template hr{border:0 !important;border-top:1px solid var(--ds-line) !important;box-shadow:none !important;margin:4px 0 0 !important}",
+    "body.nr-dashboard-theme md-card.nr-dashboard-template left{display:block;color:var(--ds-mute);font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;padding-top:8px}",
+    "body.nr-dashboard-theme md-card[node-id=\"719e11414721599e\"]{display:none !important}",
+]) + "\n</style>"
+NEU = V12.replace("Design-System v1.2 (18.10.2026", "Design-System v1.3 (18.10.2026") + V13_ZUSATZ
 
 def main():
     a = sys.argv[1:]; revert = "--revert" in a; out = a[a.index("--out") + 1]
     d = json.load(open(a[0], encoding="utf-8")); fl = d["flows"]; k = next(n for n in fl if n["id"] == KOPF_ID)
     assert k["type"] == "ui_template" and k.get("templateScope") == "global"
     if not revert:
-        assert k["format"] in (ALT, V1, V11), "Ausgangsstand weicht ab (ui_optik_kopf nicht auf dem Stand vom 14.10., v1 oder v1.1)"
+        assert k["format"] in (ALT, V1, V11, V12), "Ausgangsstand weicht ab (ui_optik_kopf nicht auf dem Stand vom 14.10., v1, v1.1 oder v1.2)"
         k["format"] = NEU
     else:
-        assert k["format"] in (NEU, V11, V1), "nicht gepatcht"
+        assert k["format"] in (NEU, V12, V11, V1), "nicht gepatcht"
         k["format"] = ALT
     json.dump(d, open(out, "w", encoding="utf-8"), ensure_ascii=False)
     print("rev", d["rev"], "->", out, "(CSS", len(k["format"]), "Zeichen)")
