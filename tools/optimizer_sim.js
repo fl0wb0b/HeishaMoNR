@@ -2154,6 +2154,14 @@ check('ohne Kinderzimmer-Werte (frischer Start): vier Spalten leer, Karte zeigt 
   const P9 = SCH.daten(hpOf(Object.assign({}, LIVE, {Room_Heater_State: 0})), X, 80, T);
   check('Schema: Heizstab aktiv = rot "AN" und "+ Heizstab"; gesperrt (Room_Heater_State 0); Störung H23; Abtauen', SCH.html(P6, {}).includes('>AN<') && SCH.html(P6, {}).includes('läuft + Heizstab') &&
         SCH.html(P9, {}).includes('>gesperrt<') && P7.zustand.c === 'stoerung' && SCH.html(P7, {}).includes('Fehler H23') && P8.zustand.c === 'abtauen', '');
+  gstore.OPT_cfg = {cop: {pelKorrW: 80}, zaehler: {quelle: 'zaehler'}}; gstore.OPT_zaehler = {ts: T, wp_w: 411, heizstab_w: 0, ok: true};
+  const PZ = run('opt_schema', {}).payload, HZ = SCH.html(PZ, {phase: 0}).replace(/\u00a0/g, ' ');
+  check('Schema: Stromzähler gewählt und frisch: Aufnahme 411 W vom Zähler, Untertitel "Zähler (intern 319)", COP = 2228 / 411',
+        PZ.w.pelK === 411 && PZ.w.pelQuelle === 'zaehler' && PZ.w.korr === 92 && Math.abs(PZ.w.cop - 2228 / 411) < 1e-9 && HZ.includes('>411 W<') && HZ.includes('Zähler (intern 319)') && HZ.includes('>5,42<'), JSON.stringify({pelK: PZ.w.pelK, q: PZ.w.pelQuelle, cop: PZ.w.cop}));
+  gstore.OPT_zaehler = {ts: T - 10 * 60000, wp_w: 411, heizstab_w: 0, ok: false};
+  const PZ2 = run('opt_schema', {}).payload;
+  check('Schema: Zähler gewählt, aber 10 min alt: Rückfall auf TOP16 + 80 = 399 W, Untertitel wie bisher', PZ2.w.pelK === 399 && PZ2.w.pelQuelle === 'intern' && SCH.html(PZ2, {}).includes('(intern 319 +80)'), JSON.stringify({pelK: PZ2.w.pelK, q: PZ2.w.pelQuelle}));
+  gstore.OPT_cfg = {cop: {pelKorrW: 80}}; delete gstore.OPT_zaehler;
   check('Schema: Korrektur aus OPT_cfg (0..200 W), sonst 80 W', SCH.daten(hpOf(LIVE), X, 50, T).w.pelK === 369 && SCH.daten(hpOf(LIVE), X, 999, T).w.pelK === 399 && SCH.daten(hpOf(LIVE), X, undefined, T).w.pelK === 399, '');
   const g1 = N('opt_g_schema'), g2 = N('opt_g_schema_ue'), t1 = N('opt_t_schema'), t2 = N('opt_t_schema_ue'), f = N('opt_schema'), i = N('opt_i_schema');
   const ueOrders = nodes.filter(n => n.type === 'ui_group' && n.tab === 'a5be8588.b8fbc8' && n.id !== 'opt_g_schema_ue').map(n => n.order);

@@ -3509,7 +3509,7 @@ SCHEMA_FN_JS = r"""
 var G = function (k) { var v; try { v = global.get(k, 'file'); } catch (e) { v = undefined; } return v !== undefined ? v : global.get(k); };
 var cfg = global.get('OPT_cfg') || {};
 __COPKW__
-var P = OPTSCHEMA.daten(G('OPT_hp') || {}, {freq: G('compressor_frequency'), rt: G('compressor_runtime'), rtLast: G('compressor_last_runtime'), starts: G('Starts_Today')}, COP_KW, Date.now());
+var P = OPTSCHEMA.daten(G('OPT_hp') || {}, {freq: G('compressor_frequency'), rt: G('compressor_runtime'), rtLast: G('compressor_last_runtime'), starts: G('Starts_Today')}, COP_KW, Date.now(), (typeof ZQ !== 'undefined') ? ZQ : null);   // ZQ: Stromzaehler (Quelle "zaehler" und frisch)
 return {payload: P};
 """
 

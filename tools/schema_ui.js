@@ -1,21 +1,22 @@
 /* Anlagenschema der Leisha WH-WDG05LE5 (Monoblock, R290, Zone 1 Heizkoerper, KEIN Warmwasserspeicher, KEIN Puffer, interner Heizstab, externer Aussenfuehler).
  * Reine Funktionen, vom Generator (tools/optimizer_phase1.py) eingebettet: daten() in den Function-Knoten opt_schema, html()/mount() in die Vorlagen
  * opt_t_schema (Seite "Optimierer") und opt_t_schema_ue (Seite "Übersicht"); geprueft in tools/optimizer_sim.js, statisch gerendert in tools/opt_seiten_vorschau.js.
- *   OPTSCHEMA.daten(HP, X, korrW, now) -> Nutzlast: HP = global OPT_hp ({Name: {v, ts}}, Namen ohne TOP-Praefix), X = {freq, rt, rtLast, starts} (HeishaMoNR-
- *                                         Globale compressor_frequency, compressor_runtime, compressor_last_runtime, Starts_Today), korrW = OPT_cfg.cop.pelKorrW
+ *   OPTSCHEMA.daten(HP, X, korrW, now, zl) -> Nutzlast: HP = global OPT_hp ({Name: {v, ts}}, Namen ohne TOP-Praefix), X = {freq, rt, rtLast, starts} (HeishaMoNR-
+ *                                         Globale compressor_frequency, compressor_runtime, compressor_last_runtime, Starts_Today), korrW = OPT_cfg.cop.pelKorrW,
+ *                                         zl = {aktiv, w} (Stromzaehler Shelly 3EM-63, ZQ des Generators: aktiv = Quelle "zaehler" und frisch) -> Aufnahme und COP vom Zaehler
  *   OPTSCHEMA.html(P, opt)               -> HTML: SVG-Schema + Kennzahlen-Leiste; opt.phase = Sekunden (Fliess-Animation laeuft ueber das Neuzeichnen hinweg weiter)
  *   OPTSCHEMA.mount(el, P)               -> zeichnet in ein Element (nur wenn sich etwas geaendert hat)
  * Nur Anzeige: liest Werte, schreibt nichts. Fehlende Werte (HeishaMon -128/-127/-78/-200, aelter als 15 min, Einstellungen aelter als 24 h) zeigen "–".
  * Farben und Schrift wie tools/ui_optik.css (Text #263238, Nebentext #546e7a, Kennzahlen 20 px, Grundschrift 14 px; Textfarben >= 4,5:1, Linien >= 3:1).
  * Fuellfarben stehen als style="fill:…" (die Seiten-CSS des Dashboards ueberschreibt das SVG-Attribut fill). */
 var OPTSCHEMA = (function () {
-    var VER = 1, MIN = 60000, FEHLT = [-128, -127, -78, -200];
+    var VER = 2, MIN = 60000, FEHLT = [-128, -127, -78, -200];
     var C = {txt: '#263238', mute: '#546e7a', box: '#b0bec5', vl: '#d32f2f', vlT: '#c62828', rl: '#1976d2', rlT: '#1565c0', luft: '#0097a7', luftT: '#00727f',
              heiss: '#d84315', fl: '#e65100', kalt: '#0288d1', saug: '#00897b', grau: '#78909c', rot: '#c62828', ok: '#2e7d32', warn: '#b45309', dunkel: '#455a64'};
 
     // ---------------------------------------------------------------- Daten (Function-Knoten opt_schema)
     function num(x) { if (x === null || x === undefined || x === '' || typeof x === 'boolean') { return null; } x = Number(x); return isFinite(x) ? x : null; }
-    function daten(HP, X, korrW, now) {
+    function daten(HP, X, korrW, now, zl) {
         HP = HP || {}; X = X || {};
         var hpTs = 0;
         Object.keys(HP).forEach(function (k) { if (k.charAt(0) !== '_' && HP[k] && typeof HP[k].ts === 'number' && HP[k].ts > hpTs) { hpTs = HP[k].ts; } });
@@ -35,6 +36,8 @@ var OPTSCHEMA = (function () {
         var kw = num(korrW); if (kw === null || kw < 0 || kw > 200) { kw = 80; }
         var pth = v('Heat_Power_Production_Extra'), pel = v('Heat_Power_Consumption_Extra');
         var korr = lauf ? kw : 0, pelK = pel !== null ? pel + korr : null;      // COP-Korrektur: TOP16 untertreibt nur im Lauf (Forum 189605), Stillstand bleibt roh
+        var zW = (zl && zl.aktiv) ? num(zl.w) : null, pelQuelle = 'intern';
+        if (zW !== null) { pelK = Math.max(0, zW); korr = pel !== null ? pelK - pel : null; pelQuelle = 'zaehler'; }   // Stromzaehler (cop-ziel 17.10.2026): gemessen statt TOP16 + Korrektur
         var cop = (lauf && pth !== null && pth > 0 && pelK !== null && pelK > 100) ? pth / pelK : null;
         var errRaw = HP.Error && HP.Error.v !== undefined && HP.Error.v !== null ? String(HP.Error.v).trim() : '';
         var fehler = (errRaw && !/^(no error|0|)$/i.test(errRaw)) ? errRaw : null;
@@ -54,7 +57,7 @@ var OPTSCHEMA = (function () {
                 w: {at: v('Outside_Temp'), rohrA: v('Outside_Pipe_Temp'), evaAus: v('Eva_Outlet_Temp'), hz: hz, strom: v('Compressor_Current'), fan: fan,
                     heiss: v('Discharge_Temp'), hd: v('High_Pressure'), eev: v('Expansion_Valve'), hex: v('Main_Hex_Outlet_Temp'), rohrI: v('Inside_Pipe_Temp'),
                     vl: vl, rl: rl, soll: v('Main_Target_Temp'), shift: s('Z1_Heat_Request_Temp'), flow: flow, pumpU: pumpU, duty: v('Pump_Duty'), druck: v('Water_Pressure'),
-                    grenze: s('Heating_Off_Outdoor_Temp'), pth: pth, pel: pel, pelK: pelK, korr: korr, korrW: kw, cop: cop, spreiz: (vl !== null && rl !== null) ? vl - rl : null,
+                    grenze: s('Heating_Off_Outdoor_Temp'), pth: pth, pel: pel, pelK: pelK, korr: korr, korrW: kw, pelQuelle: pelQuelle, cop: cop, spreiz: (vl !== null && rl !== null) ? vl - rl : null,
                     quiet: s('Quiet_Mode_Level'), hc: s('Heating_Control'), betrH: s('Operations_Hours'), betrN: s('Operations_Counter'),
                     laufMin: lauf ? num(X.rt) : null, letzteMin: num(X.rtLast), startsHeute: num(X.starts)}};
     }
@@ -173,8 +176,9 @@ var OPTSCHEMA = (function () {
         var hs = P.heizstab;
         var k = [
             kachel('Abgabe', P.lauf ? f(ok(W.pth) ? W.pth / 1000 : null, 2, 'kW') : '–', P.lauf ? 'Wärme (HeishaMon)' : 'Verdichter steht', '', 'Heat_Power_Production_Extra'),
-            kachel('Aufnahme', f(W.pelK, 0, 'W'), P.lauf ? '(intern ' + f(W.pel, 0) + ' +' + f(W.korr, 0) + ')' : 'Stillstand, roh', '', 'Heat_Power_Consumption_Extra; im Lauf + ' + W.korrW + ' W (TOP16 untertreibt, Forum 189605)'),
-            kachel('COP', f(W.cop, 2), 'Wärme / Aufnahme', '', 'Abgabe geteilt durch die korrigierte Aufnahme'),
+            kachel('Aufnahme', f(W.pelK, 0, 'W'), W.pelQuelle === 'zaehler' ? 'Zähler' + (ok(W.pel) ? ' (intern ' + f(W.pel, 0) + ')' : '') : (P.lauf ? '(intern ' + f(W.pel, 0) + ' +' + f(W.korr, 0) + ')' : 'Stillstand, roh'), '',
+                   W.pelQuelle === 'zaehler' ? 'Stromzähler Shelly 3EM-63, Klemme Wärmepumpe; intern = HeishaMon TOP16 roh' : 'Heat_Power_Consumption_Extra; im Lauf + ' + W.korrW + ' W (TOP16 untertreibt, Forum 189605)'),
+            kachel('COP', f(W.cop, 2), 'Wärme / Aufnahme', '', W.pelQuelle === 'zaehler' ? 'Abgabe geteilt durch die gemessene Aufnahme (Zähler)' : 'Abgabe geteilt durch die korrigierte Aufnahme'),
             kachel('Spreizung', ok(W.spreiz) ? dez(W.spreiz, 1) + ' K' : '–', 'VL ' + t(W.vl) + ' · RL ' + t(W.rl)),
             kachel('Zustand', esc(P.zustand.t) + (hs.an ? ' + Heizstab' : ''), P.fehler ? 'Fehler ' + esc(P.fehler) : ('Außen ' + t(W.at) + ' · Grenze ' + t(W.grenze)), 'z-' + P.zustand.c + (hs.an ? ' z-hs' : '')),
             kachel('Modus', W.hc === 1 ? 'Efficiency' : (W.hc === 0 ? 'Comfort' : '–'), 'Heizregelung'),
