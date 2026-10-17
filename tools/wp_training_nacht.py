@@ -13,9 +13,15 @@ Ablauf (nur lesend gegenüber der Anlage, der NAS und MQTT):
 Das lokale Sprachmodell „Bonsai“ fittet nichts: Die Parameter schätzt dieses Skript (über wp_training.js) deterministisch.
 Bonsai kann höchstens den fertigen Bericht wp_training.md lesen und kommentieren.
 
+Container „optimizer-tools“ auf der NAS (docker/optimizer-tools): --daten <ordner> --ergebnis <ordner>
+   liest nur die Monatsdateien des Trainingsfensters aus dem (nur lesend eingehängten) Datenordner, nur Namen nach DATEI_MUSTER
+   (andere Dateien wie owm.json/vrm.json werden nie geöffnet), und schreibt nach <ergebnis>/training/:
+   wp_params_<tag>.json, wp_training.md und letzter.json (Kurzfassung für status.json: Güte, Drift, Fehler).
+
 Beispiele:
   python3 tools/wp_training_nacht.py --quelle ~/Kopien/replay_data_1510 --tag 2026-10-15
   python3 tools/wp_training_nacht.py --ssh
+  python3 tools/wp_training_nacht.py --daten /daten --ergebnis /ergebnis
 """
 import argparse
 import datetime as dt
@@ -26,6 +32,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 HIER = os.path.dirname(os.path.abspath(__file__))
 AUSGABE_STANDARD = os.path.expanduser("~/Dokumente/heishamonr-optimizer/bonsai-berichte")
@@ -34,6 +41,7 @@ DATEI_MUSTER = re.compile(r"^(quiet|optimizer-v2|energy)-\d{4}-\d{2}\.csv$")
 PRAEFIXE = ("quiet", "optimizer-v2", "energy")
 DRIFT_REL = 0.10
 DRIFT_ABS = 0.05
+AUFBEWAHREN = 120                                  # wp_params_<datum>.json im Ergebnisordner: so viele behalten (je ~50 kB)
 
 
 def monate(tag, tage_zurueck=21):
@@ -74,6 +82,43 @@ def kopiere(quelle, ordner):
     if not any(f.startswith("quiet-") for f in geholt):
         raise RuntimeError("keine quiet-*.csv in " + quelle)
     return geholt
+
+
+def kopiere_monate(quelle, ordner, monatsliste):
+    """Nur die Monatsdateien des Trainingsfensters, Namen fest gebildet und gegen DATEI_MUSTER geprüft (kein Auflisten des Ordners)."""
+    if not os.path.isdir(quelle):
+        raise RuntimeError("Datenordner fehlt: " + quelle)
+    geholt = []
+    for mo in monatsliste:
+        for pre in PRAEFIXE:
+            datei = "%s-%s.csv" % (pre, mo)
+            if not DATEI_MUSTER.match(datei):
+                raise ValueError("unerlaubter Dateiname: " + datei)
+            p = os.path.join(quelle, datei)
+            if not os.path.isfile(p):
+                if pre == "quiet" and mo == monatsliste[-1]:
+                    raise RuntimeError("%s fehlt im Datenordner" % datei)
+                continue
+            shutil.copyfile(p, os.path.join(ordner, datei))
+            geholt.append(datei)
+    return geholt
+
+
+def schreibe_atomar(pfad, text):
+    tmp = pfad + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(text)
+    os.replace(tmp, pfad)
+
+
+def aufraeumen(ausgabe, behalten=AUFBEWAHREN):
+    alte = sorted(f for f in os.listdir(ausgabe) if re.match(r"^wp_params_\d{4}-\d{2}-\d{2}\.json$", f))
+    for f in alte[:-behalten] if behalten > 0 else []:
+        os.unlink(os.path.join(ausgabe, f))
+
+
+def kurz_json(gk):
+    return {k: (list(v) if isinstance(v, tuple) else v) for k, v in gk.items()}
 
 
 def flach(x, praefix=""):
@@ -194,18 +239,27 @@ def main(argv=None):
     ap.add_argument("--tag", help="JJJJ-MM-TT (Standard: heute)")
     ap.add_argument("--tage", type=int, default=21, help="Trainingsfenster in Kalendertagen (Standard 21)")
     ap.add_argument("--ausgabe", default=AUSGABE_STANDARD)
+    ap.add_argument("--daten", help="Container: Datenordner (nur lesend), nur Monatsdateien des Trainingsfensters")
+    ap.add_argument("--ergebnis", help="Container: Ergebnisordner; Ausgabe nach <ergebnis>/training/ (ersetzt --ausgabe), dazu letzter.json")
     ap.add_argument("--node", default=shutil.which("node") or "/usr/bin/node")
     a = ap.parse_args(argv)
-    if not a.quelle and not a.ssh:
-        ap.error("--quelle oder --ssh angeben")
+    if sum(1 for x in (a.quelle, a.ssh, a.daten) if x) != 1:
+        ap.error("genau eins von --quelle, --ssh oder --daten angeben")
+    if a.ergebnis:
+        a.ausgabe = os.path.join(a.ergebnis, "training")
     tag = dt.date.fromisoformat(a.tag) if a.tag else dt.date.today()
     tag_s = tag.isoformat()
     os.makedirs(a.ausgabe, exist_ok=True)
+    beginn = time.time()
+    kurz = {"tag": tag_s, "ok": False, "fehler": None, "datei": "wp_params_%s.json" % tag_s}
     basis = tempfile.mkdtemp(prefix="wp_training_")
     arbeit = os.path.join(basis, "protokolle_" + tag_s)            # fester Ordnername: gleiche Daten → bit-identische Ausgabe
     os.makedirs(arbeit)
     try:
-        if a.quelle:
+        if a.daten:
+            geholt = kopiere_monate(a.daten, arbeit, monate(tag, a.tage))
+            quelle_txt = "Datenordner %s, nur lesend (%s)" % (a.daten, ", ".join(geholt))
+        elif a.quelle:
             geholt = kopiere(a.quelle, arbeit)
             quelle_txt = "Kopien aus %s (%s)" % (a.quelle, ", ".join(geholt))
         else:
@@ -230,14 +284,25 @@ def main(argv=None):
         with open(os.path.join(a.ausgabe, "wp_training.md"), "w", encoding="utf-8") as f:
             f.write(bericht(tag_s, R, alt_r, zeilen, training_md, quelle_txt))
         print("wp_params_%s.json und wp_training.md geschrieben (%s); auffällige Drift: %d" % (tag_s, a.ausgabe, sum(1 for z in zeilen if z[5])))
+        if a.ergebnis:
+            kurz.update({"ok": True, "daten": R["daten"], "trennung": R["trennung"], "guete_test": kurz_json(guete_kurz(R["guete"]["test"])),
+                         "guete_training": kurz_json(guete_kurz(R["guete"]["training"])) if "training" in R["guete"] else None,
+                         "vorher": alt_r[0] if alt_r else None, "guete_test_vorher": kurz_json(guete_kurz(alt_r[1]["guete"]["test"])) if alt_r else None,
+                         "drift": {"gegen": alt_r[0] if alt_r else None, "werte": len(zeilen), "auffaellig": sum(1 for z in zeilen if z[5]),
+                                   "liste": [{"name": z[0], "vorher": z[1], "heute": z[2], "rel": None if z[4] is None else round(z[4], 4)} for z in zeilen if z[5]]}})
+            aufraeumen(a.ausgabe)
         return 0
     except Exception as e:                                     # Bericht trotzdem schreiben, damit der Beobachter den Fehler sieht
         with open(os.path.join(a.ausgabe, "wp_training.md"), "w", encoding="utf-8") as f:
             f.write("# Nächtliches Training des Anlagen-Zwillings – %s\n\n**Fehler:** %s\n" % (tag_s, e))
         print("Fehler: %s" % e, file=sys.stderr)
+        kurz["fehler"] = str(e)[:500]
         return 1
     finally:
         shutil.rmtree(basis, ignore_errors=True)
+        if a.ergebnis:
+            kurz["dauer_s"] = round(time.time() - beginn, 1)
+            schreibe_atomar(os.path.join(a.ausgabe, "letzter.json"), json.dumps(kurz, ensure_ascii=False, indent=1) + "\n")
 
 
 if __name__ == "__main__":
