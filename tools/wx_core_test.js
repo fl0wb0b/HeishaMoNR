@@ -75,10 +75,21 @@ const spec = {t0: NOW - 24 * H, t1: NOW + 36 * H, step: 6 * H, tb: [{a: NOW - 10
     {h: 100, unit: '°C', tb: [{a: NOW, b: NOW + 5 * H, c: 'rgba(3,155,229,.13)', n: 'Abtauwetter'}], series: [{n: 'Prognose', c: '#ef6c00', tol: 31 * MIN, d: [[NOW, 5], [NOW + H, 6], [NOW + 2 * H, 7]]}, {n: 'leer', k: 'area', d: []}]},
     {h: 60, unit: 'kW', series: [{n: 'PV', k: 'area', d: [[NOW, 1], [NOW + H, 2]]}]}]};
 const sv = OC.svg(spec, 912);
-check('Diagramm-Baukasten VER 6: Zeitbaender (alle Tafeln + nur Tafel 1) als Rechtecke, festes 6-h-Raster (11 Striche bei 60 h statt 12-h-Raster), ohne NaN', OC.v === 6 && (sv.svg.match(/fill="rgba\(1,2,3,\.1\)"/g) || []).length === 2 && (sv.svg.match(/fill="rgba\(3,155,229,\.13\)"/g) || []).length === 1 && (sv.svg.match(/<text[^>]*text-anchor="middle"/g) || []).length === 10 && !/NaN|undefined|Infinity/.test(sv.svg), (sv.svg.match(/<text[^>]*text-anchor="middle"/g) || []).length + ' Zeitbeschriftungen');
+check('Diagramm-Baukasten VER 6: Zeitbaender (alle Tafeln + nur Tafel 1) als Rechtecke, festes 6-h-Raster (11 Striche bei 60 h statt 12-h-Raster), ohne NaN', OC.v === 7 && (sv.svg.match(/fill="rgba\(1,2,3,\.1\)"/g) || []).length === 2 && (sv.svg.match(/fill="rgba\(3,155,229,\.13\)"/g) || []).length === 1 && (sv.svg.match(/<text[^>]*text-anchor="middle"/g) || []).length === 10 && !/NaN|undefined|Infinity/.test(sv.svg), (sv.svg.match(/<text[^>]*text-anchor="middle"/g) || []).length + ' Zeitbeschriftungen');
 const tip = OC.at(spec, NOW + 30 * MIN), tip2 = OC.at(spec, NOW + 6 * H);
 check('Diagramm-Baukasten VER 6: Tooltip mit eigenem Fenster (31 min statt 20 min: Stundenpunkte ueberall lesbar), benanntes Zeitband erscheint im Tooltip ("Abtauwetter: ja"), ausserhalb nicht', tip.some(q => q.name === 'Prognose') && tip.some(q => q.name === 'Abtauwetter' && q.text === 'ja') && !tip2.some(q => q.name === 'Abtauwetter'), JSON.stringify(tip.map(q => q.name + ' ' + q.text)));
 check('Diagramm-Baukasten VER 6: ohne step/tb wie bisher (60 h -> 12-h-Raster), leere Reihe nur in der Legende', (OC.svg({t0: NOW, t1: NOW + 60 * H, panels: [{h: 50, series: [{n: 'a', d: []}]}]}, 900).svg.match(/text-anchor="middle"/g) || []).length <= 6 && /leer/.test(OC.legend(spec)), '');
+
+// ---- Wetter-Symbole (VER 7): eigene SVG-Zeichen, Symbolzeile 18 px, Abstand, Tooltip; Vergangenheit endet 90 min vor jetzt, wenn "jetzt" ein Symbol hat
+const KL = ['sonne', 'mond', 'sonne_wolke', 'mond_wolke', 'wolke', 'regen', 'niesel', 'schnee', 'nebel', 'gewitter'];
+check('Symbole: jede der 10 Klassen zeichnet eigene SVG-Formen (keine Bilder, keine Links, kein Text), unbekannt -> nichts', KL.every(k => { const g = OC.symbol(k, 50, 20); return g.length > 40 && /<(path|circle|line)/.test(g) && !/<image|href|<text|NaN/.test(g); }) && OC.symbol('x', 1, 1) === '' && new Set(KL.map(k => OC.symbol(k, 50, 20))).size === 10, '');
+const symSpec = sym => ({t0: NOW - 24 * H, t1: NOW + 36 * H, panels: [{h: 100, sym: sym, series: [{n: 'a', d: [[NOW, 1]]}]}]});
+const S12 = [...Array(13)].map((_, k) => [NOW + k * 3 * H, KL[k % 10], 'Text ' + k]);
+const g1 = OC.svg(symSpec(S12), 912), g0 = OC.svg({t0: NOW - 24 * H, t1: NOW + 36 * H, panels: [{h: 100, series: [{n: 'a', d: [[NOW, 1]]}]}]}, 912), gN = OC.svg(symSpec(S12), 400);
+check('Symbolzeile: genau 18 px hoeher als ohne, ein Zeichen je 3-h-Punkt bei 912 px (13), bei 400 px Breite nur jedes zweite (Abstand >= 20 px), Marke "jetzt" unterhalb der Zeile', g1.geo.H - g0.geo.H === 18 && (g1.svg.match(/class="optch-sym"/g) || []).length === 13 && (gN.svg.match(/class="optch-sym"/g) || []).length === 7 && g1.geo.panels[0].top === 36, [(g1.svg.match(/class="optch-sym"/g) || []).length, (gN.svg.match(/class="optch-sym"/g) || []).length, g1.geo.H - g0.geo.H].join('/'));
+check('Symbolzeile: Tooltip "Wetter" mit der Beschreibung des naechsten Punkts (bis 90 min), weiter weg nichts', OC.at(symSpec(S12), NOW + 3 * H + 40 * MIN).some(q => q.name === 'Wetter' && q.text === 'Text 1') && !OC.at(symSpec([[NOW, 'sonne', 'x']]), NOW + 2 * H).some(q => q.name === 'Wetter'), '');
+const sv7 = W.symbole({fpts: [[NOW - 40 * MIN, 5, 80, 0, 1, 800, 1], [NOW + 3 * H, 5, 80, 0, 1, 500, 1]], fdesc: {500: 'leichter Regen'}}, [{t: (NOW - 4 * H) / 1000, owm: [[NOW - 3 * H, 5, 80, 0, 1, 804, 1], [NOW - H, 5, 80, 0, 1, 804, 1]]}], NOW, NOW - 24 * H, NOW + 36 * H, []);
+check('Symbole: "jetzt" (Punkt 40 min alt) steht am Strich; Vergangenheit aus Schnappschuss nur bis 90 min vor jetzt (-3 h ja, -1 h nein); Beschreibung aus fdesc, sonst Klassenname', sv7.length === 3 && sv7[0][0] === NOW - 3 * H && sv7[1][0] === NOW && sv7[1][1] === 'sonne' && sv7[1][2] === 'klar' && sv7[2][2] === 'leichter Regen', JSON.stringify(sv7.map(x => [(x[0] - NOW) / MIN, x[1], x[2]])));
 
 // ---- Datenfunktion: Ende-zu-Ende (Messung + Prognose) und leere Faelle
 const rws = [];
@@ -94,9 +105,9 @@ check('Datenfunktion ohne alles: n 0, leere Listen, Naechte trotzdem, kein Fehle
 const flowsFile = process.argv[2];
 if (flowsFile) {
     const flows = JSON.parse(fs.readFileSync(flowsFile, 'utf8')), NB = id => flows.find(n => n.id === id), core = fs.readFileSync(path.join(__dirname, 'wx_core.js'), 'utf8');
-    check('Flow: wx_core.js unveraendert in opt_hist und opt_engine eingebettet, opt_hist nur lesend (kein writeFileSync), Karte opt_t_ch_at in Gruppe "Wetter · 24 h zurück, 36 h voraus" (17 breit), ui_chart VER 6 in allen Diagrammkarten',
+    check('Flow: wx_core.js unveraendert in opt_hist und opt_engine eingebettet, opt_hist nur lesend (kein writeFileSync), Karte opt_t_ch_at in Gruppe "Wetter · 24 h zurück, 36 h voraus" (17 breit), ui_chart VER 7 in allen Diagrammkarten',
           NB('opt_hist').func.includes(core) && NB('opt_engine').func.includes(core) && !/writeFileSync|node\.send/.test(NB('opt_hist').func) && NB('opt_g_ch_at').name === 'Wetter · 24 h zurück, 36 h voraus' && NB('opt_g_ch_at').width === 17 &&
-          ['opt_t_ch_wp', 'opt_t_ch_rooms', 'opt_t_ch_at', 'opt_t_plan'].every(id => NB(id).format.includes('var VER = 6;')), '');
+          ['opt_t_ch_wp', 'opt_t_ch_rooms', 'opt_t_ch_at', 'opt_t_plan'].every(id => NB(id).format.includes('var VER = 7;')), '');
     check('Flow: opt_owm_parse merkt Sonnenauf-/-untergang (W.sun) nur aus der Antwort, keine neuen HTTP-Abfragen (Anzahl http request-Knoten im Tab gleich), keine neuen Geheimnisse', /W\.sun = \[p\.sys\.sunrise \* 1000, p\.sys\.sunset \* 1000\]/.test(NB('opt_owm_parse').func) && !/owm\.json|vrm\.json/.test(NB('opt_hist').func), '');
     // opt_engine einmal mit Minimal-Werten ausfuehren: rechnet weiter wie bisher und legt OPT_cz_verlauf ab
     const g = {OPT_cfg: {engine: {}, rooms: []}, TOP14_Outside_Temp: 2, Z1_Heat_Curve_Outside_Low_Temp: -13, Z1_Heat_Curve_Outside_High_Temp: 11, Z1_Heat_Curve_Target_Low_Temp: 29, Z1_Heat_Curve_Target_High_Temp: 37,

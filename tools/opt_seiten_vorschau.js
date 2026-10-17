@@ -35,8 +35,17 @@ if (dataDir && NB.opt_hist) {
         if (fcF.length) {
             const E = require('./engine_core.js'), WXC = require('./wx_core.js');
             const sn = fs.readFileSync(path.join(dataDir, fcF[fcF.length - 1]), 'utf8').trim().split('\n').map(l => { try { return JSON.parse(l); } catch (e) { return null; } }).filter(x => x && x.t);
+            // Wetter-Symbole: aeltere Schnappschuesse haben keinen OWM-Code (6. Element). NUR FUER DIE VORSCHAU wird er dann aus Bewoelkung/Feuchte abgeleitet
+            // (live nie: dort kommen Symbole nur aus den echten Codes von opt_owm_parse)
+            const FDE = {300: 'leichter Nieselregen', 741: 'Nebel', 800: 'klarer Himmel', 801: 'ein paar Wolken', 802: 'mäßig bewölkt', 803: 'überwiegend bewölkt', 804: 'bedeckt'};
+            let abgeleitet = false;
+            if (!sn.some(x => (x.owm || []).some(q => Array.isArray(q) && q[5] !== undefined && q[5] !== null))) {
+                abgeleitet = true;
+                sn.forEach(x => { x.owm = (x.owm || []).map(q => { const c = q[3], h = q[2], id = (h >= 99 && c < 50) ? 741 : (h >= 97 && c >= 90) ? 300 : c < 11 ? 800 : c < 25 ? 801 : c < 51 ? 802 : c < 85 ? 803 : 804; return [q[0], q[1], q[2], q[3], q[4] === undefined ? null : q[4], id, null]; }); });
+            }
             const L0 = sn[sn.length - 1], o0 = (L0.owm || [])[0] || [];
-            G.OPT_weather = {status: 'OK', ts: L0.t * 1000, f_ts: L0.t * 1000, temp: o0[1], rh: o0[2], clouds: o0[3], wind: o0[4], fpts: L0.owm || null};
+            G.OPT_weather = {status: 'OK', ts: L0.t * 1000, f_ts: L0.t * 1000, temp: o0[1], rh: o0[2], clouds: o0[3], wind: o0[4], fpts: L0.owm || null, fdesc: abgeleitet ? FDE : undefined};
+            if (abgeleitet) { console.log('Wetterkarte: Wetter-Codes für die Symbole aus Bewölkung/Feuchte abgeleitet (NUR Vorschau, die Schnappschüsse enthalten noch keine Codes)'); }
             if (process.env.OPT_VORSCHAU_SONNE) { const z = process.env.OPT_VORSCHAU_SONNE.split('-').map(x => x.split(':').map(Number)), d = new Date(NOW); G.OPT_weather.sun = z.map(q => new Date(d.getFullYear(), d.getMonth(), d.getDate(), q[0], q[1]).getTime()); }
             G.OPT_plan_in = {ts: NOW, pvSrc: L0.pvSrc || 'VRM', pv: (L0.pv || []).map(x => [x[0] * 1000, x[1], (x[2] || 3600) * 1000])};
             VIRT['forecast-recent.json'] = JSON.stringify(sn.slice(-30).map(x => ({t: x.t, owm: x.owm, pv: x.pv})));

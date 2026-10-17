@@ -8,6 +8,8 @@
 //   WXC.gestern(snaps, now, a, b)     OWM-Prognose aus dem Schnappschuss ~24 h zuvor (forecast-recent.json), stuendlich
 //   WXC.copVerlauf(E, cfg, S, W, PI, inp, now)   COP-Ziel-Verlauf (Kern E = ENGINE), siehe unten
 //   WXC.istAusZeilen(rows)            Ist-COP je Stunde aus den Protokollspalten (cop_korr, leistung_korr_w, verdichter_hz)
+//   WXC.symbol(id, tag)               OWM-Wetter-Code + Tag/Nacht -> Symbolname (sonne, mond, sonne_wolke, mond_wolke, wolke, regen, niesel, schnee, nebel, gewitter) oder null
+//   WXC.symbole(W, snaps, now, a, b, naechte)   Symbolzeile [[t, Symbol, Beschreibung]]: ab jetzt je Prognosepunkt, davor nur aus Schnappschuessen mit Code
 //   WXC.daten(o)                      Nutzlast der Karte
 var WXC = (function () {
     var VER = 1, MIN = 60000, H = 3600000;
@@ -101,6 +103,35 @@ var WXC = (function () {
         if (!Array.isArray(k) || k.length < 4 || !have(at) || !k.every(function (x) { return have(num(x)); }) || !(k[1] > k[0])) { return null; }
         return at <= k[0] ? k[3] : (at >= k[1] ? k[2] : k[3] + (k[2] - k[3]) * (at - k[0]) / (k[1] - k[0]));
     }
+    // Wetter-Symbole (wetter-grafik 17.10.2026): Klassen nach OWM-Code (wie die OWM-Icons: 801/802 Sonne mit Wolke, 803/804 Wolke), Tag/Nacht aus dem Icon, sonst aus den Naechten
+    var SYM_TXT = {sonne: 'klar', mond: 'klar', sonne_wolke: 'teils bewölkt', mond_wolke: 'teils bewölkt', wolke: 'bewölkt', regen: 'Regen', niesel: 'Nieselregen', schnee: 'Schnee', nebel: 'Nebel/Dunst', gewitter: 'Gewitter'};
+    function symbol(id, tag) {
+        id = num(id); if (!have(id) || id < 200 || id > 804 || Math.floor(id) !== id) { return null; }
+        var g = Math.floor(id / 100), nacht = tag === 0;
+        if (g === 2) { return 'gewitter'; } if (g === 3) { return 'niesel'; } if (g === 5) { return id === 511 ? 'schnee' : 'regen'; } if (g === 6) { return 'schnee'; } if (g === 7) { return 'nebel'; }
+        if (id === 800) { return nacht ? 'mond' : 'sonne'; }
+        if (id === 801 || id === 802) { return nacht ? 'mond_wolke' : 'sonne_wolke'; }
+        if (id === 803 || id === 804) { return 'wolke'; }
+        return null;
+    }
+    function inNacht(t, N) { return (N || []).some(function (b) { return t >= b[0] && t < b[1]; }); }
+    function symbole(W, snaps, now, a, b, N) {
+        var out = [], D = (W && W.fdesc && typeof W.fdesc === 'object') ? W.fdesc : {};
+        var fp = (W && Array.isArray(W.fpts) ? W.fpts : []).filter(function (p) { return Array.isArray(p) && have(num(p[0])) && p[0] >= now - 90 * MIN && p[0] <= b; }).sort(function (x, y) { return x[0] - y[0]; });
+        var bis = fp.some(function (p) { return symbol(p[5], 1); }) ? now - 90 * MIN : now;            // mit Symbol "jetzt": Vergangenheit endet 90 min davor (kein Gedraenge am Strich)
+        function add(t, id, tag) { var g = (tag === 0 || tag === 1) ? tag : (inNacht(t, N) ? 0 : 1), k = symbol(id, g); if (k) { out.push([t, k, String(D[id] || SYM_TXT[k])]); } }
+        // Vergangenheit: je Prognosezeit die zuletzt davor prognostizierte (Schnappschuss mit Zeit <= Punktzeit), nur Punkte mit Code (aeltere Schnappschuesse haben keinen)
+        var best = {};
+        (Array.isArray(snaps) ? snaps : []).forEach(function (s) {
+            if (!s || !have(num(s.t)) || !Array.isArray(s.owm)) { return; }
+            var st = s.t * 1000;
+            s.owm.forEach(function (p) { if (!Array.isArray(p) || !have(num(p[0])) || p[0] < a || p[0] >= bis || p[0] < st || !have(num(p[5]))) { return; } var c = best[p[0]]; if (!c || st > c.st) { best[p[0]] = {st: st, id: p[5], tag: num(p[6])}; } });
+        });
+        Object.keys(best).map(Number).sort(function (x, y) { return x - y; }).forEach(function (t) { add(t, best[t].id, best[t].tag); });
+        // ab jetzt: Prognosepunkte (der erste, juengstens 90 min alte Punkt = "jetzt" steht am Strich)
+        fp.forEach(function (p, i) { add(i === 0 ? Math.max(now, p[0]) : p[0], p[5], num(p[6])); });
+        return out;
+    }
     function stdKey(k) { var m = /^(\d{4})-(\d\d)-(\d\d) (\d\d)$/.exec(k); return m ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], 30, 0).getTime() : null; }
     // COP-Ziel-Verlauf (in opt_engine, alle 5 min). Zurueck: Ziel je Stunde aus dem Kern (S.cz.h, wie die Karte "COP: Ziel und Ist").
     // Voraus: ENGINE.copZiel je Stunde mit der OWM-Prognose (AT, Feuchte), Soll-Vorlauf = Heizkurve Z1 bei der Prognose-AT + jetzige Verschiebung (ohne Kurve: jetziger Soll),
@@ -165,12 +196,13 @@ var WXC = (function () {
         if (pvp.length) { var p0 = pvW(o.PI.pv, now); if (have(p0) && pvp[0][0] > now) { pvp.unshift([now, r(p0 / 1000, 100)]); } }
         var CZ = o.CZ && have(num(o.CZ.ts)) && now - o.CZ.ts <= STD.czMaxAlterMin * MIN ? o.CZ : {};
         var ge = gestern(o.snaps, now, t0, t1);
-        return {now: now, t0: t0, t1: t1, n: Math.max(rows.length, pr.length), hist: hist, prog: prog, abtau: abtau, nacht: naechte(t0, t1, W.sun), gestern: ge, pv: pvp,
+        var N = naechte(t0, t1, W.sun);
+        return {now: now, t0: t0, t1: t1, n: Math.max(rows.length, pr.length), hist: hist, prog: prog, abtau: abtau, nacht: N, gestern: ge, pv: pvp, sym: symbole(fOk ? W : {}, o.snaps, now, t0, t1, N),
                 cop: {zh: (Array.isArray(CZ.zh) ? CZ.zh : []).filter(function (p) { return p[0] >= t0; }), zp: Array.isArray(CZ.zp) ? CZ.zp : [], ih: istAusZeilen(rows), soll: have(num(CZ.soll)) ? CZ.soll : null},
                 stand: {wetter: fOk ? W.f_ts : null, pv: piOk ? String(o.PI.pvSrc || '') : null}};
     }
     return {VER: VER, STD: STD, raster: raster, interp: interp, abtauL: abtauL, abtauJa: abtauJa, abtauBaender: abtauBaender, naechte: naechte, gestern: gestern, pvPunkte: pvPunkte, pvW: pvW,
-            kurveSoll: kurveSoll, copVerlauf: copVerlauf, istAusZeilen: istAusZeilen, daten: daten, dew: dew};
+            kurveSoll: kurveSoll, symbol: symbol, symbole: symbole, SYM_TXT: SYM_TXT, copVerlauf: copVerlauf, istAusZeilen: istAusZeilen, daten: daten, dew: dew};
 })();
 if (typeof module !== 'undefined' && module.exports) { module.exports = WXC; }
 // == WX-CORE-ENDE ==

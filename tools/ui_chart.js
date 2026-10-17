@@ -5,9 +5,11 @@
  * spec = {t0, t1, step (Zeitraster in ms, optional), marks: [{t, label}], tb: [{a, b, c}] (Zeitbaender in allen Tafeln), panels: [{h, unit, min, max, zero, rmin, rmax,
  *          bands: [{a, b, c}] (Wertebaender), tb: [{a, b, c, n}] (Zeitbaender nur dieser Tafel; mit n auch im Tooltip), series: [
  *          {n, c, d: [[t, v], ...], k: 'line'|'step'|'area'|'bar', w, dash, r: true (rechte Achse), dg: Nachkommastellen, u: Einheit, fill, bw (Balkenbreite in ms), bc: [[t, Farbe]],
- *           tol (Tooltip-Fenster in ms, Standard 20 min)}]}]} */
+ *           tol (Tooltip-Fenster in ms, Standard 20 min)}],
+ *          sym: [[t, Symbol, Text]] (Wetter-Symbolzeile ueber der Tafel, 18 px; Symbole: sonne mond sonne_wolke mond_wolke wolke regen niesel schnee nebel gewitter; Text im Tooltip)}]}
+ *   optChart.symbol(name, cx, cy) -> SVG-Zeichen (16 x 16 px, eigene Pfade, keine Bilder) */
 (function (root) {
-    var VER = 6;                                                                                    // 5: UI-Optik 14.10. (Achsen 12 px, Kontrast >= 4,5:1); 6: Zeitbaender, Zeitraster, Tooltip-Fenster, Achsen mit 2,5er-Schritt zeigen die Nachkommastelle (Wetterkarte 17.10.)
+    var VER = 7;                                                                                    // 5: UI-Optik 14.10. (Achsen 12 px, Kontrast >= 4,5:1); 6: Zeitbaender, Zeitraster, Tooltip-Fenster, Achsen mit 2,5er-Schritt zeigen die Nachkommastelle (Wetterkarte 17.10.); 7: Wetter-Symbolzeile
     if (root.optChart && root.optChart.v === VER) { return; }
     var C = {v: VER};
     var MONTHS = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
@@ -37,6 +39,25 @@
         for (; t <= t1; t += st) { out.push(t); }
         return out;
     }
+    // Wetter-Symbole (16 x 16 px um cx/cy): Farben aus ui_optik.css (Sonne/Blitz #f9a825 mit Rand #b45309, Wolke #cfd8dc mit Rand #546e7a, Mond/Nebel #546e7a,
+    // Regen/Niesel/Schnee #0277bd); Linien und Raender mit Kontrast >= 3:1 gegen den weissen Grund (Grafik, WCAG 1.4.11)
+    var SY = {
+        sun: function (x, y, r) { var o = '<circle cx="' + x + '" cy="' + y + '" r="' + r + '" fill="#f9a825" stroke="#b45309" stroke-width="0.8"/>', i; for (i = 0; i < 8; i++) { var a = i * Math.PI / 4, c = Math.cos(a), s = Math.sin(a); o += '<line x1="' + (x + c * (r + 1.6)).toFixed(1) + '" y1="' + (y + s * (r + 1.6)).toFixed(1) + '" x2="' + (x + c * (r + 3.4)).toFixed(1) + '" y2="' + (y + s * (r + 3.4)).toFixed(1) + '" stroke="#b45309" stroke-width="1.1" stroke-linecap="round"/>'; } return o; },
+        moon: function (x, y, r) { return '<path d="M' + (x + r * 0.35).toFixed(1) + ' ' + (y - r).toFixed(1) + 'A' + r + ' ' + r + ' 0 1 0 ' + (x + r).toFixed(1) + ' ' + (y + r * 0.45).toFixed(1) + 'A' + (r * 0.8).toFixed(1) + ' ' + (r * 0.8).toFixed(1) + ' 0 0 1 ' + (x + r * 0.35).toFixed(1) + ' ' + (y - r).toFixed(1) + 'Z" fill="#cfd8dc" stroke="#546e7a" stroke-width="1"/>'; },
+        cloud: function (x, y, k) { k = k || 1; return '<path d="M' + (x - 6.5 * k).toFixed(1) + ' ' + (y + 3 * k).toFixed(1) + 'a' + (2.8 * k).toFixed(1) + ' ' + (2.8 * k).toFixed(1) + ' 0 0 1 ' + (1.2 * k).toFixed(1) + ' ' + (-5.4 * k).toFixed(1) + 'a' + (3.6 * k).toFixed(1) + ' ' + (3.6 * k).toFixed(1) + ' 0 0 1 ' + (6.8 * k).toFixed(1) + ' ' + (-1 * k).toFixed(1) + 'a' + (2.8 * k).toFixed(1) + ' ' + (2.8 * k).toFixed(1) + ' 0 0 1 ' + (4.6 * k).toFixed(1) + ' ' + (5.2 * k).toFixed(1) + 'a' + (1.2 * k).toFixed(1) + ' ' + (1.2 * k).toFixed(1) + ' 0 0 1 ' + (-0.6 * k).toFixed(1) + ' ' + (1.2 * k).toFixed(1) + 'Z" fill="#eceff1" stroke="#546e7a" stroke-width="1" stroke-linejoin="round"/>'; },
+        drops: function (x, y, kind) { var o = '', i; for (i = -1; i <= 1; i++) { var xx = x + i * 3.6; if (kind === 'regen') { o += '<line x1="' + (xx + 0.8).toFixed(1) + '" y1="' + (y + 4.6) + '" x2="' + (xx - 0.6).toFixed(1) + '" y2="' + (y + 7.8) + '" stroke="#0277bd" stroke-width="1.4" stroke-linecap="round"/>'; } else if (kind === 'niesel') { o += '<circle cx="' + xx.toFixed(1) + '" cy="' + (y + 6.3) + '" r="0.95" fill="#0277bd"/>'; } else { o += '<path d="M' + (xx - 1.4).toFixed(1) + ' ' + (y + 6.3) + 'h2.8M' + xx.toFixed(1) + ' ' + (y + 4.9) + 'v2.8" stroke="#0277bd" stroke-width="1.1" stroke-linecap="round"/>'; } } return o; }
+    };
+    C.symbol = function (k, x, y) {
+        if (k === 'sonne') { return SY.sun(x, y, 3.6); }
+        if (k === 'mond') { return SY.moon(x, y, 5.2); }
+        if (k === 'sonne_wolke') { return SY.sun(x - 3, y - 3, 2.8) + SY.cloud(x + 1.5, y + 2, 0.8); }
+        if (k === 'mond_wolke') { return SY.moon(x - 2.5, y - 3, 4) + SY.cloud(x + 1.5, y + 2, 0.8); }
+        if (k === 'wolke') { return SY.cloud(x + 0.5, y + 1.5, 1); }
+        if (k === 'regen' || k === 'niesel' || k === 'schnee') { return SY.cloud(x + 0.5, y - 2, 0.85) + SY.drops(x, y - 2, k); }
+        if (k === 'nebel') { return '<path d="M' + (x - 7) + ' ' + (y - 4) + 'h12M' + (x - 5) + ' ' + y + 'h12M' + (x - 7) + ' ' + (y + 4) + 'h12" stroke="#546e7a" stroke-width="1.6" stroke-linecap="round"/>'; }
+        if (k === 'gewitter') { return SY.cloud(x + 0.5, y - 2.5, 0.85) + '<path d="M' + (x + 0.5) + ' ' + (y + 0.5) + 'l-2.6 4.2h2.4l-1.4 3.6l4.2-5h-2.4l1.4-2.8Z" fill="#f9a825" stroke="#b45309" stroke-width="0.7" stroke-linejoin="round"/>'; }
+        return '';
+    };
     C.svg = function (spec, W) {
         W = Math.max(360, Math.round(W || 800));
         var hasR = spec.panels.some(function (p) { return p.series.some(function (s) { return s.r; }); });
@@ -44,6 +65,14 @@
         var X = function (t) { return x0 + (t - t0) / (t1 - t0) * (x1 - x0); };
         var out = [], y = TOP, geo = {x0: x0, x1: x1, t0: t0, t1: t1, W: W, panels: []}, ticks = timeTicks(t0, t1, spec.step);
         spec.panels.forEach(function (pn, pi) {
+            if (pn.sym) {                                                                           // Symbolzeile (18 px) ueber der Tafel; Abstand mindestens 20 px, sonst wird ein Symbol uebersprungen
+                var lastX = -99;
+                pn.sym.slice().sort(function (a, b) { return a[0] - b[0]; }).forEach(function (q) {
+                    if (q[0] < t0 || q[0] > t1) { return; } var xx = Math.max(x0 + 8, Math.min(x1 - 8, X(q[0]))); if (xx - lastX < 20) { return; } lastX = xx;
+                    var g = C.symbol(q[1], xx, y + 9); if (g) { out.push('<g class="optch-sym">' + g + '</g>'); }
+                });
+                y += 18;
+            }
             var h = pn.h || 150, top = y, bot = y + h;
             var ls = pn.series.filter(function (s) { return !s.r; }), rs = pn.series.filter(function (s) { return s.r; });
             var lr = range(ls, pn.min, pn.max, pn.zero), lt = nice(lr[0], lr[1], 4);
@@ -89,13 +118,14 @@
         });
         var H = y - GAP + BOT;
         ticks.forEach(function (t) { var d = new Date(t), lab = (d.getHours() === 0) ? p2(d.getDate()) + '. ' + MONTHS[d.getMonth()] : hhmm(t); out.push('<text x="' + X(t).toFixed(1) + '" y="' + (H - 7) + '" text-anchor="middle" font-size="12" fill="' + (d.getHours() === 0 ? '#263238' : '#546e7a') + '"' + (d.getHours() === 0 ? ' font-weight="bold"' : '') + '>' + lab + '</text>'); });
-        (spec.marks || []).forEach(function (m) { if (m.t < t0 || m.t > t1) { return; } var xx = X(m.t).toFixed(1); out.push('<line x1="' + xx + '" x2="' + xx + '" y1="' + TOP + '" y2="' + (H - BOT) + '" stroke="' + (m.c || '#546e7a') + '" stroke-dasharray="4 3"/>' + (m.label ? '<text x="' + (+xx + 4) + '" y="' + (TOP + 10) + '" font-size="10" fill="' + (m.c || '#546e7a') + '">' + esc(m.label) + '</text>' : '')); });
+        (spec.marks || []).forEach(function (m) { if (m.t < t0 || m.t > t1) { return; } var xx = X(m.t).toFixed(1); out.push('<line x1="' + xx + '" x2="' + xx + '" y1="' + TOP + '" y2="' + (H - BOT) + '" stroke="' + (m.c || '#546e7a') + '" stroke-dasharray="4 3"/>' + (m.label ? '<text x="' + (+xx + 4) + '" y="' + ((geo.panels[0] ? geo.panels[0].top : TOP) + 10) + '" font-size="10" fill="' + (m.c || '#546e7a') + '">' + esc(m.label) + '</text>' : '')); });
         geo.H = H;
         return {svg: '<svg xmlns="http://www.w3.org/2000/svg" width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" style="display:block;font-family:inherit">' + out.join('') + '<line class="optch-x" x1="0" x2="0" y1="' + TOP + '" y2="' + (H - BOT) + '" stroke="#37474f" stroke-width="1" visibility="hidden"/></svg>', geo: geo};
     };
     C.at = function (spec, t) {
         var res = [];
         spec.panels.forEach(function (pn, pi) {
+            if (pn.sym) { var bs = null, bd2 = Infinity; pn.sym.forEach(function (q) { var dd = Math.abs(q[0] - t); if (dd < bd2) { bd2 = dd; bs = q; } }); if (bs && bd2 <= 90 * 60000) { res.push({panel: pi, name: 'Wetter', color: '#546e7a', text: String(bs[2] || bs[1])}); } }
             (pn.tb || []).forEach(function (b) { if (b.n && t >= b.a && t <= b.b) { res.push({panel: pi, name: b.n, color: b.c || '#90a4ae', text: b.txt || 'ja'}); } });
             pn.series.forEach(function (s) {
                 var best = null, bd = Infinity;

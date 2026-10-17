@@ -397,20 +397,27 @@ if (msg.statusCode !== 200 || !msg.payload || typeof msg.payload !== 'object') {
 }
 var p = msg.payload, now = Date.now();
 function dew(t, rh) { var a = 17.62, b = 243.12, g = Math.log(Math.max(rh, 1) / 100) + a * t / (b + t); return b * g / (a - g); }
+// Wetter-Code (Symbole der Wetterkarte, wetter-grafik 17.10.2026): weather[0].id (2xx Gewitter, 3xx Niesel, 5xx Regen, 6xx Schnee, 7xx Nebel/Dunst, 800 klar, 801-804 Wolken),
+// Tag/Nacht aus der Endung von weather[0].icon (d = 1, n = 0, sonst null); Beschreibungen je Code in W.fdesc (Tooltip)
+function wcode(e) { var w = e && e.weather && e.weather[0]; return (w && typeof w.id === 'number' && isFinite(w.id)) ? w.id : null; }
+function wtag(e) { var w = e && e.weather && e.weather[0], i = w && typeof w.icon === 'string' ? w.icon.slice(-1) : ''; return i === 'd' ? 1 : (i === 'n' ? 0 : null); }
+function wdesc(e, D) { var w = e && e.weather && e.weather[0], id = wcode(e); if (id !== null && w && typeof w.description === 'string' && w.description) { D[id] = w.description.slice(0, 60); } }
 if (msg.topic === 'current' && p.main) {
     W.temp = p.main.temp; W.rh = p.main.humidity; W.dew = Math.round(dew(p.main.temp, p.main.humidity) * 10) / 10;
     W.clouds = p.clouds ? p.clouds.all : null; W.wind = p.wind ? p.wind.speed : null; W.pressure = p.main.pressure;
     W.desc = (p.weather && p.weather[0]) ? p.weather[0].description : '';
     if (p.sys && typeof p.sys.sunrise === 'number' && typeof p.sys.sunset === 'number') { W.sun = [p.sys.sunrise * 1000, p.sys.sunset * 1000]; }     // Naechte der Wetterkarte (wetter-grafik 17.10.2026)
+    W.id = wcode(p); W.tag = wtag(p); W.fdesc = W.fdesc && typeof W.fdesc === 'object' ? W.fdesc : {}; wdesc(p, W.fdesc);
     W.ts = now; W.status = 'OK';
 }
 if (msg.topic === 'forecast' && Array.isArray(p.list) && p.list.length) {
     // +1/+3/+6 h per linearer Interpolation. Der Startpunkt "jetzt" ist der letzte aktuelle Wert (falls frisch);
     // kommt die Prognose vor der Aktuell-Antwort an, beginnt die Kurve am ersten Prognosepunkt.
     var fresh = (W.temp !== undefined && W.ts && (now - W.ts) < 30 * 60000);
-    var pts = (fresh ? [{t: now, v: W.temp, h: W.rh, c: W.clouds, w: typeof W.wind === 'number' ? W.wind : null}] : []).concat(p.list.map(function (e) {
-        return {t: e.dt * 1000, v: e.main.temp, h: e.main.humidity, c: e.clouds ? e.clouds.all : null, w: (e.wind && typeof e.wind.speed === 'number') ? e.wind.speed : null};
+    var pts = (fresh ? [{t: now, v: W.temp, h: W.rh, c: W.clouds, w: typeof W.wind === 'number' ? W.wind : null, i: typeof W.id === 'number' ? W.id : null, g: W.tag === 0 || W.tag === 1 ? W.tag : null}] : []).concat(p.list.map(function (e) {
+        return {t: e.dt * 1000, v: e.main.temp, h: e.main.humidity, c: e.clouds ? e.clouds.all : null, w: (e.wind && typeof e.wind.speed === 'number') ? e.wind.speed : null, i: wcode(e), g: wtag(e)};
     }));
+    var fd = {}; if (fresh && typeof W.id === 'number' && W.fdesc && W.fdesc[W.id]) { fd[W.id] = W.fdesc[W.id]; } p.list.forEach(function (e) { wdesc(e, fd); }); W.fdesc = fd;
     function r1(x) { return Math.round(x * 10) / 10; }
     function at(hours, key) {
         var target = now + hours * 3600000;
@@ -431,7 +438,7 @@ if (msg.topic === 'forecast' && Array.isArray(p.list) && p.list.length) {
         for (var hh = 0; hh <= 24; hh++) { var vv = at(hh, 'v'); if (vv !== null) { sum24 += vv; cnt24++; } }
     }
     W.f24 = cnt24 ? r1(sum24 / cnt24) : null;
-    W.fpts = pts.filter(function (q) { return q.t > now - 3600000; }).map(function (q) { return [q.t, q.v, q.h, q.c, q.w === undefined ? null : q.w]; });       // 5. Element: Wind in m/s (Prognosepunkt), null wenn unbekannt
+    W.fpts = pts.filter(function (q) { return q.t > now - 3600000; }).map(function (q) { return [q.t, q.v, q.h, q.c, q.w === undefined ? null : q.w, q.i === undefined ? null : q.i, q.g === undefined ? null : q.g]; });       // 5. Element: Wind in m/s (Prognosepunkt), 6.: OWM-Wetter-Code, 7.: Tag 1 / Nacht 0 (null wenn unbekannt; wetter-grafik 17.10.2026)
 }
 global.set('OPT_weather', W);
 return null;
@@ -2773,7 +2780,7 @@ CH_WX = (
     "    function p2(x) { return (x < 10 ? '0' : '') + x; }\n"
     "    var ge = P.gestern, gd = new Date(ge ? ge.ts : 0), gTxt = ge ? 'OWM-Prognose vom ' + p2(gd.getDate()) + '.' + p2(gd.getMonth() + 1) + '. ' + p2(gd.getHours()) + ':' + p2(gd.getMinutes()) + ' Uhr' : '';\n"
     "    spec = {t0: P.t0, t1: P.t1, step: 6 * H, marks: [{t: P.now, label: 'jetzt'}], tb: (P.nacht || []).map(function (b) { return {a: b[0], b: b[1], c: 'rgba(84,110,122,.09)'}; }), panels: [\n"
-    "        {h: 150, unit: '°C', tb: (P.abtau || []).map(function (b) { return {a: b[0], b: b[1], c: 'rgba(3,155,229,.13)', n: 'Abtauwetter'}; }), series: [\n"
+    "        {h: 150, unit: '°C', sym: P.sym || [], tb: (P.abtau || []).map(function (b) { return {a: b[0], b: b[1], c: 'rgba(3,155,229,.13)', n: 'Abtauwetter'}; }), series: [\n"
     "            {n: 'Fühler (WP)', c: '#37474f', k: 'line', w: 1.8, dg: 1, u: '°C', d: pairs(th, hs.at || [])},\n"
     "            {n: 'berechnet', c: '#1976d2', k: 'line', dash: '5 3', w: 1.4, dg: 1, u: '°C', d: pairs(th, hs.calc || [])},\n"
     "            {n: 'OWM', c: '#ef6c00', k: 'line', dg: 1, u: '°C', d: pairs(th, hs.owm || [])},\n"
