@@ -5,7 +5,8 @@
 // Ein kleiner Angular-Ersatz (ng-repeat, ng-repeat-start/-end, ng-if, ng-class, ng-model, ng-bind-html, {{ }}) zeichnet die Karten, die Skripte der Vorlagen
 // laufen mit einer Scope-Attrappe ($watch('msg') sofort). Masonry, Einpassen (FIT_JS) und Prüfung wie tools/engine_ui_preview.js (CHECK_JS): inneres Scrollen,
 // abgeschnittene oder herausragende Elemente, waagrechtes Scrollen, überlappende Gruppen. Bilder und Prüfung je Breite: node tools/ui_vorschau_pruefen.js <ordner> <seite.html> ...
-// Usage: node tools/opt_seiten_vorschau.js <flows.json> <ui_dump.json> <ausgabe-ordner> [Datenordner mit optimizer-v2-YYYY-MM.csv]
+// Usage: node tools/opt_seiten_vorschau.js <flows.json> <ui_dump.json> <ausgabe-ordner> [Datenordner mit optimizer-v2-YYYY-MM.csv, für die Wetterkarte auch forecast-YYYY-MM.jsonl]
+// (OPT_VORSCHAU_SONNE=08:05-18:20 setzt Beispiel-Sonnenzeiten für die Nächte, sonst fest 18–07 Uhr)
 process.env.TZ = process.env.TZ_SIM || 'Europe/Berlin';
 const fs = require('fs');
 const path = require('path');
@@ -27,10 +28,31 @@ if (dataDir && NB.opt_hist) {
         const lastF = fs.readFileSync(path.join(dataDir, files[files.length - 1]), 'utf8').trim().split('\n'), lastL = lastF[lastF.length - 1];
         const m = /^(\d{4})-(\d\d)-(\d\d) (\d\d):(\d\d):(\d\d)/.exec(lastL), NOW = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime();
         class FD extends Date { constructor(...a) { if (a.length === 0) { super(NOW); } else { super(...a); } } static now() { return NOW; } }
-        const fsMock = {readFileSync: p => { const f = path.join(dataDir, path.basename(p)); if (!fs.existsSync(f)) { const e = new Error('ENOENT'); e.code = 'ENOENT'; throw e; } return fs.readFileSync(f, 'utf8'); }};
-        const G = {OPT_cfg: dump.cfg || {}};
+        const G = {OPT_cfg: dump.cfg || {}}, VIRT = {};
+        // Wetterkarte (wetter-grafik 17.10.2026): Wetter, PV-Prognose und "Prognose von gestern" aus forecast-YYYY-MM.jsonl (letzter Schnappschuss = OPT_weather.fpts / OPT_plan_in.pv,
+        // die letzten 30 = forecast-recent.json); COP-Ziel wie opt_engine (WXC.copVerlauf mit dem Kern), der Kern-Zustand S.cz aus den Protokollzeilen nachgerechnet (Minute = letzte 5-min-Zeile)
+        const fcF = fs.readdirSync(dataDir).filter(f => /^forecast-\d{4}-\d\d\.jsonl$/.test(f)).sort();
+        if (fcF.length) {
+            const E = require('./engine_core.js'), WXC = require('./wx_core.js');
+            const sn = fs.readFileSync(path.join(dataDir, fcF[fcF.length - 1]), 'utf8').trim().split('\n').map(l => { try { return JSON.parse(l); } catch (e) { return null; } }).filter(x => x && x.t);
+            const L0 = sn[sn.length - 1], o0 = (L0.owm || [])[0] || [];
+            G.OPT_weather = {status: 'OK', ts: L0.t * 1000, f_ts: L0.t * 1000, temp: o0[1], rh: o0[2], clouds: o0[3], wind: o0[4], fpts: L0.owm || null};
+            if (process.env.OPT_VORSCHAU_SONNE) { const z = process.env.OPT_VORSCHAU_SONNE.split('-').map(x => x.split(':').map(Number)), d = new Date(NOW); G.OPT_weather.sun = z.map(q => new Date(d.getFullYear(), d.getMonth(), d.getDate(), q[0], q[1]).getTime()); }
+            G.OPT_plan_in = {ts: NOW, pvSrc: L0.pvSrc || 'VRM', pv: (L0.pv || []).map(x => [x[0] * 1000, x[1], (x[2] || 3600) * 1000])};
+            VIRT['forecast-recent.json'] = JSON.stringify(sn.slice(-30).map(x => ({t: x.t, owm: x.owm, pv: x.pv})));
+            let kurve = null; try { const es = JSON.parse(fs.readFileSync(path.join(dataDir, 'engine-state.json'), 'utf8')); kurve = es.S.kf.sig.split('/').map(Number); } catch (e) { kurve = null; }
+            const rowsCsv = fs.readFileSync(path.join(dataDir, files[files.length - 1]), 'utf8').trim().split('\n'); let hd = null; const R = [];
+            rowsCsv.forEach(l => { const q = l.split(','); if (q[0] === 'zeit') { hd = q; return; } if (!hd || q.length !== hd.length) { return; } const m2 = /^(\d{4})-(\d\d)-(\d\d) (\d\d):(\d\d):(\d\d)/.exec(q[0]); if (!m2) { return; } const o = {t: new Date(+m2[1], +m2[2] - 1, +m2[3], +m2[4], +m2[5], +m2[6]).getTime()}; hd.forEach((h, i) => { o[h] = q[i]; }); R.push(o); });
+            const cfgE = E.mergeCfg({}), S = {}, nm = v => (v === '' || v === undefined ? null : Number(v));
+            R.filter(r => r.t > NOW - 27 * 3600000).forEach((r, i, A) => { const nx = A[i + 1] ? A[i + 1].t : r.t + 5 * MIN_V; for (let t = r.t; t < nx; t += MIN_V) {
+                const pw = nm(r.leistung_w), c = nm(r.cop); E.copZielStep(S, {t: t, hz: nm(r.verdichter_hz), vl: nm(r.vorlauf), rl: nm(r.ruecklauf), soll: nm(r.soll_vorlauf), at: nm(r.aussen_panasonic), pel: pw, pth: c !== null && pw !== null ? c * pw : 0, defrost: nm(r.defrost) || 0, dhw: nm(r.warmwasser) || 0, heater: 0, rh: nm(r.wetter_feuchte), pv: nm(r.pv_w), hpAge: 0}, cfgE); } });
+            const last = R[R.length - 1] || {};
+            G.OPT_cz_verlauf = WXC.copVerlauf(E, cfgE, S, G.OPT_weather, G.OPT_plan_in, {kurve: kurve, shift: 0, soll: nm(last.soll_vorlauf)}, NOW);
+            console.log('Wetterkarte: Schnappschuss ' + new Date(L0.t * 1000).toLocaleString('de-DE') + ', ' + (L0.owm || []).length + ' OWM-Punkte, PV ' + (L0.pv || []).length + ' h, COP-Ziel ' + G.OPT_cz_verlauf.zh.length + ' h zurück / ' + G.OPT_cz_verlauf.zp.length + ' h voraus');
+        }
+        const fsMock = {readFileSync: p => { const b = path.basename(p); if (VIRT[b] !== undefined) { return VIRT[b]; } const f = path.join(dataDir, b); if (!fs.existsSync(f)) { const e = new Error('ENOENT'); e.code = 'ENOENT'; throw e; } return fs.readFileSync(f, 'utf8'); }};
         const fn = vm.runInNewContext('(function(msg,global,flow,node,fs,Date){' + NB.opt_hist.func + '\n})', {});
-        const out = fn({}, {get: k => G[k], set: () => {}}, {get: () => undefined, set: () => {}}, {warn: () => {}}, fsMock, FD);
+        const out = fn({}, {get: (k, st) => (st === 'file' ? undefined : G[k]), set: () => {}}, {get: () => undefined, set: () => {}}, {warn: m => console.log('opt_hist: ' + m)}, fsMock, FD);
         NB.opt_hist.wires.forEach((w, i) => { w.forEach(t => { MSG[t] = out[i]; }); });
         console.log('Verläufe aus ' + files.join(', ') + ' bis ' + lastL.slice(0, 16));
     }
@@ -86,7 +108,8 @@ const PAGES = [['a5be8588.b8fbc8', 'Übersicht', 'uebersicht', null], ['opt_ui_t
                ['opt_ui_tab_data', 'Daten & Güte', 'daten', null], ['opt_ui_tab_plan', 'Wärmefahrplan', 'waermefahrplan', null], ['opt_ui_tab_quiet', 'Quiet-Messwerte', 'quiet', null]];
 // Karten der Entscheidungsmaschine: Nachrichten wie opt_engine sie schickt ({payload: V.card} usw.), aus dem Replay der Protokolle im Datenordner
 const ENG_KIND = {opt_t_eng_prop: 'card', opt_t_eng_rules: 'rules', opt_t_eng_score: 'score', opt_t_eng_mess: 'mess', opt_t_eng_log: 'log', opt_t_eng_cop: 'cop'};
-const SNAP = (dataDir && flows.some(n => ENG_KIND[n.id])) ? PRE.snapshots(dataDir) : null;
+let SNAP = null;
+try { SNAP = (dataDir && flows.some(n => ENG_KIND[n.id])) ? PRE.snapshots(dataDir) : null; } catch (e) { console.log('Karten der Maschine bleiben leer (Replay nicht möglich: ' + e.message + ')'); SNAP = null; }
 // Optional: Karte "Entscheidungen" aus einem echten Zustand (OPT_ENG_STATE=<engine-state.json> von der NAS, nur gelesen), z. B. mit Episoden stillgelegter Regeln
 if (SNAP && process.env.OPT_ENG_STATE) {
     const VW = require('./engine_view.js'), ST = JSON.parse(fs.readFileSync(process.env.OPT_ENG_STATE, 'utf8')), V = ST.V || {ep: [], open: {}};

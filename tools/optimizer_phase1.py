@@ -68,6 +68,7 @@ upsert({"id": BROKER, "type": "mqtt-broker", "name": "MQTT (Venus) Optimizer", "
 
 
 UI_CHART_JS = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui_chart.js"), encoding="utf-8").read()      # SVG-Diagramme der Oberflaeche (reine Funktionen, in der Sim getestet)
+WX_CORE_JS = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "wx_core.js"), encoding="utf-8").read()        # Wetterkarte (wetter-grafik 17.10.2026): Daten + COP-Ziel-Verlauf, reine Funktionen (tools/wx_core_test.js)
 FS = [{"var": "fs", "module": "fs"}]       # core module, allowed on this instance (functionExternalModules: true)
 
 
@@ -400,6 +401,7 @@ if (msg.topic === 'current' && p.main) {
     W.temp = p.main.temp; W.rh = p.main.humidity; W.dew = Math.round(dew(p.main.temp, p.main.humidity) * 10) / 10;
     W.clouds = p.clouds ? p.clouds.all : null; W.wind = p.wind ? p.wind.speed : null; W.pressure = p.main.pressure;
     W.desc = (p.weather && p.weather[0]) ? p.weather[0].description : '';
+    if (p.sys && typeof p.sys.sunrise === 'number' && typeof p.sys.sunset === 'number') { W.sun = [p.sys.sunrise * 1000, p.sys.sunset * 1000]; }     // Naechte der Wetterkarte (wetter-grafik 17.10.2026)
     W.ts = now; W.status = 'OK';
 }
 if (msg.topic === 'forecast' && Array.isArray(p.list) && p.list.length) {
@@ -2578,7 +2580,7 @@ ENG_TAB = "opt_eng_ui_tab"                       # Seite "Optimierer" (eigenes K
 ENG_W = 17                                       # Gruppenbreite der Seite "Optimierer" (Begruendung bei ENG_GROUPS); gilt auch fuer die Quiet-Karten dort (keine gemischten Breiten)
 UI_TAB_DATA = "opt_ui_tab_data"
 upsert({"id": UI_TAB_DATA, "type": "ui_tab", "name": "Daten & Güte", "icon": "analytics", "order": 12.75, "disabled": False, "hidden": False})
-GROUPS = [("opt_g_ch_wp", "Wärmepumpe · letzte 24 h", OPT_W, UI_TAB), ("opt_g_ch_rooms", "Räume · letzte 24 h", OPT_W, UI_TAB), ("opt_g_ch_at", "Außentemperatur · letzte 48 h", OPT_W, UI_TAB),
+GROUPS = [("opt_g_ch_wp", "Wärmepumpe · letzte 24 h", OPT_W, UI_TAB), ("opt_g_ch_rooms", "Räume · letzte 24 h", OPT_W, UI_TAB), ("opt_g_ch_at", "Wetter · 24 h zurück, 36 h voraus", OPT_W, UI_TAB),
           ("opt_g_rooms", "Räume und Komfortbänder", OPT_W, UI_TAB),
           ("opt_g_opt", "Optimierung", OPT_W, UI_TAB_DATA),
           ("opt_g_wx", "Außen & Wetter", OPT_W, UI_TAB_DATA), ("opt_g_calc", "Berechnete Außentemperatur", OPT_W, UI_TAB_DATA), ("opt_g_quiet", "Leistung & Quiet (Shadow)", OPT_W, UI_TAB_DATA), ("opt_g_en", "Energie & Preise (nur Anzeige)", OPT_W, UI_TAB_DATA),
@@ -2685,9 +2687,10 @@ for _qid, _qg, _qn, _qc, _qy in (("opt_t_qstats", "opt_g_qstats", "Quiet-Statist
             "templateScope": "local", "className": "", "x": 1260, "y": _qy, "wires": [[]]})
 upsert(template("opt_t_wp", "opt_g_wp", 3, 260))
 HIST_JS = r"""
-// Verlaufsdaten fuer die Diagramme (nur lesen): letzte 48 h aus dem 5-Minuten-Protokoll optimizer-v2-YYYY-MM.csv; Kopfzeilen-Abschnitte werden ueber die Spaltennamen zugeordnet.
-// Zeitstempel einmal, Reihen als Zahlenfelder (kleine Nachrichten). Ausgang 1: Waermepumpe 24 h, 2: Raeume 24 h, 3: Aussentemperatur 48 h.
-var now = Date.now(), H = 3600000, t0 = now - 48 * H;
+// Verlaufsdaten fuer die Diagramme (nur lesen): letzte 24 h aus dem 5-Minuten-Protokoll optimizer-v2-YYYY-MM.csv; Kopfzeilen-Abschnitte werden ueber die Spaltennamen zugeordnet.
+// Zeitstempel einmal, Reihen als Zahlenfelder (kleine Nachrichten). Ausgang 1: Waermepumpe 24 h, 2: Raeume 24 h, 3: Wetterkarte (wetter-grafik 17.10.2026, WXC.daten): 24 h zurueck aus
+// dem Protokoll, 36 h voraus aus OPT_weather.fpts, PV-Prognose OPT_plan_in, COP-Ziel OPT_cz_verlauf (opt_engine), "Prognose von gestern" aus forecast-recent.json (nur lesen).
+var now = Date.now(), H = 3600000, t0 = now - 24 * H;
 function pad(x) { return (x < 10 ? '0' : '') + x; }
 function monthOf(ts) { var d = new Date(ts); return d.getFullYear() + '-' + pad(d.getMonth() + 1); }
 function tsOf(s) { var m = /^(\d{4})-(\d\d)-(\d\d) (\d\d):(\d\d):(\d\d)/.exec(s); return m ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime() : null; }
@@ -2712,12 +2715,16 @@ function cut(hours) { var lim = now - hours * H; return rows.filter(function (r)
 function col(rs, name, f) { return rs.map(function (r) { var v = nn(r[name]); return v === null ? null : Math.round(v * f) / f; }); }
 var cfg = global.get('OPT_cfg') || {}, rc = cfg.rooms || [];
 __COPKW__
-var r24 = cut(24), r48 = rows;
+var r24 = cut(24);
 // Strom mit COP-Korrektur fuer jede Zeile aus dem Rohwert (leistung_w = TOP16) und dem Verdichter: keine Mischung alter und neuer Zeilen
 function elK(rs) { return rs.map(function (r) { var v = nn(r.leistung_w), hz = nn(r.verdichter_hz); return v === null ? null : Math.round(pelK(v, hz !== null && hz > 0)); }); }
 var wp = {now: now, n: r24.length, t: r24.map(function (r) { return r.t; }), at: col(r24, 'aussen_panasonic', 10), sollVl: col(r24, 'soll_vorlauf', 100), vl: col(r24, 'vorlauf', 100), rl: col(r24, 'ruecklauf', 100), hz: col(r24, 'verdichter_hz', 10), el: elK(r24), korr: KORR_TXT};
 var rm = {now: now, n: r24.length, t: wp.t, rooms: rc.map(function (x) { return {id: x.id, name: x.name, min: x.min, max: x.max, active: x.active !== false, v: col(r24, x.id + '_wert', 100)}; })};
-var wx = {now: now, n: r48.length, t: r48.map(function (r) { return r.t; }), at: col(r48, 'aussen_panasonic', 10), owm: col(r48, 'aussen_wetter', 10), calc: col(r48, 'aussen_berechnet', 10), wind: col(r48, 'wetter_wind_ms', 10), clouds: col(r48, 'wetter_bewoelkung', 1)};
+var GX = function (k) { var v; try { v = global.get(k, 'file'); } catch (e) { v = undefined; } return v !== undefined ? v : global.get(k); };
+var snaps = null; try { snaps = JSON.parse(String(fs.readFileSync('/data/optimizer/forecast-recent.json', 'utf8'))); } catch (e) { snaps = null; }
+var wx;
+try { wx = WXC.daten({now: now, rows: r24, W: GX('OPT_weather') || {}, PI: GX('OPT_plan_in') || null, CZ: global.get('OPT_cz_verlauf') || null, snaps: snaps, cfg: cfg}); }
+catch (e) { node.warn('Wetterkarte: ' + e.message); wx = {now: now, n: 0}; }
 return [{payload: wp}, {payload: rm}, {payload: wx}];
 """
 
@@ -2758,21 +2765,36 @@ CH_ROOMS = (
     "    var t = P.t, cols = ['#1976d2', '#43a047', '#8e24aa', '#ef6c00', '#00838f', '#6d4c41'], ser = [], bands = [];\n"
     "    P.rooms.forEach(function (r, i) { if (!r.active) { return; } var c = cols[i % cols.length]; ser.push({n: r.name + ' (' + String(r.min).replace('.', ',') + '–' + String(r.max).replace('.', ',') + ')', c: c, k: 'line', w: 1.8, dg: 2, u: '°C', d: pairs(t, r.v)}); bands.push({a: r.min, b: r.max, c: c.replace('#', '') && 'rgba(' + parseInt(c.slice(1, 3), 16) + ',' + parseInt(c.slice(3, 5), 16) + ',' + parseInt(c.slice(5, 7), 16) + ',0.07)'}); });\n"
     "    spec = {t0: P.now - 24 * H, t1: P.now, panels: [{h: 236, unit: '°C', bands: bands, series: ser}]};\n")
-CH_AT = (
-    "    var t = P.t; spec = {t0: P.now - 48 * H, t1: P.now, panels: [\n"
-    "        {h: 150, unit: '°C', series: [\n"
-    "            {n: 'Fühler (Regelwert)', c: '#37474f', k: 'line', w: 1.8, dg: 1, u: '°C', d: pairs(t, P.at)},\n"
-    "            {n: 'Wetterdienst (OWM)', c: '#ef6c00', k: 'line', dg: 1, u: '°C', d: pairs(t, P.owm)},\n"
-    "            {n: 'berechnet', c: '#1976d2', k: 'line', dash: '5 3', w: 1.4, dg: 1, u: '°C', d: pairs(t, P.calc)}]},\n"
-    "        {h: 70, unit: 'm/s', zero: true, runit: '%', rmin: 0, rmax: 100, series: [\n"
-    "            {n: 'Bewölkung', c: '#b0bec5', k: 'area', r: true, dg: 0, u: '%', d: pairs(t, P.clouds)},\n"
-    "            {n: 'Wind', c: '#00897b', k: 'line', w: 1.4, dg: 1, u: 'm/s', d: pairs(t, P.wind)}]}]};\n")
+# Wetterkarte (wetter-grafik 17.10.2026, ersetzt "Außentemperatur · letzte 48 h"): -24 h bis +36 h, Marke "jetzt", Naechte grau, drei Tafeln: Temperatur (Messung, OWM-Prognose
+# gestrichelt, Prognose von gestern, Taupunkt, Abtauwetter-Band hellblau), Feuchte/Bewoelkung/Wind, PV (gemessen | Prognose) mit COP-Ziel/-Ist. Fehlende Teile bleiben leer.
+CH_WX = (
+    "    var hs = P.hist || {}, pg = P.prog || {}, th = hs.t || [], tp = pg.t || [], cz = P.cop || {}, T31 = 31 * 60000;\n"
+    "    function both(k) { return pairs(th, hs[k] || []).concat(pairs(tp, pg[k] || [])); }\n"
+    "    function p2(x) { return (x < 10 ? '0' : '') + x; }\n"
+    "    var ge = P.gestern, gd = new Date(ge ? ge.ts : 0), gTxt = ge ? 'OWM-Prognose vom ' + p2(gd.getDate()) + '.' + p2(gd.getMonth() + 1) + '. ' + p2(gd.getHours()) + ':' + p2(gd.getMinutes()) + ' Uhr' : '';\n"
+    "    spec = {t0: P.t0, t1: P.t1, step: 6 * H, marks: [{t: P.now, label: 'jetzt'}], tb: (P.nacht || []).map(function (b) { return {a: b[0], b: b[1], c: 'rgba(84,110,122,.09)'}; }), panels: [\n"
+    "        {h: 150, unit: '°C', tb: (P.abtau || []).map(function (b) { return {a: b[0], b: b[1], c: 'rgba(3,155,229,.13)', n: 'Abtauwetter'}; }), series: [\n"
+    "            {n: 'Fühler (WP)', c: '#37474f', k: 'line', w: 1.8, dg: 1, u: '°C', d: pairs(th, hs.at || [])},\n"
+    "            {n: 'berechnet', c: '#1976d2', k: 'line', dash: '5 3', w: 1.4, dg: 1, u: '°C', d: pairs(th, hs.calc || [])},\n"
+    "            {n: 'OWM', c: '#ef6c00', k: 'line', dg: 1, u: '°C', d: pairs(th, hs.owm || [])},\n"
+    "            {n: 'OWM-Prognose', c: '#ef6c00', k: 'line', dash: '6 4', w: 1.8, dg: 1, u: '°C', tol: T31, d: pairs(tp, pg.at || [])},\n"
+    "            {n: 'Prognose von gestern', t: gTxt, c: '#90a4ae', k: 'line', w: 1.1, dg: 1, u: '°C', tol: T31, d: ge ? ge.d : []},\n"
+    "            {n: 'Taupunkt', c: '#8e24aa', k: 'line', w: 1, dg: 1, u: '°C', tol: T31, d: both('dew')},\n"
+    "            {n: 'Abtauwetter', t: 'Außen −5 bis unter 10 °C und Feuchte ≥ 80 % (wie die Sperre der Maschine); bis jetzt gemessen, danach Prognose', c: '#4fc3f7', k: 'area', d: []}]},\n"
+    "        {h: 64, unit: '%', min: 0, max: 100, runit: 'm/s', rzero: true, series: [\n"
+    "            {n: 'Bewölkung', c: '#b0bec5', k: 'area', op: 0.35, w: 0.8, dg: 0, u: '%', tol: T31, d: both('clouds')},\n"
+    "            {n: 'Feuchte', c: '#0277bd', k: 'line', w: 1.4, dg: 0, u: '%', tol: T31, d: both('rh')},\n"
+    "            {n: 'Wind', c: '#00897b', k: 'line', w: 1, r: true, dg: 1, u: 'm/s', tol: T31, d: both('wind')}]},\n"
+    "        {h: 72, unit: 'kW', zero: true, runit: 'COP', series: [\n"
+    "            {n: 'PV', t: 'bis jetzt gemessen, danach Prognose (' + ((P.stand && P.stand.pv) || 'VRM') + ')', c: '#f9a825', k: 'area', op: 0.45, w: 1.2, dg: 2, u: 'kW', tol: T31, d: pairs(th, hs.pv || []).concat(P.pv || [])},\n"
+    "            {n: 'COP-Ziel', t: 'Stundenwerte; voraus mit OWM-Prognose und Heizkurve' + (cz.soll !== null && cz.soll !== undefined ? ' (Soll-Vorlauf jetzt ' + String(cz.soll).replace('.', ',') + ' °C)' : ''), c: '#2e7d32', k: 'line', w: 1.8, r: true, dg: 2, u: '', tol: T31, d: (cz.zh || []).concat(cz.zp || [])},\n"
+    "            {n: 'COP Ist', t: 'Stundenwerte aus dem Protokoll (Wärme ÷ Strom, mit Korrektur)', c: '#5d4037', k: 'line', w: 1.1, r: true, dg: 2, u: '', tol: T31, d: cz.ih || []}]}]};\n")
 # Diagrammhoehen (13.10. kompakt): je Karte 6 Rastereinheiten (318 px) bei 17 breit; Raeume mindestens so hoch wie Waermepumpe, damit die Masonry
 # Waermepumpe + Aussentemperatur links und Raeume-Diagramm + Raumkarte rechts anordnet (statische Vorschau tools/opt_seiten_vorschau.js)
 upsert(chart_card("wp", "opt_g_ch_wp", "Verlauf Wärmepumpe", 6, 520, CH_WP))
 upsert(chart_card("rooms", "opt_g_ch_rooms", "Verlauf Räume", 6, 560, CH_ROOMS))
-upsert(chart_card("at", "opt_g_ch_at", "Verlauf Außentemperatur", 6, 600, CH_AT))
-upsert(fn("opt_hist", "Verlaufsdaten (nur lesen)", HIST_JS.replace("__COPKW__", COP_KW_JS), 3, [["opt_t_ch_wp"], ["opt_t_ch_rooms"], ["opt_t_ch_at"]], 440, 520, FS))
+upsert(chart_card("at", "opt_g_ch_at", "Wetterkarte", 9, 600, CH_WX))
+upsert(fn("opt_hist", "Verlaufsdaten (nur lesen)", WX_CORE_JS + HIST_JS.replace("__COPKW__", COP_KW_JS), 3, [["opt_t_ch_wp"], ["opt_t_ch_rooms"], ["opt_t_ch_at"]], 440, 520, FS))
 upsert(inject("opt_i_hist", "alle 5 Minuten", 300, 20, ["opt_hist"], 140, 520))
 # ---------------------------------------------------------------- Status des NAS-Containers optimizer-tools (Paket 2, 15.10.2026; Karte auf "Daten & Güte")
 # Der Container schreibt /data/optimizer-tools/status.json (Format 2, Branch nas-container: docker/optimizer-tools/README.md). opt_nas liest die Datei alle 5 min
@@ -3249,6 +3271,12 @@ if (msg.topic !== 'anzeige') {
         try { fs.mkdirSync('/data/optimizer', {recursive: true}); fs.writeFileSync('/data/optimizer/engine-state.json', JSON.stringify({S: ST.S, V: ST.V})); ST.saved = now; } catch (e) { node.warn('engine-state.json: ' + e.message); }
     }
 }
+// Wetterkarte (Seite Optimierung, wetter-grafik 17.10.2026; nur Anzeige): COP-Ziel 24 h zurueck (Stundenwerte des Kerns) und 36 h voraus (ENGINE.copZiel mit OWM-Prognose,
+// Heizkurve Z1 + Verschiebung, PV-Prognose) als global OPT_cz_verlauf, alle 5 min; ein Fehler hier aendert an der Maschine nichts
+if (msg.topic !== 'anzeige' && (!ST.czv || now - ST.czv >= 5 * MIN)) {
+    ST.czv = now;
+    try { global.set('OPT_cz_verlauf', WXC.copVerlauf(ENGINE, cfg, ST.S, G('OPT_weather'), G('OPT_plan_in'), inp, now)); } catch (e) { global.set('OPT_cz_verlauf', {ts: now, fehler: String(e.message)}); }
+}
 flow.set('eng', ST);
 if (!ST.last) { return null; }
 // ---------- Anzeige (Karten-Daten aus ENGVIEW.build, gezeichnet in den Vorlagen mit optEngUi); Lernstand des Waermefahrplans aus OPT_plan (nur lesen)
@@ -3360,7 +3388,7 @@ for _g in ENG_GROUPS:
     upsert(eng_template(_g[2], _g[0], _g[1], _g[4], eng_format(_g[3], _g[2], _g[3] == "score"), _g[5], [["opt_apply"]] if _g[3] == "card" else None))
 upsert(inject("opt_i_engine", "jede Minute", 60, 50, ["opt_engine"], 140, 2100))
 # Ausgaenge: 1 Vorschlag, 2 Regeln, 3 Punkte, 4 Entscheidungen, 5 Dateien, 6 Messwerte & Lernen, 7 COP: Ziel und Ist (hinten angefuegt, damit die Dateien Ausgang 5 bleiben)
-upsert(fn("opt_engine", "Entscheidungsmaschine (Shadow)", ENGINE_CORE_JS + ENGINE_VIEW_JS + ENGINE_WRAP_JS.replace("__EIGEN__", EIGEN_JS), 7,
+upsert(fn("opt_engine", "Entscheidungsmaschine (Shadow)", ENGINE_CORE_JS + ENGINE_VIEW_JS + WX_CORE_JS + ENGINE_WRAP_JS.replace("__EIGEN__", EIGEN_JS), 7,
           [["opt_t_eng_prop"], ["opt_t_eng_rules"], ["opt_t_eng_score"], ["opt_t_eng_log"], ["opt_f_eng"], ["opt_t_eng_mess"], ["opt_t_eng_cop"]], 440, 2100, FS))
 # Karte "COP: Ziel und Ist" (cop-ziel 17.10.2026) auf der Seite Optimierer, gleich breit wie die anderen Karten (ENG_W), als letzte Gruppe (Reihenfolge 8 nach den beiden
 # Quiet-Karten): die Anordnung der fuenf Maschinenkarten und der Quiet-Karten bleibt, die neue Karte fuellt die kuerzere Spalte auf

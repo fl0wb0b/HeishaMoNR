@@ -1,5 +1,6 @@
 // Bilder und Ueberlauf-Pruefung der statischen Vorschau (tools/engine_ui_preview.js) in mehreren Fensterbreiten, offline mit Firefox headless (WebDriver BiDi).
-// Usage: node tools/ui_vorschau_pruefen.js <ausgabe-ordner> <seite.html> [weitere.html ...] [--breiten=1024,1920,2560]
+// Usage: node tools/ui_vorschau_pruefen.js <ausgabe-ordner> <seite.html> [weitere.html ...] [--breiten=1024,1920,2560] [--karte=<node-id>[,<node-id>]]
+// --karte: zusaetzlich ein Ausschnitt nur der Gruppe mit dieser Vorlage je Breite (<seite>_<breite>_<node-id>.png)
 // Schreibt je Seite und Breite <ordner>/<seite>_<breite>.png und gibt die Pruefung der Seite aus (window.__pruef). Exit 1 bei einem Fehler.
 // Firefox laeuft mit eigenem, leerem Profil: klassische Bildlaufleisten (wie Windows/Chrome), alle Netzwerkzugriffe ueber einen toten Proxy (nur file://).
 const fs = require('fs');
@@ -9,6 +10,7 @@ const { spawn } = require('child_process');
 const args = process.argv.slice(2), opt = args.filter(a => a.startsWith('--')), pos = args.filter(a => !a.startsWith('--'));
 const outDir = pos[0], pages = pos.slice(1).map(p => path.resolve(p));
 const widths = ((opt.find(a => a.startsWith('--breiten=')) || '--breiten=1024,1920,2560').split('=')[1]).split(',').map(Number);
+const karten = ((opt.find(a => a.startsWith('--karte=')) || '--karte=').split('=')[1]).split(',').filter(Boolean);
 if (!outDir || !pages.length) { console.error('Usage: node tools/ui_vorschau_pruefen.js <ausgabe-ordner> <seite.html> [...] [--breiten=1024,1920,2560]'); process.exit(2); }
 fs.mkdirSync(outDir, {recursive: true});
 const prof = fs.mkdtempSync(path.join(os.tmpdir(), 'ffprof-'));
@@ -43,6 +45,15 @@ setTimeout(() => { console.error('Zeitueberschreitung'); done(3); }, 180000);
             const shot = await call('browsingContext.captureScreenshot', {context: ctx, origin: 'document'});
             const png = path.join(outDir, path.basename(pg, '.html') + '_' + w + '.png');
             fs.writeFileSync(png, Buffer.from(shot.data, 'base64'));
+            for (const k of karten) {
+                const bx = await call('script.evaluate', {expression: 'JSON.stringify((function () { var c = document.querySelector(\'[node-id="' + k + '"]\'), g = c && (c.closest(".grp") || c), r = g && g.getBoundingClientRect(); return r ? {x: r.left + window.scrollX, y: r.top + window.scrollY, width: r.width, height: r.height} : null; })())', target: {context: ctx}, awaitPromise: false});
+                const b = JSON.parse(bx.result.value);
+                if (!b) { console.log('       Ausschnitt ' + k + ': nicht gefunden'); continue; }
+                const cut = await call('browsingContext.captureScreenshot', {context: ctx, origin: 'document', clip: {type: 'box', x: b.x, y: b.y, width: b.width, height: b.height}});
+                const pk = path.join(outDir, path.basename(pg, '.html') + '_' + w + '_' + k + '.png');
+                fs.writeFileSync(pk, Buffer.from(cut.data, 'base64'));
+                console.log('       Ausschnitt ' + k + ' (' + Math.round(b.width) + ' x ' + Math.round(b.height) + ' px) -> ' + pk);
+            }
             if (!P || P.fehler.length) { fails++; }
             console.log((P && !P.fehler.length ? 'OK   ' : 'FAIL ') + path.basename(pg) + ' bei ' + w + ' px (Inhalt ' + (P ? P.breite : '?') + ' px, Spalten ' + (P ? P.spalten : '?') + ') -> ' + png);
             if (P) { P.karten.forEach(k => console.log('       ' + k)); P.fehler.forEach(f => console.log('       FEHLER ' + f)); }

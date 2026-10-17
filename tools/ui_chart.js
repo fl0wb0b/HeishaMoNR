@@ -2,10 +2,12 @@
  *   optChart.svg(spec, width)  -> {svg: '<svg ...>', geo: {...}}   reine Funktion, testbar
  *   optChart.at(spec, t)       -> [{panel, name, color, text}]      Werte nahe der Zeit t (Tooltip)
  *   optChart.mount(el, spec)   -> zeichnet in ein Element, Tooltip bei Mausbewegung
- * spec = {t0, t1, marks: [{t, label}], panels: [{h, unit, min, max, zero, rmin, rmax, bands: [{a, b, c}], series: [
- *          {n, c, d: [[t, v], ...], k: 'line'|'step'|'area'|'bar', w, dash, r: true (rechte Achse), dg: Nachkommastellen, u: Einheit, fill, bw (Balkenbreite in ms), bc: [[t, Farbe]]}]}]} */
+ * spec = {t0, t1, step (Zeitraster in ms, optional), marks: [{t, label}], tb: [{a, b, c}] (Zeitbaender in allen Tafeln), panels: [{h, unit, min, max, zero, rmin, rmax,
+ *          bands: [{a, b, c}] (Wertebaender), tb: [{a, b, c, n}] (Zeitbaender nur dieser Tafel; mit n auch im Tooltip), series: [
+ *          {n, c, d: [[t, v], ...], k: 'line'|'step'|'area'|'bar', w, dash, r: true (rechte Achse), dg: Nachkommastellen, u: Einheit, fill, bw (Balkenbreite in ms), bc: [[t, Farbe]],
+ *           tol (Tooltip-Fenster in ms, Standard 20 min)}]}]} */
 (function (root) {
-    var VER = 5;                                                                                    // 5: UI-Optik 14.10. (Achsen 12 px, Kontrast >= 4,5:1)
+    var VER = 6;                                                                                    // 5: UI-Optik 14.10. (Achsen 12 px, Kontrast >= 4,5:1); 6: Zeitbaender, Zeitraster, Tooltip-Fenster, Achsen mit 2,5er-Schritt zeigen die Nachkommastelle (Wetterkarte 17.10.)
     if (root.optChart && root.optChart.v === VER) { return; }
     var C = {v: VER};
     var MONTHS = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
@@ -26,9 +28,10 @@
         var pad = (hi - lo) * 0.08 || 0.5;
         return [lo0 !== undefined && lo0 !== null ? lo0 : lo - (zero && lo >= 0 ? 0 : pad), hi0 !== undefined && hi0 !== null ? hi0 : hi + pad];
     }
-    function timeTicks(t0, t1) {
+    function timeTicks(t0, t1, step) {
         var span = t1 - t0, H = 3600000, steps = [H, 2 * H, 3 * H, 6 * H, 12 * H, 24 * H], st = steps[steps.length - 1], i;
         for (i = 0; i < steps.length; i++) { if (span / steps[i] <= 9) { st = steps[i]; break; } }
+        if (step >= H && span / step <= 16) { st = step; }                                         // fester Raster (z. B. 6 h bei 60 h), hoechstens 16 Striche
         var out = [], d0 = new Date(t0), t = new Date(d0.getFullYear(), d0.getMonth(), d0.getDate(), 0, 0, 0).getTime();
         while (t < t0) { t += st; }
         for (; t <= t1; t += st) { out.push(t); }
@@ -39,7 +42,7 @@
         var hasR = spec.panels.some(function (p) { return p.series.some(function (s) { return s.r; }); });
         var L = 52, R = hasR ? 52 : 14, GAP = 26, BOT = 26, TOP = 18, x0 = L, x1 = W - R, t0 = spec.t0, t1 = spec.t1;
         var X = function (t) { return x0 + (t - t0) / (t1 - t0) * (x1 - x0); };
-        var out = [], y = TOP, geo = {x0: x0, x1: x1, t0: t0, t1: t1, W: W, panels: []}, ticks = timeTicks(t0, t1);
+        var out = [], y = TOP, geo = {x0: x0, x1: x1, t0: t0, t1: t1, W: W, panels: []}, ticks = timeTicks(t0, t1, spec.step);
         spec.panels.forEach(function (pn, pi) {
             var h = pn.h || 150, top = y, bot = y + h;
             var ls = pn.series.filter(function (s) { return !s.r; }), rs = pn.series.filter(function (s) { return s.r; });
@@ -49,9 +52,10 @@
             var rlo = rr ? (pn.rmin !== undefined && pn.rmin !== null ? pn.rmin : rt[0]) : 0, rhi = rr ? (pn.rmax !== undefined && pn.rmax !== null ? pn.rmax : rt[1]) : 1;
             var YL = function (v) { return bot - (v - lo) / (hi - lo) * h; }, YR = function (v) { return bot - (v - rlo) / (rhi - rlo) * h; };
             out.push('<rect x="' + x0 + '" y="' + top + '" width="' + (x1 - x0) + '" height="' + h + '" fill="#fbfcfc" stroke="#e0e6e9"/>');
+            (spec.tb || []).concat(pn.tb || []).forEach(function (b) { var xa = X(Math.max(t0, b.a)), xb = X(Math.min(t1, b.b)); if (xb > xa) { out.push('<rect x="' + xa.toFixed(1) + '" y="' + top + '" width="' + (xb - xa).toFixed(1) + '" height="' + h + '" fill="' + (b.c || 'rgba(84,110,122,.08)') + '"/>'); } });
             (pn.bands || []).forEach(function (b) { var ya = YL(Math.min(hi, b.b)), yb = YL(Math.max(lo, b.a)); if (yb > ya) { out.push('<rect x="' + x0 + '" y="' + ya.toFixed(1) + '" width="' + (x1 - x0) + '" height="' + (yb - ya).toFixed(1) + '" fill="' + (b.c || 'rgba(46,125,50,.10)') + '"/>'); } });
-            for (var v = lt[0]; v <= lt[1] + 1e-9; v += lt[2]) { if (v < lo - 1e-9 || v > hi + 1e-9) { continue; } var yy = YL(v).toFixed(1); out.push('<line x1="' + x0 + '" x2="' + x1 + '" y1="' + yy + '" y2="' + yy + '" stroke="#eee"/><text x="' + (x0 - 6) + '" y="' + (+yy + 4) + '" text-anchor="end" font-size="12" fill="#546e7a">' + fmt(v, lt[2] < 1 ? 1 : 0) + '</text>'); }
-            if (rt) { for (var vr = rt[0]; vr <= rt[1] + 1e-9; vr += rt[2]) { if (vr < rlo - 1e-9 || vr > rhi + 1e-9) { continue; } out.push('<text x="' + (x1 + 6) + '" y="' + (YR(vr) + 4).toFixed(1) + '" font-size="12" fill="#546e7a">' + fmt(vr, rt[2] < 1 ? 1 : 0) + '</text>'); } }
+            for (var v = lt[0]; v <= lt[1] + 1e-9; v += lt[2]) { if (v < lo - 1e-9 || v > hi + 1e-9) { continue; } var yy = YL(v).toFixed(1); out.push('<line x1="' + x0 + '" x2="' + x1 + '" y1="' + yy + '" y2="' + yy + '" stroke="#eee"/><text x="' + (x0 - 6) + '" y="' + (+yy + 4) + '" text-anchor="end" font-size="12" fill="#546e7a">' + fmt(v, lt[2] % 1 ? 1 : 0) + '</text>'); }
+            if (rt) { for (var vr = rt[0]; vr <= rt[1] + 1e-9; vr += rt[2]) { if (vr < rlo - 1e-9 || vr > rhi + 1e-9) { continue; } out.push('<text x="' + (x1 + 6) + '" y="' + (YR(vr) + 4).toFixed(1) + '" font-size="12" fill="#546e7a">' + fmt(vr, rt[2] % 1 ? 1 : 0) + '</text>'); } }
             ticks.forEach(function (t) { var xx = X(t).toFixed(1); out.push('<line x1="' + xx + '" x2="' + xx + '" y1="' + top + '" y2="' + bot + '" stroke="#eee"/>'); });
             if (pn.unit) { out.push('<text x="' + (x0 - 6) + '" y="' + (top - 7) + '" text-anchor="end" font-size="11" fill="#546e7a">' + esc(pn.unit) + '</text>'); }
             if (pn.runit && rt) { out.push('<text x="' + (x1 + 6) + '" y="' + (top - 7) + '" font-size="11" fill="#546e7a">' + esc(pn.runit) + '</text>'); }
@@ -92,10 +96,11 @@
     C.at = function (spec, t) {
         var res = [];
         spec.panels.forEach(function (pn, pi) {
+            (pn.tb || []).forEach(function (b) { if (b.n && t >= b.a && t <= b.b) { res.push({panel: pi, name: b.n, color: b.c || '#90a4ae', text: b.txt || 'ja'}); } });
             pn.series.forEach(function (s) {
                 var best = null, bd = Infinity;
                 s.d.forEach(function (q) { var dd = Math.abs(q[0] - t); if (dd < bd && q[1] !== null && q[1] !== undefined && isFinite(q[1])) { bd = dd; best = q; } });
-                var tol = s.k === 'bar' ? (s.bw || 3600000) : 20 * 60000;
+                var tol = s.tol || (s.k === 'bar' ? (s.bw || 3600000) : 20 * 60000);
                 if (best && bd <= tol) { res.push({panel: pi, name: s.n, color: s.c || '#1976d2', text: fmt(best[1], s.dg === undefined ? 1 : s.dg) + (s.u ? ' ' + s.u : '')}); }
             });
         });
