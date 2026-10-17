@@ -40,7 +40,7 @@ V1 = "<style>\n/* Design-System v1 (17.10.2026, tools/ui_system_patch.py): ein S
     "/* Optimierer-Karten: Abschnittstitel in derselben Familie wie die Gruppentitel */",
     ".optfit .sec,.optp .sec,.optr .sec,.optev .evh{color:var(--ds-mute)}",
 ]) + "\n</style>"
-NEU = V1.replace("Design-System v1 (17.10.2026", "Design-System v1.1 (18.10.2026").replace(
+V11 = V1.replace("Design-System v1 (17.10.2026", "Design-System v1.1 (18.10.2026").replace(
     "font-size:12.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;min-height:32px;line-height:30px;margin:0 2px;padding:0 10px;",
     "font-size:11.5px;font-weight:600;letter-spacing:.03em;text-transform:uppercase;min-height:32px;line-height:30px;margin:0 2px;padding:0 6px;") + "<style>\n" + "\n".join([
     "/* v1.1: Seitenhintergrund, Abschnittstitel der Kern-Vorlagen (<hr><left>…</left>), Schieberegler-Beschriftung, Tabellenzebra */",
@@ -51,15 +51,28 @@ NEU = V1.replace("Design-System v1 (17.10.2026", "Design-System v1.1 (18.10.2026
     "body.nr-dashboard-theme md-card.nr-dashboard-numeric .label,body.nr-dashboard-theme md-card.nr-dashboard-switch .label{white-space:normal;line-height:1.25}",
     "body.nr-dashboard-theme .nr-dashboard-table .tabulator-row.tabulator-row-even{background:#f7f9fa}",
 ]) + "\n</style>"
+V12_ZUSATZ = "<style>\n" + "\n".join([
+    "/* v1.2: Knoepfe ohne Abschneiden, Schieberegler-Beschriftung, Dezimalkomma per Skript (nur Anzeige) */",
+    "body.nr-dashboard-theme md-card.nr-dashboard-button md-button,body.nr-dashboard-theme md-card.nr-dashboard-button .md-button{font-size:11px;letter-spacing:0;padding:0 4px}",
+    "body.nr-dashboard-theme md-card.nr-dashboard-slider p.label{flex:0 0 auto !important;max-width:46%;min-width:0;margin-right:8px}",
+    "body.nr-dashboard-theme md-card.nr-dashboard-slider md-slider{flex:1 1 auto}",
+]) + "\n</style>\n<script>\n(function () { /* Dezimalpunkt -> Komma in Text-Widgets des Kerns (z. B. 33.25 °C -> 33,25 °C); nur Werte, die eine Zahl mit Einheit sind */\n" \
+    "var RE = /^(-?\\d+)\\.(\\d+)(\\s.*)?$/; function fix(el) { var t = el.textContent, m = RE.exec(t.trim()); if (m) { el.textContent = m[1] + ',' + m[2] + (m[3] || ''); } }\n" \
+    "function sweep(root) { (root.querySelectorAll ? root.querySelectorAll('md-card.nr-dashboard-text p.value') : []).forEach(fix); }\n" \
+    "var mo = new MutationObserver(function (ms) { ms.forEach(function (m) { if (m.type === 'characterData' || m.type === 'childList') { var n = m.target.nodeType === 3 ? m.target.parentNode : m.target; if (n && n.closest && n.closest('md-card.nr-dashboard-text p.value')) { fix(n.closest('p.value')); } else if (n && n.querySelectorAll) { sweep(n); } } }); });\n" \
+    "function start() { sweep(document); mo.observe(document.body, {subtree: true, childList: true, characterData: true}); }\n" \
+    "if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', start); } else { start(); } })();\n</script>"
+NEU = V11.replace("Design-System v1.1 (18.10.2026", "Design-System v1.2 (18.10.2026") + V12_ZUSATZ
+
 def main():
     a = sys.argv[1:]; revert = "--revert" in a; out = a[a.index("--out") + 1]
     d = json.load(open(a[0], encoding="utf-8")); fl = d["flows"]; k = next(n for n in fl if n["id"] == KOPF_ID)
     assert k["type"] == "ui_template" and k.get("templateScope") == "global"
     if not revert:
-        assert k["format"] in (ALT, V1), "Ausgangsstand weicht ab (ui_optik_kopf nicht auf dem Stand vom 14.10. oder v1)"
+        assert k["format"] in (ALT, V1, V11), "Ausgangsstand weicht ab (ui_optik_kopf nicht auf dem Stand vom 14.10., v1 oder v1.1)"
         k["format"] = NEU
     else:
-        assert k["format"] in (NEU, V1), "nicht gepatcht"
+        assert k["format"] in (NEU, V11, V1), "nicht gepatcht"
         k["format"] = ALT
     json.dump(d, open(out, "w", encoding="utf-8"), ensure_ascii=False)
     print("rev", d["rev"], "->", out, "(CSS", len(k["format"]), "Zeichen)")
