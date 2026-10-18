@@ -3666,9 +3666,7 @@ SCHEMA_CSS = "<style>" + "".join(re.findall(r"'([^']*)'", re.search(r"var CSS = 
 SCHEMA_VOLL_CSS = ('<style>ui-card-panel[node-id="opt_g_schema_ue"]{width:calc(100% - 12px) !important}'
                    'ui-card-panel[node-id="opt_g_schema_ue"] .nr-dashboard-cardpanel,ui-card-panel[node-id="opt_g_schema_ue"] .nr-dashboard-cardcontainer{width:100% !important}'
                    'ui-card-panel[node-id="opt_g_schema_ue"] .nr-dashboard-cardtitle{width:auto !important}'
-                   'md-card[node-id="opt_t_schema_ue"]{width:100% !important;box-sizing:border-box !important}'
-                   # ui-review 18.10.2026: Kacheln neben dem Schema hoechstens drei je Zeile (bei 1920 px 3 x 3 statt 5 + 4 mit leerer Flaeche darunter; bei 1280 px weiter zwei)
-                   'md-card[node-id="opt_t_schema_ue"] .osch-kpi{grid-template-columns:repeat(auto-fill,minmax(max(150px,30%),1fr))}</style>')
+                   'md-card[node-id="opt_t_schema_ue"]{width:100% !important;box-sizing:border-box !important}</style>')
 SCHEMA_FN_JS = r"""
 // Anlagenschema: Werte der Waermepumpe fuer die beiden Schema-Karten (Optimierer, Übersicht), alle 10 s. NUR LESEN, schreibt nichts.
 var G = function (k) { var v; try { v = global.get(k, 'file'); } catch (e) { v = undefined; } return v !== undefined ? v : global.get(k); };
