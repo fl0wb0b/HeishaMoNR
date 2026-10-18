@@ -63,6 +63,13 @@ if (dataDir && NB.opt_hist) {
         const fn = vm.runInNewContext('(function(msg,global,flow,node,fs,Date){' + NB.opt_hist.func + '\n})', {});
         const out = fn({}, {get: (k, st) => (st === 'file' ? undefined : G[k]), set: () => {}}, {get: () => undefined, set: () => {}}, {warn: m => console.log('opt_hist: ' + m)}, fsMock, FD);
         NB.opt_hist.wires.forEach((w, i) => { w.forEach(t => { MSG[t] = out[i]; }); });
+        // Zustandsleiste (zeitleiste 18.10.2026): opt_zustand baut die 24 h aus quiet-YYYY-MM.csv (wie nach einem Neustart); die Nachrichten zeichnet unten ein Platzhalter
+        if (NB.opt_zustand) {
+            const FL = {}, fz = vm.runInNewContext('(function(msg,global,flow,node,fs,Date){' + NB.opt_zustand.func + '\n})', {});
+            const oz = fz({topic: 'init'}, {get: () => undefined, set: () => {}}, {get: k => FL[k], set: (k, v) => { FL[k] = v; }}, {warn: m => console.log('opt_zustand: ' + m)}, fsMock, FD);
+            (NB.opt_zustand.wires || []).forEach((w, i) => { w.forEach(t => { if (oz && oz[i]) { MSG[t] = oz[i]; } }); });
+            console.log('Zustandsleiste: ' + (FL.zst ? FL.zst.n + ' Minutenzeilen, ' + FL.zst.z.length + ' Zustandswechsel, ' + FL.zst.q.length + ' Quiet-Wechsel' : 'keine Daten'));
+        }
         console.log('Verläufe aus ' + files.join(', ') + ' bis ' + lastL.slice(0, 16));
     }
 }
@@ -134,7 +141,24 @@ if (!MSG.opt_t_zaehler && flows.some(n => n.id === 'opt_t_zaehler')) {
     for (let i = 0; i < 300; i++) { ZL.minute(Z, {t: t0 - (300 - i) * MIN_V, ok: true, wpW: i % 3 ? 395 : 40, rohW: 395, top16: i % 3 ? 303 : 34, lauf: i % 3 !== 0, heizstab: 0, korrW: 80}, c); }
     MSG.opt_t_zaehler = {payload: ZL.karte(ZL.stand(Z, t0 + 20000, c, 0), ZL.vergleich(Z, t0, 80), c, t0, {top16: 317, lauf: true, korrW: 80})};
 }
+// Raumkarte: OPT_VORSCHAU_SONNE_AUF_FENSTER=1 zeigt das Symbol "Sonne auf Fenster" beim Raum mit Sonnenfenster (nur Vorschau; live aus OPT_sonne.swFensterSonnig)
+if (process.env.OPT_VORSCHAU_SONNE_AUF_FENSTER === '1' && MSG.opt_t_rooms && MSG.opt_t_rooms.payload && Array.isArray(MSG.opt_t_rooms.payload.rooms)) { MSG.opt_t_rooms.payload.rooms.forEach(r => { r.sonne = !!r.sf; }); }
 const PAD = PRE.PAD;
+// Platzhalter fuer das fremde Widget ui_statetrail (node-red-contrib-ui-state-trail; die statische Vorschau kann es nicht rendern): feste Hoehe wie im Dashboard
+// (Hoehe in Einheiten), darin Bezeichnung, Balken aus der Nachricht von opt_zustand (Anteile ueber 24 h), Zeitstriche HH:mm und Legende - nur Annaeherung an das Widget
+function stPlatzhalter(t, m, gw) {
+    const H = 3600000, per = (+t.periodLimit || 24) * (+t.periodLimitUnit || 3600) * 1000, st = (m && m.control && m.control.states) || t.states, arr = (m && Array.isArray(m.payload)) ? m.payload : [];
+    const t1 = arr.length ? arr[arr.length - 1].timestamp : Date.now(), t0 = t1 - per, col = v => (st.find(x => x.state === v) || {}).col || '#ccc', esc = x => String(x).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    let seg = '';
+    arr.forEach((x, i) => { const a = Math.max(t0, x.timestamp), b = i + 1 < arr.length ? arr[i + 1].timestamp : t1; if (b > a) { seg += '<div style="flex:0 0 ' + (100 * (b - a) / per).toFixed(3) + '%;background:' + col(x.state) + '"></div>'; } });
+    const p2 = x => String(x).padStart(2, '0'), n = +t.tickmarks || 4;
+    let ticks = ''; for (let i = 0; i < n; i++) { const d = new Date(t0 + i * per / (n - 1)); ticks += '<span>' + p2(d.getHours()) + ':' + p2(d.getMinutes()) + '</span>'; }
+    const leg = st.map(x => '<span style="margin:0 8px;white-space:nowrap"><span style="display:inline-block;width:9px;height:9px;background:' + x.col + ';border:1px solid #b0bec5;margin-right:4px"></span>' + esc(x.label || x.state) + '</span>').join('');
+    const hpx = t.height * 48 + (t.height - 1) * 6;
+    return '<div class="crd" data-k="' + t.id + '" data-u="' + t.height + '" style="width:' + gw + 'px" node-id="' + t.id + '" title="Platzhalter für ui_statetrail (Vorschau)"><div class="optfit" style="height:' + (hpx - 14) + 'px;box-sizing:border-box;outline:1px dashed #cfd8dc;font-size:12px;color:#455a64;text-align:center;display:flex;flex-direction:column;justify-content:space-between;padding:2px 0">' +
+        '<div style="font-size:13px">' + esc(t.label) + '</div><div style="display:flex;height:22px;margin:0 6px;background:#f5f5f5">' + seg + '</div>' +
+        '<div style="display:flex;justify-content:space-between;margin:0 6px;font-size:11px;color:#78909c">' + ticks + '</div><div style="font-size:12px">' + leg + '</div></div></div>';
+}
 // Kern-Gruppen (nicht opt_*) zeichnet die Vorschau nicht nach, sondern als Platzhalter in ihrer live gemessenen Hoehe (Titel + Inhalt, 1920 px, 14.10.2026)
 const KERN_H = {bf4af523ba16d457: 644, hc_grp: 212, '1179fa790d2d89ca': 590};
 const TITEL_FARBE = process.env.OPT_TITEL_FARBE || '#1bbfff';                  // Gruppentitel wie das Dashboard (theme-light); mit tools/ui_optik_patch.py: #0083b8
@@ -146,16 +170,17 @@ PAGES.forEach(([tabId, title, file, snap]) => {
     Object.keys(ENG_KIND).forEach(k => { if (SNAP && snap) { MSG[k] = {payload: SNAP[snap][ENG_KIND[k]]}; } else { delete MSG[k]; } });
     let blobs = '', body = '';
     groups.forEach(g => {
-        const tpls = flows.filter(n => n.type === 'ui_template' && n.group === g.id).sort((a, b) => a.order - b.order);
+        const tpls = flows.filter(n => (n.type === 'ui_template' || n.type === 'ui_statetrail') && n.group === g.id).sort((a, b) => a.order - b.order);
         const W = +g.width, gw = W * 48 + (W - 1) * 6;
         if (!g.id.startsWith('opt_')) {
             const h = KERN_H[g.id] || 300;
             body += '<div class="grp kern" data-g="' + g.name + '" data-w="' + W + '" style="width:' + gw + 'px"><div class="ttl">' + g.name + '</div><div class="kph" style="height:' + (h - 54) + 'px">Kern-Gruppe (Platzhalter, Höhe live gemessen)</div></div>';
             return;
         }
-        const voll = tpls.some(t => t.format.includes('ui-card-panel[node-id="' + g.id + '"]{width:calc(100% - 12px)'));      // Gruppe nimmt per CSS die volle Inhaltsbreite
+        const voll = tpls.some(t => (t.format || "").includes('ui-card-panel[node-id="' + g.id + '"]{width:calc(100% - 12px)'));      // Gruppe nimmt per CSS die volle Inhaltsbreite
         body += '<div class="grp" data-g="' + g.name + '" data-w="' + W + '"' + (voll ? ' data-voll="1"' : '') + ' style="width:' + gw + 'px">' + (g.disp !== false ? '<div class="ttl">' + g.name + '</div>' : '');
         tpls.forEach(t => {
+            if (t.type === 'ui_statetrail') { body += stPlatzhalter(t, MSG[t.id], gw); return; }
             const id = 'src_' + t.id;
             blobs += '<script type="application/json" id="' + id + '">' + JSON.stringify({format: t.format, msg: MSG[t.id] || null}).replace(/</g, '\\u003c') + '</script>';
             body += '<div class="crd" data-k="' + t.id + '" data-u="' + t.height + '" style="width:' + gw + 'px" node-id="' + t.id + '"><div class="tplsrc" data-src="' + id + '"></div></div>';

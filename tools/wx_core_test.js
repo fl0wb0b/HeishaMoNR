@@ -101,6 +101,12 @@ check('Datenfunktion: Abtauband Vergangenheit aus Messung (3 °C/90 % bis vor 10
 const d0 = W.daten({now: NOW, rows: [], W: {}, PI: null, CZ: null, snaps: null, cfg: null});
 check('Datenfunktion ohne alles: n 0, leere Listen, Naechte trotzdem, kein Fehler', d0.n === 0 && d0.hist.t.length === 0 && d0.prog.t.length === 0 && d0.abtau.length === 0 && d0.pv.length === 0 && d0.gestern === null && d0.nacht.length >= 2, '');
 
+// ---- Naechte aus dem Sonnenstand (zeitleiste 18.10.2026): OPT_sonne (frisch, <= 30 min) vor den OWM-Zeiten
+{ const sunO = [new Date(2026, 9, 17, 7, 58).getTime(), new Date(2026, 9, 17, 18, 31).getTime()], SO = {ts: NOW - 5 * MIN, aufgang: new Date(2026, 9, 17, 8, 1).getTime(), untergang: new Date(2026, 9, 17, 18, 28).getTime()};
+  const dS = W.daten({now: NOW, rows: [], W: {sun: sunO}, SO: SO}), dO = W.daten({now: NOW, rows: [], W: {sun: sunO}, SO: Object.assign({}, SO, {ts: NOW - 40 * MIN})}), dN = W.daten({now: NOW, rows: [], W: {sun: sunO}, SO: {ts: NOW, aufgang: null}});
+  const hm = d => d.nacht.map(b => new Date(b[0]).toTimeString().slice(0, 5) + '-' + new Date(b[1]).toTimeString().slice(0, 5)).join(' ');
+  check('Naechte: frischer Sonnenstand (opt_sonne: 08:01/18:28) hat Vorrang vor OWM (07:58/18:31); aelter als 30 min oder ohne Zeiten -> OWM', /18:28-08:01/.test(hm(dS)) && /18:31-07:58/.test(hm(dO)) && /18:31-07:58/.test(hm(dN)), hm(dS) + ' | ' + hm(dO)); }
+
 // ---- Flow-Datei: Einbettung und Huelle opt_engine (OPT_cz_verlauf)
 const flowsFile = process.argv[2];
 if (flowsFile) {

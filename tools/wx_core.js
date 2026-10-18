@@ -12,7 +12,7 @@
 //   WXC.symbole(W, snaps, now, a, b, naechte)   Symbolzeile [[t, Symbol, Beschreibung]]: ab jetzt je Prognosepunkt, davor nur aus Schnappschuessen mit Code
 //   WXC.daten(o)                      Nutzlast der Karte
 var WXC = (function () {
-    var VER = 1, MIN = 60000, H = 3600000;
+    var VER = 2, MIN = 60000, H = 3600000;
     var STD = {zurueckH: 24, vorH: 36, progMaxAlterH: 6, piMaxAlterMin: 15, czMaxAlterMin: 15, gesternTolMin: 90, nachtVon: 18, nachtBis: 7,
                abtauAtMin: -5, abtauAtMax: 10, abtauRhMin: 80, abtauAtOhne: 4, abtauRasterMin: 15, istMinZeilen: 3};
     function num(v) { if (v === null || v === undefined || v === '' || typeof v === 'boolean') { return null; } v = Number(v); return isFinite(v) ? v : null; }
@@ -175,7 +175,7 @@ var WXC = (function () {
         Object.keys(h).map(Number).sort(function (a, b) { return a - b; }).forEach(function (k) { if (h[k][2] >= STD.istMinZeilen) { out.push([k + H / 2, r(h[k][0] / h[k][1], 100)]); } });
         return out;
     }
-    // Nutzlast der Karte. o = {now, rows (Protokollzeilen {t, spalte: text}), W (OPT_weather), PI (OPT_plan_in), CZ (OPT_cz_verlauf), snaps (forecast-recent.json), cfg (OPT_cfg)}
+    // Nutzlast der Karte. o = {now, rows (Protokollzeilen {t, spalte: text}), W (OPT_weather), PI (OPT_plan_in), CZ (OPT_cz_verlauf), snaps (forecast-recent.json), cfg (OPT_cfg), SO (OPT_sonne)}
     function daten(o) {
         var now = o.now, t0 = now - STD.zurueckH * H, t1 = now + STD.vorH * H, L = abtauL(o.cfg), W = o.W || {};
         var rows = (o.rows || []).filter(function (x) { return x && have(x.t) && x.t >= t0 && x.t <= now + MIN; });
@@ -196,7 +196,8 @@ var WXC = (function () {
         if (pvp.length) { var p0 = pvW(o.PI.pv, now); if (have(p0) && pvp[0][0] > now) { pvp.unshift([now, r(p0 / 1000, 100)]); } }
         var CZ = o.CZ && have(num(o.CZ.ts)) && now - o.CZ.ts <= STD.czMaxAlterMin * MIN ? o.CZ : {};
         var ge = gestern(o.snaps, now, t0, t1);
-        var N = naechte(t0, t1, W.sun);
+        var SO = o.SO, soOk = !!(SO && have(num(SO.ts)) && now - SO.ts <= 30 * MIN && have(num(SO.aufgang)) && have(num(SO.untergang)));   // Naechte: Sonnenstand (opt_sonne, zeitleiste 18.10.2026), Rueckfall OWM
+        var N = naechte(t0, t1, soOk ? [SO.aufgang, SO.untergang] : W.sun);
         return {now: now, t0: t0, t1: t1, n: Math.max(rows.length, pr.length), hist: hist, prog: prog, abtau: abtau, nacht: N, gestern: ge, pv: pvp, sym: symbole(fOk ? W : {}, o.snaps, now, t0, t1, N),
                 cop: {zh: (Array.isArray(CZ.zh) ? CZ.zh : []).filter(function (p) { return p[0] >= t0; }), zp: Array.isArray(CZ.zp) ? CZ.zp : [], ih: istAusZeilen(rows), soll: have(num(CZ.soll)) ? CZ.soll : null},
                 stand: {wetter: fOk ? W.f_ts : null, pv: piOk ? String(o.PI.pvSrc || '') : null}};

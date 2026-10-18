@@ -368,6 +368,8 @@ if (lat === undefined || lat === '') { lat = env.get('OWM_LAT'); }
 if (lon === undefined || lon === '') { lon = env.get('OWM_LON'); }
 var W = global.get('OPT_weather') || {};
 flow.set('owmInfo', {hasKey: !!key, keyLen: key ? String(key).length : 0, lat: lat, lon: lon, source: source});
+function posOf(a, b) { var la = Number(a), lo = Number(b); return (a !== '' && b !== '' && a !== undefined && b !== undefined && a !== null && b !== null && isFinite(la) && isFinite(lo) && Math.abs(la) <= 90 && Math.abs(lo) <= 180) ? {lat: Math.round(la * 100) / 100, lon: Math.round(lo * 100) / 100} : null; }   // Standort fuer den Sonnenstand (zeitleiste 18.10.2026): nur die zwei Zahlen, auf 0,01° (~1 km) gerundet, nie der Schluessel
+W.pos = posOf(lat, lon);
 if (!key || lat === undefined || lat === '' || lon === undefined || lon === '') {
     W.status = 'nicht konfiguriert';
     global.set('OPT_weather', W);
@@ -455,6 +457,9 @@ try {
     fill.owm_lat = String(j.lat); fill.owm_lon = String(j.lon);
 } catch (e) { /* noch nichts gespeichert */ }
 flow.set('owmInfo', info);
+function posOf(a, b) { var la = Number(a), lo = Number(b); return (a !== '' && b !== '' && a !== undefined && b !== undefined && a !== null && b !== null && isFinite(la) && isFinite(lo) && Math.abs(la) <= 90 && Math.abs(lo) <= 180) ? {lat: Math.round(la * 100) / 100, lon: Math.round(lo * 100) / 100} : null; }   // Standort fuer den Sonnenstand (zeitleiste 18.10.2026): nur die zwei Zahlen, auf 0,01° (~1 km) gerundet, nie der Schluessel
+var Wp = global.get('OPT_weather') || {}, ps = posOf(info.lat !== undefined ? info.lat : env.get('OWM_LAT'), info.lon !== undefined ? info.lon : env.get('OWM_LON'));
+if (ps) { Wp.pos = ps; global.set('OPT_weather', Wp); }
 return {payload: fill};
 """
 
@@ -2241,6 +2246,7 @@ var sum = {
     valid: valids.length + ' von ' + nActive + ' aktiven Räumen' + (nActive < rooms.length ? ' · ' + (rooms.length - nActive) + ' inaktiv' : ''),
     validCls: valids.length < nActive ? 'warn' : ''
 };
+var SOz = (function () { var o = global.get('OPT_sonne'); return (o && typeof o.ts === 'number' && now - o.ts <= 15 * 60000) ? o : null; })();      // Sonnenstand (opt_sonne, zeitleiste 18.10.2026): nur Anzeige "Sonne auf Fenster"
 var roomsOut = rooms.map(function (x) {
     var why = !x.active ? 'nein (inaktiv)' : (!x.hasData ? 'nein (keine Daten)' : (!x.valid ? 'nein (veraltet)' : 'ja'));
     return {id: x.id, name: x.name,
@@ -2251,7 +2257,7 @@ var roomsOut = rooms.map(function (x) {
             valid: why + (x.hasData ? ' · ' + age(x.age) : ''),
             role: x === heat ? 'heat' : (x === over ? 'over' : ''),
             cls: !x.valid ? 'mute' : (x.dev !== 0 ? 'warn' : 'ok'),
-            on: x.on, eigen: x.eigen, sf: x.sf, min: x.min, max: x.max, weight: x.weight, maxAgeMin: x.lim};
+            on: x.on, eigen: x.eigen, sf: x.sf, sonne: !!(x.sf && SOz && SOz.swFensterSonnig), min: x.min, max: x.max, weight: x.weight, maxAgeMin: x.lim};
 });
 
 // ---------- Aussen / Wetter
@@ -2730,7 +2736,7 @@ var rm = {now: now, n: r24.length, t: wp.t, rooms: rc.map(function (x) { return 
 var GX = function (k) { var v; try { v = global.get(k, 'file'); } catch (e) { v = undefined; } return v !== undefined ? v : global.get(k); };
 var snaps = null; try { snaps = JSON.parse(String(fs.readFileSync('/data/optimizer/forecast-recent.json', 'utf8'))); } catch (e) { snaps = null; }
 var wx;
-try { wx = WXC.daten({now: now, rows: r24, W: GX('OPT_weather') || {}, PI: GX('OPT_plan_in') || null, CZ: global.get('OPT_cz_verlauf') || null, snaps: snaps, cfg: cfg}); }
+try { wx = WXC.daten({now: now, rows: r24, W: GX('OPT_weather') || {}, PI: GX('OPT_plan_in') || null, CZ: global.get('OPT_cz_verlauf') || null, snaps: snaps, cfg: cfg, SO: global.get('OPT_sonne') || null}); }
 catch (e) { node.warn('Wetterkarte: ' + e.message); wx = {now: now, n: 0}; }
 return [{payload: wp}, {payload: rm}, {payload: wx}];
 """
@@ -2803,6 +2809,113 @@ upsert(chart_card("rooms", "opt_g_ch_rooms", "Verlauf Räume", 6, 560, CH_ROOMS)
 upsert(chart_card("at", "opt_g_ch_at", "Wetterkarte", 9, 600, CH_WX))
 upsert(fn("opt_hist", "Verlaufsdaten (nur lesen)", WX_CORE_JS + HIST_JS.replace("__COPKW__", COP_KW_JS), 3, [["opt_t_ch_wp"], ["opt_t_ch_rooms"], ["opt_t_ch_at"]], 440, 520, FS))
 upsert(inject("opt_i_hist", "alle 5 Minuten", 300, 20, ["opt_hist"], 140, 520))
+# ---------------------------------------------------------------- Zustandsleiste (zeitleiste 18.10.2026): zwei state-trail-Widgets (node-red-contrib-ui-state-trail 1.0.2, Typ ui_statetrail)
+# unter dem Diagramm "Wärmepumpe · letzte 24 h": Zustand (läuft/Pause/Abtauen/Heizstab/aus) und Quiet 0-3. Nur Anzeige. Das Widget speichert nur im Speicher (persist aus,
+# Kontext nur memory): opt_zustand baut die 24 h nach Start/Deploy aus quiet-YYYY-MM.csv neu auf (Array = ersetzt die Daten) und schickt danach nur Wechsel; alle 5 min den
+# jetzigen Zustand (das Widget verbindet gleiche Zustaende, der Balken reicht so bis "jetzt") und die Anteile der 24 h als Legendentext (msg.control.states: die Legende zeigt
+# sonst nur Namen; die Prozent-Ansicht des Widgets gibt es nur nach einem Klick).
+ZUSTAND_JS = r"""
+// Zustandsleiste (nur lesen, nur Anzeige): Ausgang 1 -> Widget "Zustand", Ausgang 2 -> Widget "Quiet". msg.topic 'init' (Inject beim Start): Historie neu aus dem Minutenprotokoll.
+var now = Date.now(), MIN = 60000, H = 3600000, DAY = 24 * H;
+var ZS = [['lauf', 'läuft', '#00897b'], ['pause', 'Pause', '#b0bec5'], ['abtau', 'Abtauen', '#0094ce'], ['heizstab', 'Heizstab', '#c62828'], ['aus', 'aus', '#eceff1']];
+var QS = [[0, 'Quiet 0', '#78909c'], [1, 'Quiet 1', '#90caf9'], [2, 'Quiet 2', '#0094ce'], [3, 'Quiet 3', '#1565c0']];
+function num(v) { if (v === null || v === undefined || v === '' || typeof v === 'boolean') { return null; } v = Number(v); return isFinite(v) ? v : null; }
+function p2(x) { return (x < 10 ? '0' : '') + x; }
+function monthOf(ts) { var d = new Date(ts); return d.getFullYear() + '-' + p2(d.getMonth() + 1); }
+function tsOf(s) { var m = /^(\d{4})-(\d\d)-(\d\d) (\d\d):(\d\d):(\d\d)/.exec(s); return m ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime() : null; }
+// Vorrang: aus (Heatpump_State 0) > Abtauen > Heizstab > laeuft (Verdichter > 0) > Pause; ohne Verdichterwert unbekannt (null)
+function zustandOf(hz, df, hs, hp) {
+    if (hp === 0) { return 'aus'; }
+    if (df === 1) { return 'abtau'; }
+    if (hs === 1) { return 'heizstab'; }
+    if (hz === null) { return null; }
+    return hz > 0 ? 'lauf' : 'pause';
+}
+function maxOf(a, b) { return a === null ? b : (b === null ? a : Math.max(a, b)); }
+// Wechselliste [[t, Zustand], ...]: nur Eintraege, an denen sich der Zustand aendert; der Zustand vor dem Fenster beginnt am Fensteranfang
+function wechsel(L, t, v) { if (v === null || v === undefined) { return; } if (!L.length || L[L.length - 1][1] !== v) { L.push([t, v]); } }
+function kuerzen(L, t0) { var pre = null; while (L.length && L[0][0] < t0) { pre = L.shift(); } if (pre && (!L.length || L[0][0] > t0)) { L.unshift([t0, pre[1]]); } return L; }
+function ladeHist() {
+    var t0 = now - DAY, months = [monthOf(t0)], z = [], q = [], n = 0;
+    if (monthOf(now) !== months[0]) { months.push(monthOf(now)); }
+    months.forEach(function (mo) {
+        var text = '';
+        try { text = String(fs.readFileSync('/data/optimizer/quiet-' + mo + '.csv', 'utf8')); } catch (e) { return; }
+        var head = null, I = {};
+        text.split('\n').forEach(function (l) {
+            if (!l) { return; }
+            if (l.slice(0, 5) === 'zeit,') { head = l.split(','); I = {}; head.forEach(function (h, i) { I[h] = i; }); return; }      // jede Kopfzeile setzt die Spalten neu
+            if (!head) { return; }
+            var t = tsOf(l); if (t === null || t < t0 - 2 * H || t > now + MIN) { return; }
+            var p = l.split(','); if (p.length !== head.length) { return; }
+            var g = function (k) { return I[k] === undefined ? null : num(p[I[k]]); };
+            wechsel(z, t, zustandOf(g('verdichter_hz'), g('defrost'), maxOf(g('heizstab_intern'), g('heizstab_extern')), null));
+            wechsel(q, t, g('quiet_aktuell'));
+            n++;
+        });
+    });
+    return {z: kuerzen(z, t0), q: kuerzen(q, t0), n: n};
+}
+function anteile(L) {                                                             // Anteil je Zustand an den letzten 24 h (bis jetzt), in %
+    var o = {}, t0 = now - DAY, tot = 0;
+    L.forEach(function (x, i) { var a = Math.max(t0, x[0]), b = i + 1 < L.length ? L[i + 1][0] : now; if (b > a) { o[x[1]] = (o[x[1]] || 0) + (b - a); tot += b - a; } });
+    Object.keys(o).forEach(function (k) { o[k] = tot > 0 ? 100 * o[k] / tot : 0; });
+    return o;
+}
+function states(DEF, L, typ) {                                                   // Legende: Name und Anteil (z. B. "läuft · 62 %"); Typ und Farbe wie konfiguriert
+    var A = anteile(L);
+    return DEF.map(function (d) { var v = A[d[0]] || 0; return {state: d[0], col: d[2], t: typ, label: d[1] + ' · ' + (v > 0 && v < 1 ? '<1' : String(Math.round(v))) + ' %'}; });
+}
+function voll(L, DEF, typ) {                                                     // ganze Historie (ersetzt die Daten im Widget) + Punkt "jetzt"
+    var arr = L.map(function (x) { return {state: x[1], timestamp: x[0]}; });
+    if (L.length) { arr.push({state: L[L.length - 1][1], timestamp: now}); }
+    return {payload: arr, control: {states: states(DEF, L, typ)}};
+}
+var HP = global.get('OPT_hp') || {};
+function hpv(k) { var e = HP[k]; return (e && typeof e.v === 'number' && now - e.ts < 10 * MIN) ? e.v : null; }
+var ST = flow.get('zst');
+if (msg.topic === 'init' || !ST) {
+    var h = ladeHist();
+    ST = {z: h.z, q: h.q, ka: now, n: h.n};
+    flow.set('zst', ST);
+    return [h.z.length ? voll(ST.z, ZS, 'str') : null, h.q.length ? voll(ST.q, QS, 'num') : null];
+}
+// je Minute: Live-Werte aus OPT_hp (HeishaMon, hoechstens 10 min alt); ohne Werte nichts
+var hz = hpv('Compressor_Freq'), hpS = hpv('Heatpump_State');
+if (hz === null && hpS === null) { return null; }
+var z = zustandOf(hz, hpv('Defrosting_State'), maxOf(hpv('Internal_Heater_State'), hpv('External_Heater_State')), hpS), q = hpv('Quiet_Mode_Level');
+if (q !== null && [0, 1, 2, 3].indexOf(q) < 0) { q = null; }
+var zNeu = z !== null && (!ST.z.length || ST.z[ST.z.length - 1][1] !== z), qNeu = q !== null && (!ST.q.length || ST.q[ST.q.length - 1][1] !== q);
+wechsel(ST.z, now, z); wechsel(ST.q, now, q);
+kuerzen(ST.z, now - DAY); kuerzen(ST.q, now - DAY);
+var ka = now - (ST.ka || 0) >= 5 * MIN;                                          // alle 5 min: jetziger Zustand (Balken bis jetzt) und Anteile
+if (ka) { ST.ka = now; }
+flow.set('zst', ST);
+var cz = ST.z.length ? ST.z[ST.z.length - 1][1] : null, cq = ST.q.length ? ST.q[ST.q.length - 1][1] : null;
+var o1 = (zNeu || (ka && cz !== null)) ? {payload: {state: cz, timestamp: now}, control: {states: states(ZS, ST.z, 'str')}} : null;
+var o2 = (qNeu || (ka && cq !== null)) ? {payload: {state: cq, timestamp: now}, control: {states: states(QS, ST.q, 'num')}} : null;
+return (o1 || o2) ? [o1, o2] : null;
+"""
+
+
+def statetrail(i, label, order, states, y):
+    """state-trail-Widget (node-red-contrib-ui-state-trail 1.0.2): Felder wie die defaults in ui-state-trail.html; 24 h, HH:mm, Legende mit allen Zustaenden, Hoehe 2 (Label + Legende)."""
+    return {"id": i, "type": "ui_statetrail", "z": TAB, "group": "opt_g_ch_wp", "order": order, "width": 0, "height": 2, "name": label, "label": label,
+            "states": states, "periodLimit": 24, "periodLimitUnit": "3600", "timeformat": "HH:mm", "tickmarks": 7, "exactticks": False, "persist": False,
+            "legend": 1, "combine": True, "blanklabel": "", "x": 1260, "y": y, "wires": [[]]}
+
+
+ZS_STATES = [{"state": "lauf", "col": "#00897b", "t": "str", "label": "läuft"}, {"state": "pause", "col": "#b0bec5", "t": "str", "label": "Pause"},
+             {"state": "abtau", "col": "#0094ce", "t": "str", "label": "Abtauen"}, {"state": "heizstab", "col": "#c62828", "t": "str", "label": "Heizstab"},
+             {"state": "aus", "col": "#eceff1", "t": "str", "label": "aus"}]
+QS_STATES = [{"state": 0, "col": "#78909c", "t": "num", "label": "Quiet 0"}, {"state": 1, "col": "#90caf9", "t": "num", "label": "Quiet 1"},
+             {"state": 2, "col": "#0094ce", "t": "num", "label": "Quiet 2"}, {"state": 3, "col": "#1565c0", "t": "num", "label": "Quiet 3"}]
+upsert(statetrail("opt_st_zustand", "Zustand", 2, ZS_STATES, 2700))
+upsert(statetrail("opt_st_quiet", "Quiet", 3, QS_STATES, 2740))
+upsert(fn("opt_zustand", "Zustandsleiste (nur lesen)", ZUSTAND_JS, 2, [["opt_st_zustand"], ["opt_st_quiet"]], 900, 2720, FS))
+upsert({"id": "opt_i_zst_init", "type": "inject", "z": TAB, "name": "Zustandsleiste neu aufbauen", "props": [{"p": "payload"}, {"p": "topic", "vt": "str"}],
+        "repeat": "", "crontab": "", "once": True, "onceDelay": "25", "topic": "init", "payload": "", "payloadType": "date", "x": 160, "y": 2700, "wires": [["opt_zustand"]]})
+upsert(inject("opt_i_zst", "jede Minute", 60, 40, ["opt_zustand"], 140, 2740))
 # ---------------------------------------------------------------- Status des NAS-Containers optimizer-tools (Paket 2, 15.10.2026; Karte auf "Daten & Güte")
 # Der Container schreibt /data/optimizer-tools/status.json (Format 2, Branch nas-container: docker/optimizer-tools/README.md). opt_nas liest die Datei alle 5 min
 # (nur lesen; fehlt sie: "kein Lauf") und baut kompakte Zeilen [Bezeichnung, Wert, Chip, Chip-Klasse ok/warn/fehler, Tooltip].
@@ -2955,7 +3068,7 @@ ROOMS_TPL = """<div class="optr optfit" ng-if="d">
 <td>{{r.trend}}</td><td ng-class="r.cls==='mute' ? 'mute' : ''">{{r.valid}}</td>
 <td><input type="checkbox" ng-model="r.on" ng-change="set(r, 'active', r.on)"></td>
 <td><input type="checkbox" ng-model="r.eigen" ng-change="set(r, 'eigeneHeizung', r.eigen)"></td>
-<td><input type="checkbox" ng-model="r.sf" ng-change="set(r, 'sonnenfenster', r.sf)"></td>
+<td style="white-space:nowrap"><input type="checkbox" ng-model="r.sf" ng-change="set(r, 'sonnenfenster', r.sf)"><svg ng-if="r.sonne" class="sfs" style="vertical-align:middle;margin-left:5px" width="14" height="14" viewBox="0 0 14 14" role="img" aria-label="Sonne auf Fenster"><title>Sonne auf Fenster</title><circle cx="7" cy="7" r="2.8" fill="#f9a825" stroke="#b45309" stroke-width="0.8"/><path d="M7 0.8v2M7 11.2v2M0.8 7h2M11.2 7h2M2.6 2.6l1.4 1.4M10 10l1.4 1.4M2.6 11.4l1.4-1.4M10 4l1.4-1.4" stroke="#b45309" stroke-width="1.1" stroke-linecap="round"/></svg></td>
 <td class="n">__IN_min__</td><td class="n">__IN_max__</td><td class="n">__IN_weight__</td><td class="n">__IN_maxAgeMin__</td></tr>
 </table>
 <div class="sec" title="Regeln: 1. Ein Raum unter seinem Minimum: nie absenken, der Raum mit dem größten Defizit führt, langsam höchstens +1 K. 2. Kein Raum unter Minimum, aber einer über Maximum: Absenkung erlaubt, zunächst -1 K. 3. Alle im Band: niedrigste Heizkurve suchen (0 K oder vorsichtig -1 K testen). 4. Gleichzeitig deutlich zu kalt und zu warm: Wärmeverteilungsproblem, die Heizkurve bleibt unverändert. Der Soll-Vorlauf wird nie unter die Untergrenze von 29 °C gesenkt (Heizkörper). Jede Änderung nur nach der Mindesthaltezeit und nie bei Abtauen, Warmwasser, Verdichterstart oder Sanftanlauf. Der Vorschlag steht im Protokoll (korrektur_vorschlag).">Vorschlag für die Heizkurve (nur Anzeige, greift nicht ein)</div>
@@ -3007,6 +3120,41 @@ upsert({"id": "opt_http", "type": "http request", "z": TAB, "name": "OpenWeather
 upsert({"id": "opt_catch", "type": "catch", "z": TAB, "name": "", "scope": ["opt_http"], "uncaught": False,
         "x": 620, "y": 660, "wires": [["opt_owm_parse"]]})
 upsert(fn("opt_owm_parse", "OWM-Antwort auswerten", OWM_PARSE_JS, 1, [[]], 880, 600))
+# ---------------------------------------------------------------- Sonnenstand (zeitleiste 18.10.2026): node-red-contrib-sun-position 3.0.1. Der Knoten "sun-position" nimmt Breite/Laenge
+# aus der Nachricht (msg.latitude / msg.longitude, 30-sun-position.js), der Konfigknoten opt_pos_cfg traegt nur Platzhalter 0/0 (der echte Standort steht nur in owm.json;
+# opt_owm_req/opt_owm_load legen ihn ohne Schluessel als OPT_weather.pos ab). Azimut wie suncalc3 im Kompass-Sinn (0 = Nord, 180 = Sued). Nur Daten und Anzeige.
+SONNE_IN_JS = r"""
+// Alle 5 min: Standort (OPT_weather.pos, nur Breite/Laenge) an den sun-position-Knoten; ohne Standort nichts (kein Sonnenstand bei 0/0)
+var W = global.get('OPT_weather') || {}, P = W.pos;
+if (!P || typeof P.lat !== 'number' || typeof P.lon !== 'number' || !isFinite(P.lat) || !isFinite(P.lon) || (P.lat === 0 && P.lon === 0)) { return null; }
+return {topic: 'sonne', latitude: P.lat, longitude: P.lon};
+"""
+SONNE_JS = r"""
+// Ergebnis des sun-position-Knotens -> global OPT_sonne {ts, azimut, hoehe, aufgang, untergang, swFenster, swFensterSonnig, wolken, abwOwmMin}. Nur Anzeige, keine Regelwirkung.
+// swFenster: Sonne steht im Suedwesten (Azimut 180-270°) und hoeher als 10° (Suedwestfenster Wohnzimmer); swFensterSonnig: zusaetzlich OWM-Bewoelkung unter 70 %.
+// abwOwmMin: Abweichung von Auf-/Untergang gegen die OWM-Zeiten (OPT_weather.sun) in Minuten (Selbstkontrolle des Standorts).
+var now = Date.now(), MIN = 60000, P = msg.payload || {}, W = global.get('OPT_weather') || {};
+function num(v) { if (v === null || v === undefined || v === '' || typeof v === 'boolean') { return null; } v = Number(v); return isFinite(v) ? v : null; }
+function tOf(x) { if (!x || x.valid === false) { return null; } if (typeof x.ts === 'number') { return x.ts; } var d = new Date(x.value); return isFinite(d.getTime()) ? d.getTime() : null; }
+var az = num(P.azimuthDegrees !== undefined ? P.azimuthDegrees : P.azimuth), alt = num(P.altitudeDegrees !== undefined ? P.altitudeDegrees : P.altitude);
+if (az === null || alt === null) { return null; }
+var T = P.times || {}, auf = tOf(T.sunriseStart || T.sunrise), unt = tOf(T.sunsetEnd || T.sunset);
+var wOk = typeof W.ts === 'number' && now - W.ts <= 60 * MIN && num(W.clouds) !== null, sw = az >= 180 && az <= 270 && alt > 10;
+function abw(a, b) { if (a === null || typeof b !== 'number') { return null; } var d = ((a - b) / MIN) % 1440; if (d > 720) { d -= 1440; } if (d < -720) { d += 1440; } return Math.round(d); }
+var o = {ts: now, azimut: Math.round(az * 10) / 10, hoehe: Math.round(alt * 10) / 10, aufgang: auf, untergang: unt, swFenster: sw, swFensterSonnig: !!(sw && wOk && num(W.clouds) < 70),
+         wolken: wOk ? num(W.clouds) : null, abwOwmMin: Array.isArray(W.sun) ? [abw(auf, W.sun[0]), abw(unt, W.sun[1])] : null};
+global.set('OPT_sonne', o);
+return null;
+"""
+upsert({"id": "opt_pos_cfg", "type": "position-config", "name": "Standort (Platzhalter, echte Werte per Nachricht)", "isValide": "true", "longitude": "0", "latitude": "0",
+        "angleType": "deg", "timeZoneOffset": 99, "timeZoneDST": 0, "stateTimeFormat": "3", "stateDateFormat": "12", "contextStore": "", "sunPositions": [], "predefAngles": [],
+        "credentials": {"posLatitude": "0", "posLongitude": "0"}})
+upsert(inject("opt_i_sonne", "alle 5 Minuten", 300, 15, ["opt_sonne_in"], 140, 2800))
+upsert(fn("opt_sonne_in", "Standort an Sonnenstand", SONNE_IN_JS, 1, [["opt_sun_pos"]], 380, 2800))
+upsert({"id": "opt_sun_pos", "type": "sun-position", "z": TAB, "name": "Sonnenstand", "positionConfig": "opt_pos_cfg", "rules": [], "onlyOnChange": "true", "topic": "",
+        "outputs": 1, "start": "", "startType": "none", "startOffset": 0, "startOffsetType": "none", "startOffsetMultiplier": 60, "end": "", "endType": "none",
+        "endOffset": 0, "endOffsetType": "none", "endOffsetMultiplier": 60, "x": 620, "y": 2800, "wires": [["opt_sonne"]]})
+upsert(fn("opt_sonne", "Sonnenstand auswerten (nur Anzeige)", SONNE_JS, 1, [[]], 880, 2800))
 
 upsert(comment("opt_c4", "Auswertung jede Minute → Anzeige + Protokoll (CSV in /data/optimizer)", 380, 700))
 upsert(inject("opt_i_tick", "jede Minute", 60, 15, ["opt_eval"], 140, 760))

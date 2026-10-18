@@ -2207,5 +2207,95 @@ console.log('\n--- Auswertung NAS (status.json des Containers optimizer-tools)')
   if (had) { files[SP] = had; } else { delete files[SP]; } NOW = nowKeep;
 })();
 
+// ---- Zeitleiste (18.10.2026): Zustandsleiste (opt_zustand -> zwei ui_statetrail-Widgets) und Sonnenstand (opt_sonne_in -> sun-position -> opt_sonne)
+console.log('\n--- Zeitleiste: Zustandsleiste und Sonnenstand');
+(function () {
+  const nowKeep = NOW, M = 60000, HH = 3600000, p2 = x => String(x).padStart(2, '0');
+  const iso = t => { const d = new RealDate(t); return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()) + ' ' + p2(d.getHours()) + ':' + p2(d.getMinutes()) + ':' + p2(d.getSeconds()); };
+  const NOWZ = new RealDate(2026, 10, 1, 0, 30, 0).getTime(), T0 = NOWZ - 24 * HH, at = (d, h, m) => new RealDate(2026, d === 1 ? 10 : 9, d, h, m, 0).getTime();
+  // Oktober: Kopf A (quiet_aktuell, verdichter_hz, defrost; ohne Heizstab-Spalten), ab 31.10. 08:00 Kopf B (andere Reihenfolge, mit Heizstab); November: Kopf B
+  const hA = 'zeit,quiet_aktuell,verdichter_hz,defrost', hB = 'zeit,verdichter_hz,heizstab_intern,quiet_aktuell,heizstab_extern,defrost';
+  let okt = hA + '\n', nov = hB + '\n';
+  for (let t = at(30, 23, 0); t < NOWZ; t += M) {
+    const pause = t >= at(31, 6, 0) && t < at(31, 8, 0), df = t >= at(31, 10, 0) && t < at(31, 10, 10), hs = t >= at(31, 10, 0) && t < at(31, 10, 30), novP = t >= at(1, 0, 0);
+    if (t === at(31, 8, 0)) { okt += hB + '\n'; }
+    if (t < at(31, 8, 0)) { okt += iso(t) + ',3,' + (pause ? 0 : 17) + ',0\n'; }
+    else { const row = iso(t) + ',' + (novP ? 0 : 20) + ',' + (hs ? 1 : 0) + ',' + (novP ? 1 : 2) + ',0,' + (df ? 1 : 0) + '\n'; if (novP) { nov += row; } else { okt += row; } }
+    if (t === at(31, 12, 0)) { okt += 'kaputte,zeile\n'; }
+  }
+  files['/data/optimizer/quiet-2026-10.csv'] = {data: okt, mode: 0o644}; files['/data/optimizer/quiet-2026-11.csv'] = {data: nov, mode: 0o644};
+  NOW = NOWZ; delete fstore.zst; const keepHp = gstore.OPT_hp; delete gstore.OPT_hp;
+  const o = run('opt_zustand', {topic: 'init'}), z = o && o[0] && o[0].payload, q = o && o[1] && o[1].payload;
+  const zs = (z || []).map(x => [(x.timestamp - NOWZ) / M, x.state]), qs = (q || []).map(x => [(x.timestamp - NOWZ) / M, x.state]);
+  check('Zustandsleiste Historie: aus quiet-YYYY-MM.csv der letzten 24 h, ueber den Monatswechsel (Oktober + November) und zwei Kopfzeilen mit anderer Spaltenreihenfolge; nur Wechsel (8 statt ~1440 Eintraege, letzter = jetzt), Beginn am Fensteranfang mit dem Zustand davor',
+        JSON.stringify(zs) === JSON.stringify([[-1440, 'lauf'], [-1110, 'pause'], [-990, 'lauf'], [-870, 'abtau'], [-860, 'heizstab'], [-840, 'lauf'], [-30, 'pause'], [0, 'pause']]), JSON.stringify(zs));
+  check('Zustandsleiste Historie: Vorrang Abtauen > Heizstab > laeuft (10:00 Abtauen mit Heizstab und 20 Hz = Abtauen, 10:10 Heizstab mit 20 Hz = Heizstab); Quiet 3 -> 2 -> 1 nur bei Wechsel; kaputte Zeile ignoriert',
+        zs[3][1] === 'abtau' && zs[4][1] === 'heizstab' && JSON.stringify(qs) === JSON.stringify([[-1440, 3], [-990, 2], [-30, 1], [0, 1]]), JSON.stringify(qs));
+  const lz = o[0].control.states, lq = o[1].control.states;
+  check('Zustandsleiste: Legende mit Anteilen der 24 h im Namen (läuft · 88 %, Pause · 10 %, Abtauen · <1 %, Heizstab · 1 %, aus · 0 %), Farben und Typen wie konfiguriert (str / num); Summe ~100 %',
+        lz.length === 5 && lz.map(x => x.state).join() === 'lauf,pause,abtau,heizstab,aus' && lz.map(x => x.col).join() === '#00897b,#b0bec5,#0094ce,#c62828,#eceff1' && lz.every(x => x.t === 'str' && / · (\d+|<1) %$/.test(x.label)) && lz.map(x => x.label).join() === 'läuft · 88 %,Pause · 10 %,Abtauen · <1 %,Heizstab · 1 %,aus · 0 %' &&
+        lq.map(x => x.state).join() === '0,1,2,3' && lq.every(x => x.t === 'num') && lq.map(x => x.col).join() === '#78909c,#90caf9,#0094ce,#1565c0', JSON.stringify(lz.map(x => x.label)) + ' ' + JSON.stringify(lq.map(x => x.label)));
+  NOW += M; const n1 = run('opt_zustand', {});
+  check('Zustandsleiste live: ohne OPT_hp (HeishaMon) nichts senden, kein Fehler', n1 === null, JSON.stringify(n1));
+  const hp = (k, v) => { gstore.OPT_hp = gstore.OPT_hp || {}; gstore.OPT_hp[k] = {v: v, ts: NOW}; };
+  hp('Compressor_Freq', 0); hp('Quiet_Mode_Level', 1); hp('Defrosting_State', 0); hp('Internal_Heater_State', 0); hp('Heatpump_State', 1);
+  NOW += M; const n2 = run('opt_zustand', {});
+  NOW += M; hp('Compressor_Freq', 24); hp('Quiet_Mode_Level', 1); hp('Heatpump_State', 1); hp('Defrosting_State', 0); hp('Internal_Heater_State', 0); const n3 = run('opt_zustand', {});
+  NOW += M; hp('Defrosting_State', 1); hp('Internal_Heater_State', 1); hp('Compressor_Freq', 24); hp('Heatpump_State', 1); hp('Quiet_Mode_Level', 2); const n4 = run('opt_zustand', {});
+  NOW += M; hp('Defrosting_State', 0); hp('Compressor_Freq', 24); hp('Heatpump_State', 1); hp('Internal_Heater_State', 1); hp('Quiet_Mode_Level', 2); const n5 = run('opt_zustand', {});
+  NOW += M; hp('Heatpump_State', 0); hp('Compressor_Freq', 0); hp('Internal_Heater_State', 0); hp('Quiet_Mode_Level', 2); const n6 = run('opt_zustand', {});
+  check('Zustandsleiste live: gleicher Zustand -> nichts; Wechsel -> das betroffene Widget (das andere nur zum 5-min-Takt) mit {state, timestamp: jetzt} und neuer Legende (läuft; Abtauen + Quiet 2; Heizstab; aus bei Heatpump_State 0)',
+        n2 === null && n3 && n3[0].payload.state === 'lauf' && n3[0].payload.timestamp === NOW - 3 * M && n3[1] === null && n3[0].control.states.length === 5 &&
+        n4 && n4[0].payload.state === 'abtau' && n4[1].payload.state === 2 && n5 && n5[0].payload.state === 'heizstab' && (n5[1] === null || n5[1].payload.state === 2) && n6 && n6[0].payload.state === 'aus', JSON.stringify([n2, n3 && n3[0].payload, n4 && n4[1], n5 && n5[0].payload.state, n6 && n6[0].payload.state]));
+  NOW += 5 * M; hp('Heatpump_State', 0); hp('Compressor_Freq', 0); hp('Quiet_Mode_Level', 2); const n7 = run('opt_zustand', {});
+  check('Zustandsleiste live: alle 5 min der jetzige Zustand an beide Widgets (Balken bis jetzt, Anteile neu), auch ohne Wechsel', n7 && n7[0].payload.state === 'aus' && n7[1].payload.state === 2 && n7[0].payload.timestamp === NOW, JSON.stringify(n7 && [n7[0].payload, n7[1].payload]));
+  delete files['/data/optimizer/quiet-2026-10.csv']; delete files['/data/optimizer/quiet-2026-11.csv'];
+  let e0 = null, n8 = null; try { n8 = run('opt_zustand', {topic: 'init'}); } catch (e) { e0 = e.message; }
+  check('Zustandsleiste: leeres Protokoll (keine Datei) -> nichts an die Widgets, kein Fehler; Neuaufbau ersetzt die Daten (Array)', e0 === null && Array.isArray(n8) && n8[0] === null && n8[1] === null && Array.isArray(z), e0 || JSON.stringify(n8));
+  const NBz = id => ALLNODES.find(n => n.id === id), sz = NBz('opt_st_zustand'), sq = NBz('opt_st_quiet');
+  check('Zustandsleiste (Flow): zwei ui_statetrail in "Wärmepumpe · letzte 24 h" unter dem Diagramm (Reihenfolge 2, 3), Hoehe 2, 24 h, HH:mm, Legende 1 (alle), ohne Data Storage; Zustaende/Farben wie vorgegeben; opt_zustand hat nur diese zwei Ausgaenge, liest nur (kein writeFileSync), Init-Inject mit topic "init", Takt 60 s; Gruppe bleibt 17 breit',
+        [sz, sq].every(n => n && n.type === 'ui_statetrail' && n.group === 'opt_g_ch_wp' && n.height === 2 && n.width === 0 && n.periodLimit === 24 && n.periodLimitUnit === '3600' && n.timeformat === 'HH:mm' && n.legend === 1 && n.persist === false && n.combine === true) &&
+        sz.order === 2 && sq.order === 3 && sz.label === 'Zustand' && sq.label === 'Quiet' && sz.states.map(x => x.label).join() === 'läuft,Pause,Abtauen,Heizstab,aus' && sq.states.map(x => x.state).join() === '0,1,2,3' &&
+        JSON.stringify(NBz('opt_zustand').wires) === '[["opt_st_zustand"],["opt_st_quiet"]]' && !/writeFileSync|node\.send/.test(NBz('opt_zustand').func) && NBz('opt_i_zst_init').topic === 'init' && NBz('opt_i_zst_init').once === true && NBz('opt_i_zst').repeat === '60' && NBz('opt_g_ch_wp').width === 17, '');
+  if (keepHp) { gstore.OPT_hp = keepHp; } else { delete gstore.OPT_hp; }
+  // ---- Sonnenstand
+  NOW = new RealDate(2026, 9, 18, 15, 0, 0).getTime();
+  const keepW = gstore.OPT_weather;
+  gstore.OPT_weather = {status: 'OK', ts: NOW, clouds: 50, sun: [1792302658000, 1792340809000]};
+  check('Sonnenstand: ohne Standort (OPT_weather.pos fehlt oder 0/0) keine Anfrage an sun-position', run('opt_sonne_in', {}) === null && (gstore.OPT_weather.pos = {lat: 0, lon: 0}, run('opt_sonne_in', {}) === null), '');
+  const keepOwm = files['/data/optimizer/owm.json'];
+  files['/data/optimizer/owm.json'] = {data: JSON.stringify({key: 'ATTRAPPE-SCHLUESSEL-123', lat: '50.1234', lon: '8.6789'}), mode: 0o600};
+  run('opt_owm_load', {});
+  const pos = gstore.OPT_weather.pos, si = run('opt_sonne_in', {});
+  check('Sonnenstand: opt_owm_load legt nur Breite/Laenge (auf 0,01° gerundet) als OPT_weather.pos ab, nie den Schluessel; opt_sonne_in schickt msg.latitude/longitude (so nimmt sun-position 3.0.1 den Standort)',
+        pos && pos.lat === 50.12 && pos.lon === 8.68 && !JSON.stringify(gstore).includes('ATTRAPPE-SCHLUESSEL') && si && si.latitude === 50.12 && si.longitude === 8.68 && si.time === undefined && si.ts === undefined, JSON.stringify([pos, si]));
+  if (keepOwm) { files['/data/optimizer/owm.json'] = keepOwm; } else { delete files['/data/optimizer/owm.json']; }
+  const sp = (az, alt, ex) => Object.assign({payload: {azimuth: az, altitude: alt, azimuthDegrees: az, altitudeDegrees: alt, times: {sunriseStart: {ts: 1792302658000 + 2 * M, valid: true}, sunsetEnd: {value: new RealDate(1792340809000 - M), valid: true}}}}, ex || {});
+  delete gstore.OPT_sonne; run('opt_sonne', sp(225.04, 20.06)); const S1 = gstore.OPT_sonne;
+  check('Sonnenstand: OPT_sonne aus dem sun-position-Ergebnis (Azimut 225,0°, Hoehe 20,1°, Auf-/Untergang als Zeit), Suedwestfenster bei 180–270° und > 10°, mit 50 % Wolken sonnig; Abweichung zu den OWM-Zeiten vom 18.10. in Minuten (+2 / −1)',
+        S1 && S1.ts === NOW && S1.azimut === 225 && S1.hoehe === 20.1 && S1.aufgang === 1792302658000 + 2 * M && S1.untergang === 1792340809000 - M && S1.swFenster === true && S1.swFensterSonnig === true && S1.wolken === 50 && JSON.stringify(S1.abwOwmMin) === '[2,-1]', JSON.stringify(S1));
+  gstore.OPT_weather.clouds = 85; run('opt_sonne', sp(225, 20)); const S2 = gstore.OPT_sonne;
+  run('opt_sonne', sp(150, 30)); const S3 = gstore.OPT_sonne; run('opt_sonne', sp(260, 8)); const S4 = gstore.OPT_sonne;
+  gstore.OPT_weather.clouds = 20; gstore.OPT_weather.ts = NOW - 2 * HH; run('opt_sonne', sp(200, 25)); const S5 = gstore.OPT_sonne;
+  check('Sonnenstand: 85 % Wolken -> Fenster ja, sonnig nein; Azimut 150° (Suedost) oder Hoehe 8° -> kein Suedwestfenster; Wetter aelter als 60 min -> sonnig nein (Wolken unbekannt)',
+        S2.swFenster === true && S2.swFensterSonnig === false && S3.swFenster === false && S4.swFenster === false && S5.swFenster === true && S5.swFensterSonnig === false && S5.wolken === null, JSON.stringify([S2.swFensterSonnig, S3.swFenster, S4.swFenster, S5.wolken]));
+  const keepS = gstore.OPT_sonne; let e1 = null; try { run('opt_sonne', {payload: {}}); run('opt_sonne', {payload: 'x'}); run('opt_sonne', {}); } catch (e) { e1 = e.message; }
+  check('Sonnenstand: Ergebnis ohne Azimut (Fehler im Knoten, kein Standort) -> OPT_sonne bleibt, kein Fehler', e1 === null && gstore.OPT_sonne === keepS, e1 || '');
+  gstore.OPT_weather = keepW;
+  const NBs = id => ALLNODES.find(n => n.id === id), pc = NBs('opt_pos_cfg'), su = NBs('opt_sun_pos');
+  check('Sonnenstand (Flow): Konfigknoten opt_pos_cfg (position-config) nur mit Platzhalter 0/0, Grad, Zeitzone des Systems; sun-position opt_sun_pos daran, Inject alle 300 s -> opt_sonne_in -> opt_sun_pos -> opt_sonne (kein Ausgang); kein mqtt/http in der Kette',
+        pc && pc.type === 'position-config' && pc.latitude === '0' && pc.longitude === '0' && pc.angleType === 'deg' && pc.timeZoneOffset === 99 && pc.credentials.posLatitude === '0' && su && su.type === 'sun-position' && su.positionConfig === 'opt_pos_cfg' && JSON.stringify(su.wires) === '[["opt_sonne"]]' &&
+        JSON.stringify(NBs('opt_i_sonne').wires) === '[["opt_sonne_in"]]' && NBs('opt_i_sonne').repeat === '300' && JSON.stringify(NBs('opt_sonne_in').wires) === '[["opt_sun_pos"]]' && JSON.stringify(NBs('opt_sonne').wires) === '[[]]', '');
+  // Raumkarte: "Sonne auf Fenster" beim Raum mit Sonnenfenster (Wohnzimmer), nur wenn swFensterSonnig und frisch
+  gstore.OPT_sonne = {ts: NOW, swFenster: true, swFensterSonnig: true}; NOW = gstore.OPT_sonne.ts - 6 * M;
+  const sc = scene({ki_oben: [23.0], ki_unten: [22.8], schlaf: [20.5], wohn: [22.5]});
+  gstore.OPT_sonne = {ts: NOW - 20 * M, swFenster: true, swFensterSonnig: true}; const sc2 = scene({ki_oben: [23.0], ki_unten: [22.8], schlaf: [20.5], wohn: [22.5]});
+  const tplR = ALLNODES.find(n => n.id === 'opt_t_rooms').format;
+  check('Raumkarte: Sonnensymbol "Sonne auf Fenster" (eigenes SVG, Tooltip) nur beim Raum mit Sonnenfenster und nur bei sonnigem, frischem Sonnenstand (aelter als 15 min: nichts)',
+        rowOf(sc, 'wohn').sonne === true && rowOf(sc, 'schlaf').sonne === false && rowOf(sc2, 'wohn').sonne === false && /<svg ng-if="r\.sonne"[^>]*aria-label="Sonne auf Fenster"><title>Sonne auf Fenster<\/title>/.test(tplR), JSON.stringify([rowOf(sc, 'wohn').sonne, rowOf(sc2, 'wohn').sonne]));
+  delete gstore.OPT_sonne;
+  NOW = nowKeep;
+})();
+
 console.log('\nERGEBNIS:', assertFails === 0 ? 'alle Pruefungen bestanden' : assertFails + ' Pruefung(en) fehlgeschlagen');
 process.exit(assertFails ? 1 : 0);
