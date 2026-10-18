@@ -2972,7 +2972,8 @@ if (T) {
     var ent = T.entscheidung && T.entscheidung.ergebnis ? String(T.entscheidung.ergebnis) : '';                        // training-v2: Gate uebernommen/abgelehnt
     var drT = Array.isArray(dr.liste) ? dr.liste.map(function (e) {                                                  // Drift-Eintraege {name, vorher, heute, rel} lesbar (vorher "[object Object]")
         if (!e || typeof e !== 'object') { return String(e); }
-        var rel = ok(e.rel) ? ' (' + (e.rel >= 0 ? '+' : '') + f(100 * e.rel, 0) + ' %)' : '';
+        var rr = (ok(e.vorher) && ok(e.heute) && e.vorher !== 0) ? (e.heute - e.vorher) / Math.abs(e.vorher) : (ok(e.rel) ? e.rel : null);   // Prozent aus den gezeigten Zahlen (training-v2: e.rel bezieht sich auf den roh gelernten Wert)
+        var rel = rr !== null ? ' (' + (rr >= 0 ? '+' : '') + f(100 * rr, 0) + ' %)' : '';
         return e.name + ' ' + (ok(e.vorher) ? f(e.vorher, Math.abs(e.vorher) < 10 ? 2 : 0) : '–') + ' → ' + (ok(e.heute) ? f(e.heute, Math.abs(e.heute) < 10 ? 2 : 0) : '–') + rel;
     }) : [];
     rows.push(['Training', dm(T.tag) + ' · Drift ' + (nDr === null ? '–' : nDr + ' auffällig') + (dr.gegen ? '' : ' (erster Lauf)') + (ent ? ' · ' + ent : ''), T.ok === false ? 'Fehler' : ampT, T.ok === false || amp === 'rot' ? 'fehler' : (amp === 'gelb' || nDr > 0 ? 'warn' : (amp === 'gruen' ? 'ok' : '')),
