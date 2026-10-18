@@ -2205,6 +2205,11 @@ console.log('\n--- Auswertung NAS (status.json des Containers optimizer-tools)')
         row2('Letzter Lauf')[3] === 'fehler' && row2('Training')[2] === 'gelb' && row2('Training')[3] === 'warn' && /Drift 2 auffällig/.test(row2('Training')[1]) && /ua, cap/.test(row2('Training')[4]) &&
         row2('Replay-Güte')[1] === '14.10. · nicht bewertbar: nur 40 % der Minuten mit Live-Eingabe' && row2('Replay-Güte')[3] === 'warn' && row2('Minutenprotokoll')[1] === '14.10. · 2 Lücken > 10 min, größte 37 min' && row2('Minutenprotokoll')[3] === 'warn' &&
         row2('Sicherung')[2] === 'ungeprüft' && row2('Sicherung')[3] === 'fehler' && row2('Fehler')[3] === 'fehler' && /Zeitlimit/.test(row2('Fehler')[4]), JSON.stringify(R2.map(r => r.slice(0, 4))));
+  { const J3 = JSON.parse(fix); J3.training.drift = {gegen: '2026-10-17', auffaellig: 2, liste: [{name: 'hausAtTauMin', vorher: 240, heute: 480, rel: 1}, {name: 'gain', vorher: 0.2282, heute: 0.1636, rel: -0.2831}]};
+    J3.training.entscheidung = {ergebnis: 'übernommen', grund: 'nicht schlechter als der bisherige Satz'};
+    files[SP] = {data: JSON.stringify(J3), mode: 0o644}; const o3 = run('opt_nas', {}), t3 = (o3.payload.rows.find(r => r[0] === 'Training') || []);
+    check('Training (training-v2): Drift-Einträge als Objekte lesbar im Tooltip ("hausAtTauMin 240 → 480 (+100 %)", "gain 0,23 → 0,16 (-28 %)"), kein "[object Object]"; Gate-Ergebnis in der Zeile, Grund im Tooltip',
+          /Drift: hausAtTauMin 240 → 480 \(\+100 %\), gain 0,23 → 0,16 \(-28 %\)/.test(t3[4]) && !/object Object/.test(t3[4]) && /· übernommen$/.test(t3[1]) && /Gate: nicht schlechter/.test(t3[4]), JSON.stringify([t3[1], t3[4]])); }
   NOW = new Date(2026, 9, 17, 9, 0, 0).getTime(); files[SP] = {data: fix, mode: 0o644}; o = run('opt_nas', {});
   check('Lauf älter als 26 h: "veraltet" (warn), Sicherung ebenso', (o.payload.rows.find(r => r[0] === 'Letzter Lauf') || [])[2] === 'veraltet' && (o.payload.rows.find(r => r[0] === 'Sicherung') || [])[2] === 'veraltet', JSON.stringify(o.payload.rows.map(r => r.slice(0, 4))));
   NOW = new Date(2026, 9, 15, 22, 30, 0).getTime(); run('opt_nas', {});                      // Vorschau: echte Datei, frisch

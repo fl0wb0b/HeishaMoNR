@@ -2969,8 +2969,14 @@ if (L) {
 var T = st.training || null;
 if (T) {
     var amp = String(T.ampel || ''), ampT = {gruen: 'grün', gelb: 'gelb', rot: 'rot'}[amp] || '–', dr = T.drift || {}, nDr = ok(dr.auffaellig) ? dr.auffaellig : null, G = T.guete_test || {};
-    rows.push(['Training', dm(T.tag) + ' · Drift ' + (nDr === null ? '–' : nDr + ' auffällig') + (dr.gegen ? '' : ' (erster Lauf)'), T.ok === false ? 'Fehler' : ampT, T.ok === false || amp === 'rot' ? 'fehler' : (amp === 'gelb' || nDr > 0 ? 'warn' : (amp === 'gruen' ? 'ok' : '')),
-               Object.keys(G).filter(function (k) { return ok(G[k]); }).map(function (k) { return k + ' ' + f(G[k], G[k] < 10 ? 2 : 0); }).join(' · ') + (Array.isArray(dr.liste) && dr.liste.length ? ' · Drift: ' + dr.liste.join(', ') : '') + (T.fehler ? ' · ' + T.fehler : '')]);
+    var ent = T.entscheidung && T.entscheidung.ergebnis ? String(T.entscheidung.ergebnis) : '';                        // training-v2: Gate uebernommen/abgelehnt
+    var drT = Array.isArray(dr.liste) ? dr.liste.map(function (e) {                                                  // Drift-Eintraege {name, vorher, heute, rel} lesbar (vorher "[object Object]")
+        if (!e || typeof e !== 'object') { return String(e); }
+        var rel = ok(e.rel) ? ' (' + (e.rel >= 0 ? '+' : '') + f(100 * e.rel, 0) + ' %)' : '';
+        return e.name + ' ' + (ok(e.vorher) ? f(e.vorher, Math.abs(e.vorher) < 10 ? 2 : 0) : '–') + ' → ' + (ok(e.heute) ? f(e.heute, Math.abs(e.heute) < 10 ? 2 : 0) : '–') + rel;
+    }) : [];
+    rows.push(['Training', dm(T.tag) + ' · Drift ' + (nDr === null ? '–' : nDr + ' auffällig') + (dr.gegen ? '' : ' (erster Lauf)') + (ent ? ' · ' + ent : ''), T.ok === false ? 'Fehler' : ampT, T.ok === false || amp === 'rot' ? 'fehler' : (amp === 'gelb' || nDr > 0 ? 'warn' : (amp === 'gruen' ? 'ok' : '')),
+               Object.keys(G).filter(function (k) { return ok(G[k]); }).map(function (k) { return k + ' ' + f(G[k], G[k] < 10 ? 2 : 0); }).join(' · ') + (drT.length ? ' · Drift: ' + drT.join(', ') : '') + (T.entscheidung && T.entscheidung.grund ? ' · Gate: ' + T.entscheidung.grund : '') + (T.fehler ? ' · ' + T.fehler : '')]);
 } else { rows.push(['Training', 'noch keins', '–', '', '']); }
 // Replay-Güte
 var R = st.replay || null, RG = R && R.guete ? R.guete : null;
