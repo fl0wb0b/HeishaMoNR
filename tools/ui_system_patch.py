@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Design-System v1 (17.10.2026): EIN Stil fuer Kern- und Optimierer-Seiten, nur Darstellung (CSS im globalen ui_template "UI-Optik (Kopfbereich)").
+"""Design-System v1 (17.10.2026, v1.5 ui-review 18.10.2026: Kern-Diagramme, Platzhalter, SYSTEM-Leiste): EIN Stil fuer Kern- und Optimierer-Seiten, nur Darstellung (CSS im globalen ui_template "UI-Optik (Kopfbereich)").
 Aendert genau einen Knoten (ui_optik_kopf, format). Erwartet den Stand von ui_optik_patch.py (14.10.2026); --revert stellt ihn byte-genau wieder her.
 Nutzung: ui_system_patch.py <flows_v2_export.json> --out <neu.json> [--revert]
 Was der Stil macht: Grundschrift 14 px ueberall (Kern bisher 16), Gruppentitel einheitlich (Kapitaelchen 12,5 px, Blau #00729f, Linie darunter),
@@ -77,17 +77,61 @@ V14_ZUSATZ = "<style>\n" + "\n".join([
     ",".join("body.nr-dashboard-theme md-card[node-id=\"%s\"] p.label" % i for i in ("dc6b3a3d39fd9593", "0a5194a2ae53226f", "ee5c4cc82116fb3a")) + "{overflow:visible;white-space:nowrap;font-size:12.5px}",
     ",".join("body.nr-dashboard-theme md-card[node-id=\"%s\"]" % i for i in ("b40c0f3e82728c9d", "6cce5b6bd4157c5b", "23aa1aeed6d15e49", "68cd36d3c50eaef1")) + "{color:var(--ds-mute);font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;padding-top:6px}",
 ]) + "\n</style>"
-NEU = V13.replace("Design-System v1.3 (18.10.2026", "Design-System v1.4 (18.10.2026") + V14_ZUSATZ
+V14 = V13.replace("Design-System v1.3 (18.10.2026", "Design-System v1.4 (18.10.2026") + V14_ZUSATZ
+ZEITPLAN = "2b0c8e162d47abbb"          # Zeitplan > Gruppe mit den 10 Zeilen (Papierkorb-Knoepfe 1x1)
+SYSKNOEPFE = "70a5fe6af8ed1d29"        # SYSTEM > Knopfleiste (Protokoll, Hardware, Sensoren, MQTT, Menue-Konfiguration, Systemzustand, Einstellungen, Hilfe)
+V15_ZUSATZ = "<style>\n" + "\n".join([
+    "/* v1.5 (ui-review 18.10.2026): leere Auswahlfelder als Platzhalter (grau, normal), Papierkorb ohne Rahmen, SYSTEM-Knopfleiste als Registerleiste */",
+    "body.nr-dashboard-theme md-select-value.md-select-placeholder>span:first-child{color:#90a4ae;font-weight:400}",
+    "body.nr-dashboard-theme md-card.nr-dashboard-textinput .md-input{border-bottom-color:#dfe5e8}",
+    "body.nr-dashboard-theme ui-card-panel[node-id=\"" + ZEITPLAN + "\"] md-card.nr-dashboard-button[ui-card-size=\"1x1\"] .md-button{border-color:transparent;background:transparent !important}",
+    "body.nr-dashboard-theme ui-card-panel[node-id=\"" + ZEITPLAN + "\"] md-card.nr-dashboard-button[ui-card-size=\"1x1\"] .md-button ui-icon,body.nr-dashboard-theme ui-card-panel[node-id=\"" + ZEITPLAN + "\"] md-card.nr-dashboard-button[ui-card-size=\"1x1\"] .md-button ng-md-icon svg{color:#90a4ae !important;fill:#90a4ae !important}",
+    "body.nr-dashboard-theme ui-card-panel[node-id=\"" + ZEITPLAN + "\"] md-card.nr-dashboard-button[ui-card-size=\"1x1\"] .md-button:hover ng-md-icon svg{fill:#c62828 !important}",
+    "body.nr-dashboard-theme ui-card-panel[node-id=\"" + SYSKNOEPFE + "\"]{border-width:0 0 1px 0;border-radius:0;background:transparent}",
+    "body.nr-dashboard-theme ui-card-panel[node-id=\"" + SYSKNOEPFE + "\"] md-card.nr-dashboard-button .md-button{border-color:transparent;border-radius:0;background:transparent !important;color:var(--ds-mute) !important;border-bottom:2px solid transparent}",
+    "body.nr-dashboard-theme ui-card-panel[node-id=\"" + SYSKNOEPFE + "\"] md-card.nr-dashboard-button .md-button:hover{color:var(--ds-acc-t) !important;border-bottom-color:var(--ds-acc)}",
+    "body.nr-dashboard-theme ui-card-panel[node-id=\"" + SYSKNOEPFE + "\"] md-card{background:transparent !important;box-shadow:none !important}",
+]) + "\n</style>\n<script>\n" + r"""(function () { /* v1.5: Kern-Diagramme (Chart.js) in Schrift, Farben und Zahlenformat des Design-Systems; Dezimalkomma auch in Tachos, Tabellen und Zahlenfeldern. Nur Anzeige. */
+var FONT = getComputedStyle(document.body).fontFamily, MON = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
+function de(v) { var n = typeof v === 'number' ? v : (typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v) ? Number(v) : null); return n === null ? v : n.toLocaleString('de-DE', {maximumFractionDigits: 2}); }
+function kat(v) { var m = /^(\d{4})-(\d\d)$/.exec(v), d = /^(\d\d)-(\d\d)$/.exec(v); return m ? MON[+m[2] - 1] + ' ' + m[1].slice(2) : (d ? d[2] + '.' + d[1] + '.' : v); }
+function stil(c) {
+    if (!c || !c.options || c.$ds) { return; }
+    c.$ds = true;
+    var o = c.options, L = o.legend = o.legend || {}, gen = (window.Chart.defaults.global.legend.labels || {}).generateLabels;
+    L.labels = L.labels || {}; L.labels.fontFamily = FONT; L.labels.fontSize = 12; L.labels.fontColor = '#455a64'; L.labels.boxWidth = 9; L.labels.padding = 8;
+    if (gen) { L.labels.generateLabels = function (ch) { return gen(ch).map(function (l) { l.fillStyle = l.strokeStyle || l.fillStyle; l.lineWidth = 0; return l; }); }; }
+    ['xAxes', 'yAxes'].forEach(function (ax) { ((o.scales || {})[ax] || []).forEach(function (s) {
+        var t = s.ticks = s.ticks || {}; t.fontFamily = FONT; t.fontSize = 12; t.fontColor = '#546e7a';
+        s.gridLines = s.gridLines || {}; s.gridLines.color = '#eceff1'; s.gridLines.zeroLineColor = '#cfd8dc';
+        if (s.type === 'time' && s.time) { s.time.displayFormats = Object.assign({}, s.time.displayFormats, {second: 'HH:mm', minute: 'HH:mm', hour: 'HH:mm', day: 'DD.MM.'}); }
+        var cb = t.callback;
+        if (ax === 'yAxes') { t.callback = function (v, i, a) { var r = cb ? cb.call(this, v, i, a) : v; return (typeof v === 'number' && String(r) === String(v)) ? de(v) : r; }; }   // nur unformatierte Zahlen (eigene Formate der Knoten bleiben)
+        else if (s.type !== 'time') { t.callback = function (v, i, a) { return kat(cb ? cb.call(this, v, i, a) : v); }; }
+    }); });
+    try { c.update(0); } catch (e) { /* bleibt wie es ist */ }
+}
+function sweep() { try { var I = (window.Chart && window.Chart.instances) || {}; Object.keys(I).forEach(function (k) { stil(I[k]); }); } catch (e) { /* nichts */ } }
+if (window.Chart && window.Chart.defaults) { var g = window.Chart.defaults.global; g.defaultFontFamily = FONT; g.defaultFontColor = '#546e7a'; g.defaultFontSize = 12; }
+sweep(); setInterval(sweep, 1500);
+/* Dezimalkomma auch in Tachos (Wert), Tabellenzellen und Zahlenfeldern: nur reine Zahlen mit Dezimalpunkt, z. B. 5.55 -> 5,55, +1.5 -> +1,5; genau drei Nachkommastellen gelten als Tausenderpunkt (1.750 bleibt) */
+var RE = /^([+\-\u2212]?\d+)\.(\d{1,2}|\d{4,})(\s.*)?$/, SEL = 'md-card:not(.nr-dashboard-template) svg text, md-card:not(.nr-dashboard-template) svg tspan, .tabulator-cell, md-card.nr-dashboard-numeric p.value';
+function fix(el) { for (var n = el.firstChild; n; n = n.nextSibling) { if (n.nodeType === 3) { var m = RE.exec(n.nodeValue.trim()); if (m) { n.nodeValue = m[1] + ',' + m[2] + (m[3] || ''); } } } }
+function lauf() { document.querySelectorAll(SEL).forEach(fix); }
+lauf(); setInterval(lauf, 1500);
+})();
+</script>"""
+NEU = V14 + V15_ZUSATZ
 
 def main():
     a = sys.argv[1:]; revert = "--revert" in a; out = a[a.index("--out") + 1]
     d = json.load(open(a[0], encoding="utf-8")); fl = d["flows"]; k = next(n for n in fl if n["id"] == KOPF_ID)
     assert k["type"] == "ui_template" and k.get("templateScope") == "global"
     if not revert:
-        assert k["format"] in (ALT, V1, V11, V12, V13), "Ausgangsstand weicht ab (ui_optik_kopf nicht auf einem bekannten Stand)"
+        assert k["format"] in (ALT, V1, V11, V12, V13, V14), "Ausgangsstand weicht ab (ui_optik_kopf nicht auf einem bekannten Stand)"
         k["format"] = NEU
     else:
-        assert k["format"] in (NEU, V13, V12, V11, V1), "nicht gepatcht"
+        assert k["format"] in (NEU, V14, V13, V12, V11, V1), "nicht gepatcht"
         k["format"] = ALT
     json.dump(d, open(out, "w", encoding="utf-8"), ensure_ascii=False)
     print("rev", d["rev"], "->", out, "(CSS", len(k["format"]), "Zeichen)")

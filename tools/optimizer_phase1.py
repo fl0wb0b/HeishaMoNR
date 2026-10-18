@@ -2884,7 +2884,7 @@ function hpv(k) { var e = HP[k]; return (e && typeof e.v === 'number' && now - e
 var ST = flow.get('zst');
 if (msg.topic === 'init' || !ST) {
     var h = ladeHist();
-    ST = {z: h.z, q: h.q, ka: now, n: h.n};
+    ST = {z: h.z, q: h.q, ka: now, voll: now, n: h.n};
     flow.set('zst', ST);
     return [h.z.length ? voll(ST.z, ZS, 'str') : null, h.q.length ? voll(ST.q, QS, 'num') : null];
 }
@@ -2898,6 +2898,9 @@ wechsel(ST.z, now, z); wechsel(ST.q, now, q);
 kuerzen(ST.z, now - DAY); kuerzen(ST.q, now - DAY);
 var ka = now - (ST.ka || 0) >= 5 * MIN;                                          // alle 5 min: jetziger Zustand (Balken bis jetzt) und Anteile
 if (ka) { ST.ka = now; }
+// ui-review 18.10.2026: stuendlich die ganze Liste neu (Beginn genau jetzt - 24 h). Das Widget kuerzt sonst nur ab dem letzten Eintrag, der Balken beginnt dann beim
+// ersten Wechsel im Fenster, und die Zeitachse beider Leisten passt nicht mehr zum Diagramm darueber (live gesehen: Zustand ab 18:52, Quiet ab 07:57).
+if (now - (ST.voll || 0) >= 60 * MIN) { ST.voll = now; ST.ka = now; flow.set('zst', ST); return [ST.z.length ? voll(ST.z, ZS, 'str') : null, ST.q.length ? voll(ST.q, QS, 'num') : null]; }
 flow.set('zst', ST);
 var cz = ST.z.length ? ST.z[ST.z.length - 1][1] : null, cq = ST.q.length ? ST.q[ST.q.length - 1][1] : null;
 var o1 = (zNeu || (ka && cz !== null)) ? {payload: {state: cz, timestamp: now}, control: {states: states(ZS, ST.z, 'str')}} : null;
@@ -3663,7 +3666,9 @@ SCHEMA_CSS = "<style>" + "".join(re.findall(r"'([^']*)'", re.search(r"var CSS = 
 SCHEMA_VOLL_CSS = ('<style>ui-card-panel[node-id="opt_g_schema_ue"]{width:calc(100% - 12px) !important}'
                    'ui-card-panel[node-id="opt_g_schema_ue"] .nr-dashboard-cardpanel,ui-card-panel[node-id="opt_g_schema_ue"] .nr-dashboard-cardcontainer{width:100% !important}'
                    'ui-card-panel[node-id="opt_g_schema_ue"] .nr-dashboard-cardtitle{width:auto !important}'
-                   'md-card[node-id="opt_t_schema_ue"]{width:100% !important;box-sizing:border-box !important}</style>')
+                   'md-card[node-id="opt_t_schema_ue"]{width:100% !important;box-sizing:border-box !important}'
+                   # ui-review 18.10.2026: Kacheln neben dem Schema hoechstens drei je Zeile (bei 1920 px 3 x 3 statt 5 + 4 mit leerer Flaeche darunter; bei 1280 px weiter zwei)
+                   'md-card[node-id="opt_t_schema_ue"] .osch-kpi{grid-template-columns:repeat(auto-fill,minmax(max(150px,30%),1fr))}</style>')
 SCHEMA_FN_JS = r"""
 // Anlagenschema: Werte der Waermepumpe fuer die beiden Schema-Karten (Optimierer, Übersicht), alle 10 s. NUR LESEN, schreibt nichts.
 var G = function (k) { var v; try { v = global.get(k, 'file'); } catch (e) { v = undefined; } return v !== undefined ? v : global.get(k); };

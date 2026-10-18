@@ -2253,6 +2253,10 @@ console.log('\n--- Zeitleiste: Zustandsleiste und Sonnenstand');
         n4 && n4[0].payload.state === 'abtau' && n4[1].payload.state === 2 && n5 && n5[0].payload.state === 'heizstab' && (n5[1] === null || n5[1].payload.state === 2) && n6 && n6[0].payload.state === 'aus', JSON.stringify([n2, n3 && n3[0].payload, n4 && n4[1], n5 && n5[0].payload.state, n6 && n6[0].payload.state]));
   NOW += 5 * M; hp('Heatpump_State', 0); hp('Compressor_Freq', 0); hp('Quiet_Mode_Level', 2); const n7 = run('opt_zustand', {});
   check('Zustandsleiste live: alle 5 min der jetzige Zustand an beide Widgets (Balken bis jetzt, Anteile neu), auch ohne Wechsel', n7 && n7[0].payload.state === 'aus' && n7[1].payload.state === 2 && n7[0].payload.timestamp === NOW, JSON.stringify(n7 && [n7[0].payload, n7[1].payload]));
+  NOW = NOWZ + 61 * M; hp('Heatpump_State', 0); hp('Compressor_Freq', 0); hp('Quiet_Mode_Level', 2); const n9 = run('opt_zustand', {});
+  check('Zustandsleiste (ui-review): stuendlich die ganze Liste neu, Beginn genau jetzt − 24 h (Zeitachse beider Leisten = Diagramm darueber), letzter Punkt jetzt',
+        n9 && Array.isArray(n9[0].payload) && n9[0].payload[0].timestamp === NOW - 24 * HH && n9[0].payload[n9[0].payload.length - 1].timestamp === NOW && Array.isArray(n9[1].payload) && n9[1].payload[0].timestamp === NOW - 24 * HH,
+        JSON.stringify(n9 && [n9[0].payload[0], n9[1].payload.length]));
   delete files['/data/optimizer/quiet-2026-10.csv']; delete files['/data/optimizer/quiet-2026-11.csv'];
   let e0 = null, n8 = null; try { n8 = run('opt_zustand', {topic: 'init'}); } catch (e) { e0 = e.message; }
   check('Zustandsleiste: leeres Protokoll (keine Datei) -> nichts an die Widgets, kein Fehler; Neuaufbau ersetzt die Daten (Array)', e0 === null && Array.isArray(n8) && n8[0] === null && n8[1] === null && Array.isArray(z), e0 || JSON.stringify(n8));
