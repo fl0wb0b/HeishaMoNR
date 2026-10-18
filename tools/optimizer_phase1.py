@@ -2884,7 +2884,7 @@ function hpv(k) { var e = HP[k]; return (e && typeof e.v === 'number' && now - e
 var ST = flow.get('zst');
 if (msg.topic === 'init' || !ST) {
     var h = ladeHist();
-    ST = {z: h.z, q: h.q, ka: now, n: h.n};
+    ST = {z: h.z, q: h.q, ka: now, voll: now, n: h.n};
     flow.set('zst', ST);
     return [h.z.length ? voll(ST.z, ZS, 'str') : null, h.q.length ? voll(ST.q, QS, 'num') : null];
 }
@@ -2898,6 +2898,9 @@ wechsel(ST.z, now, z); wechsel(ST.q, now, q);
 kuerzen(ST.z, now - DAY); kuerzen(ST.q, now - DAY);
 var ka = now - (ST.ka || 0) >= 5 * MIN;                                          // alle 5 min: jetziger Zustand (Balken bis jetzt) und Anteile
 if (ka) { ST.ka = now; }
+// ui-review 18.10.2026: stuendlich die ganze Liste neu (Beginn genau jetzt - 24 h). Das Widget kuerzt sonst nur ab dem letzten Eintrag, der Balken beginnt dann beim
+// ersten Wechsel im Fenster, und die Zeitachse beider Leisten passt nicht mehr zum Diagramm darueber (live gesehen: Zustand ab 18:52, Quiet ab 07:57).
+if (now - (ST.voll || 0) >= 60 * MIN) { ST.voll = now; ST.ka = now; flow.set('zst', ST); return [ST.z.length ? voll(ST.z, ZS, 'str') : null, ST.q.length ? voll(ST.q, QS, 'num') : null]; }
 flow.set('zst', ST);
 var cz = ST.z.length ? ST.z[ST.z.length - 1][1] : null, cq = ST.q.length ? ST.q[ST.q.length - 1][1] : null;
 var o1 = (zNeu || (ka && cz !== null)) ? {payload: {state: cz, timestamp: now}, control: {states: states(ZS, ST.z, 'str')}} : null;
