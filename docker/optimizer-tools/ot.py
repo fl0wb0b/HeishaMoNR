@@ -53,6 +53,10 @@ SICH_NIE = re.compile(r"(?i)owm|vrm|cred|secret|token|passw|key|auth")
 DATEN_MAX_ALTER_MIN = 30                                           # jüngste Zeile in quiet-*.csv älter → Fehler in status.json (Node-RED schreibt jede Minute)
 # Ampel für die Güte des Trainings (ANNAHME, aus den Testwerten 15.10.2026 mit Abstand: TOP16 21,6 W, Vorlauf 0,97 K, Pause Median 7 min)
 GUETE_GRENZEN = {"Strom TOP16 RMSE (W)": 40.0, "Wasserkreis RMSE (K)": 1.5, "Pause Median-Fehler (min)": 30.0}
+# training-v2 (18.10.2026): Glättung, Bindung in der Dünn-Daten-Phase, Gate Champion gegen Herausforderer (Grenzen wie GUETE_GRENZEN)
+TRAINING_GLAETTUNG = os.environ.get("TRAINING_GLAETTUNG", "")      # Anteil der neu gelernten Werte je Nacht; leer = Standard 1/3, "1" = ersetzen
+TRAINING_BINDUNG = os.environ.get("TRAINING_BINDUNG", "")          # Gewicht der Bindung an die Vorwerte; leer = Standard 0.1, "0" = aus
+TRAINING_GATE_REL = os.environ.get("TRAINING_GATE_REL", "")        # erlaubte relative Verschlechterung je Ampel-Kennzahl; leer = Standard 0.10
 
 _log_datei = None
 _kind = None
@@ -165,7 +169,11 @@ def tag_arg(argv, standard):
 
 
 def cmd_training(tag):
-    return [sys.executable, os.path.join(TOOLS, "wp_training_nacht.py"), "--daten", DATEN, "--ergebnis", ERGEBNIS, "--tag", tag.isoformat(), "--node", "node"]
+    c = [sys.executable, os.path.join(TOOLS, "wp_training_nacht.py"), "--daten", DATEN, "--ergebnis", ERGEBNIS, "--tag", tag.isoformat(), "--node", "node"]
+    for opt, wert in (("--glaettung", TRAINING_GLAETTUNG), ("--bindung", TRAINING_BINDUNG), ("--gate-rel", TRAINING_GATE_REL)):
+        if re.match(r"^\d+(\.\d+)?$", wert.strip()):
+            c += [opt, wert.strip()]
+    return c
 
 
 def cmd_cop_eta(tag):
@@ -325,10 +333,21 @@ def baue_status(lauf=None, dienst=None):
         S["training"] = {"tag": tr.get("tag"), "ok": tr.get("ok"), "fehler": tr.get("fehler"), "dauer_s": tr.get("dauer_s"), "datei": "training/" + str(tr.get("datei")),
                          "ampel": guete_ampel(tr), "ampel_grenzen": GUETE_GRENZEN, "guete_test": tr.get("guete_test"), "guete_test_vorher": tr.get("guete_test_vorher"),
                          "daten": tr.get("daten"), "drift": {k: (tr.get("drift") or {}).get(k) for k in ("gegen", "werte", "auffaellig", "liste")}}
+        # training-v2: Entscheidung Champion/Herausforderer, Glättung/Bindung, Güte je Außentemperatur-Band, Abdeckung (additive Felder; null bei älterem letzter.json)
+        S["training"]["entscheidung"] = tr.get("entscheidung")
+        S["training"]["glaettung"] = tr.get("glaettung")
+        S["training"]["guete_je_band"] = tr.get("guete_je_band")
+        S["training"]["abdeckung"] = tr.get("abdeckung")
         if (S["training"]["drift"] or {}).get("auffaellig"):
             hinweise.append("Training: %d Parameter mit auffälliger Drift" % S["training"]["drift"]["auffaellig"])
         if S["training"]["ampel"] == "gelb":
             hinweise.append("Training: Güte gelb (Grenze überschritten)")
+        en = tr.get("entscheidung") or {}
+        if en.get("ergebnis") == "abgelehnt":
+            hinweise.append("Training: neuer Parametersatz abgelehnt, aktiv bleibt %s (%s)" % (en.get("aktiv"), en.get("grund")))
+        ab = tr.get("abdeckung") or {}
+        if ab.get("hinweis"):
+            hinweise.append(ab["hinweis"])
     ce = lies_json(os.path.join(ERGEBNIS, "training", "cop_eta.json"))   # cop-ziel 17.10.2026: Guetegrad des Ziel-COP (Datei liest opt_nas direkt)
     S["cop_eta"] = {"datei": "training/cop_eta.json", "erstellt": ce.get("erstellt"), "tag": ce.get("tag"), "kalibrierminuten": ce.get("kalibrierminuten"),
                     "eta": {b: (x or {}).get("v") for b, x in (ce.get("eta") or {}).items()}, "abtauungen": (ce.get("abtau") or {}).get("n")} if ce else None

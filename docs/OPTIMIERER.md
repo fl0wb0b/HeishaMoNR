@@ -1678,3 +1678,13 @@ Karte **„COP: Ziel und Ist“** (Seite Optimierer, Gruppe `opt_g_eng_cop`, 17 
 ### 25.3 Tests
 
 `tools/cop_ziel_sim.js [flows] [daten]`: Minutenmodell, exakte Zerlegung, Start/Abtauen/Wiederaufheizen, Zählerquelle und Ausfall, Kalibrierung (synthetisch, η wiedergefunden), beide Shelly-Profile, NotifyStatus, Vorzeichen, Heizstab-Sprung, 24-h-Vergleich, Form, Hülle `opt_zaehler` (Abos, Speichern, Umschalten, Ausfall-/Wieder-Ereignis), Karten, Replay, Kennzahlen mit Zählerspalte.
+
+## 26. Training v2 des Anlagen-Zwillings (18.10.2026, Branch `training-v2`)
+
+Nächtliches Training im Container `optimizer-tools` (`tools/wp_training_nacht.py` → `tools/wp_training.js`), Bericht `~/Dokumente/heishamonr-optimizer/training-v2/BERICHT.md`.
+
+- **Champion gegen Herausforderer:** Der neue Satz wird nur übernommen, wenn er auf den heutigen Testtagen (gleicher Datenstand, der bisherige Satz wird neu bewertet) bei Strom-RMSE, Wasserkreis-RMSE und Pause-Median nicht mehr als 10 % (mindestens 0,5 W / 0,02 K / 1 min) schlechter ist und keine Ampelgrenze reißt, die der bisherige einhält. Abgelehnt → `training/kandidat_<tag>.json`; aktiv bleibt die jüngste `wp_params_<tag>.json` (Kopie `wp_params_aktiv.json`). `status.json` → `training.entscheidung`.
+- **Glättung:** übernommen = bisher + 1/3 · (roh gelernt − bisher) (`TRAINING_GLAETTUNG`). Schalter-Werte 99 („aus“, `startHystK`, `comfortWiederK`) gleiten über 5 K.
+- **Bindung** in der Dünn-Daten-Phase (unter 21 Tagen oder unter 3 Außentemperatur-Bändern mit je ≥ 300 Laufminuten): jeder Fit minimiert (Fehler/Bezugsfehler)² + λ · Σ((Wert − Vorwert)/(25 % des Vorwerts))², λ = 0,1 (`TRAINING_BINDUNG`); Grenzen der Fits wie bisher.
+- **Güte je Außentemperatur-Band** (< 0, 0…4, 4…8, 8…12, ≥ 12 °C) mit Minutenzahl, **Abdeckung** des 21-Tage-Fensters; leere Bänder „keine Daten, Zwilling extrapoliert“, Hinweis „Zwilling hat unter X °C keine Daten“ in `status.json` → `hinweise`. Ampel unverändert.
+- Tests: `node tools/wp_training_test.js [daten]`, `python3 tools/wp_training_nacht_test.py [daten]`, `docker/optimizer-tools/test.sh` (Abschnitt 7 prüft die neuen Felder).

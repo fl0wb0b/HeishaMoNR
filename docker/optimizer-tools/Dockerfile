@@ -1,5 +1,5 @@
 # optimizer-tools: nächtliches Training des Anlagen-Zwillings, Replay der Entscheidungsmaschine und Tageskennzahlen neben den Daten (NAS).
-# Bauen aus der Wurzel des Repos:  docker build -f docker/optimizer-tools/Dockerfile -t optimizer-tools:1 .
+# Bauen aus der Wurzel des Repos:  docker build -f docker/optimizer-tools/Dockerfile -t optimizer-tools:training-v2 .
 # Alle Werkzeuge nutzen nur Node-Builtins (fs, path) und die Python-Standardbibliothek: keine npm-/pip-Pakete.
 FROM node:22.23.3-alpine3.24
 

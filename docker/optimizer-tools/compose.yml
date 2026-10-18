@@ -7,7 +7,7 @@ name: optimizer-tools
 
 services:
   optimizer-tools:
-    image: optimizer-tools:1
+    image: optimizer-tools:${OT_TAG:-training-v2}   # training-v2 (18.10.2026); zurück: OT_TAG=1 docker compose up -d
     pull_policy: never              # nie von Docker Hub holen; fehlt das Image, bricht compose mit „No such image“ ab
     container_name: optimizer-tools
     labels:
@@ -34,6 +34,9 @@ services:
       AUFBEWAHREN_TAGE: "120"       # Replay-Berichte und Trainingsparameter so lange behalten
       SICHERUNG_TAGE: "120"         # tägliche Archive der Protokolle so lange behalten
       SICHERUNG_MONATSERSTE: "1"    # Archiv vom 1. jedes Monats (Vormonat komplett) unbegrenzt behalten
+      TRAINING_GLAETTUNG: "0.333333"  # training-v2: Anteil der neu gelernten Parameter je Nacht (1 = ersetzen wie vor training-v2)
+      TRAINING_BINDUNG: "0.1"       # training-v2: Bindung an die Vorwerte in der Dünn-Daten-Phase (< 21 Tage oder < 3 AT-Bänder mit ≥ 300 Laufminuten); 0 = aus
+      TRAINING_GATE_REL: "0.10"     # training-v2: Gate, erlaubte Verschlechterung je Ampel-Kennzahl (Strom, Wasserkreis, Pause) gegen den bisherigen Satz
     volumes:
       - type: bind
         source: ${OT_DATEN:-/volume2/@docker/volumes/node_red_node-red-data/_data/optimizer}

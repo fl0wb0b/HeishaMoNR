@@ -3,6 +3,7 @@
 Ein kleiner Container für die NAS. Er rechnet jede Nacht drei Dinge aus den Protokollen des Node-RED-Optimierers und sichert sie:
 
 1. **Training des Anlagen-Zwillings** (`tools/wp_training_nacht.py` → `tools/wp_training.js`): Parameterschätzung über die letzten 21 Tage, Güte auf den letzten 4 Tagen, Drift gegen den letzten Lauf.
+   Seit training-v2 (18.10.2026) mit Glättung, Bindung in der Dünn-Daten-Phase, Champion gegen Herausforderer und Güte je Außentemperatur-Band (Abschnitt „Training v2“).
 2. **Replay der Entscheidungsmaschine** für den Vortag (`tools/replay_tag.js` → `tools/engine_core.js`, wie live): Status je Regel, Vorschläge, Punkte, dazu ein Abgleich Minute für Minute mit dem Live-Lauf (`decisions-*.jsonl`).
    Eingänge sind die Eingaben, die die Live-Maschine selbst protokolliert hat (`decisions-*.jsonl` → `in`); verglichen wird nur, wo live dieselbe Regelversion lief (Abschnitt „Replay-Güte“).
 3. **Tageskennzahlen** des Vortags (`tools/kennzahlen_tag.py`): dieselben Fakten wie der Bonsai-Beobachter (Läufe, Pausen, kWh el mit +80 W und th, COP, kWh/Kh mit Komfort-Toleranz 0,3 K/30 min, Räume gegen Bänder, Abtauungen, Heizstab, Quiet-/Heizregelungs-Anteile, Entscheidungen/Punkte, Datenlücken) und die festen Regel-Befunde.
@@ -34,8 +35,10 @@ Auf der NAS: `/volume2/@docker/volumes/node_red_node-red-data/_data/optimizer-to
 ```
 status.json                     Zustand für Node-RED (Format unten)
 letzter-lauf.log                Protokoll des letzten Laufs (wie stdout)
-training/wp_params_<tag>.json   Parameter des Zwillings (120 Tage behalten)
-training/wp_training.md         Bericht mit Güte und Drift-Tabelle (je Lauf überschrieben)
+training/wp_params_<tag>.json   übernommener Parametersatz des Zwillings (120 Tage behalten); der jüngste ist der aktive
+training/wp_params_aktiv.json   Kopie des aktiven Satzes (fester Name für Zwilling/Vergleiche)
+training/kandidat_<tag>.json    vom Gate abgelehnter Kandidat (mit roh gelernten Werten und Güte beider Sätze; 120 behalten)
+training/wp_training.md         Bericht: Entscheidung, Güte, Güte je Außentemperatur-Band, Abdeckung, Drift (roh gelernt / übernommen); je Lauf überschrieben
 training/letzter.json           Kurzfassung des letzten Trainings
 training/cop_eta.json           Gütegrad eta, dT_verd (Rohr außen), Spreizung je Außenband, Frequenzfaktor je Hz-Bereich, Abtau-Anteil (Format 1; opt_nas liest es -> OPT_cop_eta)
 replay/<tag>.md                 Replay-Bericht des Tages (120 Tage behalten)
@@ -59,10 +62,14 @@ Wird nach jedem Lauf und beim Start des Dienstes neu geschrieben (atomar: erst `
 | `aktualisiert` | Zeitpunkt des Schreibens (Ortszeit, `JJJJ-MM-TT HH:MM:SS`) |
 | `ok` | `true`, wenn `fehler` leer ist |
 | `fehler` | Liste: gescheiterte Schritte (`training: …`), Daten älter als 30 min, Datenordner nicht lesbar |
-| `hinweise` | Liste, setzt `ok` nicht auf `false`: auffällige Drift, Ampel gelb, Lücken im Minutenprotokoll, Raumfühler > 120 min ungültig |
+| `hinweise` | Liste, setzt `ok` nicht auf `false`: auffällige Drift, Ampel gelb, abgelehnter Parametersatz, „Zwilling hat unter X °C keine Daten“, Lücken im Minutenprotokoll, Raumfühler > 120 min ungültig |
 | `letzter_lauf` | `art` (nacht/alles/…), `beginn`, `ende`, **`dauer_s`**, `ok`, `speicher_spitze_mb`, `schritte.{training,cop_eta,replay,kennzahlen,sicherung}` je `{ok, rc, dauer_s, fehler, tag}` |
 | `dienst` | `gestartet`, `zeitplan`, `naechster_lauf` |
-| `training` | `tag`, `ok`, **`ampel`** (`gruen`/`gelb`/`rot`), `ampel_grenzen`, **`guete_test`** (TOP16 W, Wasserkreis K, Pause min), `guete_test_vorher`, **`drift`** `{gegen, auffaellig, liste, werte}`, `datei` |
+| `training` | `tag`, `ok`, **`ampel`** (`gruen`/`gelb`/`rot`), `ampel_grenzen`, **`guete_test`** (TOP16 W, Wasserkreis K, Pause min; Güte des **aktiven** Satzes auf den heutigen Testtagen), `guete_test_vorher`, **`drift`** `{gegen, auffaellig, liste, werte}` (seit training-v2 zusätzlich `auffaellig_uebernommen`, je Listeneintrag `roh`, `uebernommen`, `rel_uebernommen`), `datei` (aktiver Satz) |
+| `training.entscheidung` | training-v2: `ergebnis` (`übernommen`/`abgelehnt`), `grund`, `aktiv`, `aktiv_tag`, `kandidat_datei`, `bisher_tag`, `kandidat`/`bisher`/`roh` (Kennzahlen wie `guete_test`, alle auf denselben Testtagen), `kriterium` `{rel, tol, grenzen}`, `verletzt` (Liste) |
+| `training.glaettung` | training-v2: `anteil` (Standard 0,333), `bindung` `{aktiv, gewicht, skalaRel, grund}` |
+| `training.guete_je_band` | training-v2: Liste der 5 Außentemperatur-Bänder (`< 0`, `0…4`, `4…8`, `8…12`, `≥ 12 °C`) mit `minuten`, `laufminuten`, `status` (`Daten` / `keine Testdaten` / `keine Daten, Zwilling extrapoliert`) und den Kennzahlen wie `guete_test` (Zyklen nach AT am Zyklusbeginn, `n_pausen`, `n_laeufe`) |
+| `training.abdeckung` | training-v2: ganzes 21-Tage-Fenster je Band `minuten`, `laufminuten`, `tage`, `status` (`ausreichend` ≥ 300 Laufminuten / `dünn` / `keine Daten, Zwilling extrapoliert`); `tage`, `duenn`, `grund`, `extrapoliert_unter_c`, `hinweis` |
 | `cop_eta` | `datei`, `erstellt`, `tag`, `kalibrierminuten`, `eta` je Band, `abtauungen` (Kurzfassung von `training/cop_eta.json`; `null` vor dem ersten Lauf) |
 | `replay` | `tag`, `datei`, `minuten`, `vorschlaege`, `punkte_eintraege`, **`guete`** (unten) |
 | `replay.guete` | `bewertbar` (bool), `prozent` (Status gleich live über die bewertbaren Regeln; **`null`, wenn nicht bewertbar**), `grund` (warum nicht), `nicht_bewertbar` (Regel-IDs), `regeln.<id>` `{bewertbar, prozent, minuten, grund}`, `eingang_live_minuten` |
@@ -71,6 +78,17 @@ Wird nach jedem Lauf und beim Start des Dienstes neu geschrieben (atomar: erst `
 | `sicherung` | `tag`, `datei`, `bytes`, **`sha256`**, `dateien`, `bytes_roh`, `geprueft`, `archive`, `aeltestes`, `belegt_mb` |
 
 Fehlt ein Teil (z. B. noch kein Training), steht dort `null`.
+
+### Training v2 (18.10.2026)
+
+1. **Champion gegen Herausforderer.** Der neue Satz (geglättet, siehe 2.) und der bisher aktive Satz (jüngste `wp_params_<datum>.json`) werden auf den heutigen Testtagen mit demselben Datenstand bewertet.
+   Abgelehnt wird, wenn Strom-RMSE, Wasserkreis-RMSE oder Pause-Median um mehr als 10 % (mindestens 0,5 W / 0,02 K / 1 min) schlechter werden oder über die Ampelgrenze steigen, die der bisherige Satz einhält.
+   Abgelehnt: `kandidat_<tag>.json`, aktiv bleibt der bisherige Satz, `status.json` meldet es unter `hinweise`. Der erste Lauf (kein bisheriger Satz) wird immer übernommen.
+2. **Glättung:** übernommen = bisher + 1/3 · (roh gelernt − bisher) je gefittetem Parameter (`TRAINING_GLAETTUNG`, 1 = ersetzen wie vorher).
+3. **Bindung** in der Dünn-Daten-Phase (unter 21 Tagen Daten oder unter 3 Außentemperatur-Bändern mit je ≥ 300 Laufminuten): jeder Fit zieht zu den bisherigen Werten (Regularisierung, `TRAINING_BINDUNG`, Standard 0,1; 0 = aus). Grenzen wie bisher in den Fits.
+4. **Güte je Außentemperatur-Band** und **Abdeckung**: alle Testfehler zusätzlich je Band; leere Bänder heißen „keine Daten, Zwilling extrapoliert“. Die Ampel bleibt wie sie ist; dazu kommt der Hinweis „Zwilling hat unter X °C keine Daten“.
+
+Alte `wp_params_<datum>.json` (vor training-v2) dienen als bisheriger Satz; es ist nichts umzustellen.
 
 ### Replay-Güte
 
@@ -90,7 +108,7 @@ Alle Werkzeuge nutzen nur Node-Builtins und die Python-Standardbibliothek. Das I
 
 ```sh
 # im Repo (PC oder NAS), Baukontext = Wurzel des Repos (.dockerignore lässt nur die 7 Werkzeuge und ot.py durch)
-docker build --build-arg OT_VERSION=$(git rev-parse --short HEAD) -f docker/optimizer-tools/Dockerfile -t optimizer-tools:1 .
+docker build --build-arg OT_VERSION=$(git rev-parse --short HEAD) -f docker/optimizer-tools/Dockerfile -t optimizer-tools:training-v2 .
 ```
 
 ## Start auf der NAS
@@ -111,8 +129,8 @@ Fehlt der Ordner, bricht `docker compose up` mit „bind source path does not ex
 **Start** (vom PC, im Repo auf Branch `nas-container`):
 
 ```sh
-docker build --build-arg OT_VERSION=$(git rev-parse --short HEAD) -f docker/optimizer-tools/Dockerfile -t optimizer-tools:1 .
-docker save optimizer-tools:1 | gzip | ssh 10.10.10.128 'gunzip | docker load'
+docker build --build-arg OT_VERSION=$(git rev-parse --short HEAD) -f docker/optimizer-tools/Dockerfile -t optimizer-tools:training-v2 .
+docker save optimizer-tools:training-v2 | gzip | ssh 10.10.10.128 'gunzip | docker load'
 ssh 10.10.10.128 'mkdir -p ~/optimizer-tools' && scp docker/optimizer-tools/compose.yml 10.10.10.128:optimizer-tools/
 ssh 10.10.10.128 'cd ~/optimizer-tools && docker compose run --rm optimizer-tools alles'      # erste Füllung (ca. 4–6 min)
 ssh 10.10.10.128 'cd ~/optimizer-tools && docker compose up -d && docker compose ps'
@@ -120,8 +138,9 @@ ssh 10.10.10.128 'docker exec node_red-node-red-1 cat /data/optimizer-tools/stat
 ```
 
 Update: dieselben Schritte (Bauen, `docker load`, ggf. `scp`), dann `docker compose up -d` (erstellt den Container mit dem neuen Image neu).
+Das Image-Tag steht in `compose.yml` als `optimizer-tools:${OT_TAG:-training-v2}`; zurück auf ein älteres Image: `OT_TAG=1 docker compose up -d` (das alte Image bleibt dafür geladen).
 
-**Watchtower** läuft auf der NAS für alle Container (03:00, mit Aufräumen). `compose.yml` setzt das Label `com.centurylinklabs.watchtower.enable: "false"`, damit Watchtower den Container nicht anfasst: Ein Abgleich mit Docker Hub ergäbe für das lokale Image `optimizer-tools:1` nur Fehler oder ein fremdes Image.
+**Watchtower** läuft auf der NAS für alle Container (03:00, mit Aufräumen). `compose.yml` setzt das Label `com.centurylinklabs.watchtower.enable: "false"`, damit Watchtower den Container nicht anfasst: Ein Abgleich mit Docker Hub ergäbe für das lokale Image `optimizer-tools:training-v2` (bzw. `:1`) nur Fehler oder ein fremdes Image.
 Kontrolle: `docker inspect -f '{{index .Config.Labels "com.centurylinklabs.watchtower.enable"}}' optimizer-tools` → `false`.
 
 Bauen direkt auf der NAS geht auch (Docker 29.6 mit buildx 0.33): den Repo-Stand dorthin kopieren und dort `docker build …` wie oben ausführen.
@@ -230,7 +249,7 @@ Ein `file in`-Knoten (Ausgabe: ein String, danach `json`) liest die Datei z. B. 
 | `Zeitlimit … überschritten` | NAS überlastet. Dauer in `letzter_lauf.schritte` ansehen und `TIMEOUT` in `ot.py` erhöhen |
 | Container `unhealthy` | Herzschlag älter als 3 min, `/daten` nicht lesbar oder `/ergebnis` nicht schreibbar: `docker inspect --format '{{json .State.Health}}' optimizer-tools` |
 | Training rot | `training/wp_training.md` zeigt den Fehler im Kopf |
-| `No such image: optimizer-tools:1` | Image fehlt auf der NAS: bauen oder `docker load` (siehe oben) |
+| `No such image: optimizer-tools:training-v2` | Image fehlt auf der NAS: bauen oder `docker load` (siehe oben) |
 
 ## Rückbau
 
@@ -240,7 +259,7 @@ docker compose down                                         # Container weg, Erg
 # Ergebnisse und Sicherungen löschen (vorher ggf. sichern): die Dateien gehören uid 10001, also mit dem Image selbst
 docker compose run --rm --entrypoint sh optimizer-tools -c 'rm -rf /ergebnis/* /ergebnis/.[!.]*'
 docker exec node_red-node-red-1 rmdir /data/optimizer-tools
-docker image rm optimizer-tools:1
+docker image rm optimizer-tools:training-v2 optimizer-tools:1
 rm -r ~/optimizer-tools
 ```
 

@@ -87,6 +87,75 @@ function koordinatensuche(start, schritte, kosten, runden) {                    
 }
 const rel = (fs0) => v => fs0.map(f => Math.round(v * f * 1e6) / 1e6);
 
+// ------------------------------------------------------------------ training-v2: Bindung an die Vorwerte, Glättung, Grenzen, Außentemperatur-Bänder
+// Bindung (nur in der Dünn-Daten-Phase): jeder Fit minimiert J = (Fehler / Bezugsfehler)² + λ · Σ ((Wert − Vorwert) / Skala)².
+//   Bezugsfehler: kleinste Quadrate → Fehler des ungebundenen Fits; Such-/Rasterverfahren → Fehler beim Vorwert. Skala = 25 % des Vorwerts
+//   (mindestens 25 % des Standardwerts aus PARAM, mindestens 0,001). λ = 0,1 (Standard) heißt: eine Änderung um 25 % kostet so viel wie 10 % mehr
+//   quadratischer Fehler. Gut bestimmte Parameter (Strom, Wärme) folgen den Daten, schwach bestimmte (AT-Glättung, Speicher) bleiben stehen.
+//   λ = 1 band in der Vorher/Nachher-Kette (12.–18.10.) zu fest an einen schlechten ersten Satz (Strom 19,3 statt 16,9 W, Pause 13,5 statt 10 min).
+// Glättung: übernommen = Vorwert + Anteil · (roh gelernt − Vorwert), Standard 1/3 je Nacht, für alle gefitteten/kalibrierten Parameter.
+const BIND_REL = 0.25, BINDUNG = 0.1;
+const SCHALTER = {startHystK: 5, comfortWiederK: 5};             // 99 = „aus“: für Glättung/Bindung auf 5 K begrenzt (wirkt ab ~3 K wie aus), ab 5 K wieder 99
+const GRENZEN = {ua: [0.05, 0.4], gain: [-0.5, 1.5], sonne: [0, 0.5], ch: [0.5, 30], cr: [0.1, 5], hr: [0.1, 2],                         // nur die Grenzen der Fits (lsqBox, Filter der Kandidatenlisten)
+                 hausAtTauMin: [1, 720], startK: [2.5, 3.5], stopK: [2.75, 3.5], startVerzugMin: [1, 25], stopHaltMin: [1, 6], eisRate: [0.0005, 0.5]};   // und die Such-/Rasterbereiche
+const BAENDER = [{id: 'unter0', name: '< 0 °C', lo: -Infinity, hi: 0}, {id: '0bis4', name: '0…4 °C', lo: 0, hi: 4}, {id: '4bis8', name: '4…8 °C', lo: 4, hi: 8},
+                 {id: '8bis12', name: '8…12 °C', lo: 8, hi: 12}, {id: 'ab12', name: '≥ 12 °C', lo: 12, hi: Infinity}];
+const ABDECKUNG = {laufMinBand: 300, tage: 21, baender: 3};       // Dünn-Daten-Phase: unter 21 Tagen oder unter 3 Bändern mit je ≥ 300 Laufminuten
+const KEINE_DATEN = 'keine Daten, Zwilling extrapoliert';
+// Gate (Champion gegen Herausforderer) über die Ampel-Kennzahlen; Grenzen wie GUETE_GRENZEN in docker/optimizer-tools/ot.py
+const GATE = {rel: 0.10, kennzahlen: [
+    {id: 'strom', name: 'Strom TOP16 RMSE (W)', wert: g => g.teil.pelRmseW, grenze: 40, tol: 0.5},
+    {id: 'wasserkreis', name: 'Wasserkreis RMSE (K)', wert: g => g.teil.wasserkreisRmseK, grenze: 1.5, tol: 0.02},
+    {id: 'pause', name: 'Pause Median-Fehler (min)', wert: g => g.zyklenHausSimuliert.pause.medianAbsMin, grenze: 30, tol: 1}]};
+const FIT_KEYS = {waerme: ['pthHz', 'pthHzAT', 'pthEnde'], strom: ['pel0', 'pelHz', 'pelRL', 'pelAT'], standby: ['pelPauseW', 'pelAusW'], pumpe: ['flowPause', 'flowComfort', 'flowEff', 'pumpe0', 'pumpeJeL'], luefter: ['fanQ', 'fanJeHz'],
+                  rohr: ['pipe0', 'pipeQ'], startStopp: ['stopK', 'stopHaltMin', 'startK', 'startVerzugMin', 'startHystK'], regler: ['regSenkK', 'regAbHzMin', 'comfortWiederK', 'effT1', 'effK1', 'effL1', 'effT2', 'effK2', 'effKp', 'effKi'],
+                  wasserkreis: ['cw', 'krad', 'cr', 'hr', 'kv'], zyklen: [], haus: ['ua', 'gain', 'ch', 'sonne', 'hausAtTauMin'], raeume: ['raeume'], vereisung: ['eisRate']};
+const GEFITTET = [].concat.apply([], Object.keys(FIT_KEYS).map(g => FIT_KEYS[g]));
+
+const bandOf = at => { if (at === null || at === undefined || !isFinite(at)) { return -1; } for (let i = 0; i < BAENDER.length; i++) { if (at >= BAENDER[i].lo && at < BAENDER[i].hi) { return i; } } return -1; };
+function skalaVon(v0, std) { return Math.max(BIND_REL * Math.abs(v0), typeof std === 'number' ? BIND_REL * Math.abs(std) : 0, 1e-3); }
+const schalterWert = (k, v) => SCHALTER[k] !== undefined && typeof v === 'number' ? Math.min(v, SCHALTER[k]) : v;
+function strafe(B, p) {                                                             // Σ ((Wert − Vorwert) / Skala)² über die Schlüssel von p (Zahlen und Zahlenlisten)
+    let s = 0;
+    Object.keys(p).forEach(k => {
+        const v = p[k], v0 = B.vor[k], st = Z.PARAM[k] ? Z.PARAM[k][0] : null;
+        if (typeof v === 'number' && typeof v0 === 'number') { const b = schalterWert(k, v0), d = (schalterWert(k, v) - b) / skalaVon(b, st); s += d * d; }
+        else if (Array.isArray(v) && Array.isArray(v0) && v.length === v0.length) { v.forEach((x, i) => { if (typeof x === 'number' && typeof v0[i] === 'number') { const d = (x - v0[i]) / skalaVon(v0[i], Array.isArray(st) ? st[i] : null); s += d * d; } }); }
+    });
+    return s;
+}
+function gebunden(B, keys, kosten) {                                               // Kostenfunktion einer Such-/Rastermethode mit Bindung; ohne B unverändert
+    if (!B) { return {kosten: kosten, start: null}; }
+    const vor = {}; keys.forEach(k => { vor[k] = clone(B.vor[k]); });
+    const c0 = Math.max(1e-9, kosten(vor));
+    return {kosten: p => { const c = kosten(p) / c0, q = {}; keys.forEach(k => { q[k] = p[k]; }); return c * c + B.lambda * strafe(B, q); }, start: vor, c0: c0};
+}
+function lsqBind(X, y, x0, s, lam, lo, hi) {                                       // kleinste Quadrate (mit Grenzen) und Bindung an x0: λ · SSE_ungebunden · ((x − x0)/s)² als Zusatzzeilen
+    const f0 = lo ? lsqBox(X, y, lo, hi) : lsq(X, y);
+    if (!lam || !x0 || !f0 || x0.some(v => typeof v !== 'number' || !isFinite(v))) { return f0; }
+    const sse = Math.max(1e-9, f0.rmse * f0.rmse * f0.n), Xa = X.slice(), ya = y.slice();
+    x0.forEach((v, j) => { const w = Math.sqrt(lam * sse) / s[j], row = new Array(x0.length).fill(0); row[j] = w; Xa.push(row); ya.push(w * v); });
+    const f = lo ? lsqBox(Xa, ya, lo, hi) : lsq(Xa, ya);
+    const res = X.map((r, i) => r.reduce((a, v, j) => a + v * f.x[j], 0) - y[i]);
+    return {x: f.x, rmse: rmse(res), n: X.length, rmseUngebunden: f0.rmse};
+}
+const skalen = (B, keys) => keys.map(k => skalaVon(B.vor[k], Z.PARAM[k] ? Z.PARAM[k][0] : null));
+function glaette(alt, neu, a, k) {                                                 // übernommen = alt + a · (neu − alt), elementweise; ohne passenden Vorwert: neu
+    if (typeof neu === 'number' && typeof alt === 'number') {
+        if (SCHALTER[k] !== undefined) { const c = SCHALTER[k], x = Math.min(alt, c) + a * (Math.min(neu, c) - Math.min(alt, c)); return x >= c - 1e-9 ? 99 : rd(x, 6); }
+        return rd(alt + a * (neu - alt), 6);
+    }
+    if (Array.isArray(neu) && Array.isArray(alt) && neu.length === alt.length) { return neu.map((v, i) => glaette(alt[i], v, a, k)); }
+    if (neu && alt && typeof neu === 'object' && typeof alt === 'object' && !Array.isArray(neu) && !Array.isArray(alt)) { const o = {}; Object.keys(neu).forEach(j => { o[j] = j in alt ? glaette(alt[j], neu[j], a, k) : clone(neu[j]); }); return o; }
+    return clone(neu);
+}
+function begrenze(k, v) { const g = GRENZEN[k]; return g && typeof v === 'number' ? Math.max(g[0], Math.min(g[1], v)) : v; }
+function glaetteSatz(alt, neu, a) {                                                // ganzer Parametersatz: gefittete Schlüssel geglättet und begrenzt, alle anderen wie neu (PARAM)
+    const o = {};
+    Object.keys(neu).forEach(k => { o[k] = GEFITTET.indexOf(k) >= 0 && alt && k in alt ? begrenze(k, glaette(alt[k], neu[k], a, k)) : clone(neu[k]); });
+    return o;
+}
+
 // ------------------------------------------------------------------ Daten
 function monateIn(dir) { return fs.readdirSync(dir).map(f => /^quiet-(\d{4}-\d\d)\.csv$/.exec(f)).filter(Boolean).map(m => m[1]).sort(); }
 function lade(dir, monate, tage) {                                                  // monate: Liste 'JJJJ-MM' (Standard: alle quiet-*.csv im Ordner); tage: nur die letzten n Kalendertage
@@ -153,18 +222,20 @@ const inTage = (m, r) => m.tag >= r[0] && m.tag <= r[1];
 // ------------------------------------------------------------------ Teil-Fits (je Funktion: Daten → Werte + Fit-Kennzahl)
 function stabil(D, r) { return D.M.filter(m => m.ok && inTage(m, r) && m.lauf && m.rm !== null && m.rm >= 5 && !m.def && m.pth > 0 && m.flow > 5 && m.pel > 0 && m.at !== null && m.rl !== null); }
 function vlRelVor(D, m) { const i = (m.t - D.M[0].t) / MIN, v = D.M[Math.max(0, i - 1)]; return v.vl !== null && m.soll !== null ? v.vl - m.soll : 0; }
-function fitPth(D, r) {
-    const S = stabil(D, r);
-    const f = lsq(S.map(m => [m.hz, m.hz * (m.at - 5), m.hz * Math.max(0, vlRelVor(D, m) - 1)]), S.map(m => m.pth));
+function fitPth(D, r, B) {
+    const S = stabil(D, r), X = S.map(m => [m.hz, m.hz * (m.at - 5), m.hz * Math.max(0, vlRelVor(D, m) - 1)]), y = S.map(m => m.pth);
+    const f = B ? lsqBind(X, y, [B.vor.pthHz, B.vor.pthHzAT, B.vor.pthEnde * B.vor.pthHz], skalen(B, ['pthHz', 'pthHzAT']).concat([skalen(B, ['pthEnde'])[0] * Math.abs(B.vor.pthHz)]), B.lambda) : lsq(X, y);
     return {pthHz: rd(f.x[0], 3), pthHzAT: rd(f.x[1], 4), pthEnde: rd(f.x[2] / f.x[0], 4), _fit: {n: f.n, rmseW: rd(f.rmse, 1), modell: 'Pth = Hz · (a + b · (AT − 5)) · (1 + c · max(0, VL − Soll − 1))'}};
 }
-function fitPel(D, r) { const S = stabil(D, r); const f = lsq(S.map(m => [1, m.hz, m.hz * m.rl, m.hz * m.at]), S.map(m => m.pel)); return {pel0: rd(f.x[0], 2), pelHz: rd(f.x[1], 4), pelRL: rd(f.x[2], 5), pelAT: rd(f.x[3], 5), _fit: {n: f.n, rmseW: rd(f.rmse, 1), modell: 'TOP16 = c0 + Hz · (c1 + c2 · RL + c3 · AT)', dPel_dRL_16_5Hz: rd(f.x[2] * 16.5, 2), dPel_dAT_16_5Hz: rd(f.x[3] * 16.5, 2)}}; }
+function fitPel(D, r, B) {
+    const S = stabil(D, r), X = S.map(m => [1, m.hz, m.hz * m.rl, m.hz * m.at]), y = S.map(m => m.pel), K = ['pel0', 'pelHz', 'pelRL', 'pelAT'];
+    const f = B ? lsqBind(X, y, K.map(k => B.vor[k]), skalen(B, K), B.lambda) : lsq(X, y); return {pel0: rd(f.x[0], 2), pelHz: rd(f.x[1], 4), pelRL: rd(f.x[2], 5), pelAT: rd(f.x[3], 5), _fit: {n: f.n, rmseW: rd(f.rmse, 1), modell: 'TOP16 = c0 + Hz · (c1 + c2 · RL + c3 · AT)', dPel_dRL_16_5Hz: rd(f.x[2] * 16.5, 2), dPel_dAT_16_5Hz: rd(f.x[3] * 16.5, 2)}}; }
 function fitStandby(D, r) {
     const p = D.M.filter(m => m.ok && inTage(m, r) && !m.lauf && m.pel !== null);
     const a = p.filter(m => m.pumpe).map(m => m.pel), b = p.filter(m => !m.pumpe).map(m => m.pel);
     return {pelPauseW: a.length ? median(a) : Z.PARAM.pelPauseW[0], pelAusW: b.length ? median(b) : Z.PARAM.pelAusW[0], _fit: {nPause: a.length, nAus: b.length}};
 }
-function fitFlow(D, r) {
+function fitFlow(D, r, B) {
     const R = D.M.filter(m => m.ok && inTage(m, r) && m.lauf && !m.def && m.flow > 5 && m.rm !== null);
     const pf = D.M.filter(m => m.ok && inTage(m, r) && !m.lauf && m.pumpe && m.flow < 30).map(m => m.flow);
     const cf = R.filter(m => m.hc === 0).map(m => m.flow);
@@ -172,13 +243,17 @@ function fitFlow(D, r) {
     const flowPause = rd(median(pf), 2), flowComfort = cf.length >= 60 ? rd(median(cf), 2) : flowPause;
     // Rastersuche für das Efficiency-Profil gegen die Minutenwerte
     let best = null;
+    const H = {}; eff.forEach(m => { const h = H[m.rm] || (H[m.rm] = {n: 0, s1: 0, s2: 0}); h.n++; h.s1 += m.flow; h.s2 += m.flow * m.flow; });   // je Laufminute: Anzahl, Σ, Σ² (gleiche SSE, ~30× schneller)
+    const HK = Object.keys(H).map(Number).sort((x, y) => x - y);
+    const sse = v => { const P = {flowEff: v, flowComfort: flowPause}; let s = 0; for (let j = 0; j < HK.length; j++) { const h = H[HK[j]], f = Z.flowEffOf(P, HK[j]); s += h.n * f * f - 2 * f * h.s1 + h.s2; } return Math.max(0, s); };
+    const s0 = B && Array.isArray(B.vor.flowEff) ? Math.max(1e-9, sse(B.vor.flowEff)) : null;     // Bindung: J = SSE / SSE(Vorwert) + λ · Strafe
     for (let a = 10; a <= 40; a += 1) { for (let b = 15; b <= 26; b += 0.5) { for (let c = a + 5; c <= 80; c += 5) { for (let d = c + 10; d <= 150; d += 5) {
-        const P = {flowEff: [a, b, c, d], flowComfort: flowPause}; let s = 0;
-        for (let i = 0; i < eff.length; i++) { const e = Z.flowEffOf(P, eff[i].rm) - eff[i].flow; s += e * e; }
-        if (!best || s < best.s - 1e-9) { best = {s: s, v: [a, b, c, d]}; }
+        const v = [a, b, c, d], s = sse(v), j = s0 ? s / s0 + B.lambda * strafe(B, {flowEff: v}) : s;
+        if (!best || j < best.j - 1e-9) { best = {s: s, j: j, v: v}; }
     } } } }
     const sp = D.M.filter(m => m.ok && inTage(m, r) && m.pumpe && m.pump > 0 && m.flow > 5 && m.flow < 30);
-    const f = lsq(sp.map(m => [1, m.flow - flowPause]), sp.map(m => m.pump));
+    const Xp = sp.map(m => [1, m.flow - flowPause]), yp = sp.map(m => m.pump);
+    const f = B ? lsqBind(Xp, yp, [B.vor.pumpe0, B.vor.pumpeJeL], skalen(B, ['pumpe0', 'pumpeJeL']), B.lambda) : lsq(Xp, yp);
     return {flowPause: flowPause, flowComfort: flowComfort, flowEff: best.v, pumpe0: rd(f.x[0], 0), pumpeJeL: rd(f.x[1], 1), _fit: {nEff: eff.length, rmseEff: rd(Math.sqrt(best.s / Math.max(1, eff.length)), 2), nComfort: cf.length, comfortQuelle: cf.length >= 60 ? 'gemessen' : 'zu wenig Comfort-Minuten, wie Pause', rmsePumpe: rd(f.rmse, 0)}};
 }
 function fitFan(D, r, P) {
@@ -190,11 +265,12 @@ function fitFan(D, r, P) {
     const fq = [0, 1, 2, 3].map(q => cnt[q] >= 200 ? Math.round(f.x[q]) : P.fanQ[q]);          // erst ab 200 min je Stufe, sonst Messtabelle
     return {fanQ: fq, fanJeHz: rd(f.x[4], 2), _fit: {n: f.n, rmse: rd(f.rmse, 0), minutenJeQuiet: cnt}};
 }
-function fitPipe(D, r, P) {
+function fitPipe(D, r, P, B) {
     let S = stabil(D, r).filter(m => m.pipe !== null && m.fan > 0), quelle = 'Trainingstage';
     if (S.length < 300) { S = D.M.filter(m => m.ok && m.lauf && m.rm >= 5 && !m.def && m.pth > 0 && m.pel > 0 && m.pipe !== null && m.fan > 0); quelle = 'alle Tage (Spalte rohr_aussen erst ab 14.10.; keine Testtrennung)'; }
     if (S.length < 100) { return {_fit: {n: S.length, quelle: 'zu wenig Daten, Vorgabe'}}; }
-    const f = lsq(S.map(m => [1, Math.max(0, m.pth - m.pel) / 1000 * 300 / m.fan]), S.map(m => m.at - m.pipe));
+    const X = S.map(m => [1, Math.max(0, m.pth - m.pel) / 1000 * 300 / m.fan]), y = S.map(m => m.at - m.pipe);
+    const f = B ? lsqBind(X, y, [B.vor.pipe0, B.vor.pipeQ], skalen(B, ['pipe0', 'pipeQ']), B.lambda) : lsq(X, y);
     return {pipe0: rd(f.x[0], 3), pipeQ: rd(f.x[1], 3), _fit: {n: f.n, rmseK: rd(f.rmse, 2), quelle: quelle, atBereich: [Math.min.apply(null, S.map(m => m.at)), Math.max.apply(null, S.map(m => m.at))]}};
 }
 // Stopp: Vorlauf ≥ Soll + K für H Minuten am Stück; Fehler je Lauf (nur Abschaltung über den Vorlauf)
@@ -225,17 +301,20 @@ function startFehler(D, r, K, Dv, Hy) {
     });
     return err;
 }
-function fitStartStopp(D, r) {
+function fitStartStopp(D, r, B) {
     let bs = null, bt = null;
-    [2.75, 3.0, 3.25, 3.5].forEach(K => { [1, 2, 3, 4, 5, 6].forEach(H => { const e = stoppFehler(D, r, K, H), c = mean(e.map(Math.abs)); if (e.length && (!bs || c < bs.c - 1e-9)) { bs = {c: c, K: K, H: H, n: e.length, bias: mean(e)}; } }); });
-    [2.5, 2.75, 3.0, 3.25, 3.5].forEach(K => { [0.25, 0.5, 0.75, 1.0, 99].forEach(Hy => { for (let Dv = 1; Dv <= 25; Dv++) { const e = startFehler(D, r, K, Dv, Hy), c = mean(e.map(Math.abs)); if (e.length && (!bt || c < bt.c - 1e-9)) { bt = {c: c, K: K, D: Dv, Hy: Hy, n: e.length, bias: mean(e), med: median(e.map(Math.abs))}; } } }); });
+    const maeS = (K, H) => mean(stoppFehler(D, r, K, H).map(Math.abs)), maeT = (K, Dv, Hy) => mean(startFehler(D, r, K, Dv, Hy).map(Math.abs));
+    const c0s = B ? maeS(B.vor.stopK, B.vor.stopHaltMin) : null, c0t = B ? maeT(B.vor.startK, B.vor.startVerzugMin, B.vor.startHystK) : null;   // Bindung: J = (MAE / MAE(Vorwert))² + λ · Strafe
+    const js = (c, p) => c0s ? Math.pow(c / Math.max(1e-9, c0s), 2) + B.lambda * strafe(B, p) : c, jt = (c, p) => c0t ? Math.pow(c / Math.max(1e-9, c0t), 2) + B.lambda * strafe(B, p) : c;
+    [2.75, 3.0, 3.25, 3.5].forEach(K => { [1, 2, 3, 4, 5, 6].forEach(H => { const e = stoppFehler(D, r, K, H), c = mean(e.map(Math.abs)), j = e.length ? js(c, {stopK: K, stopHaltMin: H}) : null; if (e.length && (!bs || j < bs.j - 1e-9)) { bs = {c: c, j: j, K: K, H: H, n: e.length, bias: mean(e)}; } }); });
+    [2.5, 2.75, 3.0, 3.25, 3.5].forEach(K => { [0.25, 0.5, 0.75, 1.0, 99].forEach(Hy => { for (let Dv = 1; Dv <= 25; Dv++) { const e = startFehler(D, r, K, Dv, Hy), c = mean(e.map(Math.abs)), j = e.length ? jt(c, {startK: K, startVerzugMin: Dv, startHystK: Hy}) : null; if (e.length && (!bt || j < bt.j - 1e-9)) { bt = {c: c, j: j, K: K, D: Dv, Hy: Hy, n: e.length, bias: mean(e), med: median(e.map(Math.abs))}; } } }); });
     const o = {_fit: {}};
     if (bs) { o.stopK = bs.K; o.stopHaltMin = bs.H; o._fit.stopp = {n: bs.n, maeMin: rd(bs.c, 2), biasMin: rd(bs.bias, 2)}; }
     if (bt) { o.startK = bt.K; o.startVerzugMin = bt.D; o.startHystK = bt.Hy; o._fit.start = {n: bt.n, maeMin: rd(bt.c, 2), medianMin: bt.med, biasMin: rd(bt.bias, 2)}; }
     return o;
 }
 // Regler: offene Schleife mit gemessenem Vorlauf/Soll/Quiet/Heizregelung → Frequenz
-function reglerFehler(D, r, P) {
+function reglerFehler(D, r, P, samm) {                                            // samm (optional): Liste {at, e} je Minute (Güte je Außentemperatur-Band)
     let s = 0, n = 0;
     D.runs.filter(x => x.okAll && inTage(D.M[x.i0], r)).forEach(x => {
         let lvl = 0, ab = false;
@@ -243,17 +322,18 @@ function reglerFehler(D, r, P) {
             const m = D.M[i], v = D.M[Math.max(x.i0, i - 1)];
             if (m.def || m.at === null || m.soll === null) { continue; }
             const res = Z.regler(P, lvl, {at: Math.round(m.at), soll: m.soll, vl: i === x.i0 ? D.M[i - 1].vl : v.vl, q: m.q === null ? 3 : m.q, hc: m.hc, rt: i - x.i0, nachAbtau: 999, comfortAb: ab});
-            lvl = res.lvl; ab = res.ab; const e = res.hz - m.hz; s += e * e; n++;
+            lvl = res.lvl; ab = res.ab; const e = res.hz - m.hz; s += e * e; n++; if (samm) { samm.push({at: m.at, e: e}); }
         }
     });
     return {rmse: Math.sqrt(s / Math.max(1, n)), n: n};
 }
-function fitRegler(D, r, P0) {
+function fitRegler(D, r, P0, B) {
     const keys = ['regSenkK', 'regAbHzMin', 'comfortWiederK', 'effT1', 'effK1', 'effL1', 'effT2', 'effK2', 'effKp', 'effKi'];
     const start = {}; keys.forEach(k => { start[k] = P0[k]; });
     const sch = {regSenkK: () => [0.75, 1, 1.25, 1.5, 1.75, 2], regAbHzMin: () => [0.25, 0.5, 1, 1.5, 2, 3], comfortWiederK: () => [0.5, 1, 1.5, 2, 3, 99], effT1: () => [12, 15, 18, 19, 20, 22, 25, 30], effK1: () => [1.5, 1.75, 2, 2.25, 2.5, 3, 4],
                  effL1: () => [19, 20, 21, 22], effT2: () => [30, 33, 36, 39, 42, 45], effK2: () => [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2], effKp: () => [2, 2.5, 3, 3.5, 4, 5], effKi: () => [0, 0.02, 0.05, 0.1, 0.2]};
-    const k = koordinatensuche(start, sch, p => reglerFehler(D, r, Object.assign({}, P0, p)).rmse, 4);
+    const G = gebunden(B, keys, p => reglerFehler(D, r, Object.assign({}, P0, p)).rmse);
+    const k = koordinatensuche(G.start || start, sch, G.kosten, 4);
     const f = reglerFehler(D, r, Object.assign({}, P0, k.p));
     return Object.assign({}, k.p, {_fit: {n: f.n, rmseHz: rd(f.rmse, 3), auswertungen: k.n}});
 }
@@ -261,7 +341,7 @@ function fitRegler(D, r, P0) {
 // Neustart je Segment aus der Messung (Fühler im 0,25-K-Raster)
 function twAus(P, vl, rl, flow, tr) { const md = Math.max(1, flow) * Z.CP; let tw = (vl + rl) / 2; for (let k = 0; k < 6; k++) { tw = rl + Z.qrad(P, tw, tr) / (2 * md); } return tw; }
 function initKreis(P, vl, rl, flow, th) { let tw = (vl + rl) / 2 + 0.5, tr = th; for (let k = 0; k < 6; k++) { tr = Z.trAus(P, tw, th); tw = twAus(P, vl, rl, flow, tr); } return {tw: tw, tr: tr}; }
-function hydraulikFehler(D, r, P, segMin) {
+function hydraulikFehler(D, r, P, segMin, samm) {
     const e = [];
     let k = null, seg = 0;
     for (let i = 1; i < D.M.length; i++) {
@@ -271,18 +351,19 @@ function hydraulikFehler(D, r, P, segMin) {
         const md = m.flow * Z.CP, pth = m.lauf ? Math.max(0, md * (m.vl - m.rl)) : 0;
         const h = Z.heizkreis(P, k.tw, k.tr, m.th, pth); k = {tw: h.tw, tr: h.tr}; seg++;
         const rl = k.tw - Z.qrad(P, k.tw, k.tr) / (2 * md), vl = rl + pth / md;
-        if (seg > 1) { e.push(vl - m.vl, rl - m.rl); }
+        if (seg > 1) { e.push(vl - m.vl, rl - m.rl); if (samm) { samm.push({at: m.at, e: vl - m.vl}, {at: m.at, e: rl - m.rl}); } }
     }
     return {rmse: rmse(e), n: e.length / 2};
 }
-function fitHydraulik(D, r, P0) {
+function fitHydraulik(D, r, P0, B) {
     const SEG = 360, R8 = rel([0.5, 0.7, 0.85, 0.93, 1.07, 1.18, 1.4, 2]);
-    const k = koordinatensuche({cw: P0.cw, krad: P0.krad, cr: P0.cr, hr: P0.hr, kv: P0.kv}, {cw: R8, krad: R8, cr: v => R8(v).filter(x => x >= 0.1 && x <= 5), hr: v => R8(v).filter(x => x >= 0.1 && x <= 2), kv: v => [0, 0.05, 0.1, 0.15, 0.2, 0.3, 0.4, 0.6].concat([rd(v * 0.9, 4), rd(v * 1.1, 4)])}, p => hydraulikFehler(D, r, Object.assign({}, P0, p), SEG).rmse, 10);
+    const G = gebunden(B, ['cw', 'krad', 'cr', 'hr', 'kv'], p => hydraulikFehler(D, r, Object.assign({}, P0, p), SEG).rmse);
+    const k = koordinatensuche(G.start || {cw: P0.cw, krad: P0.krad, cr: P0.cr, hr: P0.hr, kv: P0.kv}, {cw: R8, krad: R8, cr: v => R8(v).filter(x => x >= 0.1 && x <= 5), hr: v => R8(v).filter(x => x >= 0.1 && x <= 2), kv: v => [0, 0.05, 0.1, 0.15, 0.2, 0.3, 0.4, 0.6].concat([rd(v * 0.9, 4), rd(v * 1.1, 4)])}, G.kosten, 10);
     const f = hydraulikFehler(D, r, Object.assign({}, P0, k.p), SEG);
     return {cw: rd(k.p.cw, 4), krad: rd(k.p.krad, 5), cr: rd(k.p.cr, 4), hr: rd(k.p.hr, 4), kv: rd(k.p.kv, 4), _fit: {n: f.n, rmseK: rd(f.rmse, 3), segmentMin: SEG, nrad: P0.nrad}};
 }
 // Haus: Simulation des Hausmittels; Heizkörper-Mittel aus der Messung, schneller Knoten simuliert; Segmente segMin; Fehler nur bei AT ≤ kaltBis (Heizbetrieb, winterrelevant)
-function hausFehler(D, r, P, segMin, kaltBis) {
+function hausFehler(D, r, P, segMin, kaltBis, samm) {
     segMin = segMin || 1440; kaltBis = kaltBis === undefined ? 99 : kaltBis;
     const e = []; let th = null, tr = null, seg = 0, twL = null, atH = null;
     for (let i = 0; i < D.M.length; i++) {
@@ -294,7 +375,7 @@ function hausFehler(D, r, P, segMin, kaltBis) {
         if (m.pumpe && m.vl !== null && m.rl !== null && !m.def) { twL = twAus(P, m.vl, m.rl, m.flow, tr); }
         const h = Z.heizkreis(P, twL, tr, th, 0); tr = h.tr; if (!(m.pumpe && m.vl !== null && m.rl !== null && !m.def)) { twL = h.tw; }      // Pumpe aus: Heizkörper kühlen nach dem Modell aus
         th = Z.hausSchritt(P, th, h.qh, atH, m.pv); seg++;
-        if (m.th !== null && seg > 1 && m.at <= kaltBis) { e.push(th - m.th); }
+        if (m.th !== null && seg > 1 && m.at <= kaltBis) { e.push(th - m.th); if (samm) { samm.push({at: m.at, e: th - m.th}); } }
     }
     return {rmse: rmse(e), n: e.length, bias: mean(e)};
 }
@@ -312,21 +393,22 @@ function hausFenster(D, r, P, stunden, schritt) {                               
     }
     return W;
 }
-function fitHaus(D, r, P0) {
+function fitHaus(D, r, P0, B) {
     // (1) Energiebilanz (Plausibilität, Startwert): 24-h-Fenster alle 2 h, Vorwert Auslegung (5 kW bei −13 °C → UA 0,154 kW/K bei 0,3 kW Gewinnen) als 2 Pseudo-Tage
     const W = hausFenster(D, r, P0, 24, 2), ch0 = P0.ch, ua0 = 0.154, g0 = 0.3, X = [], y = [];
     W.forEach(w => { X.push([w.kh, -w.h, -w.pv]); y.push(w.q - ch0 * w.dth); });
     [-5, 10].forEach(atp => { const kh = 24 * (21.3 - atp); for (let k = 0; k < 12; k++) { X.push([kh, -24, 0]); y.push(ua0 * kh - g0 * 24); } });
     let st = {ua: P0.ua, gain: P0.gain, ch: P0.ch, hausAtTauMin: P0.hausAtTauMin}, sonne = P0.sonne, bil = {fenster24h: W.length};
     if (W.length >= 12) {
-        const f = lsqBox(X, y, [0.05, -0.5, 0], [0.4, 1.5, 0.5]);
+        const f = B ? lsqBind(X, y, [B.vor.ua, B.vor.gain, B.vor.sonne], skalen(B, ['ua', 'gain', 'sonne']), B.lambda, [0.05, -0.5, 0], [0.4, 1.5, 0.5]) : lsqBox(X, y, [0.05, -0.5, 0], [0.4, 1.5, 0.5]);
         st.ua = rd(f.x[0], 4); st.gain = rd(f.x[1], 4); sonne = rd(f.x[2], 4);
         bil = {fenster24h: W.length, ua: st.ua, gain: st.gain, sonne: sonne, bilanzpunktC: rd(21.3 - st.gain / st.ua, 1), vorwert: 'UA 0,154 kW/K, Gewinne 0,3 kW als 2 Pseudo-Tage (−5/+10 °C)'};
     }
     // (2) Simulation des Hausmittels über 48-h-Segmente, Fehler nur bei AT ≤ 8 °C (Heizbetrieb, für den Winter maßgeblich)
     const P1 = Object.assign({}, P0, {sonne: sonne});
-    const k = koordinatensuche(st, {ua: rel([0.7, 0.85, 0.93, 1.07, 1.18, 1.4]), gain: v => [-0.3, -0.15, -0.05, 0.05, 0.15, 0.3].map(d => rd(v + d, 4)), ch: v => rel([0.5, 0.7, 0.85, 1.18, 1.4, 2])(v).filter(x => x >= 0.5 && x <= 30), hausAtTauMin: () => [1, 60, 120, 240, 480, 720]},
-        p => hausFehler(D, r, Object.assign({}, P1, p), 2880, 8).rmse, 8);
+    const G = gebunden(B, ['ua', 'gain', 'ch', 'hausAtTauMin'], p => hausFehler(D, r, Object.assign({}, P1, p), 2880, 8).rmse);
+    const k = koordinatensuche(G.start || st, {ua: rel([0.7, 0.85, 0.93, 1.07, 1.18, 1.4]), gain: v => [-0.3, -0.15, -0.05, 0.05, 0.15, 0.3].map(d => rd(v + d, 4)), ch: v => rel([0.5, 0.7, 0.85, 1.18, 1.4, 2])(v).filter(x => x >= 0.5 && x <= 30), hausAtTauMin: () => [1, 60, 120, 240, 480, 720]},
+        G.kosten, 8);
     const f = hausFehler(D, r, Object.assign({}, P1, k.p), 2880, 8), fa = hausFehler(D, r, Object.assign({}, P1, k.p), 1440);
     return {ua: rd(k.p.ua, 4), gain: rd(k.p.gain, 4), ch: rd(k.p.ch, 3), hausAtTauMin: k.p.hausAtTauMin, sonne: sonne,
             _fit: {n: f.n, rmseKKalt: rd(f.rmse, 3), biasKKalt: rd(f.bias, 3), rmseKAlle24h: rd(fa.rmse, 3), hausmittel: HAUS_RAEUME.join(' + '), bilanzpunktC: rd(21.3 - k.p.gain / k.p.ua, 1),
@@ -338,10 +420,11 @@ function zyklusVerlust(D, r, P) {
     const z = zyklen(D, r, P, false, true), h = hydraulikFehler(D, r, P, 360);
     return {verlust: h.rmse / 0.8 + z.logFehler / 0.3, hyd: h.rmse, log: z.logFehler};
 }
-function fitZyklen(D, r, P0) {
+function fitZyklen(D, r, P0, B) {
     const R6 = rel([0.7, 0.85, 0.93, 1.07, 1.18, 1.4]);
+    const G = gebunden(B, ['cw', 'krad', 'cr', 'hr', 'kv'], p => zyklusVerlust(D, r, Object.assign({}, P0, p)).verlust);
     const k = koordinatensuche({cw: P0.cw, krad: P0.krad, cr: P0.cr, hr: P0.hr, kv: P0.kv}, {cw: R6, krad: R6, cr: v => R6(v).filter(x => x >= 0.1 && x <= 5), hr: v => R6(v).filter(x => x >= 0.1 && x <= 2), kv: v => [0, 0.05, 0.1, 0.2, 0.3].concat([rd(v * 0.8, 4), rd(v * 1.25, 4)])},
-        p => zyklusVerlust(D, r, Object.assign({}, P0, p)).verlust, 4);
+        G.kosten, 4);
     const v0 = zyklusVerlust(D, r, P0), v1 = zyklusVerlust(D, r, Object.assign({}, P0, k.p));
     return {cw: rd(k.p.cw, 4), krad: rd(k.p.krad, 5), cr: rd(k.p.cr, 4), hr: rd(k.p.hr, 4), kv: rd(k.p.kv, 4), _fit: {vorher: {verlust: rd(v0.verlust, 3), wasserkreisRmseK: rd(v0.hyd, 3), logFehler: rd(v0.log, 3)}, nachher: {verlust: rd(v1.verlust, 3), wasserkreisRmseK: rd(v1.hyd, 3), logFehler: rd(v1.log, 3)}, auswertungen: k.n}};
 }
@@ -360,11 +443,17 @@ function raumZeilen(D, r, P, id, tau) {
     }
     return {X: X, y: y, ix: ix};
 }
-function fitRaeume(D, r, P0) {
+function fitRaeume(D, r, P0, B) {
     const out = {raeume: {}, _fit: {}};
     RAEUME.forEach(id => {
         let best = null;
-        [30, 60, 120, 240, 480].forEach(tau => { const Zr = raumZeilen(D, r, P0, id, tau); if (Zr.X.length < 300) { return; } const f = lsqBox(Zr.X, Zr.y, [-10, 0, -0.3, 0], [10, 0.5, 0.3, 2]); if (!best || f.rmse < best.f.rmse - 1e-12) { best = {f: f, tau: tau}; } });
+        const v0 = B && B.vor.raeume && Array.isArray(B.vor.raeume[id]) && B.vor.raeume[id].length >= 5 ? B.vor.raeume[id] : null;
+        const sk = v0 ? v0.slice(0, 5).map((v, i) => skalaVon(v, Z.PARAM.raeume[0][id] ? Z.PARAM.raeume[0][id][i] : null)) : null;
+        const pen = (x, tau) => { let s = 0; x.forEach((v, i) => { s += Math.pow((v - v0[i]) / sk[i], 2); }); return s + Math.pow((tau - v0[4]) / sk[4], 2); };
+        const kand = [];
+        [30, 60, 120, 240, 480].forEach(tau => { const Zr = raumZeilen(D, r, P0, id, tau); if (Zr.X.length < 300) { return; } const f = v0 ? lsqBind(Zr.X, Zr.y, v0.slice(0, 4), sk.slice(0, 4), B.lambda, [-10, 0, -0.3, 0], [10, 0.5, 0.3, 2]) : lsqBox(Zr.X, Zr.y, [-10, 0, -0.3, 0], [10, 0.5, 0.3, 2]); kand.push({f: f, tau: tau}); });
+        const ref = v0 && kand.length ? Math.max(1e-9, Math.min.apply(null, kand.map(c => c.f.rmseUngebunden !== undefined ? c.f.rmseUngebunden : c.f.rmse))) : null;   // Bindung: J = (RMSE / bester ungebundener RMSE)² + λ · Strafe (Koeffizienten und tau)
+        kand.forEach(c => { c.j = v0 ? Math.pow(c.f.rmse / ref, 2) + B.lambda * pen(c.f.x, c.tau) : c.f.rmse; if (!best || c.j < best.j - 1e-12) { best = c; } });
         if (!best) { out.raeume[id] = P0.raeume[id]; out._fit[id] = {n: 0, quelle: 'zu wenig Daten, Vorgabe'}; return; }
         const Zr = raumZeilen(D, r, P0, id, best.tau), x1 = Zr.X.map(x => x[1]), x2 = Zr.X.map(x => x[2]);
         const bereich = [Math.min.apply(null, x1), Math.max.apply(null, x1), Math.min.apply(null, x2), Math.max.apply(null, x2)].map(v => rd(v, 2));
@@ -401,21 +490,23 @@ function kalibriereEis(P0) {
 }
 
 // ------------------------------------------------------------------ Alles fitten
-function fitAlles(D, r) {
+// B (optional, training-v2): Bindung an die Vorwerte {vor: Parametersatz (Z.mitWerten), lambda}; null = ungebunden wie bisher
+function fitAlles(D, r, B) {
     let P = Z.standard(); const fit = {};
     const nimm = (name, o) => { fit[name] = o._fit || {}; Object.keys(o).forEach(k => { if (k !== '_fit') { P[k] = o[k]; } }); };
-    nimm('waerme', fitPth(D, r));
-    nimm('strom', fitPel(D, r));
+    B = B && B.vor && B.lambda > 0 ? B : null;
+    nimm('waerme', fitPth(D, r, B));
+    nimm('strom', fitPel(D, r, B));
     nimm('standby', fitStandby(D, r));
-    nimm('pumpe', fitFlow(D, r));
+    nimm('pumpe', fitFlow(D, r, B));
     nimm('luefter', fitFan(D, r, P));
-    nimm('rohr', fitPipe(D, r, P));
-    nimm('startStopp', fitStartStopp(D, r));
-    nimm('regler', fitRegler(D, r, P));
-    nimm('wasserkreis', fitHydraulik(D, r, P));
-    nimm('zyklen', fitZyklen(D, r, P));
-    nimm('haus', fitHaus(D, r, P));
-    nimm('raeume', fitRaeume(D, r, P));
+    nimm('rohr', fitPipe(D, r, P, B));
+    nimm('startStopp', fitStartStopp(D, r, B));
+    nimm('regler', fitRegler(D, r, P, B));
+    nimm('wasserkreis', fitHydraulik(D, r, P, B));
+    nimm('zyklen', fitZyklen(D, r, P, B));
+    nimm('haus', fitHaus(D, r, P, B));
+    nimm('raeume', fitRaeume(D, r, P, B));
     nimm('vereisung', kalibriereEis(P));
     return {P: P, fit: fit};
 }
@@ -433,12 +524,14 @@ function teilGuete(D, r, P) {
     const kWhPth = [S.reduce((s, m) => s + Z.pthOf(P, m.hz, m.at, vlRelVor(D, m)), 0) / 60000, S.reduce((s, m) => s + m.pth, 0) / 60000];
     const pp = D.M.filter(m => m.ok && inTage(m, r) && m.pipe !== null && m.lauf && m.rm >= 5 && !m.def && m.pth > 0 && m.pel > 0 && m.fan > 0);
     const ePipe = pp.map(m => (m.at - (P.pipe0 + P.pipeQ * Math.max(0, m.pth - m.pel) / 1000 * 300 / m.fan)) - m.pipe);
-    const reg = reglerFehler(D, r, P), hyd = hydraulikFehler(D, r, P, 360), haus = hausFehler(D, r, P, 1440);
+    const samm = {regler: [], wasserkreis: [], haus: []};
+    const reg = reglerFehler(D, r, P, samm.regler), hyd = hydraulikFehler(D, r, P, 360, samm.wasserkreis), haus = hausFehler(D, r, P, 1440, undefined, samm.haus);
+    samm.strom = S.map((m, i) => ({at: m.at, e: ePel[i]})); samm.waerme = S.map((m, i) => ({at: m.at, e: ePth[i]}));
     const raeume = {}; RAEUME.forEach(id => { const f = raumFehler(D, r, P, id, P.raeume[id]); raeume[id] = {n: f.n, rmseK: rd(f.rmse, 3), biasK: rd(f.bias, 3)}; });
     const st = stoppFehler(D, r, P.stopK, P.stopHaltMin), sa = startFehler(D, r, P.startK, P.startVerzugMin, P.startHystK);
     return {pthRmseW: rd(rmse(ePth), 1), pthBiasW: rd(mean(ePth), 1), pthKWhModellMessung: kWhPth.map(x => rd(x, 2)), pelRmseW: rd(rmse(ePel), 1), pelBiasW: rd(mean(ePel), 1), nStabil: S.length,
             pipeRmseK: pp.length ? rd(rmse(ePipe), 2) : null, nPipe: pp.length, reglerRmseHz: rd(reg.rmse, 3), wasserkreisRmseK: rd(hyd.rmse, 3), hausRmseK: rd(haus.rmse, 3), raeume: raeume,
-            stoppRegelMaeMin: rd(mean(st.map(Math.abs)), 2), stoppN: st.length, startRegelMaeMin: rd(mean(sa.map(Math.abs)), 2), startN: sa.length};
+            stoppRegelMaeMin: rd(mean(st.map(Math.abs)), 2), stoppN: st.length, startRegelMaeMin: rd(mean(sa.map(Math.abs)), 2), startN: sa.length, _samm: samm};
 }
 // Zyklen: ab jedem echten Stopp (Pause) bzw. Start (Lauf) den Zwilling geschlossen laufen lassen, bis er selbst startet bzw. stoppt
 function zyklen(D, r, P, mitHaus, nurVerlust) {
@@ -447,13 +540,15 @@ function zyklen(D, r, P, mitHaus, nurVerlust) {
         let S = Z.neu(P, initAus(D, p.i0, P, {modus: D.M[p.i0].pumpe ? 'pause' : 'aus', pauseMin: 0, rt: 0, lvl: 0})), pred = null;
         for (let i = p.i0 + 1; i < Math.min(D.M.length, p.i1 + 600); i++) { const res = Z.schritt(S, eingabe(D.M[i], mitHaus), P); S = res.S; if (res.A.start) { pred = i; break; } }
         const ist = p.i1 - p.i0, prog = pred === null ? null : pred - p.i0;
-        pause.push(prog === null ? Math.min(600, D.M.length - p.i0) - ist : prog - ist); detail.push({art: 'pause', zeit: ymd(D.M[p.i0].t) + ' ' + hm(D.M[p.i0].t), istMin: ist, zwillingMin: prog, pumpeAus: p.pumpeAus});
+        const fe = prog === null ? Math.min(600, D.M.length - p.i0) - ist : prog - ist;
+        pause.push(fe); detail.push({art: 'pause', zeit: ymd(D.M[p.i0].t) + ' ' + hm(D.M[p.i0].t), istMin: ist, zwillingMin: prog, pumpeAus: p.pumpeAus, at: D.M[p.i0].at, fehlerMin: fe});
     });
     D.runs.filter(x => x.okAll && x.i0 > 0 && inTage(D.M[x.i0], r) && x.art !== 'sonst').forEach(x => {
         let S = Z.neu(P, initAus(D, x.i0 - 1, P, {modus: 'lauf', rt: 0, lvl: 0})), pred = null;
         for (let i = x.i0; i < Math.min(D.M.length, x.i1 + 1200); i++) { const res = Z.schritt(S, eingabe(D.M[i], mitHaus), P); S = res.S; if (res.A.stopp) { pred = i; break; } }
         const ist = x.i1 - x.i0, prog = pred === null ? null : pred - x.i0;
-        lauf.push(prog === null ? Math.min(1200, D.M.length - x.i0) - ist : prog - ist); detail.push({art: 'lauf', zeit: ymd(D.M[x.i0].t) + ' ' + hm(D.M[x.i0].t), istMin: ist, zwillingMin: prog, ende: x.art});
+        const fe = prog === null ? Math.min(1200, D.M.length - x.i0) - ist : prog - ist;
+        lauf.push(fe); detail.push({art: 'lauf', zeit: ymd(D.M[x.i0].t) + ' ' + hm(D.M[x.i0].t), istMin: ist, zwillingMin: prog, ende: x.art, at: D.M[x.i0].at, fehlerMin: fe});
     });
     const lf = detail.map(z => Math.abs(Math.log(((z.zwillingMin === null ? (z.art === 'lauf' ? 1200 : 600) : z.zwillingMin) + 10) / (z.istMin + 10))));
     if (nurVerlust) { return {logFehler: mean(lf)}; }
@@ -485,36 +580,108 @@ function freilauf(D, tag, P) {
     RAEUME.forEach(id => { o.raeume[id] = e.raeume[id].length ? {rmseK: rd(rmse(e.raeume[id]), 2), biasK: rd(mean(e.raeume[id]), 2)} : null; });
     return o;
 }
+// Güte je Außentemperatur-Band (WP-Fühler): Minuten und Laufminuten im Fenster, je Kennzahl n und RMSE bzw. Median; Zyklen nach der AT am Zyklusbeginn
+function jeBand(D, r, teil, detail) {
+    const B = BAENDER.map(b => ({band: b.id, name: b.name, minuten: 0, laufMinuten: 0}));
+    D.M.forEach(m => { const i = inTage(m, r) ? bandOf(m.at) : -1; if (i >= 0) { B[i].minuten++; if (m.lauf) { B[i].laufMinuten++; } } });
+    const S = teil._samm, rm = (liste, i) => { const e = liste.filter(x => bandOf(x.at) === i).map(x => x.e); return {n: e.length, rmse: e.length ? rmse(e) : null}; };
+    B.forEach((b, i) => {
+        const st = rm(S.strom, i), wm = rm(S.waerme, i), rg = rm(S.regler, i), wk = rm(S.wasserkreis, i), hs = rm(S.haus, i);
+        b.strom = {n: st.n, rmseW: rd(st.rmse, 1)}; b.waerme = {n: wm.n, rmseW: rd(wm.rmse, 1)}; b.regler = {n: rg.n, rmseHz: rd(rg.rmse, 3)};
+        b.wasserkreis = {n: wk.n / 2, rmseK: rd(wk.rmse, 3)}; b.haus = {n: hs.n, rmseK: rd(hs.rmse, 3)};
+        ['pause', 'lauf'].forEach(art => { const e = detail.filter(z => z.art === art && bandOf(z.at) === i).map(z => Math.abs(z.fehlerMin)); b[art] = {n: e.length, medianAbsMin: rd(median(e), 1)}; });
+    });
+    return B;
+}
 function guete(D, r, P) {
     const tage = tageVon(D).filter(t => t >= r[0] && t <= r[1]);
     const fl = tage.map(t => freilauf(D, t, P)).filter(Boolean);
     const zA = zyklen(D, r, P, false), zH = zyklen(D, r, P, true);
     const sum = k => fl.reduce((s, x) => s + x[k], 0);
-    return {tage: tage, teil: teilGuete(D, r, P), zyklenHausGemessen: {pause: zA.pause, lauf: zA.lauf}, zyklenHausSimuliert: {pause: zH.pause, lauf: zH.lauf}, zyklenDetail: zH.detail,
+    const teil = teilGuete(D, r, P), baender = jeBand(D, r, teil, zH.detail); delete teil._samm;
+    return {tage: tage, teil: teil, jeBand: baender, zyklenHausGemessen: {pause: zA.pause, lauf: zA.lauf}, zyklenHausSimuliert: {pause: zH.pause, lauf: zH.lauf}, zyklenDetail: zH.detail,
             freilauf: fl, freilaufSumme: fl.length ? {kwhElZwilling: rd(sum('kwhElZwilling'), 2), kwhElMessung: rd(sum('kwhElMessung'), 2), kwhThZwilling: rd(sum('kwhThZwilling'), 2), kwhThMessung: rd(sum('kwhThMessung'), 2),
                 startsZwilling: sum('startsZwilling'), startsMessung: sum('startsMessung'), laufMinZwilling: sum('laufMinZwilling'), laufMinMessung: sum('laufMinMessung')} : null};
 }
 
+// ------------------------------------------------------------------ training-v2: Abdeckung, Gate
+// Abdeckung des ganzen Datenfensters je Außentemperatur-Band (Grundlage der Dünn-Daten-Phase und des Extrapolations-Hinweises)
+function abdeckung(D, o) {
+    o = Object.assign({}, ABDECKUNG, o || {});
+    const B = BAENDER.map(b => ({band: b.id, name: b.name, minuten: 0, laufMinuten: 0, tage: 0, status: null})), tageJe = BAENDER.map(() => ({}));
+    let atMin = null, atMax = null;
+    D.M.forEach(m => { const i = bandOf(m.at); if (i < 0) { return; } B[i].minuten++; if (m.lauf) { B[i].laufMinuten++; tageJe[i][m.tag] = 1; } atMin = atMin === null ? m.at : Math.min(atMin, m.at); atMax = atMax === null ? m.at : Math.max(atMax, m.at); });
+    B.forEach((b, i) => { b.tage = Object.keys(tageJe[i]).length; b.status = b.laufMinuten >= o.laufMinBand ? 'ausreichend' : (b.minuten > 0 ? 'dünn' : KEINE_DATEN); });
+    const tage = tageVon(D).length, nAus = B.filter(b => b.status === 'ausreichend').length, grund = [];
+    if (tage < o.tage) { grund.push(tage + ' Tage Daten (< ' + o.tage + ')'); }
+    if (nAus < o.baender) { grund.push(nAus + ' Außentemperatur-Bänder mit ≥ ' + o.laufMinBand + ' Laufminuten (< ' + o.baender + ')'); }
+    const iu = B.findIndex(b => b.status === 'ausreichend');                       // unterhalb des tiefsten ausreichend belegten Bandes extrapoliert der Zwilling
+    const unter = iu > 0 ? BAENDER[iu].lo : null;
+    const hinweis = unter === null ? null : 'Zwilling hat unter ' + unter + ' °C keine' + (B.slice(0, iu).some(b => b.laufMinuten > 0) ? ' ausreichenden' : '') + ' Daten (tiefste gemessene AT ' + de(atMin, 0) + ' °C' +
+        (B.slice(0, iu).some(b => b.laufMinuten > 0) ? ', darunter nur ' + B.slice(0, iu).reduce((a, b) => a + b.laufMinuten, 0) + ' Laufminuten' : '') + '): dort extrapoliert';
+    return {baender: B, tage: tage, baenderAusreichend: nAus, duenn: grund.length > 0, grund: grund.join('; ') || null, atMin: atMin, atMax: atMax, extrapoliertUnterC: unter, hinweis: hinweis, kriterien: o};
+}
+function bandStatus(baender, abd) {                                               // Test-Bänder ohne Minuten: „keine Daten, Zwilling extrapoliert“ (auch im Fenster keine) bzw. „keine Testdaten“
+    baender.forEach((b, i) => { b.status = b.minuten > 0 ? 'Daten' : (abd && abd.baender[i].status !== KEINE_DATEN ? 'keine Testdaten' : KEINE_DATEN); });
+    return baender;
+}
+// Gate: Herausforderer (geglätteter Kandidat) gegen Champion (bisher aktiver Satz), beide auf denselben Testtagen mit demselben Datenstand.
+// Abgelehnt, wenn eine Ampel-Kennzahl um mehr als max(rel · bisher, tol) schlechter wird oder über die Ampelgrenze steigt, während der bisherige Satz darunter liegt.
+function entscheide(gK, gC, opt) {
+    opt = opt || {};
+    const rel = opt.rel === undefined ? GATE.rel : opt.rel;
+    if (!gC) { return {ergebnis: 'übernommen', grund: 'erster Lauf: kein bisheriger Satz', kriterium: {rel: rel}, kennzahlen: []}; }
+    const ks = GATE.kennzahlen.map(k => {
+        const v = x => { try { const w = k.wert(x); return w === null || w === undefined || !isFinite(w) ? null : w; } catch (e) { return null; } };
+        const a = v(gK), b = v(gC), o = {id: k.id, name: k.name, kandidat: a, bisher: b, grenze: k.grenze, tol: k.tol, verletzt: false, warum: null};
+        if (a === null || b === null) { o.warum = 'nicht bewertbar (keine Werte)'; return o; }
+        if (a - b > Math.max(rel * b, k.tol) + 1e-9) { o.verletzt = true; o.warum = 'schlechter um ' + de(100 * (a - b) / Math.max(1e-9, b), 0) + ' % (' + de(b, 2) + ' → ' + de(a, 2) + ')'; }
+        else if (a > k.grenze && b <= k.grenze) { o.verletzt = true; o.warum = 'über der Ampelgrenze ' + de(k.grenze, 1) + ' (' + de(a, 2) + ')'; }
+        return o;
+    });
+    const v = ks.filter(k => k.verletzt);
+    return {ergebnis: v.length ? 'abgelehnt' : 'übernommen', grund: v.length ? v.map(k => k.name + ': ' + k.warum).join('; ') : 'nicht schlechter als der bisherige Satz (Strom, Wasserkreis, Pause je höchstens +' + de(100 * rel, 0) + ' %, unter der Ampelgrenze)',
+            kriterium: {rel: rel, tol: GATE.kennzahlen.reduce((o, k) => { o[k.id] = k.tol; return o; }, {}), grenzen: GATE.kennzahlen.reduce((o, k) => { o[k.id] = k.grenze; return o; }, {})}, kennzahlen: ks};
+}
+
 // ------------------------------------------------------------------ Hauptablauf
+// opt.vorher: bisher aktiver Parametersatz (Inhalt einer wp_params_<tag>.json) → Glättung, Bindung (Dünn-Daten-Phase), Neubewertung und Gate.
+// opt.glaettung: Anteil der neuen Werte je Nacht (Standard 1/3; 1 = ersetzen wie bis 18.10.), opt.bindung: Gewicht λ (Standard 0,1; 0 = aus).
 function trainiere(dir, opt) {
     opt = opt || {};
     const D = lade(dir, opt.monat ? opt.monat.split(',') : null, opt.tage ? Number(opt.tage) : null), T = trennung(D, opt);
-    const ftr = fitAlles(D, T.train);
-    const gTrain = guete(D, T.train, ftr.P), gTest = guete(D, T.test, ftr.P);
-    const fall = fitAlles(D, [T.tage[0], T.tage[T.tage.length - 1]]);
-    const her = Z.herkunft(), werte = {}, werteTraining = {};
-    Object.keys(her).forEach(k => { werte[k] = fall.P[k]; werteTraining[k] = ftr.P[k]; });
-    const fitKeys = {waerme: ['pthHz', 'pthHzAT', 'pthEnde'], strom: ['pel0', 'pelHz', 'pelRL', 'pelAT'], standby: ['pelPauseW', 'pelAusW'], pumpe: ['flowPause', 'flowComfort', 'flowEff', 'pumpe0', 'pumpeJeL'], luefter: ['fanQ', 'fanJeHz'],
-                     rohr: ['pipe0', 'pipeQ'], startStopp: ['stopK', 'stopHaltMin', 'startK', 'startVerzugMin', 'startHystK'], regler: ['regSenkK', 'regAbHzMin', 'comfortWiederK', 'effT1', 'effK1', 'effL1', 'effT2', 'effK2', 'effKp', 'effKi'],
-                     wasserkreis: ['cw', 'krad', 'cr', 'hr', 'kv'], zyklen: [], haus: ['ua', 'gain', 'ch', 'sonne', 'hausAtTauMin'], raeume: ['raeume'], vereisung: ['eisRate']};
-    Object.keys(fitKeys).forEach(g => fitKeys[g].forEach(k => { her[k] = Object.assign({}, her[k], {fit: g === 'vereisung' ? 'kalibriert (Annahme-Anker)' : 'gefittet', gruppe: g}); }));
+    const abd = abdeckung(D), alle = [T.tage[0], T.tage[T.tage.length - 1]];
+    const V = opt.vorher && opt.vorher.werte ? opt.vorher : null;
+    const anteil = V ? (opt.glaettung === undefined || opt.glaettung === null ? 1 / 3 : Math.max(0, Math.min(1, Number(opt.glaettung)))) : 1;
+    const lam = opt.bindung === undefined || opt.bindung === null ? BINDUNG : Math.max(0, Number(opt.bindung));
+    const bindAktiv = !!(V && abd.duenn && lam > 0);
+    const vorW = V ? Z.mitWerten(V.werte) : null, vorT = V ? Z.mitWerten(V.werteTraining || V.werte) : null;
+    const ftr = fitAlles(D, T.train, bindAktiv ? {vor: vorT, lambda: lam} : null);
+    const fall = fitAlles(D, alle, bindAktiv ? {vor: vorW, lambda: lam} : null);
+    const her = Z.herkunft(), rohW = {}, rohT = {};
+    Object.keys(her).forEach(k => { rohW[k] = fall.P[k]; rohT[k] = ftr.P[k]; });
+    const werte = V ? glaetteSatz(vorW, rohW, anteil) : rohW, werteTraining = V ? glaetteSatz(vorT, rohT, anteil) : rohT;
+    const PK = Z.mitWerten(werteTraining);
+    const gTrain = guete(D, T.train, PK), gTest = guete(D, T.test, PK);
+    let roh = null, vorherNeu = null, ent = entscheide(gTest, null, opt.gate);
+    if (V) {
+        const gRoh = anteil === 1 ? gTest : guete(D, T.test, Z.mitWerten(rohT)), gVor = guete(D, T.test, vorT);
+        [gTest, gRoh, gVor].forEach(g => bandStatus(g.jeBand, abd));
+        roh = {werte: rohW, werteTraining: rohT, guete: {test: gRoh}};
+        vorherNeu = {tag: opt.vorherTag || null, guete: {test: gVor}};
+        ent = entscheide(gTest, gVor, opt.gate);
+    }
+    [gTrain, gTest].forEach(g => bandStatus(g.jeBand, abd));
+    Object.keys(FIT_KEYS).forEach(g => FIT_KEYS[g].forEach(k => { her[k] = Object.assign({}, her[k], {fit: g === 'vereisung' ? 'kalibriert (Annahme-Anker)' : 'gefittet', gruppe: g}); }));
     return {
-        version: VERSION, modell: 'wp_zwilling v' + VERSION,
+        version: VERSION, verfahren: 2, modell: 'wp_zwilling v' + VERSION,
         daten: {ordner: path.basename(path.resolve(dir)), von: ymd(D.von) + ' ' + hm(D.von), bis: ymd(D.bis) + ' ' + hm(D.bis), minuten: D.M.length, laeufe: D.runs.length, pausen: D.pausen.length},
         trennung: {training: T.train, test: T.test},
         werte: werte, werteTraining: werteTraining, herkunft: her,
         fit: {training: ftr.fit, alle: fall.fit},
-        guete: {training: gTrain, test: gTest}
+        guete: {training: gTrain, test: gTest},
+        glaettung: {anteil: rd(anteil, 6), vorher: V ? (opt.vorherTag || null) : null, bindung: {aktiv: bindAktiv, gewicht: lam, skalaRel: BIND_REL, grund: bindAktiv ? 'Dünn-Daten-Phase: ' + abd.grund : (V ? (abd.duenn ? 'Gewicht 0' : 'genug Daten (' + abd.tage + ' Tage, ' + abd.baenderAusreichend + ' Bänder)') : 'kein Vorwert (erster Lauf)')}},
+        roh: roh, vorherNeu: vorherNeu, entscheidung: ent, abdeckung: abd
     };
 }
 
@@ -540,6 +707,28 @@ function markdown(R) {
     row('Laufdauer, alles geschlossen (Haus simuliert)', zz(tr.zyklenHausSimuliert.lauf), zz(te.zyklenHausSimuliert.lauf));
     const fs0 = x => x ? de(x.kwhElZwilling, 1) + ' / ' + de(x.kwhElMessung, 1) + ' kWh el, ' + de(x.kwhThZwilling, 0) + ' / ' + de(x.kwhThMessung, 0) + ' kWh th, Starts ' + x.startsZwilling + ' / ' + x.startsMessung + ', Laufminuten ' + x.laufMinZwilling + ' / ' + x.laufMinMessung : '–';
     row('Freilauf je Tag summiert (Zwilling / Messung)', fs0(tr.freilaufSumme), fs0(te.freilaufSumme));
+    if (R.glaettung) {
+        const gl = R.glaettung, b = gl.bindung || {};
+        L.push('', 'Parametersatz: ' + (gl.vorher || R.roh ? 'geglättet, Anteil der neuen Werte ' + de(gl.anteil, 3) + ' gegen den Satz vom ' + (gl.vorher || '–') : 'roh gelernt (kein Vorwert)') +
+               '. Bindung an die Vorwerte: ' + (b.aktiv ? 'aktiv, Gewicht ' + de(b.gewicht, 2) : 'aus') + ' (' + (b.grund || '–') + ').');
+    }
+    if (R.roh && R.vorherNeu) {
+        const gr = R.roh.guete.test, gv = R.vorherNeu.guete.test, z3 = g => g.zyklenHausSimuliert;
+        L.push('', '### Herausforderer gegen bisherigen Satz (Test ' + R.trennung.test.join(' … ') + ', gleicher Datenstand)', '', '| Größe | roh gelernt | Kandidat (übernommen, falls angenommen) | bisher (neu bewertet) |', '|---|---|---|---|');
+        const r3 = (n, f, k) => L.push('| ' + n + ' | ' + de(f(gr), k) + ' | ' + de(f(te), k) + ' | ' + de(f(gv), k) + ' |');
+        r3('Strom TOP16 RMSE (W)', g => g.teil.pelRmseW, 1); r3('Wasserkreis RMSE (K)', g => g.teil.wasserkreisRmseK, 3); r3('Pause Median-Fehler (min)', g => z3(g).pause.medianAbsMin, 1);
+        r3('Lauf Median-Fehler (min)', g => z3(g).lauf.medianAbsMin, 1); r3('Hausmittel RMSE (K)', g => g.teil.hausRmseK, 3); r3('Regler RMSE (Hz)', g => g.teil.reglerRmseHz, 3); r3('Wärme RMSE (W)', g => g.teil.pthRmseW, 0);
+        if (R.entscheidung) { L.push('', '**Entscheidung: ' + R.entscheidung.ergebnis + '** – ' + R.entscheidung.grund); }
+    }
+    L.push('', '### Güte je Außentemperatur-Band (Test, Kandidat; Zyklen nach AT am Zyklusbeginn)', '', '| Band | Minuten (Lauf) | Strom RMSE | Wärme RMSE | Regler RMSE | Wasserkreis RMSE | Hausmittel RMSE | Pause Median (n) | Lauf Median (n) | Status |', '|---|---|---|---|---|---|---|---|---|---|');
+    (te.jeBand || []).forEach(b => L.push('| ' + b.name + ' | ' + b.minuten + ' (' + b.laufMinuten + ') | ' + (b.strom.n ? de(b.strom.rmseW, 1) + ' W' : '–') + ' | ' + (b.waerme.n ? de(b.waerme.rmseW, 0) + ' W' : '–') + ' | ' + (b.regler.n ? de(b.regler.rmseHz, 2) + ' Hz' : '–') + ' | ' +
+        (b.wasserkreis.n ? de(b.wasserkreis.rmseK, 2) + ' K' : '–') + ' | ' + (b.haus.n ? de(b.haus.rmseK, 2) + ' K' : '–') + ' | ' + (b.pause.n ? de(b.pause.medianAbsMin, 0) + ' min (' + b.pause.n + ')' : '–') + ' | ' + (b.lauf.n ? de(b.lauf.medianAbsMin, 0) + ' min (' + b.lauf.n + ')' : '–') + ' | ' + (b.status || '') + ' |'));
+    if (R.abdeckung) {
+        const A = R.abdeckung;
+        L.push('', '### Datenabdeckung im ganzen Fenster (' + A.tage + ' Tage, AT ' + de(A.atMin, 0) + ' … ' + de(A.atMax, 0) + ' °C)', '', '| Band | Minuten | Laufminuten | Tage mit Lauf | Status |', '|---|---|---|---|---|');
+        A.baender.forEach(b => L.push('| ' + b.name + ' | ' + b.minuten + ' | ' + b.laufMinuten + ' | ' + b.tage + ' | ' + b.status + ' |'));
+        L.push('', 'Dünn-Daten-Phase: ' + (A.duenn ? 'ja (' + A.grund + ')' : 'nein') + '.' + (A.hinweis ? ' ' + A.hinweis + '.' : ''));
+    }
     L.push('', '### Freilauf je Tag (24 h geschlossen ab 00:00, Eingänge AT, Feuchte, PV, Quiet, Heizregelung, gemessener Soll)', '', '| Tag | kWh el Zwilling / Messung | kWh th | Starts | Laufminuten | RMSE VL | RMSE Pel | Haus RMSE (Bias) | Räume RMSE ki_oben / ki_unten / schlaf / wohn |', '|---|---|---|---|---|---|---|---|---|');
     tr.freilauf.concat(te.freilauf).forEach(x => L.push('| ' + x.tag + (te.tage.indexOf(x.tag) >= 0 ? ' (Test)' : '') + ' | ' + de(x.kwhElZwilling, 2) + ' / ' + de(x.kwhElMessung, 2) + ' | ' + de(x.kwhThZwilling, 1) + ' / ' + de(x.kwhThMessung, 1) + ' | ' + x.startsZwilling + ' / ' + x.startsMessung + ' | ' + x.laufMinZwilling + ' / ' + x.laufMinMessung + ' | ' + de(x.rmseVlK, 2) + ' K | ' + de(x.rmsePelW, 0) + ' W | ' + de(x.rmseHausK, 2) + ' (' + de(x.biasHausK, 2) + ') K | ' + RAEUME.map(id => x.raeume[id] ? de(x.raeume[id].rmseK, 2) : '–').join(' / ') + ' K |'));
     L.push('', '### Zyklen im Test (alles geschlossen)', '', '| Beginn | Art | Messung | Zwilling |', '|---|---|---|---|');
@@ -551,13 +740,16 @@ function markdown(R) {
     return L.join('\n') + '\n';
 }
 
-module.exports = {lade, trennung, fitAlles, guete, trainiere, markdown, lsq, koordinatensuche, abtauIntervall, initAus, eingabe, readMulti, RAEUME, HAUS_RAEUME};
+module.exports = {lade, trennung, fitAlles, guete, trainiere, markdown, lsq, lsqBox, lsqBind, koordinatensuche, gebunden, strafe, glaette, glaetteSatz, abdeckung, bandOf, bandStatus, jeBand, entscheide, abtauIntervall, initAus, eingabe, readMulti,
+                  RAEUME, HAUS_RAEUME, BAENDER, GATE, ABDECKUNG, GEFITTET, KEINE_DATEN};
 
 if (require.main === module) {
     const a = process.argv.slice(2), dir = a[0];
-    if (!dir || dir.indexOf('--') === 0) { console.error('Usage: node tools/wp_training.js <Datenordner> [--json Datei] [--md Datei] [--train A..B] [--test C..D] [--monat JJJJ-MM,…] [--tage n] [--still]'); process.exit(2); }
+    if (!dir || dir.indexOf('--') === 0) { console.error('Usage: node tools/wp_training.js <Datenordner> [--json Datei] [--md Datei] [--train A..B] [--test C..D] [--monat JJJJ-MM,…] [--tage n] [--vorher wp_params.json] [--vorher-tag JJJJ-MM-TT] [--glaettung 0.333] [--bindung 0.1] [--gate-rel 0.1] [--still]'); process.exit(2); }
     const arg = k => { const i = a.indexOf(k); return i > 0 && a[i + 1] && a[i + 1].indexOf('--') !== 0 ? a[i + 1] : null; };
-    const R = trainiere(dir, {train: arg('--train'), test: arg('--test'), monat: arg('--monat'), tage: arg('--tage')});
+    const vorher = arg('--vorher') ? JSON.parse(fs.readFileSync(arg('--vorher'), 'utf8')) : null;
+    const R = trainiere(dir, {train: arg('--train'), test: arg('--test'), monat: arg('--monat'), tage: arg('--tage'), vorher: vorher, vorherTag: arg('--vorher-tag'),
+                              glaettung: arg('--glaettung'), bindung: arg('--bindung'), gate: arg('--gate-rel') !== null ? {rel: Number(arg('--gate-rel'))} : undefined});
     const js = JSON.stringify(R, null, 1) + '\n';
     if (arg('--json')) { fs.writeFileSync(arg('--json'), js); }
     if (arg('--md')) { fs.writeFileSync(arg('--md'), markdown(R)); }
@@ -568,5 +760,7 @@ if (require.main === module) {
         console.log('Test Zyklen (Haus simuliert): Pause ' + JSON.stringify(t.zyklenHausSimuliert.pause) + ' Lauf ' + JSON.stringify(t.zyklenHausSimuliert.lauf));
         console.log('Test Freilauf: ' + JSON.stringify(t.freilaufSumme));
         console.log('Training Freilauf: ' + JSON.stringify(tr.freilaufSumme));
+        if (R.entscheidung) { console.log('Entscheidung: ' + R.entscheidung.ergebnis + ' (' + R.entscheidung.grund + ')'); }
+        if (R.abdeckung && R.abdeckung.hinweis) { console.log('Abdeckung: ' + R.abdeckung.hinweis); }
     }
 }

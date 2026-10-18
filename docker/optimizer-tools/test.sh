@@ -69,6 +69,8 @@ messlauf() {
   CGSPITZE=$(grep -o 'Speicher-Spitze des Containers [0-9]* MB' "$log" | tail -1 | grep -o '[0-9]*' | tail -1)
   echo "  Laufzeit $DAUER s (N100 geschätzt ×3: $(awk -v d="$DAUER" 'BEGIN{printf "%.0f", d*3}') s), Speicher-Spitze cgroup ${CGSPITZE:-?} MB, docker stats ${SPITZE} MiB ($(wc -l < "$st") Proben)"
   awk -v d="$DAUER" 'BEGIN{exit !(d*3 < 600)}' && ok "Laufzeit ×3 < 10 min" || nein "Laufzeit ×3 ≥ 10 min"
+  local TR; TR=$(grep -o '\[training\] Ende: ok nach [0-9.]* s' "$log" | grep -o '[0-9.]* s$' | tr -d ' s')
+  [ -n "$TR" ] && { awk -v d="$TR" 'BEGIN{exit !(d*3 < 180)}' && ok "Training $TR s, ×3 < 3 min (training-v2)" || nein "Training $TR s, ×3 ≥ 3 min"; }
   [ "${CGSPITZE:-${SPITZE:-0}}" -lt 1024 ] && ok "Speicher < 1 GB" || nein "Speicher ≥ 1 GB"
 }
 
@@ -161,6 +163,17 @@ cp "$ERG/kennzahlen/$TAG_VOR.json" "$ARBEIT/k1.json"
 "${LAUF[@]}" "$BILD" kennzahlen --tag "$TAG_VOR" > /dev/null 2>&1
 cmp -s "$ARBEIT/k1.json" "$ERG/kennzahlen/$TAG_VOR.json" && ok "Kennzahlen $TAG_VOR beim zweiten Lauf bit-identisch" || nein "Kennzahlen nicht wiederholbar"
 grep -q "Parameterdrift gegen $TAG_TRAINING" "$ERG/training/wp_training.md" && ok "Drift-Tabelle gegen $TAG_TRAINING (rc $RC2, auffällig: $(python3 -c "import json;print(json.load(open('$ERG/training/letzter.json'))['drift']['auffaellig'])"))" || nein "keine Drift-Tabelle"
+# training-v2: Champion gegen Herausforderer, Güte je Band, Abdeckung in status.json (additive Felder)
+python3 - "$ERG" "$TAG_TRAINING" <<'PY' && ok "training-v2: Entscheidung mit beiden Sätzen, aktiver Satz, Güte je Band (5), Abdeckung in status.json" || nein "training-v2: Felder fehlen"
+import json, os, sys
+erg, tag = sys.argv[1], sys.argv[2]
+s = json.load(open(os.path.join(erg, "status.json"))); t = s["training"]; e = t["entscheidung"]
+akt = os.path.join(erg, "training", "wp_params_aktiv.json")
+assert e["ergebnis"] in ("übernommen", "abgelehnt") and e["bisher_tag"] == tag and e["kandidat"] and e["bisher"], e
+assert os.path.exists(os.path.join(erg, "training", e["kandidat_datei"])) and os.path.exists(akt), e
+assert t["datei"] == "training/" + e["aktiv"] and len(t["guete_je_band"]) == 5 and t["abdeckung"]["baender"], t["datei"]
+print("    Entscheidung %s (%s), aktiv %s, Bindung %s" % (e["ergebnis"], e["grund"], e["aktiv"], (t.get("glaettung") or {}).get("bindung", {}).get("aktiv")))
+PY
 
 echo "== 8. Fehlerfälle"
 "${LAUF[@]}" "$BILD" kennzahlen --tag 2026-09-30 > "$ARBEIT/f1.log" 2>&1; R=$?
