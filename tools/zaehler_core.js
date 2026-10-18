@@ -183,7 +183,7 @@ var ZAEHLER = (function () {
                   title: 'Zähler − TOP16 im Lauf, gleitend 24 h; mit „Strom für COP = Zähler“ rechnen Ist-COP, COP-Matrix und Zerlegung direkt mit dem Zähler'});
         kpi.push({k: 'Stillstand · 24 h', v: St.n ? sg(St.diffW, 0) + ' W' : '–', s: St.n ? St.n + ' min · Zähler Ø ' + de(St.zaehlerW, 0) + ' W' : 'sammelt'});
         kpi.push({k: 'Zählerstand', v: have(st.kwh_wp) ? de(st.kwh_wp, 1) + ' kWh' : '–', s: have(st.kwh_heizstab) ? 'Heizstab ' + de(st.kwh_heizstab, 1) + ' kWh' : 'Wärmepumpe'});
-        return {status: status, kpi: kpi, form: {topic: c.topic, broker: c.broker, profil: c.profil, klemme_wp: c.klemme_wp, klemme_heizstab: c.klemme_heizstab, klemme_sonstiges: c.klemme_sonstiges, invertieren: c.invertieren.slice(), quelle: c.quelle}};
+        return {status: status, kpi: kpi, eingerichtet: !!c.prefix, form: {topic: c.topic, broker: c.broker, profil: c.profil, klemme_wp: c.klemme_wp, klemme_heizstab: c.klemme_heizstab, klemme_sonstiges: c.klemme_sonstiges, invertieren: c.invertieren.slice(), quelle: c.quelle}};
     }
     function heizParamTxt(st) { var q = String(st.heizstab_quelle || ''); return /^gemessen/.test(q) ? 'Sprungerkennung' : 'Annahme 3 kW'; }
     return {karte: karte, ZL: ZL, STD: STD, cfgOf: cfgOf, praefix: praefix, abos: abos, neu: neu, fix: fix, lies: lies, stand: stand, minute: minute, vergleich: vergleich, pruefe: pruefe, heizParam: heizParam};

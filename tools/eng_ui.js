@@ -3,7 +3,7 @@
  *   optEngUi.html(kind, P)              -> HTML einer Karte (kind: 'card' | 'rules' | 'score' | 'mess' | 'log' | 'cop' | 'zaehler'), P = Nutzlast aus ENGVIEW.build bzw. opt_zaehler
  *   optEngUi.mount(el, kind, P, scope)  -> zeichnet in ein Element, Knoepfe schicken nur Aktion + ID + Pruefsumme, Diagramm ueber optChart */
 (function (root) {
-    var VER = 8;                                                                  // 8: Karten „COP: Ziel und Ist“ und „Stromzähler“ (cop-ziel 17.10.2026); 4: Vorschlag mit Befehl/Zielwert/Begruendung/Wirkung/Rueckweg offen, Karte "Messwerte & Lernen"; 5: Räume und Wächter (raumeinfluss-v3); 6: UI-Optik (Schrift, Kontrast, Platzhalter statt fast leerem Punkte-Diagramm); 7: fünf Regelkacheln (Heizregelung)
+    var VER = 9;                                                                  // 8: Karten „COP: Ziel und Ist“ und „Stromzähler“ (cop-ziel 17.10.2026); 4: Vorschlag mit Befehl/Zielwert/Begruendung/Wirkung/Rueckweg offen, Karte "Messwerte & Lernen"; 5: Räume und Wächter (raumeinfluss-v3); 6: UI-Optik (Schrift, Kontrast, Platzhalter statt fast leerem Punkte-Diagramm); 7: fünf Regelkacheln (Heizregelung)
     if (root.optEngUi && root.optEngUi.v === VER) { return; }
     var U = {v: VER};
     function esc(s) { return String(s === undefined || s === null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
@@ -175,7 +175,8 @@
             '<label>Strom für COP<select data-f="quelle" title="Standard HeishaMon (TOP16 + Korrektur); Zähler erst nach zwei Tagen Vergleich">' + opt('heishamon', F.quelle, 'HeishaMon') + opt('zaehler', F.quelle, 'Zähler') + '</select></label>' +
             '</div><div class="oe-btns"><button data-a="zaehler_speichern">Speichern</button></div>';
     }
-    function zaehler(P) { return '<div class="oe-row">' + (P.status || []).map(function (s) { return chip(s.t, s.c, s.title); }).join('') + '</div><div style="margin-top:10px">' + kpis(P.kpi) + '</div><div class="oe-sec">Einrichtung</div>' + zform(P.form || {}); }
+    function zaehler(P) { return '<div class="oe-row">' + (P.status || []).map(function (s) { return chip(s.t, s.c, s.title); }).join('') + '</div><div style="margin-top:10px">' + kpis(P.kpi) + '</div>'; }   // ui-daten 18.10.2026: nur Status und Kacheln; das Formular ist die Karte "Stromzähler" auf der Seite Einstellungen (kind zlform)
+    function zlform(P) { return zform(P.form || {}); }
     // ---------------------------------------------------------------- Karte 5: Entscheidungen (Episoden)
     function log(P) {
         var rows = P.rows || [];
@@ -185,7 +186,7 @@
                    r.steps.map(function (s) { return chip(s[0], s[1]); }).join('<span class="arr">›</span>') + (r.was ? ' <span class="oe-was2">' + esc(r.was) + '</span>' : '') + '</td><td class="e">' + (r.offen ? chip('läuft', 'ok') : esc(r.ende)) + '</td></tr>';
         }).join('') + '</table>';
     }
-    U.html = function (kind, P) { P = P || {}; return '<div class="oe">' + (kind === 'card' ? card(P) : kind === 'rules' ? rules(P) : kind === 'score' ? score(P) : kind === 'mess' ? mess(P) : kind === 'cop' ? copZ(P) : kind === 'zaehler' ? zaehler(P) : log(P)) + '</div>'; };
+    U.html = function (kind, P) { P = P || {}; return '<div class="oe">' + (kind === 'card' ? card(P) : kind === 'rules' ? rules(P) : kind === 'score' ? score(P) : kind === 'mess' ? mess(P) : kind === 'cop' ? copZ(P) : kind === 'zaehler' ? zaehler(P) : kind === 'zlform' ? zlform(P) : log(P)) + '</div>'; };
     U.chartSpec = function (P) {
         return {t0: P.t0, t1: P.now, panels: [{h: 110, zero: true, series: (P.series || []).map(function (s) { return {n: s.n, c: s.c, k: 'step', w: 1.8, dg: 1, u: 'Punkte', d: s.d}; })}]};
     };

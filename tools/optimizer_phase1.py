@@ -739,7 +739,9 @@ FQ_H.forEach(function (h) {
     fqRows.push(['PV +' + h + ' h (' + (pvSrc === '–' ? 'Prognose' : pvSrc.split(' ')[0]) + ')', g && g.n >= 3 ? 'Prognose ' + f(100 * g.fc / g.act, 0, '%') + ' vom Ist · mittlerer Fehler ' + f(g.abs / g.n, 0, 'W') + ' (n ' + g.n + ')' : 'zu wenig Daten' + (g ? ' (n ' + g.n + ')' : ''), '']);
 });
 fqRows.push(['Gesammelt', fqHist.length + ' Stunden Ist-Werte · ' + fqSn.length + ' Prognose-Schnappschüsse', '']);
-out[4] = {payload: {rows: fqRows}};
+var fqTab = FQ_H.map(function (h) { var a = fq.at[h], g = fq.pv[h]; return ['+' + h + ' h', a && a.n >= 3 ? (a.bias / a.n >= 0 ? '+' : '') + f(a.bias / a.n, 1, 'K') : '–', a && a.n >= 3 ? f(a.abs / a.n, 1, 'K') : '–', a ? a.n : 0,
+    g && g.n >= 3 ? f(100 * g.fc / g.act, 0, '%') : '–', g && g.n >= 3 ? f(g.abs / g.n, 0, 'W') : '–', g ? g.n : 0]; });   // ui-daten 18.10.: Tabelle Horizont x (Aussentemperatur, PV)
+out[4] = {payload: {rows: fqRows, tab: fqTab, pvQuelle: pvSrc === '–' ? 'Prognose' : pvSrc.split(' ')[0], sammel: fqHist.length + ' Stunden Ist-Werte · ' + fqSn.length + ' Prognose-Schnappschüsse'}};
 global.set('OPT_plan_in', {ts: now, price: pSlots ? pSlots.filter(function (s) { return s.e > now - 2 * H && s.s < now + 40 * H; }).map(function (s) { return [s.s, s.e, s.p]; }) : null, priceSrc: pSrc,
     pv: pvSeries.length ? pvSeries.filter(function (s) { return s.t + s.dt > now - 2 * H && s.t < now + 40 * H; }).map(function (s) { return [s.t, Math.round(s.w), s.dt]; }) : null, pvSrc: pvSrc,
     pvNow: pv, soc: soc, socSrc: socSrc, liveOk: liveOk, grid: grid, batP: batP, vrmHpKwh: hpK});
@@ -2596,9 +2598,9 @@ upsert({"id": UI_TAB_DATA, "type": "ui_tab", "name": "Daten & Güte", "icon": "a
 GROUPS = [("opt_g_ch_wp", "Wärmepumpe · letzte 24 h", OPT_W, UI_TAB), ("opt_g_ch_rooms", "Räume · letzte 24 h", OPT_W, UI_TAB), ("opt_g_ch_at", "Wetter · 24 h zurück, 36 h voraus", OPT_W, UI_TAB),
           ("opt_g_rooms", "Räume und Komfortbänder", OPT_W, UI_TAB),
           ("opt_g_opt", "Optimierung", OPT_W, UI_TAB_DATA),
-          ("opt_g_wx", "Außen & Wetter", OPT_W, UI_TAB_DATA), ("opt_g_calc", "Berechnete Außentemperatur", OPT_W, UI_TAB_DATA), ("opt_g_quiet", "Leistung & Quiet (Shadow)", OPT_W, UI_TAB_DATA), ("opt_g_en", "Energie & Preise (nur Anzeige)", OPT_W, UI_TAB_DATA),
-          ("opt_g_fq", "Prognosegüte (nur Anzeige)", OPT_W, UI_TAB_DATA), ("opt_g_wp", "Wärmepumpe", OPT_W, UI_TAB_DATA),
-          ("opt_g_nas", "Auswertung NAS (optimizer-tools)", OPT_W, UI_TAB_DATA), ("opt_g_zaehler", "Stromzähler (Shelly 3EM-63)", OPT_W, UI_TAB_DATA)]
+          ("opt_g_wx", "Außen & Wetter", OPT_W, UI_TAB_DATA), ("opt_g_calc", "Berechnete Außentemperatur", OPT_W, UI_TAB_DATA), ("opt_g_quiet", "Leistung & Quiet", OPT_W, UI_TAB_DATA), ("opt_g_en", "Energie & Preise", OPT_W, UI_TAB_DATA),
+          ("opt_g_fq", "Prognosegüte", OPT_W, UI_TAB_DATA), ("opt_g_wp", "Wärmepumpe", OPT_W, UI_TAB_DATA),
+          ("opt_g_nas", "Auswertung NAS", OPT_W, UI_TAB_DATA), ("opt_g_zaehler", "Stromzähler", OPT_W, UI_TAB_DATA)]
 _ord = {}
 for gid, gname, gwidth, gtab in GROUPS:
     _ord[gtab] = _ord.get(gtab, 0) + 1
@@ -2661,6 +2663,12 @@ TABLE = ('<div class="optfit"><div class="optkv"><div class="kv" ng-repeat="r in
          '<span class="l">{{r[0]}}</span><span class="v" ng-class="r[2]">{{r[1]}}</span></div></div></div>')
 
 
+FQ_TABLE = ('<div class="optfit optpt optfq"><table><tr><th></th><th colspan="3">Außentemperatur (OWM)</th><th colspan="3">PV ({{msg.payload.pvQuelle}})</th></tr>'
+            '<tr><th>Horizont</th><th>Abw.</th><th>Fehler</th><th>n</th><th>Prognose / Ist</th><th>Fehler</th><th>n</th></tr>'
+            '<tr ng-repeat="z in msg.payload.tab track by $index"><td>{{z[0]}}</td><td>{{z[1]}}</td><td>{{z[2]}}</td><td>{{z[3]}}</td><td>{{z[4]}}</td><td>{{z[5]}}</td><td>{{z[6]}}</td></tr></table>'
+            '<div class="mute" style="margin-top:6px;font-size:12.5px">{{msg.payload.sammel}}</div></div>')   # ui-daten 18.10.2026: Prognoseguete als Tabelle
+
+
 def template(i, gid, height, y):
     """Status card: label/value pairs in two columns; full group width, static start height (units), fits itself to the content."""
     return {"id": i, "type": "ui_template", "z": TAB, "group": gid, "name": "", "order": 1, "width": 0,
@@ -2680,7 +2688,7 @@ _qt["format"] = (TABLE.replace('</div></div></div>', '</div></div>'
                  '<span class="n" ng-class="e[3]">{{e[1]}}</span><span class="x">{{e[2]}}</span></div></div></div>') + FIT_JS.replace("__ID__", "opt_t_quiet"))
 upsert(_qt)
 upsert(template("opt_t_en", "opt_g_en", 4, 350))
-upsert(template("opt_t_fq", "opt_g_fq", 5, 400))
+upsert(dict(template("opt_t_fq", "opt_g_fq", 5, 400), format=FQ_TABLE + FIT_JS.replace("__ID__", "opt_t_fq")))
 # Quiet-Statistik: dieselben Zeilen (Stufe x Aussenband) in zwei gleich breiten Karten, Spalten aufgeteilt (17 Spalten passen nicht ohne Scrollen in eine Karte)
 QSTATS_HEAD = ['Stufe', 'Außen', 'Minuten Lauf', 'Ø Hz', 'Ø Fan', '<span title="{{msg.payload.korr}} (TOP16 untertreibt im Lauf; Forum 189605)">Ø P el. (W)</span>', 'Ø P th. (W)', 'Max Hz', 'Max P th. (W, ab 10 min Lauf)',
                '<span title="Ø Wärme ÷ Ø Strom, Strom {{msg.payload.korr}}">Ø COP</span>',
@@ -3634,8 +3642,12 @@ upsert({"id": "opt_i_zl_init", "type": "inject", "z": TAB, "name": "Abos beim St
 upsert({"id": "opt_i_zl", "type": "inject", "z": TAB, "name": "jede Minute", "props": [{"p": "payload"}, {"p": "topic", "vt": "str"}],
         "repeat": "60", "crontab": "", "once": True, "onceDelay": "35", "topic": "tick", "payload": "", "payloadType": "date", "x": 140, "y": 2620, "wires": [["opt_zaehler"]]})
 upsert(fn("opt_zaehler", "Stromzähler lesen (nur lesen)", ZAEHLER_CORE_JS + ZAEHLER_WRAP_JS.replace("__COPKW__", COP_KW_JS), 5,
-          [["opt_mqtt_zl_v"], ["opt_mqtt_zl_n"], ["opt_t_zaehler"], ["opt_ui_toast"], ["opt_f_qev"]], 440, 2590, FS))
+          [["opt_mqtt_zl_v"], ["opt_mqtt_zl_n"], ["opt_t_zaehler", "opt_t_zl_set"], ["opt_ui_toast"], ["opt_f_qev"]], 440, 2590, FS))
 upsert(eng_template("opt_t_zaehler", "opt_g_zaehler", "Stromzähler", 6, eng_format("zaehler", "opt_t_zaehler"), 2590, [["opt_zaehler"]]))
+# ui-daten 18.10.2026: Einrichtung des Zaehlers als eigene Karte auf der Kern-Seite "Einstellungen" (neben Waermepumpe/Betrieb/Heizen, Breite 8), nicht auf der Statusseite
+SET_TAB = "33ece0076bfd7cb7"
+upsert({"id": "opt_g_zl_set", "type": "ui_group", "name": "Stromzähler", "tab": SET_TAB, "order": 5, "disp": True, "width": 8, "collapse": False, "className": ""})
+upsert(eng_template("opt_t_zl_set", "opt_g_zl_set", "Stromzähler einrichten", 8, eng_format("zlform", "opt_t_zl_set"), 2650, [["opt_zaehler"]]))
 
 # ---------------------------------------------------------------- Anlagenschema (14.10.2026, Branch ui-schema): nur Anzeige, liest OPT_hp, schreibt nichts
 # Eine SVG-Karte der Leisha WH-WDG05LE5 (Monoblock R290, Zone 1 Heizkoerper, kein Warmwasser, kein Puffer, interner Heizstab, externer Aussenfuehler) mit
