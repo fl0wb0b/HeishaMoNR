@@ -3722,7 +3722,7 @@ VENUS_LINK_JS = ("<script>(function () {   // venus-link: Klick auf den Menüpun
                  "    ev.preventDefault(); ev.stopPropagation(); window.location.href = ziel();\n"
                  "  }, true);\n"
                  "})();</script>")
-upsert({"id": "opt_t_venus_link", "type": "ui_template", "z": TAB, "group": "", "name": "Menü: Venus-Link (Kopfbereich)", "order": 0, "width": 0, "height": 0,
+upsert({"id": "opt_venus_link_js", "type": "ui_template", "z": TAB, "group": "", "name": "Menü: Venus-Link (Kopfbereich)", "order": 0, "width": 0, "height": 0,
         "format": VENUS_LINK_JS, "storeOutMessages": False, "fwdInMessages": False, "resendOnRefresh": False, "templateScope": "global", "className": "",
         "x": 1260, "y": 4100, "wires": [[]]})
 

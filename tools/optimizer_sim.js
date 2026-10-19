@@ -2181,7 +2181,7 @@ check('ohne Kinderzimmer-Werte (frischer Start): vier Spalten leer, Karte zeigt 
 
 // ---- venus-link (19.10.2026): Menüpunkt "Venus (Victron)" + Klick-Umleitung je nach Aufruf (NAS direkt, über den Venus, über den VRM-Proxy)
 (() => {
-  const L = ALLNODES.find(n => n.id === 'opt_link_venus'), T = ALLNODES.find(n => n.id === 'opt_t_venus_link');
+  const L = ALLNODES.find(n => n.id === 'opt_link_venus'), T = ALLNODES.find(n => n.id === 'opt_venus_link_js');
   const js = T ? T.format.replace(/^<script>/, '').replace(/<\/script>$/, '') : '';
   const zielVon = (origin, pathname) => { let h = null; const ctx = {window: {}, location: {origin, pathname, set href(v) { h = v; }}, document: {addEventListener: (t, fn) => { ctx.klick = fn; }}};
     vm.runInNewContext(js, ctx); const it = {innerText: 'Venus (Victron)', closest: () => it}; const ev = {target: it, preventDefault() {}, stopPropagation() {}};
