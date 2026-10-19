@@ -222,7 +222,8 @@ function regler(P, lvl, c) {
 }
 
 // ------------------------------------------------------------------ Ein Minutenschritt
-// E = {t, at, rh, pv (kW PV als Sonnenmaß), shift, q, hc, sollHand (optional), th (optional: gemessenes Hausmittel statt Modell)}
+// E = {t, at, rh, pv (kW PV als Sonnenmaß), shift, q, hc, sollHand (optional), th (optional: gemessenes Hausmittel statt Modell),
+//      startBefehl (optional: Verschiebung wurde in dieser Minute angehoben → Start in der Pause ohne Einschaltschwelle, vorziehen_sim)}
 function schritt(S0, E, P) {
     const S = Object.assign({}, S0, {raeume: Object.assign({}, S0.raeume), rf: Object.assign({}, S0.rf), n: Object.assign({}, S0.n)});
     // at = Physik-AT (Haus, Kältekreis), aw/atI = WP-AT (Fühler: Kurve, Bänder, Abtau-Linie, Heizstab; Winterpaket: atExtVersatz)
@@ -253,6 +254,7 @@ function schritt(S0, E, P) {
             if (v4 <= soll - P.startK + 1e-9) { S.startZ++; } else if (v4 > soll - P.startK + P.startHystK + 1e-9) { S.startZ = 0; } else if (S.startZ > 0) { S.startZ++; }
             const verzug = S.hgNeu < P.hgStartMin + P.startVerzugMin ? P.hgStartMin : P.startVerzugMin;
             if (S.pauseMin >= P.minPauseMin && ((S.startZ >= verzug && S.hgNeu >= P.hgStartMin) || (S.hgNeu === P.hgStartMin && S.startZ > 0))) { start = true; }
+            if (E.startBefehl && S.pauseMin >= P.minPauseMin && S.hgNeu >= P.hgStartMin) { start = true; }   // optional: Soll-Anhebung in der Pause umgeht die Einschaltschwelle (F 3969412, 4131809; M 10.10. 18:20, 11.10. 19:10) – nur wenn der Aufrufer sie meldet
         }
         if (start) { S.modus = 'lauf'; S.rt = 0; S.lvl = 0; S.ab = false; S.hzSlow = hzMinAt(P, atI); S.startZ = 0; S.n.starts++; S.startHoch = hc === 0 && atI <= P.startHochAtC; if (S.startHoch) { S.n.kaltstarts = (S.n.kaltstarts || 0) + 1; } }
     }
