@@ -2179,6 +2179,18 @@ check('ohne Kinderzimmer-Werte (frischer Start): vier Spalten leer, Karte zeigt 
   Object.keys(gstore).forEach(k => delete gstore[k]); Object.assign(gstore, keep); NOW = nowKeep;
 })();
 
+// ---- venus-link (19.10.2026): Menüpunkt "Venus (Victron)" + Klick-Umleitung je nach Aufruf (NAS direkt, über den Venus, über den VRM-Proxy)
+(() => {
+  const L = ALLNODES.find(n => n.id === 'opt_link_venus'), T = ALLNODES.find(n => n.id === 'opt_t_venus_link');
+  const js = T ? T.format.replace(/^<script>/, '').replace(/<\/script>$/, '') : '';
+  const zielVon = (origin, pathname) => { let h = null; const ctx = {window: {}, location: {origin, pathname, set href(v) { h = v; }}, document: {addEventListener: (t, fn) => { ctx.klick = fn; }}};
+    vm.runInNewContext(js, ctx); const it = {innerText: 'Venus (Victron)', closest: () => it}; const ev = {target: it, preventDefault() {}, stopPropagation() {}};
+    ctx.location = {origin, pathname, set href(v) { h = v; }}; ctx.window.location = ctx.location; ctx.klick(ev); return h; };
+  let ok1 = false, a, b, c;
+  try { a = zielVon('http://10.10.10.128:1880', '/ui/'); b = zielVon('https://192.168.5.11:1881', '/nas/ui/'); c = zielVon('https://abc.proxyrelay2.victronenergy.com', '/proxy/xyz/nas/ui/'); ok1 = true; } catch (e) { a = e.message; }
+  check('Venus-Link: ui_link "Venus (Victron)" im Menü (Reihenfolge nach allen Seiten), globales Skript leitet um: NAS direkt -> https://192.168.5.11:1881/ui/, über den Venus -> https://192.168.5.11:1881/ui/, über einen Proxy-Unterpfad -> derselbe Unterpfad + /ui/',
+        L && L.type === 'ui_link' && L.order >= 17 && T && T.templateScope === 'global' && ok1 && a === 'https://192.168.5.11:1881/ui/' && b === 'https://192.168.5.11:1881/ui/' && c === 'https://abc.proxyrelay2.victronenergy.com/proxy/xyz/ui/', JSON.stringify([a, b, c]));
+})();
 // ---- Paket 2 (15.10.2026): Karte "Auswertung NAS" (Daten & Güte) liest /data/optimizer-tools/status.json des Containers optimizer-tools (nur lesen)
 console.log('\n--- Auswertung NAS (status.json des Containers optimizer-tools)');
 (() => {

@@ -3707,6 +3707,25 @@ if UE_TAB in B and B[UE_TAB]["type"] == "ui_tab":
     _schema_out.append("opt_t_schema_ue")
 else:
     print("Hinweis: Seite Übersicht (" + UE_TAB + ") fehlt, Anlagenschema nur auf der Seite Optimierer")
+# venus-link 19.10.2026: Menüpunkt "Venus (Victron)" im NAS-Dashboard zurück zum Venus-Dashboard. Das NAS-Dashboard ist auch über den Venus
+# erreichbar (Venus-Node-RED reicht /nas/ui/ an 10.10.10.128:1880/ui durch, tools/venus_nasui_patch.py; so auch über den VRM-Proxy).
+# Ziel je nach Aufruf: unter .../nas/ui/ -> relativ .../ui/ (Venus selbst bzw. derselbe VRM-Proxy), direkt auf der NAS -> https://192.168.5.11:1881/ui/.
+VENUS_UI = "https://192.168.5.11:1881/ui/"
+upsert({"id": "opt_link_venus", "type": "ui_link", "z": TAB, "name": "Venus (Victron)", "link": "../../ui/", "icon": "fa-bolt", "target": "this",
+        "order": 17, "className": "", "x": 1260, "y": 4060})
+VENUS_LINK_JS = ("<script>(function () {   // venus-link: Klick auf den Menüpunkt \"Venus (Victron)\" je nach Aufruf richtig umleiten\n"
+                 "  if (window.__optVenusLink) { return; } window.__optVenusLink = true;\n"
+                 "  function ziel() { var p = location.pathname, i = p.indexOf('/nas/ui'); return i >= 0 ? location.origin + p.slice(0, i) + '/ui/' : '" + VENUS_UI + "'; }\n"
+                 "  document.addEventListener('click', function (ev) {\n"
+                 "    var it = ev.target && ev.target.closest ? ev.target.closest('md-list-item, md-menu-item, .md-list-item-text, button') : null;\n"
+                 "    if (!it || !/^\\s*Venus \\(Victron\\)\\s*$/.test(it.innerText || '')) { return; }\n"
+                 "    ev.preventDefault(); ev.stopPropagation(); window.location.href = ziel();\n"
+                 "  }, true);\n"
+                 "})();</script>")
+upsert({"id": "opt_t_venus_link", "type": "ui_template", "z": TAB, "group": "", "name": "Menü: Venus-Link (Kopfbereich)", "order": 0, "width": 0, "height": 0,
+        "format": VENUS_LINK_JS, "storeOutMessages": False, "fwdInMessages": False, "resendOnRefresh": False, "templateScope": "global", "className": "",
+        "x": 1260, "y": 4100, "wires": [[]]})
+
 upsert(comment("opt_c_schema", "Anlagenschema (nur Anzeige): OPT_hp lesen → Karten auf Optimierer und Übersicht", 380, 2380))
 upsert(inject("opt_i_schema", "alle 10 s", 10, 20, ["opt_schema"], 140, 2440))
 upsert(fn("opt_schema", "Anlagenschema: Werte lesen (nur Anzeige)", SCHEMA_JS + SCHEMA_FN_JS.replace("__COPKW__", COP_KW_JS), 1, [_schema_out], 440, 2440))
