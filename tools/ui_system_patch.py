@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Design-System v1 (17.10.2026, v1.5 ui-review 18.10.2026: Kern-Diagramme, Platzhalter, SYSTEM-Leiste): EIN Stil fuer Kern- und Optimierer-Seiten, nur Darstellung (CSS im globalen ui_template "UI-Optik (Kopfbereich)").
+"""Design-System v1 (17.10.2026, v1.5 ui-review 18.10.2026: Kern-Diagramme, Platzhalter, SYSTEM-Leiste; v1.6 ui-review-b 20.10.2026: Saeulenwerte): EIN Stil fuer Kern- und Optimierer-Seiten, nur Darstellung (CSS im globalen ui_template "UI-Optik (Kopfbereich)").
 Aendert genau einen Knoten (ui_optik_kopf, format). Erwartet den Stand von ui_optik_patch.py (14.10.2026); --revert stellt ihn byte-genau wieder her.
-Nutzung: ui_system_patch.py <flows_v2_export.json> --out <neu.json> [--revert]
+Nutzung: ui_system_patch.py <flows_v2_export.json> --out <neu.json> [--revert | --zurueck-v15]
+  --revert: zurueck auf den Stand 14.10. (ALT); --zurueck-v15: nur v1.6 zurueck auf v1.5 (Live-Stand seit 18.10.)
 Was der Stil macht: Grundschrift 14 px ueberall (Kern bisher 16), Gruppentitel einheitlich (Kapitaelchen 12,5 px, Blau #00729f, Linie darunter),
 Karten mit Rand und 8-px-Radius, Text-Widgets: Bezeichnung grau / Wert dunkel halbfett, Knoepfe umrandet statt vollflaechig, Tacho-/Diagrammtitel wie
 Gruppentitel, Trennlinien hell. Ausgeblendet (nur CSS, Knoten bleiben): Hinweiszeilen der Kernseiten, Gruppe WARMWASSER (Anlage ohne Warmwasser).
@@ -121,19 +122,50 @@ function lauf() { document.querySelectorAll(SEL).forEach(fix); }
 lauf(); setInterval(lauf, 1500);
 })();
 </script>"""
-NEU = V14 + V15_ZUSATZ
+V15 = V14 + V15_ZUSATZ
+WERTE = ["eee624aa045ae22a", "8084f5f9211ba26e"]          # Effizienz > COP pro Monat, Erzeugte Waerme pro Monat: Wert an jeder Saeule
+V16_ZUSATZ = "<script>\n" + r"""(function () { /* v1.6 (ui-review-b 20.10.2026): Werte an den Monatssaeulen (Effizienz), Saeulen hoechstens 40 px breit. Nur Anzeige, nur diese Diagramme. */
+var C = window.Chart; if (!C || !C.plugins) { return; }
+var FONT = getComputedStyle(document.body).fontFamily, WERTE = %s;
+function de(v) { return Number(v).toLocaleString('de-DE', {maximumFractionDigits: 2}); }
+function nid(c) { if (c.$dsId === undefined) { var cv = c.chart && c.chart.canvas, k = cv && cv.closest ? cv.closest('md-card') : null; c.$dsId = k ? k.getAttribute('node-id') : null; } return c.$dsId; }
+C.plugins.register({
+    beforeUpdate: function (c) {   /* wenige Monate: Saeulen nicht breiter als 40 px */
+        try { if (WERTE.indexOf(nid(c)) >= 0) { ((c.options.scales || {}).xAxes || []).forEach(function (s) { s.barThickness = 40; }); } } catch (e) { /* nichts */ }
+    },
+    afterDraw: function (c) {
+        try {
+            if (WERTE.indexOf(nid(c)) < 0) { return; }
+            var ctx = c.chart.ctx, a = c.chartArea; ctx.save(); ctx.font = '600 12px ' + FONT; ctx.textAlign = 'center';
+            c.data.datasets.forEach(function (d, di) { var m = c.getDatasetMeta(di); if (m.hidden) { return; } m.data.forEach(function (el, i) {
+                var v = d.data[i]; if (!(Number(v) > 0) || !el._model) { return; }
+                var innen = el._model.y - a.top < 16; ctx.fillStyle = innen ? '#fff' : '#263238'; ctx.textBaseline = innen ? 'top' : 'bottom';
+                ctx.fillText(de(v), el._model.x, innen ? el._model.y + 3 : el._model.y - 3); }); });
+            ctx.restore();
+        } catch (e) { /* Diagramm bleibt wie es ist */ }
+    }
+});
+function sweep() { try { var I = C.instances || {}; Object.keys(I).forEach(function (k) { var c = I[k]; if (!c.$dsW && WERTE.indexOf(nid(c)) >= 0) { c.$dsW = true; c.update(0); } }); } catch (e) { /* nichts */ } }
+sweep(); setInterval(sweep, 1500);
+})();
+""" % json.dumps(WERTE) + "</script>"
+V16 = V15 + V16_ZUSATZ
+NEU = V16
 
 def main():
-    a = sys.argv[1:]; revert = "--revert" in a; out = a[a.index("--out") + 1]
+    a = sys.argv[1:]; revert = "--revert" in a; auf15 = "--zurueck-v15" in a; out = a[a.index("--out") + 1]
     d = json.load(open(a[0], encoding="utf-8")); fl = d["flows"]; k = next(n for n in fl if n["id"] == KOPF_ID)
     assert k["type"] == "ui_template" and k.get("templateScope") == "global"
-    if not revert:
-        assert k["format"] in (ALT, V1, V11, V12, V13, V14), "Ausgangsstand weicht ab (ui_optik_kopf nicht auf einem bekannten Stand)"
+    if auf15:                                                     # Rueckbau nur der Stufe v1.6 auf den Live-Stand v1.5
+        assert k["format"] in (NEU, V15), "nicht auf v1.6/v1.5"
+        k["format"] = V15
+    elif not revert:
+        assert k["format"] in (ALT, V1, V11, V12, V13, V14, V15), "Ausgangsstand weicht ab (ui_optik_kopf nicht auf einem bekannten Stand)"
         k["format"] = NEU
     else:
-        assert k["format"] in (NEU, V14, V13, V12, V11, V1), "nicht gepatcht"
+        assert k["format"] in (NEU, V15, V14, V13, V12, V11, V1), "nicht gepatcht"
         k["format"] = ALT
-    json.dump(d, open(out, "w", encoding="utf-8"), ensure_ascii=False)
+    json.dump(d, open(out, "w", encoding="utf-8"), ensure_ascii=False, separators=(",", ":"))
     print("rev", d["rev"], "->", out, "(CSS", len(k["format"]), "Zeichen)")
 if __name__ == "__main__":
     main()
