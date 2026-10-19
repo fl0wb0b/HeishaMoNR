@@ -77,6 +77,29 @@ _TAGE_NEU = ("        " + (MARKE % 9) + "erst ab dem ersten Tag mit Daten (Gradt
              "        if (_ab > 0) { varlabels = varlabels.slice(_ab); vargraaddagen_data = vargraaddagen_data.slice(_ab); varkwh_heat_data = varkwh_heat_data.slice(_ab); }\n"
              + _TAGE_ALT)
 
+# ---------------------------------------------------------------- Punkt 10: Kleinkram der Kernseiten
+AUSGEBLENDET = "a1c0b0000c0f0020"     # Gruppe "Ausgeblendet (Warmwasser)" auf dem versteckten Tab GUI (wie tools/ui_kompakt_patch.py): Knoten bleiben, belegen kein Raster mehr
+# Nicht dabei: die drei Hinweise auf der Seite Heizung (36a9b7dad9d2611e, 3adf2738c40e2c50, 032ca56c8c21283e) halten dort als unsichtbare Platzhalter
+# das Raster zusammen (Vorschau 20.10.: ohne sie rutschen Zeitverlauf und "Erweitert" um); sie bleiben per CSS versteckt.
+WEG = [  # (Seite, ID, alte Gruppe, Grund)
+    ("Betrieb", "b22da9fe52b286cf", "4fb2801b6ab7ae20", "Hinweis 'Modus 0=…' (bisher nur per CSS versteckt)"),
+    ("Betrieb", "21abbbb132d72856", "4fb2801b6ab7ae20", "'Aktiver Modus' ohne Wert (kein Format, keine Zuleitung)"),
+    ("Effizienz", "4d7236c464d1c14e", "56501a1437bb83a2", "Hinweis 'Die Tabelle wird …' (bisher nur per CSS versteckt)"),
+    ("Übersicht", "719e11414721599e", "1179fa790d2d89ca", "leere Kopfzeile HEIZEN (Zone 1) (bisher nur per CSS versteckt)"),
+    ("Einstellungen", "313780cf94ef9d1c", "fea7672db2f050c9", "leere Linie am Anfang von WÄRMEPUMPE"),
+    ("Einstellungen", "4ac3620489b6a382", "548e51986bce11b0", "leere Linie am Anfang von BETRIEB"),
+    ("Einstellungen", "be17c89704b598d8", "26d9e6cf24507b4f", "leere Linie am Anfang von HEIZEN"),
+]
+_TYP = {"36a9b7dad9d2611e": "ui_text", "3adf2738c40e2c50": "ui_text", "032ca56c8c21283e": "ui_text", "b22da9fe52b286cf": "ui_text", "21abbbb132d72856": "ui_text",
+        "4d7236c464d1c14e": "ui_text", "719e11414721599e": "ui_text", "313780cf94ef9d1c": "ui_template", "4ac3620489b6a382": "ui_template", "be17c89704b598d8": "ui_template"}
+TEXTE = [  # (Seite, ID, Typ, Feld, alt, neu, Grund)
+    ("Heizung", "0fa2e5caff3f31a9", "ui_button", "label", "Automatisierung", "Automatik", "Knopf passt ohne Abschneiden ('AUTOMATISIERU…')"),
+    ("Betrieb", "30a8e90354d6eb5d", "ui_text", "label", "-- Vorlauf Ist", "Vorlauf Ist", "ohne Bindestriche"),
+    ("Betrieb", "3f9cda20118a9a8a", "ui_text", "label", "-- Rücklauf Ist", "Rücklauf Ist", "ohne Bindestriche"),
+    ("Kühlen", "6fc958da73fbdf09", "ui_text", "label", "-- Taupunkt", "Taupunkt", "ohne Bindestriche"),
+    ("Kühlen", "07ba09a16be50433", "ui_text", "label", "-- Untergrenze (berechnet)", "Untergrenze (berechnet)", "ohne Bindestriche"),
+]
+
 # (Seite, ID, Typ, Feld, Art "ganz"|"text", alt, neu, Grund)
 PUNKTE = {
     "4": [
@@ -89,9 +112,11 @@ PUNKTE = {
         ("Auswertung", "a1c0b0000c0f0061", "function", "func", "text", _LADEN_ALT, _LADEN_NEU, "COP-Diagramm: gespeicherte Ausreißer nicht laden"),
         ("Auswertung", "2391637fadbbf190", "function", "func", "text", _TAGE_ALT, _TAGE_NEU, "Letzte 31 Tage: erst ab dem ersten Datentag"),
     ],
+    "10": [(seite, i, _TYP[i], "group", "ganz", g, AUSGEBLENDET, "weg: " + grund) for (seite, i, g, grund) in WEG]
+          + [(seite, i, typ, feld, "ganz", alt, neu, grund) for (seite, i, typ, feld, alt, neu, grund) in TEXTE],
 }
 NEUE_KNOTEN = {"9": [KAPPE]}          # Punkt -> [Knoten]
-REIHENFOLGE = ["4", "9"]
+REIHENFOLGE = ["4", "9", "10"]
 FORMATE = ({"separators": (",", ":")}, {}, {"indent": 4})
 
 

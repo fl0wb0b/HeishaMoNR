@@ -157,6 +157,23 @@ r = fn_lauf(NB["2391637fadbbf190"]["func"], {"kwh_HEAT_31d": mk([0] * 6), "degre
 r2 = fn_lauf(NB["2391637fadbbf190"]["func"], {"kwh_HEAT_31d": mk([1, 0, 0, 0, 0, 0]), "degreedays_31d": mk([0] * 6), "kwh_DHW_31d": mk([0] * 6)})
 check("P9 31 Tage ohne Daten oder mit Daten ab Tag 1: alle 31 Tage wie bisher", isinstance(r, dict) and len(r["payload"][0]["labels"]) == 6 and len(r2["payload"][0]["labels"]) == 6, (r, r2))
 
+# Punkt 10: Kleinkram
+tabs = {n["id"]: n for n in flows if n["type"] == "ui_tab"}
+ag = A[P.AUSGEBLENDET]
+check("P10 Zielgruppe 'Ausgeblendet' liegt auf einem versteckten Tab (GUI), nicht angezeigt", ag["type"] == "ui_group" and tabs[ag["tab"]].get("hidden") is True, ag.get("tab"))
+check("P10 7 Widgets aus dem Raster genommen (Gruppe -> Ausgeblendet), Reihenfolge/Breite/Inhalt unveraendert, ihre alten Gruppen behalten sichtbare Widgets",
+      len(P.WEG) == 7 and all(NB[i]["group"] == P.AUSGEBLENDET and {k: v for k, v in NB[i].items() if k != "group"} == {k: v for k, v in A[i].items() if k != "group"} for (_s, i, _g, _r) in P.WEG) and
+      all(any(n.get("group") == g for n in P.knoten(NEU)) for (_s, _i, g, _r) in P.WEG), "")
+v15 = A["ui_optik_kopf"]["format"]
+check("P10 weg: die per CSS versteckten Knoten von Betrieb/Effizienz/Übersicht; die drei Platzhalter-Hinweise der Seite Heizung bleiben in ihren Gruppen (Raster)",
+      all(('node-id="%s"' % i) in v15 and NB[i]["group"] == P.AUSGEBLENDET for i in ["b22da9fe52b286cf", "4d7236c464d1c14e", "719e11414721599e"]) and
+      all(('node-id="%s"' % i) in v15 and NB[i]["group"] == A[i]["group"] for i in ["36a9b7dad9d2611e", "3adf2738c40e2c50", "032ca56c8c21283e"]), "")
+check("P10 Einstellungen: WÄRMEPUMPE, BETRIEB, HEIZEN beginnen nicht mehr mit einer leeren Linie (<left></left>)",
+      all(sorted([n for n in P.knoten(NEU) if n.get("group") == g], key=lambda n: n.get("order", 0))[0].get("format", "").find("<left></left>") < 0 for g in ["fea7672db2f050c9", "548e51986bce11b0", "26d9e6cf24507b4f"]), "")
+check("P10 Texte: Knopf 'Automatik', 'Vorlauf Ist'/'Rücklauf Ist' ohne Bindestriche, keine Kern-Beschriftung beginnt mehr mit '--'",
+      NB["0fa2e5caff3f31a9"]["label"] == "Automatik" and NB["30a8e90354d6eb5d"]["label"] == "Vorlauf Ist" and NB["3f9cda20118a9a8a"]["label"] == "Rücklauf Ist" and
+      not [n["id"] for n in P.knoten(NEU) if n["type"] == "ui_text" and str(n.get("label", "")).startswith("--")], "")
+
 # 4 vertauschbar mit dem Generator (opt_*)
 gen = os.path.join(HERE, "optimizer_phase1.py")
 a1, a2 = os.path.join(T, "a1.json"), os.path.join(T, "a2.json")
