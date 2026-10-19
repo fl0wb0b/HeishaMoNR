@@ -2350,7 +2350,7 @@ var HPe = G('OPT_hp') || {}, hcV = (HPe.Heating_Control && typeof HPe.Heating_Co
 var hcHm = function (ts) { return new Date(ts).toLocaleTimeString('de-DE', {hour: '2-digit', minute: '2-digit'}); };
 var rowsWp = [
     ['Betriebszustand', mode + (ssOn ? ' · Sanftanlauf' : ''), ''],
-    ['Heizregelung', hcV === null ? '–' : (hcV === 1 ? 'Efficiency' : 'Comfort') + (HPe._hcSince ? ' · ' + (HPe._hcSince.first ? 'seit Beobachtung ' : 'seit ') + hcHm(HPe._hcSince.ts) : ''), hcV === 1 ? 'warn' : ''],
+    ['Heizregelung', hcV === null ? '–' : (hcV === 1 ? 'Efficiency' : 'Comfort') + (HPe._hcSince ? ' · ' + (HPe._hcSince.first ? 'seit Beobachtung ' : 'seit ') + hcHm(HPe._hcSince.ts) : ''), ''],   // ui-review-b 20.10.2026: Efficiency ist ein normaler Zustand (Rot nur fuer Fehler)
     ['Soll-Vorlauf (Heizkurve)', f(target, 0, '°C'), ''],
     ['Verschiebung manuell', f(shiftBase, 0, 'K'), ''],
     ['Korrektur Raumregelung', f(rtcCorr, 0, 'K'), ''],
@@ -2663,10 +2663,10 @@ TABLE = ('<div class="optfit"><div class="optkv"><div class="kv" ng-repeat="r in
          '<span class="l">{{r[0]}}</span><span class="v" ng-class="r[2]">{{r[1]}}</span></div></div></div>')
 
 
-FQ_TABLE = ('<div class="optfit optpt optfq"><table><tr><th></th><th colspan="3">Außentemperatur (OWM)</th><th colspan="3">PV ({{msg.payload.pvQuelle}})</th></tr>'
+FQ_TABLE = ('<div class="optfit optpt optfq"><table title="{{msg.payload.sammel}}"><tr><th></th><th colspan="3">Außentemperatur (OWM)</th><th colspan="3">PV ({{msg.payload.pvQuelle}})</th></tr>'
             '<tr><th>Horizont</th><th>Abw.</th><th>Fehler</th><th>n</th><th>Prognose / Ist</th><th>Fehler</th><th>n</th></tr>'
             '<tr ng-repeat="z in msg.payload.tab track by $index"><td>{{z[0]}}</td><td>{{z[1]}}</td><td>{{z[2]}}</td><td>{{z[3]}}</td><td>{{z[4]}}</td><td>{{z[5]}}</td><td>{{z[6]}}</td></tr></table>'
-            '<div class="mute" style="margin-top:6px;font-size:12.5px">{{msg.payload.sammel}}</div></div>')   # ui-daten 18.10.2026: Prognoseguete als Tabelle
+            '</div>')   # ui-daten 18.10.2026: Prognoseguete als Tabelle; ui-review-b 20.10.2026: Sammelzeile ("240 Stunden Ist-Werte ...") nur noch als Tooltip der Tabelle
 
 
 def template(i, gid, height, y):
@@ -3028,7 +3028,7 @@ upsert(fn("opt_nas", "Status NAS-Container (nur lesen)", NAS_JS, 1, [["opt_t_nas
 upsert(inject("opt_i_nas", "alle 5 Minuten", 300, 25, ["opt_nas"], 140, 580))
 
 PLAN_TPL = """<div class="optp optfit">
-<div class="kpi"><div class="tile" ng-repeat="t in msg.payload.kpi track by $index" title="{{t.t}}"><div class="k">{{t.k}}</div><div class="v">{{t.v}}</div><div class="s">{{t.s}}</div></div></div>
+<div class="kpi" ng-if="msg.payload.kpi.length"><div class="tile" ng-repeat="t in msg.payload.kpi track by $index" title="{{t.t}}"><div class="k">{{t.k}}</div><div class="v">{{t.v}}</div><div class="s" title="{{t.s}}">{{t.s}}</div></div></div>
 <div id="optch_plan" style="min-height:120px"></div>
 <div class="sec" style="cursor:pointer" ng-click="plOpen = !plOpen">Details und Modell {{plOpen ? '▾' : '▸'}}</div>
 <div class="sum" ng-if="plOpen"><span ng-repeat-start="r in msg.payload.rows track by $index" class="k">{{r[0]}}</span><span ng-repeat-end class="v" ng-class="r[2]" title="{{r[3]}}">{{r[1]}}</span></div>
