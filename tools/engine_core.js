@@ -1345,6 +1345,8 @@ var ENGINE = (function () {
         d.qChanged = false; d.shiftChanged = false; d.sollJump = 0;
         if (have(d.q)) { if (have(S.q) && S.q !== d.q) { S.qChg = now; d.qChanged = true; d.qFrom = S.q; } S.q = d.q; }
         if (have(d.shift)) { if (have(S.shift) && S.shift !== d.shift) { S.shiftChg = now; d.shiftChanged = true; d.shiftFrom = S.shift; } S.shift = d.shift; }
+        if (num(inp.ssAn) === 1 || num(inp.ss) === 1) { S.ssT = now; }                          // wertung-wirkung 20.10.2026: Sanftanlauf eingeschaltet (inkl. 5 min Nachlauf, s. effectStart)
+        d.ssFremd = have(S.ssT) && now - S.ssT <= 5 * MIN;
         // Arbitrierung: uebernimmt die Anlage den laufenden Vorschlag einer Verschiebungs-Regel, gehoert die Verschiebung dieser Regel ("applied"), bis sie
         // sich wieder aendert; jede andere Aenderung (Hand, HeishaMoNR, Rueckweg) loest die Zuordnung
         if (d.shiftChanged) {
@@ -2456,6 +2458,13 @@ var ENGINE = (function () {
     function scoreStep(S, d, inp, cfg, res) {
         var sc = S.sc, now = d.now, recs = [], sv = svOf(cfg);
         sc.sv = sv;
+        if (!sc.korrSS1910) {                                                                 // wertung-wirkung 20.10.2026: Sanftanlauf-Test 19.10. 11:24-23:52 hat 12 Verschiebungen als Wirkung von Raumeinfluss v6 gebucht
+            sc.korrSS1910 = 1; var Tk = sc.tot['raum_offset|v6|s5'];
+            if (Tk && Tk.wirkN >= 12 && Tk.wirkP >= 100) {
+                book(sc, recs, {t: iso(now), typ: 'korrektur', regel: 'raum_offset', v: 6, sv: 5, punkte: -100, text: 'Rückbuchung: 12 Verschiebungen des Sanftanlaufs (19.10. 11:34–20:05) waren keine Wirkung der Regel (−100 Punkte, −12 Wirkungsfälle)'}, now);
+                Tk.wirkN -= 12; Tk.wirkP = Math.round((Tk.wirkP - 100) * 100) / 100; var Wk = sc.week[isoWeek(now)]; if (Wk && Wk.raum_offset) { Wk.raum_offset.wirkung = Math.max(0, (Wk.raum_offset.wirkung || 0) - 12); }
+            }
+        }
         RULES.forEach(function (R) { var T = tot(sc, R.id, R.ver, sv); if (!T.since) { T.since = now; } });
         // 1) neue Faelle aus neuen Vorschlaegen/Hinweisen
         res.forEach(function (r) {
@@ -2573,7 +2582,7 @@ var ENGINE = (function () {
                 sc.eff.push({rule: 'quiet_strecken', t0: now, art: 'deckel', pel0: S._pelPrev, kal: isKal('quiet_strecken', now), m: {}, text: 'Quiet ' + d.qFrom + ' → ' + d.q + ' bei ' + de(S._hzPrev, 0) + ' Hz'});
             }
         }
-        if (d.shiftChanged && have(d.shiftFrom) && Math.abs(d.shift - d.shiftFrom) === 1 && d.fresh) {
+        if (d.shiftChanged && have(d.shiftFrom) && Math.abs(d.shift - d.shiftFrom) === 1 && d.fresh && !(d.ssFremd && !d.shiftBy)) {   // wertung-wirkung: Bewegungen des Sanftanlaufs zaehlen nicht als Regel-Wirkung
             var er = d.shiftBy && (sc.sv || SCORE_VER) >= 3 ? d.shiftBy : 'raum_offset';                // v3: die Regel, deren Vorschlag uebernommen wurde (sonst wie bisher Raumeinfluss)
             sc.eff.push({rule: er, t0: now, art: 'verschiebung', soll0: S._sollPrev, dshift: d.shift - d.shiftFrom, kal: isKal(er, now), m: {}, text: 'Verschiebung ' + sg(d.shiftFrom, 0) + ' → ' + sg(d.shift, 0) + ' K'});
         }

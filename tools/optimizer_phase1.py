@@ -3378,7 +3378,7 @@ var inp = {t: now, hpAge: hpTs ? (now - hpTs) / MIN : null,
            hz: num(G('compressor_frequency')), vl: num(G('TOP6_Main_Outlet_Temp')), rl: num(G('TOP5_Main_Inlet_Temp')), soll: num(G('TOP42_Z1_Water_Target_Temp')), dT: num(G('TOP23_Heat_Delta')),
            pel: num(G('TOP16_Heat_Energy_Consumption')), pth: hpv('Heat_Power_Production_Extra'), flow: num(G('TOP1_Pump_Flow')), pump: hpv('Pump_Speed'),
            q: pick(hpv('Quiet_Mode_Level'), num(G('TOP18_Quiet_Mode_Level'))), qPrio: hpv('Quiet_Mode_Priority'), hc: hpv('Heating_Control'), at: at,
-           defrost: num(G('TOP26_Defrosting_State')) === 1 ? 1 : 0, dhw: num(G('TOP20_ThreeWay_Valve_State')) === 1 ? 1 : 0, ss: (ss.state === 1 && Math.abs(num(ss.correction_value) || 0) > 0) ? 1 : 0,
+           defrost: num(G('TOP26_Defrosting_State')) === 1 ? 1 : 0, dhw: num(G('TOP20_ThreeWay_Valve_State')) === 1 ? 1 : 0, ss: (ss.state === 1 && Math.abs(num(ss.correction_value) || 0) > 0) ? 1 : 0, ssAn: ss.state === 1 ? 1 : 0,   // ssAn (wertung-wirkung 20.10.2026): Sanftanlauf eingeschaltet
            rt: num(G('compressor_runtime')), shift: pick(hpv('Z1_Heat_Request_Temp'), num(G('TOP27_Z1_Heat_Request_Temp'))), heatMode: num(G('TOP76_Heating_Mode')), z1Sensor: num(G('TOP111_Z1_Sensor_Settings')),
            heaterI: hpv('Internal_Heater_State'), heaterE: hpv('External_Heater_State'), htrOnAT: hpSet('Heater_On_Outdoor_Temp'), htrStartDelta: hpSet('Heater_Start_Delta'), htrDelay: hpSet('Heater_Delay_Time'), heatOffAT: hpSet('Heating_Off_Outdoor_Temp'),
            sollKurve: sollKurve, block: mq.block_active === 1 ? 1 : 0, otherQ: otherQ.length ? otherQ.join(', ') : null, otherShift: otherS.length ? otherS.join(', ') : null,
