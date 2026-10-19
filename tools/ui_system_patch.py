@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Design-System v1 (17.10.2026, v1.5 ui-review 18.10.2026: Kern-Diagramme, Platzhalter, SYSTEM-Leiste; v1.6 ui-review-b 20.10.2026: Saeulenwerte): EIN Stil fuer Kern- und Optimierer-Seiten, nur Darstellung (CSS im globalen ui_template "UI-Optik (Kopfbereich)").
+"""Design-System v1 (17.10.2026, v1.5 ui-review 18.10.2026: Kern-Diagramme, Platzhalter, SYSTEM-Leiste; v1.6 ui-review-b 20.10.2026: Saeulenwerte, kWh-Achse, Zeitplan nur belegte Zeilen + 1): EIN Stil fuer Kern- und Optimierer-Seiten, nur Darstellung (CSS im globalen ui_template "UI-Optik (Kopfbereich)").
 Aendert genau einen Knoten (ui_optik_kopf, format). Erwartet den Stand von ui_optik_patch.py (14.10.2026); --revert stellt ihn byte-genau wieder her.
 Nutzung: ui_system_patch.py <flows_v2_export.json> --out <neu.json> [--revert | --zurueck-v15]
   --revert: zurueck auf den Stand 14.10. (ALT); --zurueck-v15: nur v1.6 zurueck auf v1.5 (Live-Stand seit 18.10.)
@@ -170,6 +170,41 @@ function sweep() { var I = C.instances || {}; Object.keys(I).forEach(function (k
 sweep(); setInterval(sweep, 1500);
 })();
 """ % (json.dumps(WERTE), json.dumps(ACHSEN)) + "</script>"
+# Punkt 5 (ui-review-b): Zeitplan zeigt nur belegte Zeilen + 1. Die Zeilen sind die letzten Karten der Gruppe ZEITPLAN (je 10 Widgets: #k, Aktiv, Name, Tag, Stunde,
+# Minuten, Aktion, Einschalten, Bedingung, Papierkorb). Leere Zeilen am Ende werden aus dem Kartencontainer genommen (nicht nur versteckt), damit das
+# Dashboard die Gruppe ohne Luecke und kuerzer anordnet; sobald die letzte sichtbare Zeile belegt ist, kommt die naechste zurueck. Die Zeitplan-Logik
+# (Fremdcode) bleibt unberuehrt: alle Widgets bestehen weiter und bekommen ihre Werte wie bisher.
+ZEITPLAN_ZEILEN = [["ace1c289fb9d01d0", "e3d4b9d611e649e0", "8fbe0ef4995f8e6a", "243fa1e4e8cef5d0", "40f0401e20235a07", "98499b42fe5f6688", "57dddda65db516a2", "1372ccca982b4f0a", "f6acd15f36324736", "684d1bcc0a898b4b"], ["42d7b810937b1eee", "ce3b0c94ff7a8500", "bbc0fc2f4315d9a0", "e411cdb2b3617a7e", "d8e5ca53b22c577d", "0fcdf0e74a334edb", "bc2393868b4f66ed", "479965c26a5f5d15", "c904ad7bb0b016d8", "c4fb7de363d6e1c1"], ["27af1c0d0307cabf", "1a27db997a27a1dd", "8a47deae609a4257", "d73541639351e613", "7a42e5778bf41519", "871d8f6de9ad1a98", "d15b2d0e98e01f65", "57520972cf8f3282", "b24f970c2d6262f9", "7d9060288d6516b7"], ["8289171ec4091397", "b01c2ff9f7469f79", "9f04561329aa26f4", "612ac224e061cc79", "5f74425ca9610401", "0710a190d551707c", "2a7fb72a1781fe14", "73e5b776ee37e929", "e90e53734d73b6da", "e87eaf09d103f9b1"], ["5b38f36e5a2a69c8", "5bd339d22882aa07", "cdd91f4f0777b0fc", "53c6208ebe18f176", "a5c85f0332e4746d", "c649a3a840183e86", "9de114ee921577b7", "fd75ca33fe4a9589", "82d6f38bd9764a93", "20053902cbf5c49a"], ["090e94afc16817e5", "67c2c134c50ed462", "1e30fa210ee856be", "a1866018a9f27226", "3103abf9a680a9ea", "51e9aad82e544c85", "e72e318e1a456090", "4470d0d9384e5146", "773eba4d817b8b93", "80971077c673d3a2"], ["8fed9f7d60769998", "87241aa5e6a2ccf7", "0a54cb095adcb787", "fcf03506100353c9", "f95cadbe3c3cd2f4", "9fc9947dc30386f3", "436b41690b969348", "0a155882d5693fda", "f314a9b676182c11", "c9e8507eeb72dae8"], ["40f60c31cf47f178", "62e00829c19bec7c", "32e23a19047b877e", "b1956b6593a4a597", "f93699165fe750ce", "0b60ef37733490bf", "f511b9d4cedb0977", "fe24caf7cb4e92d3", "c8f137bcff651fba", "57e0c404bf54aba7"], ["5b506ef531cfaa32", "5a75949723c259df", "d77c206846bfe16d", "37d57c847d1b5ff8", "5b138a18f47114e3", "663c8cf477dc16cb", "11958cca6fba73cb", "611bf69e3ab85546", "a147fe89247aa73b", "d6a7b4c88198805c"], ["9ad63ed6eb875656", "bc8c769ccc26fa5d", "99bf0b7454b3b5c0", "88872f26b2ce5e9b", "e20f0e179a77b100", "1759cf2fcc472812", "219fcc0259998439", "a477e5b86fe9c792", "8e3cfd35030617d7", "5d320e94981761fc"]]
+V16_ZUSATZ += "<script>\n" + r"""(function () { /* v1.6 (ui-review-b 20.10.2026): Zeitplan nur belegte Zeilen + 1 (nur Anzeige) */
+var GRP = '%s', Z = %s, ab = {};
+function karte(c, id) { return ab[id] || c.querySelector('md-card[node-id="' + id + '"]'); }
+function belegt(k) {
+    if (!k) { return false; }
+    if (k.classList.contains('nr-dashboard-switch')) { var sw = k.querySelector('md-switch'); return !!(sw && sw.classList.contains('md-checked')); }
+    if (k.classList.contains('nr-dashboard-textinput')) { var i = k.querySelector('input'); return !!(i && i.value.trim()); }
+    if (k.classList.contains('nr-dashboard-dropdown')) { var v = k.querySelector('md-select-value'); return !!(v && !v.classList.contains('md-select-placeholder') && v.textContent.trim()); }
+    return false;
+}
+function lauf() {
+    try {
+        var p = document.querySelector('ui-card-panel[node-id="' + GRP + '"]'), c = p && p.querySelector('.nr-dashboard-cardcontainer');
+        if (!c || !window.angular) { return; }
+        var letzte = -1; Z.forEach(function (z, i) { if (z.some(function (id) { return belegt(karte(c, id)); })) { letzte = i; } });
+        var zeige = Math.min(Z.length, letzte + 2), anders = false;
+        Z.forEach(function (z, i) { z.forEach(function (id) {
+            var k = karte(c, id); if (!k) { return; }
+            if (i >= zeige && k.parentNode === c) { ab[id] = k; c.removeChild(k); anders = true; }
+            else if (i < zeige && k.parentNode !== c) { c.appendChild(k); delete ab[id]; anders = true; }
+        }); });
+        if (anders) {
+            var ctrl = angular.element(p).controller('uiCardPanel'), mas = angular.element(p.parentElement).controller('uiMasonry');
+            if (ctrl) { ctrl.refreshLayout(function () { if (mas) { mas.refreshLayout(); } }); }
+        }
+    } catch (e) { /* Zeitplan bleibt wie er ist */ }
+}
+lauf(); setInterval(lauf, 1500);
+})();
+""" % (ZEITPLAN, json.dumps(ZEITPLAN_ZEILEN)) + "</script>"
 V16 = V15 + V16_ZUSATZ
 NEU = V16
 

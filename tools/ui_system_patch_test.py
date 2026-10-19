@@ -101,6 +101,35 @@ check("Skript v1.6 (node): 'Letzte 24 Stunden' beim Erzeugen mit zweiter Achse r
       o and o["neuIds"] == ["ds_links", "ds_rechts"] and o["pos"] == "right" and o["grid"] is False and o["t"] == ["Gradtage", "kWh"] and o["tick"] == "0,25" and o["font"] == 12 and o["ds"] == ["ds_links", "ds_rechts"], r.stderr[-300:] if not o else o)
 check("Skript v1.6: schon gezeichnetes Diagramm wird nachgeruestet (Achsen neu, alte Achsen-Boxen ersetzt, Datensaetze umgehaengt), andere Diagramme unberuehrt",
       o and o["altIds"] == ["ds_links", "ds_rechts"] and o["built"] == 1 and o["altBoxes"] == 2 and o["metas"] == ["ds_links", "ds_rechts"] and o["upd"] == 1 and o["fremd"] == 1, o)
+# v1.6 Zeitplan (Punkt 5): DOM-Attrappe mit 10 Zeilen je 10 Karten
+jsz = P.V16_ZUSATZ.split("<script>")[2].split("</script>")[0]
+probez = r"""
+var Z = %s, lay = 0, mas = 0, timer = null;
+function karte(id, typ) { var k = {id: id, typ: typ, wert: '', parentNode: null, classList: {contains: function (c) { return c === 'nr-dashboard-' + typ; }}};
+  k.querySelector = function (sel) { if (typ === 'switch') { return {classList: {contains: function (c) { return c === 'md-checked' && k.wert === true; }}}; }
+    if (typ === 'textinput') { return {value: k.wert}; } if (typ === 'dropdown') { return {classList: {contains: function (c) { return c === 'md-select-placeholder' && !k.wert; }}, textContent: k.wert || 'Option wählen'}; } return null; }; return k; }
+var typen = ['text', 'switch', 'textinput', 'dropdown', 'dropdown', 'dropdown', 'dropdown', 'switch', 'dropdown', 'button'], K = {};
+var c = {children: [], removeChild: function (k) { this.children.splice(this.children.indexOf(k), 1); k.parentNode = null; }, appendChild: function (k) { this.children.push(k); k.parentNode = c; },
+  querySelector: function (sel) { var id = /node-id="(\w+)"/.exec(sel)[1]; return c.children.filter(function (k) { return k.id === id; })[0] || null; }};
+c.appendChild(karte('kopf', 'text'));
+Z.forEach(function (z) { z.forEach(function (id, j) { K[id] = karte(id, typen[j]); c.appendChild(K[id]); }); });
+var p = {querySelector: function () { return c; }, parentElement: {}};
+global.document = {querySelector: function () { return p; }};
+global.window = {angular: true}; global.angular = {element: function (e) { return {controller: function (n) { return n === 'uiCardPanel' ? {refreshLayout: function (cb) { lay++; cb(); }} : {refreshLayout: function () { mas++; }}; }}; }};
+global.setInterval = function (f) { timer = f; };
+(function () { %s })();
+var r = [c.children.length, lay, mas];
+K[Z[0][2]].wert = 'Absenkung'; timer(); r.push(c.children.length);
+K[Z[3][4]].wert = '06'; timer(); r.push(c.children.length);
+timer(); r.push(c.children.length, lay);
+K[Z[9][1]].wert = true; timer(); r.push(c.children.length, c.children.slice(-1)[0].id === Z[9][9], c.children.map(function (k) { return k.id; }).join() === ['kopf'].concat([].concat.apply([], Z)).join());
+K[Z[9][1]].wert = false; K[Z[3][4]].wert = ''; K[Z[0][2]].wert = ''; timer(); r.push(c.children.length);
+console.log(JSON.stringify(r));
+""" % (json.dumps(P.ZEITPLAN_ZEILEN), jsz)
+r = subprocess.run(["node", "-e", probez], capture_output=True, text=True)
+check("Skript v1.6 Zeitplan (node): leer nur Zeile 1 (1 + 10 Karten), Name in Zeile 1 -> Zeile 2 dazu, Stunde in Zeile 4 -> Zeilen 1-5, ohne Aenderung kein Neuaufbau, Zeile 10 aktiv -> alle 10 in alter Reihenfolge, alles leer -> wieder nur Zeile 1",
+      r.stdout.strip() == "[11,1,1,21,51,51,3,101,true,true,11]", r.stdout + r.stderr[-300:])
+check("Zeitplan: 10 Zeilen je 10 Karten, alle verschieden, Gruppe 2b0c8e162d47abbb", len(P.ZEITPLAN_ZEILEN) == 10 and all(len(z) == 10 for z in P.ZEITPLAN_ZEILEN) and len({i for z in P.ZEITPLAN_ZEILEN for i in z}) == 100 and P.ZEITPLAN == "2b0c8e162d47abbb", "")
 if len(sys.argv) > 1:   # gegen den Live-Export: v1.5 -> v1.6 nur ui_optik_kopf, zurueck byte-gleich
     with tempfile.TemporaryDirectory() as t:
         raw = open(sys.argv[1], encoding="utf-8").read(); L = json.loads(raw)
@@ -110,5 +139,7 @@ if len(sys.argv) > 1:   # gegen den Live-Export: v1.5 -> v1.6 nur ui_optik_kopf,
         B = json.load(open(b, encoding="utf-8")); LA = {n["id"]: n for n in L["flows"]}; BA = {n["id"]: n for n in B["flows"]}
         diff = sorted(i for i in set(LA) | set(BA) if LA.get(i) != BA.get(i))
         check("Live-Export: Ausgang ist v1.5, nach dem Patch v1.6, nur ui_optik_kopf geaendert, rev gleich", LA[P.KOPF_ID]["format"] == P.V15 and BA[P.KOPF_ID]["format"] == P.NEU and diff == [P.KOPF_ID] and B["rev"] == L["rev"], diff)
+        Z = {n["id"]: n for n in L["flows"]}
+        check("Live-Export: die 100 Zeitplan-Karten sind die Widgets der Gruppe mit Reihenfolge 18-117, je Zeile #k ... Delete Schedule_k", all(Z[i].get("group") == P.ZEITPLAN for z in P.ZEITPLAN_ZEILEN for i in z) and all(Z[z[0]].get("label") == "#%d" % (k + 1) and Z[z[9]].get("name") == "Delete Schedule_%d" % (k + 1) and Z[z[2]].get("topic") == "Schedule_%d_Description" % (k + 1) for k, z in enumerate(P.ZEITPLAN_ZEILEN)), "")
         check("Live-Export: --zurueck-v15 ergibt die Datei byte-gleich", r2.returncode == 0 and open(c, encoding="utf-8").read() == raw, r2.stdout + r2.stderr)
 print("\nERGEBNIS ui_system_patch_test: %d OK, %d FAIL" % (ok, fail)); sys.exit(1 if fail else 0)
