@@ -124,12 +124,33 @@ lauf(); setInterval(lauf, 1500);
 </script>"""
 V15 = V14 + V15_ZUSATZ
 WERTE = ["eee624aa045ae22a", "8084f5f9211ba26e"]          # Effizienz > COP pro Monat, Erzeugte Waerme pro Monat: Wert an jeder Saeule
-V16_ZUSATZ = "<script>\n" + r"""(function () { /* v1.6 (ui-review-b 20.10.2026): Werte an den Monatssaeulen (Effizienz), Saeulen hoechstens 40 px breit. Nur Anzeige, nur diese Diagramme. */
+ACHSEN = {"2ee679408e4ccc6f": {"links": "Gradtage", "rechts": "kWh", "rechtsIdx": [1]}}   # Auswertung > Letzte 24 Stunden: Energie auf eigener Achse rechts
+V16_ZUSATZ = "<script>\n" + r"""(function () { /* v1.6 (ui-review-b 20.10.2026): Werte an den Monatssaeulen (Effizienz), Saeulen hoechstens 40 px breit; zweite Wertachse (kWh) fuer 'Letzte 24 Stunden'. Nur Anzeige, nur diese Diagramme. */
 var C = window.Chart; if (!C || !C.plugins) { return; }
-var FONT = getComputedStyle(document.body).fontFamily, WERTE = %s;
+var FONT = getComputedStyle(document.body).fontFamily, WERTE = %s, ACHSEN = %s;
 function de(v) { return Number(v).toLocaleString('de-DE', {maximumFractionDigits: 2}); }
 function nid(c) { if (c.$dsId === undefined) { var cv = c.chart && c.chart.canvas, k = cv && cv.closest ? cv.closest('md-card') : null; c.$dsId = k ? k.getAttribute('node-id') : null; } return c.$dsId; }
+function titel(t) { return {display: true, labelString: t, fontFamily: FONT, fontSize: 12, fontColor: '#546e7a'}; }
+function achsen(c, spaet) {   /* zweite Wertachse rechts; beim Erzeugen (beforeInit) nur Optionen, bei schon gezeichneten Diagrammen Achsen neu aufbauen */
+    var A = ACHSEN[nid(c)], y = c.options && c.options.scales && c.options.scales.yAxes, H = C.helpers;
+    if (!A || c.$dsY2 || !y || !y.length || !c.data || c.data.datasets.length < 2) { return; }
+    c.$dsY2 = true;
+    var r = H.clone(y[0]);
+    y[0].id = 'ds_links'; y[0].scaleLabel = titel(A.links);
+    r.id = 'ds_rechts'; r.position = 'right'; r.scaleLabel = titel(A.rechts);
+    r.gridLines = H.extend({}, y[0].gridLines, {drawOnChartArea: false});
+    r.ticks = H.extend({}, y[0].ticks, {beginAtZero: true, callback: function (v) { return de(v); }});
+    y.push(r);
+    c.data.datasets.forEach(function (d, i) { d.yAxisID = A.rechtsIdx.indexOf(i) >= 0 ? 'ds_rechts' : 'ds_links'; });
+    if (spaet) {
+        c.boxes = (c.boxes || []).filter(function (b) { return !(C.Scale && b instanceof C.Scale); });
+        c.buildScales();
+        c.data.datasets.forEach(function (d, i) { c.getDatasetMeta(i).yAxisID = d.yAxisID; });
+        c.update(0);
+    }
+}
 C.plugins.register({
+    beforeInit: function (c) { try { achsen(c, false); } catch (e) { /* nichts */ } },
     beforeUpdate: function (c) {   /* wenige Monate: Saeulen nicht breiter als 40 px */
         try { if (WERTE.indexOf(nid(c)) >= 0) { ((c.options.scales || {}).xAxes || []).forEach(function (s) { s.barThickness = 40; }); } } catch (e) { /* nichts */ }
     },
@@ -145,10 +166,10 @@ C.plugins.register({
         } catch (e) { /* Diagramm bleibt wie es ist */ }
     }
 });
-function sweep() { try { var I = C.instances || {}; Object.keys(I).forEach(function (k) { var c = I[k]; if (!c.$dsW && WERTE.indexOf(nid(c)) >= 0) { c.$dsW = true; c.update(0); } }); } catch (e) { /* nichts */ } }
+function sweep() { var I = C.instances || {}; Object.keys(I).forEach(function (k) { try { var c = I[k]; if (!c.$dsW && WERTE.indexOf(nid(c)) >= 0) { c.$dsW = true; c.update(0); } achsen(c, true); } catch (e) { /* nichts */ } }); }
 sweep(); setInterval(sweep, 1500);
 })();
-""" % json.dumps(WERTE) + "</script>"
+""" % (json.dumps(WERTE), json.dumps(ACHSEN)) + "</script>"
 V16 = V15 + V16_ZUSATZ
 NEU = V16
 

@@ -38,15 +38,17 @@ def run(*args):
     return r.returncode, r.stdout + r.stderr
 
 
-def fn_lauf(func, globals_, msg=None, flow=None):
+def fn_lauf(func, globals_, msg=None, flow=None, want_globals=False):
     """fuehrt den Text einer Funktion in node aus (global/flow als Attrappe), gibt das Ergebnis (JSON) zurueck"""
     js = ("const G=%s, FL=%s; const g={get:k=>G[k],set:()=>{}}, fl={get:k=>FL[k],set:()=>{}};"
-          "const f=new Function('msg','global','flow','node','context',%s);"
-          "const r=f(%s,g,fl,{warn:()=>{},error:()=>{},send:()=>{},status:()=>{}},{get:()=>undefined,set:()=>{}});console.log(JSON.stringify(r===undefined?null:r));"
+          "const RED={util:{cloneMessage:m=>JSON.parse(JSON.stringify(m))}};"
+          "const f=new Function('msg','global','flow','node','context','RED',%s);"
+          "const r=f(%s,g,fl,{warn:()=>{},error:()=>{},send:()=>{},status:()=>{}},{get:()=>undefined,set:()=>{}},RED);console.log(JSON.stringify([r===undefined?null:r,G]));"
           % (json.dumps(globals_), json.dumps(flow or {}), json.dumps(func), json.dumps(msg or {})))
     r = subprocess.run(["node", "-e", js], capture_output=True, text=True)
     try:
-        return json.loads(r.stdout.strip().split("\n")[-1])
+        o = json.loads(r.stdout.strip().split("\n")[-1])
+        return o if want_globals else o[0]
     except Exception:
         return "FEHLER " + r.stderr[-300:]
 
@@ -129,6 +131,31 @@ check("P4 Waerme pro Monat (node): gleiche Monate wie COP", isinstance(r2, dict)
 r3 = fn_lauf(NB["d4198e0e57720e55"]["func"], {})
 r4 = fn_lauf(NB["35c15a4c210a4b20"]["func"], {"HEAT_Prod_24m": wae})
 check("P4 ohne Daten: leeres Diagramm statt Fehler; Waerme ohne COP-Speicher filtert nach eigenen Werten", r3 == {"payload": [{"labels": [], "series": ["Heizen"], "data": [[]]}]} and isinstance(r4, dict) and r4["payload"][0]["labels"] == ["2026-01", "2026-09", "2026-10"], (r3, r4))
+
+# Punkt 9: Auswertung
+check("P9 Schalter: nur das Ziel Diagramm wird auf den neuen Filter umgelegt (MQTT und Kachel unveraendert), Filter fuehrt auf das Diagramm",
+      NB["a1c0b0000c0f0001"]["wires"] == [["d180ce6b9c6ad85a", "a1c0b0000c0f0010", P.KAPPE_ID]] and NB[P.KAPPE_ID]["wires"] == [["a1c0b0000c0f0012"]] and NB[P.KAPPE_ID]["z"] == A["a1c0b0000c0f0001"]["z"], "")
+seq_js = ("const ctx={}; const context={get:k=>ctx[k],set:(k,v)=>{ctx[k]=v;}}; let T=0; const _now=Date.now; Date.now=()=>T;"
+          "const f=new Function('msg','context',%s); const out=[];"
+          "[[0,0],[60,9.5],[90,7.2],[200,7.6],[400,8.6],[500,22],[600,5.1],[700,0],[900,8.2],[1300,8.3],[1400,'']].forEach(([s,v])=>{T=1e9+s*1000; const r=f({payload:v,topic:'COP_HEAT'},context); out.push(r?r.payload:null);});"
+          "console.log(JSON.stringify(out));" % json.dumps(NB[P.KAPPE_ID]["func"]))
+r = subprocess.run(["node", "-e", seq_js], capture_output=True, text=True)
+check("P9 Filter (node): Startspitze 9,5 nach Stillstand weg, 8,6 nach 6,7 min Laufzeit bleibt, 22 immer weg, 0 und leer gehen durch, nach neuem Stillstand 8,2 (3,3 min) weg und 8,3 (10 min) bleibt",
+      r.stdout.strip() == json.dumps([0, None, 7.2, 7.6, 8.6, None, 5.1, 0, None, 8.3, ""], separators=(",", ":")), r.stdout + r.stderr[-300:])
+pts = [{"x": 0, "y": 0}, {"x": 60000, "y": 9.5}, {"x": 90000, "y": 7.2}, {"x": 400000, "y": 8.6}, {"x": 500000, "y": 22}, {"x": 700000, "y": 0}, {"x": 760000, "y": 8.2}]
+gesp = {"payload": [{"series": ["COP_HEAT"], "data": [pts], "labels": [""]}], "topic": "COP_HEAT"}
+r = fn_lauf(NB["a1c0b0000c0f0061"]["func"], {"chart-cop": gesp}, want_globals=True)
+check("P9 Laden (node): gespeicherte Ausreisser nach derselben Regel weg, gespeicherter Wert selbst unveraendert",
+      isinstance(r, list) and [p["y"] for p in r[0]["payload"][0]["data"][0]] == [0, 7.2, 8.6, 0] and r[1]["chart-cop"] == gesp, r)
+check("P9 Laden ohne Speicher: null wie bisher", fn_lauf(NB["a1c0b0000c0f0061"]["func"], {}) is None, "")
+lab = ["09-20", "09-21", "09-22", "10-08", "10-09", "10-10"]
+mk = lambda d: {"payload": [{"labels": lab, "data": [d]}]}
+r = fn_lauf(NB["2391637fadbbf190"]["func"], {"kwh_HEAT_31d": mk([0, 0, 0, 0, 5.4, 4.9]), "degreedays_31d": mk([0, 0, 0, 9.6, 7.1, 0]), "kwh_DHW_31d": mk([0] * 6)})
+check("P9 31 Tage (node): beginnt am ersten Tag mit Gradtagen oder Energie, Luecken danach bleiben",
+      isinstance(r, dict) and r["payload"][0]["labels"] == ["10-08", "10-09", "10-10"] and r["payload"][0]["data"] == [[9.6, 7.1, 0], [0, 5.4, 4.9]], r)
+r = fn_lauf(NB["2391637fadbbf190"]["func"], {"kwh_HEAT_31d": mk([0] * 6), "degreedays_31d": mk([0] * 6), "kwh_DHW_31d": mk([0] * 6)})
+r2 = fn_lauf(NB["2391637fadbbf190"]["func"], {"kwh_HEAT_31d": mk([1, 0, 0, 0, 0, 0]), "degreedays_31d": mk([0] * 6), "kwh_DHW_31d": mk([0] * 6)})
+check("P9 31 Tage ohne Daten oder mit Daten ab Tag 1: alle 31 Tage wie bisher", isinstance(r, dict) and len(r["payload"][0]["labels"]) == 6 and len(r2["payload"][0]["labels"]) == 6, (r, r2))
 
 # 4 vertauschbar mit dem Generator (opt_*)
 gen = os.path.join(HERE, "optimizer_phase1.py")

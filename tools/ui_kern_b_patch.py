@@ -44,6 +44,39 @@ def _monatsfilter(kw, anderes):
 _COPM_ALT = "let m = {\n    labels: varlabels,\n    series: [\"Heizen\"],\n    data: [varData2]\n};\n"
 _WAERM_ALT = "var m = {\n    labels: varlabels,\n    series: [\"Heizen\"],\n    data: [varData2]\n};\n"
 
+# ---------------------------------------------------------------- Punkt 9: Auswertung (COP ohne Startspitzen, 31 Tage ab dem ersten Datentag)
+COP_GRENZE, COP_START_GRENZE, COP_START_MIN = 10, 8, 5
+# Roher COP ueber 10 ist immer ein Messartefakt, ueber 8 in den ersten 5 min nach Stillstand (COP 0) auch: Startspitze, Strom noch fast 0 (TOP16-Raster).
+# Im Betrieb liegt der rohe COP bei 3-7,5 (Live-Diagramm 18.-20.10.).
+KAPPE_ID = "uib_cop_kappe"
+_REGEL = ("function ausreisser(v, t, nullZeit) { return v > %d || (v > %d && t - nullZeit < %d * 60000); }\n" % (COP_GRENZE, COP_START_GRENZE, COP_START_MIN))
+_KAPPE_FUNC = ((MARKE % 9) + "COP-Diagramm ohne Ausreisser: ueber %d immer, ueber %d in den ersten %d min nach Stillstand\n"
+               "// (Startspitze, Strom noch fast 0). Nur fuer das Diagramm; MQTT und Kachel bekommen den Wert unveraendert.\n" % (COP_GRENZE, COP_START_GRENZE, COP_START_MIN)
+               + _REGEL +
+               "var v = Number(msg.payload), t = Date.now();\n"
+               "if (!isFinite(v)) { return msg; }\n"
+               "if (v <= 0) { context.set('nullZeit', t); return msg; }\n"
+               "return ausreisser(v, t, context.get('nullZeit') || 0) ? null : msg;")
+KAPPE = {"id": KAPPE_ID, "type": "function", "z": "8c9d42231fd19d3c", "name": "COP fuer Diagramm (ohne Ausreisser)", "func": _KAPPE_FUNC, "outputs": 1,
+         "timeout": 0, "noerr": 0, "initialize": "", "finalize": "", "libs": [], "x": 560, "y": 2060, "wires": [["a1c0b0000c0f0012"]]}
+_SW_ALT = [["d180ce6b9c6ad85a", "a1c0b0000c0f0010", "a1c0b0000c0f0012"]]
+_SW_NEU = [["d180ce6b9c6ad85a", "a1c0b0000c0f0010", KAPPE_ID]]
+_LADEN_ALT = "var m = global.get(\"chart-cop\", \"file\");\n"
+_LADEN_NEU = (_LADEN_ALT + (MARKE % 9) + "gespeicherte Ausreisser nicht wieder laden, gleiche Regel wie \"COP fuer Diagramm\"\n" + _REGEL +
+              "if (m && m.payload && m.payload[0] && Array.isArray(m.payload[0].data)) {\n"
+              "    m = RED.util.cloneMessage(m);\n"
+              "    m.payload[0].data = m.payload[0].data.map(function (s) {\n"
+              "        if (!Array.isArray(s)) { return s; }\n"
+              "        var nz = 0;\n"
+              "        return s.filter(function (p) { var v = p ? Number(p.y) : NaN; if (!(v > 0)) { nz = p ? Number(p.x) || nz : nz; return true; } return !ausreisser(v, Number(p.x), nz); });\n"
+              "    });\n"
+              "}\n")
+_TAGE_ALT = "        var m={};\n            m.labels    = varlabels;\n            m.series    = ['Gradtage (°C)', 'Energieverbrauch Heizen (kWh)'];\n            m.data      = [vargraaddagen_data, varkwh_heat_data];\n"
+_TAGE_NEU = ("        " + (MARKE % 9) + "erst ab dem ersten Tag mit Daten (Gradtage oder Energie > 0)\n"
+             "        var _ab = varlabels.findIndex(function (l, i) { return Number(vargraaddagen_data[i]) > 0 || Number(varkwh_heat_data[i]) > 0; });\n"
+             "        if (_ab > 0) { varlabels = varlabels.slice(_ab); vargraaddagen_data = vargraaddagen_data.slice(_ab); varkwh_heat_data = varkwh_heat_data.slice(_ab); }\n"
+             + _TAGE_ALT)
+
 # (Seite, ID, Typ, Feld, Art "ganz"|"text", alt, neu, Grund)
 PUNKTE = {
     "4": [
@@ -51,9 +84,14 @@ PUNKTE = {
         ("Effizienz", "d4198e0e57720e55", "function", "func", "text", _COPM_ALT, _monatsfilter("let", "HEAT_Prod_24m"), "COP pro Monat: Monate ohne Daten weg"),
         ("Effizienz", "35c15a4c210a4b20", "function", "func", "text", _WAERM_ALT, _monatsfilter("var", "COP_HEAT_24m"), "Wärme pro Monat: Monate ohne Daten weg"),
     ],
+    "9": [
+        ("Auswertung", "a1c0b0000c0f0001", "switch", "wires", "ganz", _SW_ALT, _SW_NEU, "COP-Diagramm über den neuen Filter (MQTT und Kachel direkt wie bisher)"),
+        ("Auswertung", "a1c0b0000c0f0061", "function", "func", "text", _LADEN_ALT, _LADEN_NEU, "COP-Diagramm: gespeicherte Ausreißer nicht laden"),
+        ("Auswertung", "2391637fadbbf190", "function", "func", "text", _TAGE_ALT, _TAGE_NEU, "Letzte 31 Tage: erst ab dem ersten Datentag"),
+    ],
 }
-NEUE_KNOTEN = {}          # Punkt -> [Knoten]
-REIHENFOLGE = ["4"]
+NEUE_KNOTEN = {"9": [KAPPE]}          # Punkt -> [Knoten]
+REIHENFOLGE = ["4", "9"]
 FORMATE = ({"separators": (",", ":")}, {}, {"indent": 4})
 
 

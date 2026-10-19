@@ -76,6 +76,31 @@ try: o = json.loads(r.stdout.strip().split("\n")[-1])
 except Exception: o = None
 check("Skript v1.6 (node): ein Plugin, nur das Monatsdiagramm einmal nachgezeichnet, Saeulen 40 px, fremdes Diagramm unberuehrt", o and o["n"] == 1 and o["upd"] == 1 and o["bt"] == [40, None], r.stderr[-300:] if not o else o)
 check("Skript v1.6: Werte mit Komma an den Saeulen (0 ohne Wert), oben anstossende Saeule mit weissem Wert innen", o and [t[1] for t in o["texte"]] == ["5,51", "4,2"] and o["texte"][0][4] == "#fff" and o["texte"][1][4] == "#263238" and o["texte"][1][3] == 117, o)
+probe16b = r"""
+var reg = [], built = 0, upd = 0, metas = {};
+function karte(id) { return {closest: function () { return {getAttribute: function () { return id; }}; }}; }
+function Scale() {}
+function chart(id, n) { var ds = []; for (var i = 0; i < n; i++) { ds.push({data: [1, 2]}); }
+  return {chart: {canvas: karte(id)}, boxes: [new Scale(), {legende: 1}, new Scale()], options: {scales: {xAxes: [{}], yAxes: [{ticks: {fontSize: 12}, gridLines: {color: '#eceff1'}}]}}, data: {datasets: ds},
+    buildScales: function () { built++; this.boxes.push(new Scale()); }, update: function () { upd++; }, getDatasetMeta: function (i) { return metas[i] = metas[i] || {}; }}; }
+var H = {clone: function (o) { return JSON.parse(JSON.stringify(o)); }, extend: function (a) { for (var i = 1; i < arguments.length; i++) { for (var k in arguments[i]) { a[k] = arguments[i][k]; } } return a; }};
+var neu = chart('2ee679408e4ccc6f', 2), alt = chart('2ee679408e4ccc6f', 2), fremd = chart('4eaa2cfa2749c551', 2);
+global.window = {Chart: {plugins: {register: function (p) { reg.push(p); }}, helpers: H, Scale: Scale, instances: {1: alt, 2: fremd}}};
+global.getComputedStyle = function () { return {fontFamily: 'Fira Sans'}; }; global.document = {body: {}}; global.setInterval = function () {};
+(function () { %s })();
+reg[0].beforeInit(neu); reg[0].beforeInit(neu);
+var y = neu.options.scales.yAxes;
+console.log(JSON.stringify({neuIds: y.map(function (a) { return a.id; }), pos: y[1].position, grid: y[1].gridLines.drawOnChartArea, t: [y[0].scaleLabel.labelString, y[1].scaleLabel.labelString], tick: y[1].ticks.callback(0.25), font: y[1].ticks.fontSize,
+  ds: neu.data.datasets.map(function (d) { return d.yAxisID; }), altIds: alt.options.scales.yAxes.map(function (a) { return a.id; }), altBoxes: alt.boxes.length, built: built, upd: upd, metas: [metas[0].yAxisID, metas[1].yAxisID],
+  fremd: fremd.options.scales.yAxes.length}));
+""" % js16
+r = subprocess.run(["node", "-e", probe16b], capture_output=True, text=True)
+try: o = json.loads(r.stdout.strip().split("\n")[-1])
+except Exception: o = None
+check("Skript v1.6 (node): 'Letzte 24 Stunden' beim Erzeugen mit zweiter Achse rechts (kWh, ohne Gitter, Komma), Energie rechts, Gradtage links; zweimal aufgerufen bleibt es bei 2 Achsen",
+      o and o["neuIds"] == ["ds_links", "ds_rechts"] and o["pos"] == "right" and o["grid"] is False and o["t"] == ["Gradtage", "kWh"] and o["tick"] == "0,25" and o["font"] == 12 and o["ds"] == ["ds_links", "ds_rechts"], r.stderr[-300:] if not o else o)
+check("Skript v1.6: schon gezeichnetes Diagramm wird nachgeruestet (Achsen neu, alte Achsen-Boxen ersetzt, Datensaetze umgehaengt), andere Diagramme unberuehrt",
+      o and o["altIds"] == ["ds_links", "ds_rechts"] and o["built"] == 1 and o["altBoxes"] == 2 and o["metas"] == ["ds_links", "ds_rechts"] and o["upd"] == 1 and o["fremd"] == 1, o)
 if len(sys.argv) > 1:   # gegen den Live-Export: v1.5 -> v1.6 nur ui_optik_kopf, zurueck byte-gleich
     with tempfile.TemporaryDirectory() as t:
         raw = open(sys.argv[1], encoding="utf-8").read(); L = json.loads(raw)
