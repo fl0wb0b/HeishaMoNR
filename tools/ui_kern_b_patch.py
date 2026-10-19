@@ -100,6 +100,18 @@ TEXTE = [  # (Seite, ID, Typ, Feld, alt, neu, Grund)
     ("Kühlen", "07ba09a16be50433", "ui_text", "label", "-- Untergrenze (berechnet)", "Untergrenze (berechnet)", "ohne Bindestriche"),
 ]
 
+# ---------------------------------------------------------------- Punkt 3c (OPTIONAL, nicht im Standardumfang, nur live pruefbar): Uebersicht > WAERMEPUMPE ohne Dopplungen zum Anlagenschema
+# Die Werte stehen im Schema (opt_t_schema_ue) darueber. Ohne sie ist die Gruppe eine Spalte: Breite 12 -> 6 wie HEIZREGELUNG und HEIZEN (Zone 1) daneben.
+# Mit Breite 12 bleibt eine unruhige Zwei-Spalten-Packung (Vorschau 20.10., bilder/p3c_uebersicht_12breit.png); die Breite 6 laesst sich offline nicht rendern.
+UE_WP = "bf4af523ba16d457"
+WEG_3C = [
+    ("a1c0b0000c0f0011", "ui_text", "COP (Heizen)"), ("a1c0b0000c0f0041", "ui_text", "Außentemperatur"), ("521e419dae5882e7", "ui_text", "Vorlauf Soll"),
+    ("1d51b425fba024d2", "ui_text", "Vorlauf Ist"), ("3478273eb4693d84", "ui_text", "Rücklauf Ist"), ("0e09d25e4fd17042", "ui_gauge", "Tacho Durchfluss"),
+    ("91fcc102b422de3b", "ui_gauge", "Tacho Frequenz"), ("79dc18dd1cca1e73", "ui_text", "Laufzeit Verdichter"), ("3ac59d9a6138e620", "ui_text", "Pumpendrehzahl"),
+    ("1ed98a1d47eb56f0", "ui_text", "Lüfter 1"), ("2ae1f0e14435e803", "ui_text", "Heizstab intern (Text)"), ("cb32ff75cb09ea95", "ui_text", "Heizstab intern (Wert)"),
+    ("46b7fe12f60ad08b", "ui_template", "Abschnitt Wassertemperatur (leer ohne die Werte)"), ("592f552754e017f5", "ui_template", "leere Linie"),
+]
+
 # (Seite, ID, Typ, Feld, Art "ganz"|"text", alt, neu, Grund)
 PUNKTE = {
     "4": [
@@ -114,9 +126,12 @@ PUNKTE = {
     ],
     "10": [(seite, i, _TYP[i], "group", "ganz", g, AUSGEBLENDET, "weg: " + grund) for (seite, i, g, grund) in WEG]
           + [(seite, i, typ, feld, "ganz", alt, neu, grund) for (seite, i, typ, feld, alt, neu, grund) in TEXTE],
+    "3c": [("Übersicht", i, typ, "group", "ganz", UE_WP, AUSGEBLENDET, "weg (steht im Schema): " + grund) for (i, typ, grund) in WEG_3C]
+          + [("Übersicht", UE_WP, "ui_group", "width", "ganz", "12", "6", "WÄRMEPUMPE eine Spalte, so breit wie HEIZREGELUNG und HEIZEN")],
 }
 NEUE_KNOTEN = {"9": [KAPPE]}          # Punkt -> [Knoten]
-REIHENFOLGE = ["4", "9", "10"]
+REIHENFOLGE = ["4", "9", "10"]          # Standard; "3c" nur ausdruecklich (--punkte 4,9,10,3c)
+OPTIONAL_PUNKTE = ["3c"]
 FORMATE = ({"separators": (",", ":")}, {}, {"indent": 4})
 
 
@@ -144,7 +159,7 @@ def punkte_liste(s):
     p = [x.strip() for x in (s or ",".join(REIHENFOLGE)).split(",") if x.strip()]
     falsch = [x for x in p if x not in PUNKTE]
     if falsch:
-        raise Abbruch("unbekannte Punkte %s (bekannt: %s)" % (falsch, ",".join(REIHENFOLGE)))
+        raise Abbruch("unbekannte Punkte %s (bekannt: %s)" % (falsch, ",".join(REIHENFOLGE + OPTIONAL_PUNKTE)))
     return p
 
 
@@ -262,7 +277,7 @@ def main():
     m.add_argument("--dry-run", action="store_true")
     m.add_argument("--apply", action="store_true")
     m.add_argument("--revert", action="store_true")
-    ap.add_argument("--punkte", help="Komma-Liste, Standard alle: " + ",".join(REIHENFOLGE))
+    ap.add_argument("--punkte", help="Komma-Liste, Standard: " + ",".join(REIHENFOLGE) + " (optional zusaetzlich: " + ",".join(OPTIONAL_PUNKTE) + ")")
     ap.add_argument("--out")
     ap.add_argument("--sicherung")
     a = ap.parse_args()

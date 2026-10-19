@@ -63,7 +63,7 @@ raw0 = open(src, encoding="utf-8").read()
 A = {n["id"]: n for n in flows}
 
 # 1 je Punkt und alle zusammen
-for punkte in [[p] for p in P.REIHENFOLGE] + [P.REIHENFOLGE]:
+for punkte in [[p] for p in P.REIHENFOLGE + P.OPTIONAL_PUNKTE] + [P.REIHENFOLGE, P.REIHENFOLGE + P.OPTIONAL_PUNKTE]:
     tag = " [P%s]" % ",".join(punkte)
     ch, neue, schon = P.plan(flows, punkte)
     erwartet = sum(len(P.PUNKTE[p]) for p in punkte)
@@ -173,6 +173,16 @@ check("P10 Einstellungen: WÄRMEPUMPE, BETRIEB, HEIZEN beginnen nicht mehr mit e
 check("P10 Texte: Knopf 'Automatik', 'Vorlauf Ist'/'Rücklauf Ist' ohne Bindestriche, keine Kern-Beschriftung beginnt mehr mit '--'",
       NB["0fa2e5caff3f31a9"]["label"] == "Automatik" and NB["30a8e90354d6eb5d"]["label"] == "Vorlauf Ist" and NB["3f9cda20118a9a8a"]["label"] == "Rücklauf Ist" and
       not [n["id"] for n in P.knoten(NEU) if n["type"] == "ui_text" and str(n.get("label", "")).startswith("--")], "")
+
+# Punkt 3c (optional): Uebersicht WAERMEPUMPE
+c3, n3, _s = P.plan(flows, ["3c"])
+N3 = {n["id"]: n for n in P.knoten(P.anwenden(data, c3, n3))}
+rest = sorted([n for n in N3.values() if n.get("group") == P.UE_WP], key=lambda n: n["order"])
+check("P3c (optional): 14 Dopplungen zum Schema aus WÄRMEPUMPE, Breite 12 -> 6 (Text wie bisher), es bleiben Schalter, Betriebsart, Aktuell, Ventilstellung, Zusatzfunktionen, Lüfter 2, Heizstab extern; jede Zeile passt in 6 Spalten",
+      len(P.WEG_3C) == 14 and N3[P.UE_WP]["width"] == "6" and all(N3[i]["group"] == P.AUSGEBLENDET for (i, _t, _g) in P.WEG_3C) and
+      [n["id"] for n in rest] == ["7b3d20aa8c9abb1e", "43403f14c1a863a4", "ef9758a537d81735", "354635fe353183fd", "f37c739180bdbc6e", "f0b7868c48887de4", "2b04b7dd5ea852f2", "3f05f1c6e437d5d3", "c66f65978915e688", "1eb00088db267256", "1b40f688e5fbc5dd", "b629087d36acf89e", "9faace07ea16ba4d", "cce68d6f8e62d22a", "5ca62cc2d15410db"] and
+      all(int(n.get("width") or 0) <= 6 for n in rest), [n["id"] for n in rest])
+check("P3c ist nicht im Standardumfang (nur mit --punkte ...,3c)", "3c" not in P.REIHENFOLGE and P.punkte_liste(None) == P.REIHENFOLGE, "")
 
 # 4 vertauschbar mit dem Generator (opt_*)
 gen = os.path.join(HERE, "optimizer_phase1.py")
