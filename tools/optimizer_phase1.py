@@ -2386,7 +2386,7 @@ var HPe = G('OPT_hp') || {}, hcV = (HPe.Heating_Control && typeof HPe.Heating_Co
 var hcHm = function (ts) { return new Date(ts).toLocaleTimeString('de-DE', {hour: '2-digit', minute: '2-digit'}); };
 var rowsWp = [
     ['Betriebszustand', mode + (ssOn ? ' · Sanftanlauf' : ''), ''],
-    ['Heizregelung', hcV === null ? '–' : (hcV === 1 ? 'Efficiency' : 'Comfort') + (HPe._hcSince ? ' · ' + (HPe._hcSince.first ? 'seit Beobachtung ' : 'seit ') + hcHm(HPe._hcSince.ts) : ''), hcV === 1 ? 'warn' : ''],
+    ['Heizregelung', hcV === null ? '–' : (hcV === 1 ? 'Efficiency' : 'Comfort') + (HPe._hcSince ? ' · ' + (HPe._hcSince.first ? 'seit Beobachtung ' : 'seit ') + hcHm(HPe._hcSince.ts) : ''), ''],   // ui-review-b 20.10.2026: Efficiency ist ein normaler Zustand (Rot nur fuer Fehler)
     ['Soll-Vorlauf (Heizkurve)', f(target, 0, '°C'), ''],
     ['Verschiebung manuell', f(shiftBase, 0, 'K'), ''],
     ['Korrektur Raumregelung', f(rtcCorr, 0, 'K'), ''],
@@ -2699,10 +2699,10 @@ TABLE = ('<div class="optfit"><div class="optkv"><div class="kv" ng-repeat="r in
          '<span class="l">{{r[0]}}</span><span class="v" ng-class="r[2]">{{r[1]}}</span></div></div></div>')
 
 
-FQ_TABLE = ('<div class="optfit optpt optfq"><table><tr><th></th><th colspan="3">Außentemperatur (OWM)</th><th colspan="3">PV ({{msg.payload.pvQuelle}})</th></tr>'
+FQ_TABLE = ('<div class="optfit optpt optfq"><table title="{{msg.payload.sammel}}"><tr><th></th><th colspan="3">Außentemperatur (OWM)</th><th colspan="3">PV ({{msg.payload.pvQuelle}})</th></tr>'
             '<tr><th>Horizont</th><th>Abw.</th><th>Fehler</th><th>n</th><th>Prognose / Ist</th><th>Fehler</th><th>n</th></tr>'
             '<tr ng-repeat="z in msg.payload.tab track by $index"><td>{{z[0]}}</td><td>{{z[1]}}</td><td>{{z[2]}}</td><td>{{z[3]}}</td><td>{{z[4]}}</td><td>{{z[5]}}</td><td>{{z[6]}}</td></tr></table>'
-            '<div class="mute" style="margin-top:6px;font-size:12.5px">{{msg.payload.sammel}}</div></div>')   # ui-daten 18.10.2026: Prognoseguete als Tabelle
+            '</div>')   # ui-daten 18.10.2026: Prognoseguete als Tabelle; ui-review-b 20.10.2026: Sammelzeile ("240 Stunden Ist-Werte ...") nur noch als Tooltip der Tabelle
 
 
 def template(i, gid, height, y):
@@ -2732,15 +2732,22 @@ QSTATS_HEAD = ['Stufe', 'Außen', 'Minuten Lauf', 'Ø Hz', 'Ø Fan', '<span titl
 QSTATS_COLS = ([0, 1, 2, 3, 4, 5, 6, 7, 8, 9], [0, 1, 10, 11, 12, 13, 14, 15, 16])
 
 
-def qstats_tpl(cols):
-    return ('<div class="optfit"><table class="optq" title="Nur Minuten mit laufendem Verdichter, ohne Abtauen und Warmwasser; Zeilen nur für benutzte Stufen"><tr>'
+QSTATS_ZU_CSS = ('<style>details.optzu>summary{cursor:pointer;outline:none;font-size:12px;color:#00729f;font-weight:600;text-transform:uppercase;letter-spacing:.06em;padding:4px 0}'
+                 'details.optzu[open]>summary{margin-bottom:6px}</style>')
+
+
+def qstats_tpl(cols, node_id):
+    """ui-review-b 20.10.2026: Tabelle zugeklappt (Messgrundlage, nicht Tagesgeschaeft); aufklappen passt die Karte sofort ein"""
+    return (QSTATS_ZU_CSS + '<div class="optfit"><details class="optzu" ontoggle="var F = window.__optFit; if (F &amp;&amp; F.fns &amp;&amp; F.fns[\'' + node_id + '\']) { setTimeout(F.fns[\'' + node_id + '\'], 30); }">'
+            '<summary>Tabelle · {{(msg.payload.stats || []).length}} Zeilen</summary>'
+            '<table class="optq" title="Nur Minuten mit laufendem Verdichter, ohne Abtauen und Warmwasser; Zeilen nur für benutzte Stufen"><tr>'
             + ''.join('<th>' + QSTATS_HEAD[c] + '</th>' for c in cols) + '</tr>'
-            '<tr ng-repeat="r in msg.payload.stats track by $index" ng-class="{leer: r[1] === \'keine Daten\'}"><td ng-repeat="c in [' + ','.join(str(c) for c in cols) + '] track by $index">{{r[c]}}</td></tr></table></div>')
+            '<tr ng-repeat="r in msg.payload.stats track by $index" ng-class="{leer: r[1] === \'keine Daten\'}"><td ng-repeat="c in [' + ','.join(str(c) for c in cols) + '] track by $index">{{r[c]}}</td></tr></table></details></div>')
 
 
 for _qid, _qg, _qn, _qc, _qy in (("opt_t_qstats", "opt_g_qstats", "Quiet-Statistik", QSTATS_COLS[0], 320), ("opt_t_qstats2", "opt_g_qstats2", "Quiet-Statistik Temperaturen", QSTATS_COLS[1], 360)):
     upsert({"id": _qid, "type": "ui_template", "z": TAB, "group": _qg, "name": _qn, "order": 1, "width": 0, "height": 4,
-            "format": qstats_tpl(_qc) + FIT_JS.replace("__ID__", _qid), "storeOutMessages": True, "fwdInMessages": False, "resendOnRefresh": True,
+            "format": qstats_tpl(_qc, _qid) + FIT_JS.replace("__ID__", _qid), "storeOutMessages": True, "fwdInMessages": False, "resendOnRefresh": True,
             "templateScope": "local", "className": "", "x": 1260, "y": _qy, "wires": [[]]})
 upsert(template("opt_t_wp", "opt_g_wp", 3, 260))
 HIST_JS = r"""
@@ -3057,7 +3064,7 @@ upsert(fn("opt_nas", "Status NAS-Container (nur lesen)", NAS_JS, 1, [["opt_t_nas
 upsert(inject("opt_i_nas", "alle 5 Minuten", 300, 25, ["opt_nas"], 140, 580))
 
 PLAN_TPL = """<div class="optp optfit">
-<div class="kpi"><div class="tile" ng-repeat="t in msg.payload.kpi track by $index" title="{{t.t}}"><div class="k">{{t.k}}</div><div class="v">{{t.v}}</div><div class="s">{{t.s}}</div></div></div>
+<div class="kpi" ng-if="msg.payload.kpi.length"><div class="tile" ng-repeat="t in msg.payload.kpi track by $index" title="{{t.t}}"><div class="k">{{t.k}}</div><div class="v">{{t.v}}</div><div class="s" title="{{t.s}}">{{t.s}}</div></div></div>
 <div id="optch_plan" style="min-height:120px"></div>
 <div class="sec" style="cursor:pointer" ng-click="plOpen = !plOpen">Details und Modell {{plOpen ? '▾' : '▸'}}</div>
 <div class="sum" ng-if="plOpen"><span ng-repeat-start="r in msg.payload.rows track by $index" class="k">{{r[0]}}</span><span ng-repeat-end class="v" ng-class="r[2]" title="{{r[3]}}">{{r[1]}}</span></div>
@@ -3601,7 +3608,8 @@ upsert(fn("opt_engine", "Entscheidungsmaschine (Shadow)", ENGINE_CORE_JS + ENGIN
           [["opt_t_eng_prop"], ["opt_t_eng_rules"], ["opt_t_eng_score"], ["opt_t_eng_log"], ["opt_f_eng"], ["opt_t_eng_mess"], ["opt_t_eng_cop"]], 440, 2100, FS))
 # Karte "COP: Ziel und Ist" (cop-ziel 17.10.2026) auf der Seite Optimierer, gleich breit wie die anderen Karten (ENG_W), als letzte Gruppe (Reihenfolge 8 nach den beiden
 # Quiet-Karten): die Anordnung der fuenf Maschinenkarten und der Quiet-Karten bleibt, die neue Karte fuellt die kuerzere Spalte auf
-upsert({"id": "opt_g_eng_cop", "type": "ui_group", "name": "COP: Ziel und Ist", "tab": ENG_TAB, "order": 8, "disp": True, "width": ENG_W, "collapse": False, "className": ""})
+# ui-review-b 20.10.2026: vor den beiden (zugeklappten) Quiet-Karten (Reihenfolge 5,5), damit sie die kuerzere Spalte auffuellt und die Quiet-Karten unten folgen
+upsert({"id": "opt_g_eng_cop", "type": "ui_group", "name": "COP: Ziel und Ist", "tab": ENG_TAB, "order": 5.5, "disp": True, "width": ENG_W, "collapse": False, "className": ""})
 upsert(eng_template("opt_t_eng_cop", "opt_g_eng_cop", "COP: Ziel und Ist", 8, eng_format("cop", "opt_t_eng_cop"), 2200))
 upsert({"id": "opt_f_eng", "type": "file", "z": TAB, "name": "Entscheidungen, Punkte, Ereignisse", "filename": "filename", "filenameType": "msg", "appendNewline": False,
         "createDir": True, "overwriteFile": "false", "encoding": "utf8", "x": 760, "y": 2160, "wires": [[]]})
@@ -3734,7 +3742,9 @@ def schema_format(node_id, group_id, voll):
             "})(scope);</script>")
 
 
-upsert({"id": "opt_g_schema", "type": "ui_group", "name": "Anlagenschema", "tab": ENG_TAB, "order": 0.5, "disp": True, "width": ENG_W, "collapse": False, "className": ""})
+# ui-review-b 20.10.2026: das Schema steht auf der Übersicht; die Gruppe der Seite "Optimierer" liegt auf dem ausgeblendeten Tab "Quiet-Messwerte" (Knoten bleiben,
+# deploy_opt.sh entfernt nichts), die Seite wird ~700 px kürzer
+upsert({"id": "opt_g_schema", "type": "ui_group", "name": "Anlagenschema", "tab": UI_TAB_QUIET, "order": 0.5, "disp": True, "width": ENG_W, "collapse": False, "className": ""})
 upsert(eng_template("opt_t_schema", "opt_g_schema", "Anlagenschema (Optimierer)", 13, schema_format("opt_t_schema", "opt_g_schema", False), 2420))
 _schema_out = ["opt_t_schema"]
 if UE_TAB in B and B[UE_TAB]["type"] == "ui_tab":

@@ -3,7 +3,7 @@
  *   optEngUi.html(kind, P)              -> HTML einer Karte (kind: 'card' | 'rules' | 'score' | 'mess' | 'log' | 'cop' | 'zaehler'), P = Nutzlast aus ENGVIEW.build bzw. opt_zaehler
  *   optEngUi.mount(el, kind, P, scope)  -> zeichnet in ein Element, Knoepfe schicken nur Aktion + ID + Pruefsumme, Diagramm ueber optChart */
 (function (root) {
-    var VER = 9;                                                                  // 8: Karten „COP: Ziel und Ist“ und „Stromzähler“ (cop-ziel 17.10.2026); 4: Vorschlag mit Befehl/Zielwert/Begruendung/Wirkung/Rueckweg offen, Karte "Messwerte & Lernen"; 5: Räume und Wächter (raumeinfluss-v3); 6: UI-Optik (Schrift, Kontrast, Platzhalter statt fast leerem Punkte-Diagramm); 7: fünf Regelkacheln (Heizregelung)
+    var VER = 10;                                                                 // 10: ui-review-b (Kachelreihen ohne Waisen, Mindestleistung zugeklappt, kurze Sperr-Zeile); 8: Karten „COP: Ziel und Ist“ und „Stromzähler“ (cop-ziel 17.10.2026); 4: Vorschlag mit Befehl/Zielwert/Begruendung/Wirkung/Rueckweg offen, Karte "Messwerte & Lernen"; 5: Räume und Wächter (raumeinfluss-v3); 6: UI-Optik (Schrift, Kontrast, Platzhalter statt fast leerem Punkte-Diagramm); 7: fünf Regelkacheln (Heizregelung)
     if (root.optEngUi && root.optEngUi.v === VER) { return; }
     var U = {v: VER};
     function esc(s) { return String(s === undefined || s === null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
@@ -50,6 +50,8 @@
         '.oe-kpi{border:1px solid #e0e6e9;border-radius:8px;background:#f7f9fa;padding:8px 12px;min-width:0}' +
         '.oe-kk{font-size:12.5px;color:#546e7a;line-height:1.3}.oe-kv{font-size:20px;font-weight:600;line-height:1.35;white-space:nowrap}.oe-okt{color:#2e7d32}.oe-warnt{color:#b45309}' +
         '.oe-ks{font-size:12.5px;color:#546e7a;min-height:19px;display:flex;flex-wrap:wrap;gap:4px;align-items:center}' +
+        '.oe details.oe-zu{margin:16px 0 8px;color:#263238;font-size:14px}.oe details.oe-zu>summary{font-size:12px;color:#00729f;font-weight:600;text-transform:uppercase;letter-spacing:.06em}.oe details.oe-zu>summary span{text-transform:none;letter-spacing:0;color:#546e7a;font-weight:400;margin-left:6px}.oe details.oe-zu[open]>summary{margin-bottom:8px}' +
+        '.oe-kv.oe-lang{font-size:16px;line-height:1.75}' +
         '.oe-ml{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:8px}' +
         '.oe-mlc{border:1px solid #e0e6e9;border-radius:8px;background:#f7f9fa;padding:4px 6px;text-align:center}.oe-mlc span{display:block;font-size:12px;color:#546e7a}.oe-mlc b{font-size:15px;font-weight:600}' +
         '.oe table{width:100%;border-collapse:collapse;font-size:13.5px}' +
@@ -126,14 +128,19 @@
                    : '<div class="oe-ln" style="margin-top:6px"><span>nur Hinweis</span><b></b></div>';
             return '<div class="oe-tile"><div class="oe-hd"><span class="oe-nm"><i class="oe-dot" style="background:' + esc(t.c) + '"></i>' + esc(t.name) + '</span></div>' +
                    '<div class="oe-pt' + (t.neg ? ' oe-neg' : '') + '">' + esc(t.punkte) + '</div><div class="oe-sub">' + esc(t.sub) + '</div><div class="oe-sub">' + esc(t.more) + '</div><div class="oe-wr">' + esc(t.warn) + '</div>' +
-                   (t.sperre !== null && t.sperre !== undefined ? '<div class="oe-ln" data-k="sperre"><span>🔒 verpasst während Sperre</span><b>' + esc(String(t.sperre)) + '</b></div>' : '<div class="oe-ln"></div>') + rf + '</div>';
+                   (t.sperre !== null && t.sperre !== undefined ? '<div class="oe-ln" data-k="sperre" title="verpasst während Sperre"><span>🔒 verpasst</span><b>' + esc(String(t.sperre)) + '</b></div>' : '<div class="oe-ln"></div>') + rf + '</div>';
         }).join('') + '</div>';
         return h;
     }
     // ---------------------------------------------------------------- Karte 4: Messwerte & Lernen (Kennzahlen mit Status-Chip, Mindestleistung je Band, COP-Matrix)
+    // Spalten je Kachelreihe (ui-review-b 20.10.2026): alle Reihen gleich voll statt auto-fit mit Einzelkachel am Ende; hoechstens 7 je Reihe, 6 bei langen Werten
+    U.spalten = function (list) {
+        var n = (list || []).length, lang = (list || []).some(function (t) { return String(t.v === undefined ? '' : t.v).length > 9; }), max = lang ? 6 : 7;
+        return n ? Math.ceil(n / Math.ceil(n / max)) : 1;
+    };
     function kpis(list) {
-        return '<div class="oe-kpis">' + (list || []).map(function (t) {
-            return '<div class="oe-kpi"' + tt(t.title) + '><div class="oe-kk">' + esc(t.k) + '</div><div class="oe-kv' + (t.vc ? ' oe-' + esc(t.vc) + 't' : '') + '">' + esc(t.v) + '</div>' +
+        return '<div class="oe-kpis" style="grid-template-columns:repeat(' + U.spalten(list) + ',minmax(0,1fr))">' + (list || []).map(function (t) {
+            return '<div class="oe-kpi"' + tt(t.title) + '><div class="oe-kk">' + esc(t.k) + '</div><div class="oe-kv' + (t.vc ? ' oe-' + esc(t.vc) + 't' : '') + (String(t.v === undefined ? '' : t.v).length > 12 ? ' oe-lang' : '') + '">' + esc(t.v) + '</div>' +
                    '<div class="oe-ks">' + (t.chip ? chip(t.chip, t.c) : '') + (t.s ? '<span>' + esc(t.s) + '</span>' : '') + '</div></div>';
         }).join('') + '</div>';
     }
@@ -148,8 +155,11 @@
     function mess(P) {
         var ml = (P.ml || []).length ? '<div class="oe-ml">' + P.ml.map(function (c) { return '<div class="oe-mlc"' + tt(c.title) + '><span>' + esc(c.band) + '</span><b>' + esc(c.v) + '</b></div>'; }).join('') + '</div>'
                                     : '<div class="oe-row">' + chip(P.mlLeer || 'sammelt', 'mute') + '</div>';
+        var mv = (P.ml || []).map(function (c) { return String(c.v || ''); }).filter(function (v) { return isFinite(parseFloat(v.replace(',', '.'))); })
+                .sort(function (x, y) { return parseFloat(x.replace(',', '.')) - parseFloat(y.replace(',', '.')); }),
+            sp = !mv.length ? '' : (mv[0] === mv[mv.length - 1] ? mv[0] : mv[0].replace(/ kW$/, '') + '–' + mv[mv.length - 1]);   // Spanne in der Titelzeile, z. B. 1,7–1,9 kW
         return '<div class="oe-sec">Takt und Leistung</div>' + kpis(P.takt) +
-               '<div class="oe-sec">Mindestleistung je Außenband</div>' + ml +
+               '<details class="oe-zu" data-k="ml"><summary>Mindestleistung je Außenband' + (sp ? '<span>' + esc(sp) + '</span>' : '') + '</summary>' + ml + '</details>' +
                '<div class="oe-sec"' + tt(P.cop && P.cop.title) + '>COP je Modus und Quiet · 30 Tage</div>' + cop(P.cop) +
                '<div class="oe-sec">Lernen</div>' + kpis(P.lern) +
                ((P.raum || []).length ? '<div class="oe-sec">Räume und Wächter</div>' + kpis(P.raum) : '');
@@ -206,7 +216,7 @@
                 return o;
             };
             Array.prototype.forEach.call(el.querySelectorAll('[data-f]'), function (x) { var mk = function () { el.__zf = formWerte(); }; x.addEventListener('input', mk); x.addEventListener('change', mk); });
-            Array.prototype.forEach.call(el.querySelectorAll('details[data-k]'), function (d) { var k = d.getAttribute('data-k'); if (open[k]) { d.open = true; } d.addEventListener('toggle', function () { open[k] = d.open; }); });
+            Array.prototype.forEach.call(el.querySelectorAll('details[data-k]'), function (d) { var k = d.getAttribute('data-k'); if (open[k]) { d.open = true; } d.addEventListener('toggle', function () { open[k] = d.open; var F = root.__optFit; if (F && F.fns) { setTimeout(function () { Object.keys(F.fns).forEach(function (f) { F.fns[f](); }); }, 30); } }); });
             Array.prototype.forEach.call(el.querySelectorAll('button[data-a]'), function (b) {
                 b.addEventListener('click', function () {
                     var a = b.getAttribute('data-a');
