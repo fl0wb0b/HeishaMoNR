@@ -13,6 +13,11 @@ const paramDatei = process.argv[3] || path.join(__dirname, 'fixtures', 'wp_param
 const P = fs.existsSync(paramDatei) ? Z.mitWerten(JSON.parse(fs.readFileSync(paramDatei, 'utf8')).werte) : Z.standard();
 console.log('Parameter: ' + (fs.existsSync(paramDatei) ? paramDatei : 'Standard (PARAM)'));
 const E = (i, o) => Object.assign({t: T0 + i * MIN, at: 5, rh: 80, pv: 0, q: 3, hc: 1, shift: 0}, o || {});
+function zaehl(A) {                                                            // bis zur letzten Minute ausserhalb einer Abtauung: Verdichterstarts (0 -> > 0 Hz), Thermostat-Starts, Abtauungen
+    let L = A.length - 1; while (L > 0 && A[L].modus === 'abtauen') { L--; }
+    let v = 0, s = 0, a = 0; for (let i = 0; i <= L; i++) { if (A[i].hz > 0 && !(i > 0 && A[i - 1].hz > 0)) { v++; } if (A[i].start) { s++; } if (A[i].modus === 'abtauen' && !(i > 0 && A[i - 1].modus === 'abtauen')) { a++; } }
+    return {v: v, s: s, a: a};
+}
 function lauf(S, n, f) { const A = []; for (let i = 0; i < n; i++) { const r = Z.schritt(S, f(i), P); S = r.S; A.push(r.A); } return {S: S, A: A}; }
 
 console.log('--- Grundsätze');
@@ -91,7 +96,18 @@ console.log('--- Abtauen und Heizstab (Modell aus Forum/Handbuch, keine Messung)
     check('bei +10 °C keine Abtauung', w.S.n.abtau === 0);
     const k = lauf(Z.neu(P, {modus: 'pause', th: 21, tw: 28}), 1440, f(0, 92));
     const ia = k.A.findIndex(x => x.modus === 'abtauen'), dauer = k.A.slice(ia).findIndex(x => x.modus !== 'abtauen');
-    check('bei 0 °C und 92 % Feuchte Abtauungen; je Abtauung ' + P.abtauDauerMin + ' min, ' + P.abtauHz + ' Hz, Lüfter 0, Wärmeentzug (Pth < 0), Defrosting_State = 1', k.S.n.abtau >= 3 && dauer === P.abtauDauerMin && k.A[ia].hz === P.abtauHz && k.A[ia].hp.Fan1_Motor_Speed === 0 && k.A[ia].pth < 0 && k.A[ia].hp.Defrosting_State === 1, k.S.n.abtau + ' Abtauungen in 24 h, erste nach ' + ia + ' min');
+    const iu = ia + P.abtauStoppVorMin;                                                  // erste Minute der Kreisumkehr
+    check('bei 0 °C und 92 % Feuchte Abtauungen; je Abtauung ' + P.abtauDauerMin + ' min, ' + P.abtauHz + ' Hz, Lüfter 0, Wärmeentzug (Pth < 0), Defrosting_State = 1', k.S.n.abtau >= 3 && dauer === P.abtauDauerMin && k.A[iu].hz === P.abtauHz && k.A[iu].hp.Fan1_Motor_Speed === 0 && k.A[iu].pth < 0 && k.A.slice(ia, ia + dauer).every(x => x.hp.Defrosting_State === 1), k.S.n.abtau + ' Abtauungen in 24 h, erste nach ' + ia + ' min');
+    // abtau-starts 20.10.2026: 4-Wege-Ventil drucklos -> Verdichter vor und nach der Kreisumkehr aus (2 zusätzliche Verdichterstarts je Abtauung, Forum 4899279/2917785/3724609)
+    const hzA = k.A.slice(ia, ia + dauer).map(x => x.hz), um = Z.abtauUmkehrMin(P);
+    check('abtau-starts: im Abtausignal ' + P.abtauStoppVorMin + ' min 0 Hz, ' + um + ' min ' + P.abtauHz + ' Hz (Kreisumkehr ~4 min, 3724609), ' + P.abtauStoppNachMin + ' min 0 Hz; Pumpe die ganze Zeit auf Abtau-Volumenstrom; Wärmeentzug nur in der Umkehr (Summe ' + P.abtauWaermeKWh + ' kWh); danach Neustart ohne Thermostat-Start',
+          hzA.join(' ') === [0].concat(Array(um).fill(P.abtauHz), [0, 0, 0]).join(' ') && k.A.slice(ia, ia + dauer).every(x => x.flow === P.flowAbtau) && Math.abs(k.A.slice(ia, ia + dauer).reduce((a, x) => a + x.pth, 0) / 60000 + P.abtauWaermeKWh) < 1e-6 &&
+          k.A[ia + dauer].hz > 0 && !k.A[ia + dauer].start && !k.A.slice(ia, ia + dauer + 1).some(x => x.stopp || x.start), hzA.join(' ') + ' | danach ' + k.A[ia + dauer].hz + ' Hz');
+    check('abtau-starts: Verdichterstarts wie der Zähler der Anlage = Thermostat-Starts + 2 × Abtauungen; compressor_runtime wie HeishaMoNR (0 im Stillstand, Neubeginn nach jedem Stopp)',
+          zaehl(k.A).v === zaehl(k.A).s + 2 * zaehl(k.A).a && k.S.n.vstarts >= 2 * k.S.n.abtau && k.A[ia].hp.Compressor_Operating_Time === 0 && k.A[iu].hp.Compressor_Operating_Time === 1 && k.A[ia + dauer].hp.Compressor_Operating_Time === 1 && k.A[ia - 1].hp.Compressor_Operating_Time === k.A[ia - 1].rt,
+          zaehl(k.A).v + ' = ' + zaehl(k.A).s + ' + 2 × ' + zaehl(k.A).a);
+    const P00 = Z.mitWerten(Object.assign({}, P, {abtauStoppVorMin: 0, abtauStoppNachMin: 0})), k00 = Z.simuliere(P00, Array.from({length: 1440}, (x, i) => f(0, 92)(i)), {modus: 'pause', th: 21, tw: 28});
+    check('abtau-starts: Stopps abschaltbar (beide 0 = Verdichter läuft durch, bisheriges Modell): ' + P.abtauDauerMin + ' min ' + P.abtauHz + ' Hz, Verdichterstarts = Thermostat-Starts', k00.S.n.vstarts === k00.S.n.starts && k00.S.n.abtau >= 3 && k00.A.filter(x => x.modus === 'abtauen').every(x => x.hz === P.abtauHz), k00.S.n.vstarts + ' / ' + k00.S.n.starts);
     const nach = k.A.slice(ia + dauer, ia + dauer + P.nachAbtauEffMin - 1).map(x => x.hz);
     check('Efficiency hält nach dem Abtauen ' + P.nachAbtauEffMin + ' min die Mindestfrequenz (Forum 4582615)', nach.every(h => h <= Z.hzMinAt(P, 0) + 0.01), nach.slice(0, 6).join(' '));
     const iAb = k.A.findIndex((x, i) => i > 0 && x.modus === 'abtauen' && k.A[i - 1].modus !== 'abtauen');
@@ -129,7 +145,7 @@ console.log('--- Winterpaket 16.10.2026: Parameter aus LEISHA_WISSEN (a)');
           ps0 === 0 && ps1 >= 0 && !psAlt, 'Abtauung ' + ps1 + ' min nach dem Sprung, Rohr min ' + Math.round(Math.min.apply(null, ps.slice(240, 300).map(x => x.pipe))) + ' °C');
     const ps10 = lauf(Z.neu(P, {modus: 'lauf', rt: 200, th: 20, tw: 26, vl: 27}), 400, i => E(i, {at: 10.4, rh: 92, q: i < 240 ? 3 : 0, hc: i < 240 ? 1 : 0, th: 20}));
     check('über 10 °C nie Abtauen (4466101), auch nicht nach dem Sprung', !ps10.A.some(x => x.modus === 'abtauen'));
-    const k0 = lauf(Z.neu(P, {modus: 'pause', th: 21, tw: 28}), 1440, i => E(i, {at: 0, rh: 92, q: 0, hc: 1})), ia = k0.A.findIndex(x => x.modus === 'abtauen');
+    const k0 = lauf(Z.neu(P, {modus: 'pause', th: 21, tw: 28}), 1440, i => E(i, {at: 0, rh: 92, q: 0, hc: 1})), ia = k0.A.findIndex(x => x.modus === 'abtauen' && x.hz > 0);
     check('interner Wärmezähler bucht Abtauwärme positiv (Heat_Energy_Production > 0, 4074654), Wasserkreis negativ (Heat_Power_Production_Extra < 0)', ia >= 0 && k0.A[ia].hp.Heat_Energy_Production > 0 && k0.A[ia].hp.Heat_Power_Production_Extra < 0);
     const Pv = Z.mitWerten(Object.assign({}, P, {atExtVersatz: 2}));
     check('atExtVersatz (externer Fühler < 2 °C zu warm): bei 0 °C Physik-AT meldet die WP 2 °C, ab 2 °C kein Versatz', Z.atWP(Pv, 0) === 2 && Z.atWP(Pv, 3) === 3 && Z.atWP(P, 0) === 0 &&

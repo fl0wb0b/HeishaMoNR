@@ -1786,6 +1786,68 @@ console.log('--- (w) Winterpaket: Abtauwetter bis unter 10 °C, kein Comfort nac
             rec.in.rh === 88 && rec.in.pipeOut === -1 && rec.abl.aw === 1 && R2.outs[2].rec.abl.aw === undefined && un.rh === 88 && un.pipeOut === -1, JSON.stringify(rec.abl)); }
 }
 
+// ================================================================== (x) abtau-starts (20.10.2026): Verdichter-Stopps vor und nach der Abtauung (4-Wege-Ventil drucklos) sind kein Start, kein Laufende, keine Pause
+console.log('--- (x) abtau-starts: zwei Verdichter-Stopps je Abtauung zaehlen nicht als Start/Laufende/Pause; ohne sichtbaren Stopp aendert sich nichts; echter Thermo-Stopp bleibt');
+{
+    // Vorlauf: 5 min Lauf (Beginn laut Anlage vor 100 min) mit Abschaltung ueber den Vorlauf, 20 min Pause, Start in Minute 25 (ein Start in 3 h), dann Lauf mit VL = Soll
+    // Ablauf der Abtauung ab Minute a (Forum 3724609, 4616566): Signal 8 min; Minute a 0 Hz, a+1..a+4 Kreisumkehr 58 Hz, a+5..a+7 0 Hz, a+8 Neustart (Signal aus)
+    // HeishaMoNR setzt compressor_runtime bei jedem 0-Hz-Wert zurueck (Knoten "Runtime"); hier wie in der Anlage
+    const seq = (a, o) => {
+        o = o || {}; let rtH = 0, hzV = 17;
+        return i => {
+            let hz, df = 0, vl = 30, soll = 30, pump = 2000;
+            if (i < 5) { hz = 17; vl = 33.5; rtH = 100 + i; }
+            else if (i < 25) { hz = 0; vl = 26; pump = 1500; }
+            else { hz = 20; }
+            const k = i - a;
+            if (o.thermoVor && k >= -3 && k < 0) { vl = 33.25; }                               // Gegenprobe: Lauf endet ueber den Vorlauf (Soll + 3,25 K)
+            if (k >= 0 && k < 8) { df = 1; vl = 24; hz = (o.ohneStopp ? 58 : (k < 1 || k >= 5 ? 0 : 58)); if (o.signalSpaet && k === 0) { df = 0; } }
+            if (o.thermoVor && k === 0) { df = 0; }                                             // Stopp ueber den Vorlauf, Signal eine Minute spaeter
+            if (k >= 8 && o.keinNeustart) { hz = 0; vl = 26; }
+            if (k >= 8 && !o.keinNeustart) { hz = 30; vl = 27; }
+            if (hz > 0) { rtH = hzV > 0 ? rtH + 1 : 1; } else { rtH = 0; } hzV = hz;
+            return inp(T0 + i * MIN, {hz: hz, defrost: df, vl: vl, soll: soll, rl: vl - 2, rt: i < 5 ? 100 + i : rtH, pump: pump, at: 1, sollKurve: 29.75});
+        };
+    };
+    const ab = 85, N = 125;
+    const runOhne = runSeq(N, i => { const x = seq(9999)(i); return x; });                  // Referenz: dieselbe Lage ohne Abtauung
+    const RA = runSeq(N, seq(ab));
+    const dA = RA.outs[N - 1].d, dR = runOhne.outs[N - 1].d;
+    check('x1 zwei sichtbare Stopps im Abtausignal: Starts in 3 h unveraendert (1 wie ohne Abtauung), kein neues Laufende, Laufzeit durchgehend seit dem echten Start (Minute 25, laut compressor_runtime ab Minute 24), Takt-Messung ohne zusaetzliche Starts, Abtauzaehler +1',
+          dA.starts3h === 1 && dR.starts3h === 1 && RA.S.runs.length === runOhne.S.runs.length && RA.S.runs.length === 1 && Math.round(dA.runMin) === N - 1 - 24 && RA.S.run.start === T0 + 24 * MIN &&
+          dA.takt.starts24h === dR.takt.starts24h && dA.takt.laeufe === dR.takt.laeufe && dA.abtau24h === 1 && dA.abtau3h === 1 && RA.S.abl.stopps === 2 && RA.S.abl.neustarts === 2 && RA.S.lastStop === runOhne.S.lastStop,
+          'starts3h ' + dA.starts3h + ', Laeufe ' + RA.S.runs.length + ', Laufmin ' + Math.round(dA.runMin) + ', Takt-Messung ' + dA.takt.starts24h + '/' + dA.takt.laeufe + ', Abtauungen ' + dA.abtau24h + ', Stopps/Neustarts ' + RA.S.abl.stopps + '/' + RA.S.abl.neustarts);
+    const oS = RA.outs[ab + 6];
+    check('x2 im Stillstand der Abtauung: kein Takt-Beleg-Material (letzter Lauf bleibt der lange Thermo-Lauf), Pause unbekannt statt Minuten seit dem letzten Stopp, Datensatz abl.abt = 1 und ab3h = 1; nach dem Neustart kein abt',
+          !oS.d.running && oS.d.abtPause && oS.d.pauseNow === null && oS.d.lastRunMin === 105 && oS.d.lastRunThermo === true && oS.rec.abl.abt === 1 && oS.rec.abl.ab3h === 1 && !RA.outs[ab + 9].rec.abl.abt && RA.outs[ab + 9].d.runMin > 60,
+          JSON.stringify(oS.rec.abl));
+    const RB = runSeq(N, seq(ab, {signalSpaet: true})), dB = RB.outs[N - 1].d;
+    check('x3 Stopp eine Minute vor dem Signal (Minutenraster): der Stopp wird zurueckgenommen (Laufende, Startschwelle, letzter Stopp wie vorher), Ergebnis wie x1',
+          dB.starts3h === 1 && RB.S.runs.length === 1 && RB.S.run.start === T0 + 24 * MIN && RB.S.lastStop === runOhne.S.lastStop && RB.S.abl.stopps === 2 && !RB.S.ablU && RB.outs[ab].d.ablOffen && !RB.outs[ab + 1].d.ablOffen && RB.outs[ab + 1].d.runMin > 60 && RB.outs[ab + 5].d.abtPause && (RB.S.sl || []).length === (runOhne.S.sl || []).length,
+          'starts3h ' + dB.starts3h + ', Laeufe ' + RB.S.runs.length + ', Stopps ' + RB.S.abl.stopps);
+    const RC = runSeq(N, seq(ab, {ohneStopp: true})), dC = RC.outs[N - 1].d;
+    check('x4 kein sichtbarer Stopp (nur Signal, „nur einen sehr kleinen Moment“ 2996819; compressor_runtime springt trotzdem auf 0): nichts aendert sich gegenueber der Lage ohne Abtauung, Abtauung gezaehlt',
+          dC.starts3h === 1 && RC.S.runs.length === 1 && RC.S.run.start === T0 + 24 * MIN && RC.S.abl.stopps === 0 && RC.S.abl.neustarts === 0 && dC.abtau24h === 1 && dC.takt.starts24h === dR.takt.starts24h,
+          'starts3h ' + dC.starts3h + ', Laufbeginn ' + E.iso(RC.S.run.start));
+    const RD = runSeq(N, seq(ab, {thermoVor: true})), dD = RD.outs[N - 1].d;
+    check('x5 Gegenprobe: echter Thermo-Stopp (Vorlauf Soll + 3,25 K) eine Minute vor dem Abtausignal wird nicht verschluckt: Laufende mit Abschaltung ueber den Vorlauf, der Lauf in der Abtauung ist ein neuer Start, nur der Stopp darin wird verschluckt',
+          RD.S.runs.length === 2 && RD.S.runs[1][2] === 1 && RD.S.runs[1][1] === ab - 24 && dD.starts3h === 2 && RD.S.run.start === T0 + ab * MIN && RD.S.abl.stopps === 1 && RD.S.abl.neustarts === 1,
+          'Laeufe ' + JSON.stringify(RD.S.runs.map(r => [r[1], r[2]])) + ', starts3h ' + dD.starts3h + ', Stopps ' + RD.S.abl.stopps);
+    const RE = runSeq(N, seq(ab, {keinNeustart: true})), dE = RE.outs[N - 1].d;
+    check('x6 kein Neustart nach dem Abtauen (binnen ' + E.ABL.nachMin + ' min nach dem Signalende): der Lauf endete mit dem Stopp in der Abtauung (ohne Abschaltung ueber den Vorlauf), ohne Startschwellen-Fall',
+          RE.S.runs.length === 2 && RE.S.runs[1][1] === ab + 5 - 24 && RE.S.runs[1][2] === 0 && RE.S.lastStop === T0 + (ab + 5) * MIN && RE.S.run.on === false && !RE.S.sp && !dE.abtPause && dE.pauseNow > 30 && RE.S.abl.stopps === 1,
+          'Laeufe ' + JSON.stringify(RE.S.runs.map(r => [r[1], r[2]])) + ', Pause ' + Math.round(dE.pauseNow) + ' min');
+    // x8: Abtauwetter-Nacht: 7 Abtauungen im Abstand von 40 min (Mindestheizzeit 35 min, Forum 4029954) = 14 zusaetzliche Verdichterstarts. Vorher: 15 Starts in 24 h
+    // (> 12 = Takt der Takt-Messung) und 7 Starts in 3 h -> Takt-Beleg fuer "Deckel/Laufzeit"; jetzt: ein Lauf, kein Takt-Beleg
+    const viele = i => { const k = (i - 60) % 40, n = Math.floor((i - 60) / 40); const x = seq(9999)(i); if (i >= 60 && n < 7 && k < 8) { x.defrost = 1; x.hz = (k < 1 || k >= 5) ? 0 : 58; x.vl = 24; x.rl = 22; x.rt = x.hz > 0 ? k : 0; } else if (i >= 60 && n <= 7 && k >= 8) { x.rt = k - 7; } return x; };
+    const RF = runSeq(400, viele), dF = RF.outs[399].d, kc = cfg.rules.quiet_strecken;
+    const tb = d => !!((d.takt && d.takt.takt) || (d.lastRunThermo && d.lastRunMin < kc.kurzerLaufMin && d.starts3h >= kc.starts3h));
+    check('x8 sieben Abtauungen in 4,7 h (14 Verdichter-Stopps): kein Takt-Beleg zu keiner Minute, Starts in 3 h hoechstens 1, Takt-Messung 1 Start in 24 h, Laufzeit durchgehend, 7 Abtauungen gezaehlt',
+          RF.outs.every(o => !tb(o.d)) && Math.max.apply(null, RF.outs.map(o => o.d.starts3h)) === 1 && dF.takt.starts24h === 1 && !dF.takt.takt && Math.round(dF.runMin) === 399 - 24 && dF.abtau24h === 7 && RF.S.abl.stopps === 14 && RF.S.abl.neustarts === 14,
+          'max starts3h ' + Math.max.apply(null, RF.outs.map(o => o.d.starts3h)) + ', Takt-Messung ' + dF.takt.starts24h + ' Starts, Laufmin ' + Math.round(dF.runMin) + ', Abtauungen ' + dF.abtau24h);
+    const Sx = JSON.parse(JSON.stringify(RA.outs[ab + 6].S)); delete Sx.abl; delete Sx.ablU;
+    check('x7 Zustand einer aelteren Datei (ohne abl/ablU) wird ergaenzt und laeuft weiter', (() => { const S2 = E.fixState(Sx, T0 + (ab + 7) * MIN); const o = E.step(S2, seq(ab)(ab + 7)); return Array.isArray(o.S.abl.t) && o.S.ablU === null; })(), '');
+}
 // ================================================================== Replay der echten Daten (07.-10.10., 07.-12.10. oder 07.-13.10.; datensatzabhaengige Pruefungen je Zeitraum)
 let RP = null;
 if (fs.existsSync(path.join(dataDir, 'quiet-2026-10.csv'))) {

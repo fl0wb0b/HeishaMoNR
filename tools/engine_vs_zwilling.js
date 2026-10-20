@@ -47,7 +47,11 @@ function lauf(P, szName, modus, opts) {
     let S = null, A = E.newApply();
     const n0 = ZS.n.abtau;
     const L = {szenario: szName, modus: modus, tage: sz.tage, kwhEl: 0, kwhHs: 0, kwhTh: 0, starts: 0, kurz: 0, laufMin: 0, abtau: 0, hsMin: 0, hz28: 0, fehler: 0,
-               unterMin: {}, khUnter: {}, ueberMax: {}, hausUnter20: 0, hausMittel: 0, vorschlaege: {}, befehle: [], atMin: 99, atMax: -99, laeufe: [], quietMin: [0, 0, 0, 0], comfortMin: 0};
+               unterMin: {}, khUnter: {}, ueberMax: {}, hausUnter20: 0, hausMittel: 0, vorschlaege: {}, befehle: [], atMin: 99, atMax: -99, laeufe: [], quietMin: [0, 0, 0, 0], comfortMin: 0,
+               vStarts: 0, eStarts: 0, eLaeufe: 0, eKurz: 0, eKurzThermo: 0, taktMin: 0, starts3hMax: 0, takt24Max: 0, eAbtau: 0, eAbtPause: 0};   // abtau-starts: Takt-Sicht der Maschine
+    const kc = cfg.rules.quiet_strecken;
+    const taktBeleg = d => !!((d.takt && d.takt.takt) || (d.lastRunThermo && d.lastRunMin !== null && d.lastRunMin !== undefined && d.lastRunMin < kc.kurzerLaufMin && d.starts3h >= kc.starts3h));   // wie engine_core taktBeleg
+    let hzVor = ZS.hz, lsVor = null, lpVor = null;
     RAEUME.forEach(r => { L.unterMin[r.id] = 0; L.khUnter[r.id] = 0; L.ueberMax[r.id] = 0; });
     let laufSeit = null;
     for (let i = 0; i < N; i++) {
@@ -63,9 +67,14 @@ function lauf(P, szName, modus, opts) {
         L.hausMittel += Aus.th / N; if (Aus.th < 20) { L.hausUnter20++; }
         RAEUME.forEach(rc => { const T = Aus.raeume[rc.id]; if (T < rc.min) { L.unterMin[rc.id]++; L.khUnter[rc.id] += (rc.min - T) / 60; } if (T > rc.max) { L.ueberMax[rc.id]++; } });
         // Maschine
+        if (Aus.hz > 0 && !(hzVor > 0)) { L.vStarts++; } hzVor = Aus.hz;                    // Verdichterstarts wie der Zähler der Anlage (je Abtauung zwei)
         const inp = Z.zuEngine(Aus, RAEUME, P, {});
         try {
             const o = E.step(S, inp, cfg); S = o.S;
+            if (i > 0 && S.lastStart !== lsVor) { L.eStarts++; } lsVor = S.lastStart;
+            if (i > 0 && S.lastStop !== lpVor && S.lastStop) { const lr = S.runs[S.runs.length - 1]; L.eLaeufe++; if (lr && lr[1] < 60) { L.eKurz++; if (lr[2] === 1) { L.eKurzThermo++; } } } lpVor = S.lastStop;
+            if (o.d) { if (taktBeleg(o.d)) { L.taktMin++; } L.starts3hMax = Math.max(L.starts3hMax, o.d.starts3h || 0); L.takt24Max = Math.max(L.takt24Max, (o.d.takt && o.d.takt.starts24h) || 0); if (o.d.abtPause) { L.eAbtPause++; } }
+            if (Aus.hp.Defrosting_State === 1 && !(L._dfVor)) { L.eAbtau++; } L._dfVor = Aus.hp.Defrosting_State === 1;
             o.res.forEach(x => { if (x.neu) { L.vorschlaege[x.id] = (L.vorschlaege[x.id] || 0) + 1; } });
             if (modus === 'sofort') {
                 const ctx = {now: t, enabled: true, knoten: true, rules: REGELN, eng: {ts: t, prop: o.prop, locks: o.locks, stoerung: o.stoerung}, cfg: cfg, endReason: o.ende, halten: o.halten};
@@ -82,7 +91,7 @@ function lauf(P, szName, modus, opts) {
     L.kwhElGesamt = rd(L.kwhEl + L.kwhHs, 2); L.cop = rd(L.kwhTh / Math.max(0.01, L.kwhElGesamt), 2);
     L.laufMittel = L.laeufe.length ? Math.round(L.laeufe.reduce((s, x) => s + x, 0) / L.laeufe.length) : null;
     RAEUME.forEach(rc => { L.khUnter[rc.id] = rd(L.khUnter[rc.id], 1); }); L.hausMittel = rd(L.hausMittel, 2);
-    L.endZustand = {q: anl.q, hc: anl.hc, shift: anl.sh};
+    L.endZustand = {q: anl.q, hc: anl.hc, shift: anl.sh}; delete L._dfVor;
     delete L.laeufe;
     return L;
 }
@@ -93,6 +102,9 @@ function markdown(R, meta) {
     const T = ['| Szenario | Lauf | AT min…max | kWh el (+ Heizstab) | kWh th | COP | Starts | Läufe < 60 min | Ø Lauf | Abtauungen | Heizstab-min | min ≥ 28 Hz | Comfort-Laufmin | Hausmittel Ø (min < 20 °C) | Minuten unter Minimum (ki_oben/ki_unten/schlaf/wohn) | K·h unter Minimum | Vorschläge | Befehle |', '|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|'];
     R.forEach(L => T.push('| ' + SZENARIEN[L.szenario].name + ' | ' + L.modus + ' | ' + de(L.atMin, 1) + '…' + de(L.atMax, 1) + ' | ' + de(L.kwhEl, 1) + ' (+' + de(L.kwhHs, 1) + ') | ' + de(L.kwhTh, 0) + ' | ' + de(L.cop, 2) + ' | ' + L.starts + ' | ' + L.kurz + ' | ' + (L.laufMittel === null ? '–' : L.laufMittel + ' min') + ' | ' + L.abtau + ' | ' + L.hsMin + ' | ' + L.hz28 + ' | ' + L.comfortMin + ' | ' + de(L.hausMittel, 1) + ' °C (' + L.hausUnter20 + ') | ' +
         RAEUME.map(r => L.unterMin[r.id]).join('/') + ' | ' + de(RAEUME.reduce((s, r) => s + L.khUnter[r.id], 0), 1) + ' | ' + (Object.keys(L.vorschlaege).sort().map(k => k + ' ' + L.vorschlaege[k]).join(', ') || '–') + ' | ' + L.befehle.length + ' |'));
+    T.push('', 'Takt-Sicht der Maschine (abtau-starts): Verdichterstarts wie der Zähler der Anlage gegen die Starts, die die Maschine zählt; Takt-Beleg = Bedingung von „Deckel/Laufzeit“.', '',
+           '| Szenario | Lauf | Abtauungen | Verdichterstarts (Anlage) | Starts (Maschine) | Läufe beendet (Maschine) | davon < 60 min (über den Vorlauf) | min mit Takt-Beleg | max Starts in 3 h | max Starts in 24 h (Takt-Messung) | min Stillstand in der Abtauung |', '|---|---|---|---|---|---|---|---|---|---|---|');
+    R.forEach(L => T.push('| ' + L.szenario + ' | ' + L.modus + ' | ' + L.abtau + ' | ' + L.vStarts + ' | ' + L.eStarts + ' | ' + L.eLaeufe + ' | ' + L.eKurz + ' (' + L.eKurzThermo + ') | ' + L.taktMin + ' | ' + L.starts3hMax + ' | ' + L.takt24Max + ' | ' + (L.eAbtPause === undefined ? '–' : L.eAbtPause) + ' |'));
     const B = R.filter(L => L.befehle.length).map(L => '- **' + L.szenario + '**: ' + L.befehle.slice(0, 14).map(b => b[0] + ' ' + b[1] + '=' + b[2] + ' (' + b[3] + ')').join('; ') + (L.befehle.length > 14 ? ' … (' + L.befehle.length + ')' : ''));
     return '_' + (meta || '') + '_\n\n' + T.join('\n') + '\n\n' + (B.length ? 'Befehle (sofort übernommen):\n\n' + B.join('\n') + '\n' : '');
 }

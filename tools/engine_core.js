@@ -1223,7 +1223,7 @@ var ENGINE = (function () {
                  defrostEnd: 0, dhwEnd: 0, defrostWas: false, dhwWas: false, q: null, qChg: 0, shift: null, shiftChg: 0, soll: null, handWas: false, vlHist: [], needSince: 0, korr0Since: 0, vsEndSince: 0, atH: [],
                  arb: {owner: null, soll: null, von: null, start: 0, applied: null, last: null}, rules: {}, sc: newScore(), takt: taktNew(),
                  arbQ: {owner: null, soll: null, von: null, start: 0, applied: null, last: null},          // Quiet-Arbitrierung (seit Quiet-Freigabe v2 / Deckel/Laufzeit v4)
-                 rtr: {}, bedT: 0, qfDeckSince: 0, lastPause: null, lz: null,                                 // Raumverlauf, letzter Quiet-Bedarf, Rueckweg der Freigabe, letzte Pause, Messaufgabe +1 K
+                 rtr: {}, bedT: 0, qfDeckSince: 0, lastPause: null, lz: null, abl: {stopps: 0, neustarts: 0, t: []}, ablU: null,   // Raumverlauf, letzter Quiet-Bedarf, Rueckweg der Freigabe, letzte Pause, Messaufgabe +1 K; Abtau-Stopps (abtau-starts 20.10.2026)
                  arbH: {owner: null, soll: null, von: null, start: 0, applied: null, last: null},          // Heizregelung (Comfort/Efficiency, 14.10.2026)
                  hc: null, hcChg: 0, hcHandT: 0, hcHandW: null, hcDeckSince: 0, hcAtNah: null};             // letzter Wechsel, Wechsel von Hand, Bedarf gedeckt seit, Heizstab-Naehe (Hysterese)
         RULES.forEach(function (r) { S.rules[r.id] = {since: 0, failSince: 0, prop: null, cool: 0, n: 0, day: '', korrV: null, korrSince: 0, last: null, hebel: null, rv: r.ver}; });
@@ -1283,30 +1283,67 @@ var ENGINE = (function () {
         d.roomAbove = d.rooms.filter(function (r) { return r.active && r.valid && have(r.max) && r.t > r.max; }).sort(function (a, b) { return (b.t - b.max) - (a.t - a.max); });
         return d;
     }
+    // Abtau-Stopps (abtau-starts 20.10.2026): die Aquarea L schaltet das 4-Wege-Ventil nur drucklos um, der Verdichter geht vor und nach jeder Abtauung kurz aus,
+    // eine Abtauung bringt zwei zusaetzliche Verdichterstarts (Forum 219455: 4899279, 4899283; 189605: 3518749, 2917785, 3737670, 4097028, 4631118; Home Assistant
+    // rechnet "Starts - 2 x Abtauungen", 4607612/4607656). Ablauf (L7 nach > 700 Abtauungen, 3724609; 3957304; 4879520; 4616566): Abtausignal (TOP26) sofort, Pumpe
+    // auf Vollgas, Verdichter aus bis Vor- und Ruecklauf gleich sind, ~4 min Kreisumkehr, Verdichter aus, Signal endet ~3 min danach, Neustart im Heizbetrieb um das
+    // Signalende. Der Stillstand kann kuerzer sein als der Minutentakt der Maschine ("nur einen sehr kleinen Moment", 2996819): dann sieht sie keinen Stopp und es
+    // aendert sich nichts. Sieht sie ihn, ist er weder Laufende noch Start, Pause oder Startschwellen-Fall: der Lauf geht logisch durch (Laufminuten seit dem echten
+    // Start; die Traegheit nach dem Abtauen haengt an S.defrostEnd). Abtauungen zaehlt S.abl.t (Beginn des Signals) getrennt.
+    //   vorMin: ein Stopp ohne Signal gehoert zur Abtauung, wenn das Signal binnen vorMin kommt und der Lauf nicht ueber den Vorlauf endete (Signal sofort, 3957304; 1-min-Raster; ANNAHME)
+    //   nachMin: Neustart spaetestens nachMin nach dem Signalende (Neustart um das Signalende, 4616446/4616566; Neustartsperre 3 min, Servicehandbuch; ANNAHME mit Puffer)
+    //   maxMin: laengster Stillstand innerhalb einer Abtauung (Signal ~10 min, 4879520; Handbuch hoechstens 9,5 min; ANNAHME); sonst endete der Lauf mit dem Stopp
+    var ABL = {vorMin: 2, nachMin: 5, maxMin: 20};
     function track(S, d, inp, cfg) {                                               // Laeufe, Starts, Abtauen, Aenderungen von Quiet/Verschiebung/Soll
-        var now = d.now, R = S.run, rt = num(inp.rt);
+        var now = d.now, R = S.run, rt = num(inp.rt), dfJetzt = num(inp.defrost) === 1;
+        if (!S.abl || !Array.isArray(S.abl.t)) { S.abl = {stopps: 0, neustarts: 0, t: []}; }
+        function ablEnde() {                                                       // kein Neustart: der Lauf endete mit dem Stopp in der Abtauung (ohne Abschaltung ueber den Vorlauf, ohne Startschwellen-Fall)
+            R.on = false; S.lastStop = R.abt; S.runs.push([R.start, mins(R.abt - R.start), 0]); S.sp = null; R.abt = 0; S.abl.stopps = Math.max(0, S.abl.stopps - 1);
+        }
         if (d.fresh && have(d.hz)) {
+            var U = S.ablU;
+            if (U && (R.on !== false || now - U.t > ABL.vorMin * MIN)) { U = S.ablU = null; }       // Neustart ohne Signal oder Frist vorbei: der Stopp bleibt ein Stopp
+            if (U && dfJetzt) {                                                                       // Signal kurz nach dem Stopp: der Stopp gehoerte zur Abtauung (zuruecknehmen)
+                var lr0 = S.runs[S.runs.length - 1];
+                if (lr0 && lr0[0] === U.run[0] && lr0[1] === U.run[1]) { S.runs.pop(); }
+                S.lastStop = U.lastStop; S.sp = null; R.on = true; R.abt = U.t; S.abl.stopps++; S.ablU = null;
+            }
+            if (d.running && R.on === true && R.abt) {
+                if (now - R.abt <= ABL.maxMin * MIN) { R.abt = 0; S.abl.neustarts++; }                 // Neustart in oder nach der Abtauung: derselbe Lauf, kein Start
+                else { ablEnde(); }                                                                   // zu lange (z. B. Datenluecke): Laufende beim Stopp, dies ist ein neuer Start
+            }
             if (d.running && R.on !== true) {
-                R.on = true; R.start = (have(rt) && rt > 0 && rt < 24 * 60) ? now - rt * MIN : now; R.reached = false; R.reachN = 0; R.sollTop = d.soll; R.over = null;
+                R.on = true; R.start = (have(rt) && rt > 0 && rt < 24 * 60) ? now - rt * MIN : now; R.reached = false; R.reachN = 0; R.sollTop = d.soll; R.over = null; R.abt = 0;
                 if (S.lastStop) { S.starts.push(R.start); S.lastPause = mins(R.start - S.lastStop); }      // Pause vor diesem Lauf (Zyklus fuer "Deckel/Laufzeit" +1 K)
                 if (S.sp && S.sp.stop) {                                                          // Startschwelle: [Start, Pause min, Verzug nach Soll-Modell, Verzug nach RL-Modell, VL-Soll zuletzt, Sollsprung, Heizgrenze-Aus]
                     S.sl = (Array.isArray(S.sl) ? S.sl : []).concat([[R.start, mins(R.start - S.sp.stop), S.sp.fSoll ? mins(R.start - S.sp.fSoll) : null, S.sp.fRl ? mins(R.start - S.sp.fRl) : null, r2(S.sp.vlS), S.sp.sj ? 1 : 0, S.sp.hg ? 1 : 0]]).slice(-START.logN);
                 }
                 S.sp = null;
                 S.lastStart = R.start;
-            } else if (!d.running && R.on === true) {
-                R.on = false; S.lastStop = now; S.runs.push([R.start, mins(now - R.start), have(R.over) && R.over >= thermoK(cfg) ? 1 : 0]);   // [Beginn, Dauer, Abschaltung ueber den Vorlauf]
-                S.sp = {stop: now, rl: have(R.rlLast) ? R.rlLast : null, fSoll: 0, fRl: 0, sj: false, hg: false, sollP: null, vlS: null};
+            } else if (!d.running && R.on === true && !R.abt) {
+                if (dfJetzt) { R.abt = now; S.abl.stopps++; }                                         // Stopp im Abtausignal: kein Laufende
+                else {
+                    var stop0 = S.lastStop, thermo = have(R.over) && R.over >= thermoK(cfg);
+                    R.on = false; S.lastStop = now; S.runs.push([R.start, mins(now - R.start), thermo ? 1 : 0]);   // [Beginn, Dauer, Abschaltung ueber den Vorlauf]
+                    S.sp = {stop: now, rl: have(R.rlLast) ? R.rlLast : null, fSoll: 0, fRl: 0, sj: false, hg: false, sollP: null, vlS: null};
+                    S.ablU = thermo ? null : {t: now, lastStop: stop0, run: S.runs[S.runs.length - 1].slice()};   // ein echter Stopp ueber den Vorlauf wird nie zurueckgenommen
+                }
+            } else if (!d.running && R.on === true && R.abt) {                                        // Verdichter steht in der Abtauung
+                var dEnde = dfJetzt ? 0 : (S.defrostWas ? now : S.defrostEnd);
+                if (now - R.abt > ABL.maxMin * MIN || (dEnde && dEnde >= R.abt && now - dEnde > ABL.nachMin * MIN)) { ablEnde(); }
             } else if (R.on === null) { R.on = false; }
-            if (d.running && have(d.vl) && have(d.soll)) { R.over = d.vl - d.soll; }          // Vorlauf zum Soll in der letzten Laufminute (Stopp-Art)
-            if (d.running && have(d.rl)) { R.rlLast = d.rl; }                                  // Ruecklauf in der letzten Laufminute (Startschwelle nach Forum: RL beim Abschalten - 3 K)
+            if (d.running && !dfJetzt && have(d.vl) && have(d.soll)) { R.over = d.vl - d.soll; }  // Vorlauf zum Soll in der letzten Laufminute (Stopp-Art; Abtauminuten zaehlen nicht)
+            if (d.running && !dfJetzt && have(d.rl)) { R.rlLast = d.rl; }                          // Ruecklauf in der letzten Laufminute (Startschwelle nach Forum: RL beim Abschalten - 3 K)
             // Laufzeit der Anlage hat Vorrang, wenn sie kleiner ist (Stopp und Neustart zwischen zwei Aufrufen; nach einem Node-RED-Neustart beginnt sie bei 0 = vorsichtig).
             // Aber nur nach einer Luecke von mehr als 4 min: der Verdichter hat eine Neustartsperre von 3 min (Servicehandbuch), zwischen zwei Minuten-Aufrufen im Lauf gibt es
             // keinen Stopp mit Neustart. Faellt die Laufzeit mitten im beobachteten Lauf, hat HeishaMoNR sie zurueckgesetzt (09.10. 03:01: 583 -> 0 min; ein 600-min-Lauf
-            // erschien sonst als 17-min-Lauf mit Abschaltung ueber den Vorlauf = falscher Takt-Beleg fuer "Deckel/Laufzeit").
+            // erschien sonst als 17-min-Lauf mit Abschaltung ueber den Vorlauf = falscher Takt-Beleg fuer "Deckel/Laufzeit"). HeishaMoNR setzt sie auch bei jedem
+            // Abtau-Stopp zurueck: der Stillstand in der Abtauung zaehlt deshalb als gesehener Lauf (abtau-starts).
             if (d.running && have(rt) && rt >= 0 && R.start && now - R.start > (rt + 2) * MIN && (!S.runSeen || now - S.runSeen > 4 * MIN)) { R.start = now - rt * MIN; }
-            if (d.running) { S.runSeen = now; }
+            if (d.running || (R.on === true && R.abt)) { S.runSeen = now; }
         }
+        d.abtPause = !!(R.on === true && R.abt && !d.running);                            // Verdichter steht innerhalb einer Abtauung (der Lauf geht logisch weiter)
+        d.ablOffen = !!S.ablU;                                                              // Stopp vor hoechstens vorMin ohne Signal: kann noch zur Abtauung gehoeren
         // Pause: wann erreichte der Vorlauf die Startschwelle (Soll-Modell: <= Soll - 3,25 K; RL-Modell nach Forum: < RL beim Abschalten - 3 K)?
         if (S.sp && d.fresh && !d.running && have(d.vl) && have(d.soll)) {
             if (S.sp.sollP !== null && d.soll !== S.sp.sollP) { S.sp.sj = true; } S.sp.sollP = d.soll;
@@ -1327,7 +1364,7 @@ var ENGINE = (function () {
         d.lastRunMin = S.runs.length ? S.runs[S.runs.length - 1][1] : null;
         d.lastRunThermo = S.runs.length ? S.runs[S.runs.length - 1][2] === 1 : false;      // aeltere Zustaende ohne Stopp-Art: unbekannt = kein Takt-Beleg
         d.lastPauseMin = have(S.lastPause) ? S.lastPause : null;
-        d.pauseNow = (!d.running && S.lastStop) ? (now - S.lastStop) / MIN : null;          // Minuten seit dem letzten Stopp (+1 K in der Pause = Startbefehl, Winterpaket 16.10.2026)
+        d.pauseNow = (!d.running && S.lastStop && !d.abtPause) ? (now - S.lastStop) / MIN : null;   // Minuten seit dem letzten Stopp (+1 K in der Pause = Startbefehl, Winterpaket 16.10.2026); Stillstand in der Abtauung ist keine Pause (abtau-starts)
         d.starts3h = S.starts.filter(function (t) { return now - t <= 3 * 60 * MIN; }).length;
         // Sollvorlauf erreicht: 3 min am Stueck >= Soll -1 K, ab Minute 15, nicht bei Abtauen/Warmwasser; ein Sollsprung nach oben (>= 1 K) setzt zurueck
         if (d.running && have(d.soll)) {
@@ -1338,6 +1375,9 @@ var ENGINE = (function () {
         }
         d.reached = !!R.reached;
         var df = num(inp.defrost) === 1, dw = num(inp.dhw) === 1;
+        if (df && !S.defrostWas) { S.abl.t = S.abl.t.concat([now]); }                          // Abtauungen getrennt zaehlen (Beginn des Signals, abtau-starts)
+        S.abl.t = S.abl.t.filter(function (t) { return now - t <= 24 * 60 * MIN; }).slice(-60);
+        d.abtau3h = S.abl.t.filter(function (t) { return now - t <= 3 * 60 * MIN; }).length; d.abtau24h = S.abl.t.length;
         if (!df && S.defrostWas) { S.defrostEnd = now; } S.defrostWas = df;
         if (!dw && S.dhwWas) { S.dhwEnd = now; } S.dhwWas = dw;
         d.defrost = df; d.dhw = dw;
@@ -1658,10 +1698,15 @@ var ENGINE = (function () {
         var now = x.t, hz = plausV('hz', x.hz), age = num(x.hpAge), qx = num(x.q);
         if (have(qx) && have(age) && age <= TAKT.maxAgeMin && T.qLast !== qx) { if (have(T.qLast)) { T.qT = now; } T.qLast = qx; }   // Quiet-Wechsel (gelernter Deckel)
         if (!have(hz) || !have(age) || age > TAKT.maxAgeMin) { T.nOn = 0; T.nOff = 0; T.hh = []; return T; }       // keine/alte/unplausible Daten: weder an noch aus (zaehlt nicht als Stopp)
-        if (hz > 0) { if (!T.nOn) { T.tOn1 = now; } T.nOn++; T.nOff = 0; } else { if (!T.nOff) { T.tOff1 = now; } T.nOff++; T.nOn = 0; }
+        var dfx = !!num(x.defrost);
+        if (hz > 0) { if (!T.nOn) { T.tOn1 = now; } T.nOn++; T.nOff = 0; } else { if (!T.nOff) { T.tOff1 = now; T.ablP = null; } T.nOff++; T.nOn = 0; }
+        // Abtau-Stopps (abtau-starts 20.10.2026, Belege bei ABL): Abtausignal im Stillstand oder binnen ABL.vorMin nach seinem Beginn -> der Stillstand gehoert zur Abtauung
+        if (!(hz > 0)) { if (dfx && (T.ablP || now - T.tOff1 <= ABL.vorMin * MIN)) { T.ablP = {e: 0}; } else if (!dfx && T.ablP && !T.ablP.e) { T.ablP.e = now; } }
         if (T.on !== true && T.nOn >= c.probenEin) {
-            if (T.on === false && T.tStop > 0 && T.tOn1 - T.tStop < c.minAusMin * MIN && T.runs.length) {  // kurze Luecke: derselbe Lauf geht weiter (kein Start)
+            var ablM = !!(T.on === false && T.tStop > 0 && T.tOn1 - T.tStop <= ABL.maxMin * MIN && ((T.ablP && (!T.ablP.e || T.tOn1 - T.ablP.e <= ABL.nachMin * MIN)) || (dfx && T.tOn1 - T.tStop <= ABL.vorMin * MIN)));
+            if (T.on === false && T.tStop > 0 && (T.tOn1 - T.tStop < c.minAusMin * MIN || ablM) && T.runs.length) {  // kurze Luecke oder Stillstand in der Abtauung: derselbe Lauf geht weiter (kein Start)
                 var L = T.runs.pop(); T.t0 = L[0];
+                if (T.hg && T.hg.length && T.hg[T.hg.length - 1][0] === T.tStop) { T.hg.pop(); }       // der Lauf endete nicht: keine Heizgrenze-Beobachtung
             } else {
                 T.t0 = T.tOn1;
                 if (T.on === false && T.tStop) {
@@ -1674,7 +1719,7 @@ var ENGINE = (function () {
             if (T.on === true) {
                 var dur = Math.round((T.tOff1 - T.t0) / MIN), atS = plausV('at', x.at);
                 T.runs.push([T.t0, dur, have(atS) ? r2(atS) : null]);
-                if (dur >= HG.laufMin && have(atS) && !num(x.dhw)) { T.hg = (T.hg || []).concat([[T.tOff1, r2(atS)]]).filter(function (h) { return T.tOff1 - h[0] <= HG.tage * 24 * 60 * MIN; }).slice(-200); }
+                if (dur >= HG.laufMin && have(atS) && !num(x.dhw) && !dfx) { T.hg = (T.hg || []).concat([[T.tOff1, r2(atS)]]).filter(function (h) { return T.tOff1 - h[0] <= HG.tage * 24 * 60 * MIN; }).slice(-200); }
             }
             T.tStop = T.on === true ? T.tOff1 : -1; T.on = false;
         }
@@ -1953,11 +1998,11 @@ var ENGINE = (function () {
         if (frisch) {
             var lauf = hz > 0 || df;
             if (lauf && Z.on !== true) {                                              // Pause kuerzer als minAusMin: derselbe Lauf; erster Lauf nach Datenbeginn: kein Start (Beginn unbekannt)
-                var kurz = Z.on === false && Z.stopT > 0 && t - Z.stopT < CZ.minAusMin * MIN && Z.t0;
+                var kurz = Z.on === false && Z.stopT > 0 && t - Z.stopT < (Z.stopDf ? Math.max(CZ.minAusMin, ABL.nachMin) : CZ.minAusMin) * MIN && Z.t0;   // nach dem Abtausignal: Neustart binnen ABL.nachMin ist kein Start
                 if (!kurz) { Z.t0 = t; Z.start = Z.on === false && Z.stopT > 0; if (Z.start) { Z.nStart = true; } }
                 Z.on = true;
             }
-            else if (!lauf && Z.on !== false) { Z.stopT = t; Z.on = false; }                    // Stillstand seit (auch der erste beobachtete: danach zaehlt ein Lauf ab minAusMin als Start)
+            else if (!lauf && Z.on !== false) { Z.stopT = t; Z.on = false; Z.stopDf = !!Z.dfOn; }                    // Stillstand seit (auch der erste beobachtete: danach zaehlt ein Lauf ab minAusMin als Start); stopDf: Stillstand beginnt mit dem Ende des Abtausignals (abtau-starts)
             if (df && !Z.dfOn) { Z.dfOn = true; Z.dfVor = have(Z.vlPrev) ? Z.vlPrev : vl; Z.nDf = true; }
             else if (!df && Z.dfOn) { Z.dfOn = false; Z.wdBis = t + CZ.wdMaxMin * MIN; Z.wdZiel = have(Z.dfVor) ? Z.dfVor - CZ.wdK : null; }
             if (!df && Z.wdBis && (t > Z.wdBis || (have(vl) && have(Z.wdZiel) && vl >= Z.wdZiel))) { Z.wdBis = 0; }
@@ -2286,6 +2331,7 @@ var ENGINE = (function () {
         if (have(d.hc) && d.hcL && d.hcL.lage) { rec.abl.hc = d.hcL.lage; }                                   // Heizregelung: Lage +1 (Comfort-Bedarf in Efficiency) bzw. -1 (Comfort ohne Bedarf, Efficiency moeglich), nur wenn nicht 0
         if (d.hc === 0 && d.hcL && d.hcL.deckMin > 0) { rec.abl.hc_deck = Math.floor(d.hcL.deckMin); }          // in Comfort: Minuten "Bedarf gedeckt"
         if (d.abtauW && d.abtauW.ja) { rec.abl.aw = 1; }                                                        // Winterpaket 16.10.2026: Abtauwetter (-5 bis unter 10 °C, Feuchte >= 80 % oder Rohr <= 0 °C)
+        if (d.abtau3h) { rec.abl.ab3h = d.abtau3h; } if (d.abtPause) { rec.abl.abt = 1; }                          // abtau-starts 20.10.2026: Abtauungen in 3 h, Verdichter steht in der Abtauung (Lauf geht logisch weiter)
         if (d.anlQNeu) { rec.abl.anl_q = [d.anlQ.von, d.anlQ.zu]; }                                             // Anlage hat Quiet selbst beendet (Fluester-Prioritaet "Leistung")
         return {S: S, d: d, res: res, prop: prop, rec: rec, ev: ev, scores: sc, ende: ende, halten: halten, locks: locks, hc: hcInfo,
                 deckel: dq ? {q: d.q, hz: dq.hz, quelle: dq.quelle} : null, hinweise: hinweisListe(S), stoerung: d.err ? {code: d.err, seit: (S.hw && S.hw.stoerung && S.hw.stoerung.seit) || now} : null};
@@ -2601,7 +2647,7 @@ var ENGINE = (function () {
         if (!d.fresh) { return; }
         if (E.art === 'efficiency') {                                                  // naechster Start in Efficiency bleibt bis Laufminute 15 bei hoechstens 21 Hz (alle 21 Efficiency-Starts 08.–14.10., davon 9 mit Quiet 0)
             if (dt > 0 && d.hcChanged) { closeEffect(E, [['nächster Start in Efficiency höchstens 21 Hz bis Laufminute 15', 0, 'nicht messbar (Heizregelung wieder geändert)']], sc, recs, now); return; }
-            if (!d.running) { m.pause = true; return; }
+            if (!d.running) { if (!d.abtPause) { m.pause = true; } return; }               // Stillstand in der Abtauung ist keine Pause, der Neustart danach kein Start
             if (!m.pause && E.lauf0) { return; }                                         // erst der naechste Start zaehlt
             if (!m.pause && !E.lauf0) { m.pause = true; }
             if (d.runMin >= 2 && d.runMin <= 15 && have(d.hz)) { m.hzMax = Math.max(m.hzMax || 0, d.hz); if (!have(m.q)) { m.q = d.q; } }
@@ -2704,7 +2750,7 @@ var ENGINE = (function () {
         var kinds = SCORE.verpasstSperre.schaden[R.id] || [];
         function hit(k) { if (kinds.indexOf(k) >= 0 && G.dmg.indexOf(k) < 0) { G.dmg.push(k); } }
         if (!d.fresh) { return; }
-        if (d.running) { G.wasRun = true; } else if (G.wasRun) { hit('takt'); }
+        if (d.running) { G.wasRun = true; } else if (G.wasRun && !d.abtPause && !d.ablOffen) { hit('takt'); }      // Stillstand in der Abtauung ist kein Takt (abtau-starts)
         if (d.running && have(d.vl) && have(d.soll) && d.vl - d.soll >= cfg.locks.stopK) { hit('ueberschwingen'); }
         d.rooms.forEach(function (x) { if (roomScore(x) && x.t < x.min - SCORE.verpasstSperre.komfortK) { hit('komfort'); } });
         if (d.heaterOn) { hit('heizstab'); }
@@ -3068,7 +3114,7 @@ var ENGINE = (function () {
     return {VER: VER, SCORE_VER: SCORE_VER, RULES: RULES, RULE: RULE, LOCKS: LOCKS, LOCK_CFG: LOCK_CFG, SCORE: SCORE, WHITELIST: WHITELIST, APPLY: APPLY,
             brier: brier, hPunkte: hPunkte, vorschau: vorschau, bedarfK: bedarfK, VS_LIM: VS_LIM, PLAUS: PLAUS, tagesgang: tagesgang, defaults: defaults, mergeCfg: mergeCfg, newState: newState, fixState: fixState, step: step, report: report, STILLGELEGT: STILLGELEGT, UEB: UEB, uebStep: uebStep, uebSumme: uebSumme, HCW: HCW, hcHinweis: hcHinweis, TAKT: TAKT, TAKT_SCHWELLEN: TAKT_SCHWELLEN, taktCfg: taktCfg, taktNew: taktNew, taktStep: taktStep, taktKennzahlen: taktKennzahlen, mindestLeistung: mindestLeistung, copSumme: copSumme, copTabelle: copTabelle, COP_KORR: COP_KORR, copKw: copKw, pelKorr: pelKorr, korrTxt: korrTxt, bandOf: bandOf, modusOf: modusOf, nlNeu: nlNeu, nlZeilen: nlZeilen, nlEnde: nlEnde, HG: HG, heizgrenzeBeob: heizgrenzeBeob, LAG: LAG, lagMessen: lagMessen, lagStep: lagStep, KB: KB, kbTag: kbTag, kbStep: kbStep, snapshot: snapshot, unsnap: unsnap,
             checksum: checksum, newApply: newApply, applyRequest: applyRequest, applyTick: applyTick, fortsetzung: fortsetzung, gOfCmd: gOfCmd, iso: iso, ymd: ymd, zielDeckel: zielDeckel, zielFrei: zielFrei, deckelOf: deckelOf, deckelTab: deckelTab, DECKEL: DECKEL,
-            abtauKennzahl: abtauKennzahl, abtauWetter: abtauWetter, startGewollt: startGewollt, ABZ: ABZ, zielStufe: zielStufe,
+            abtauKennzahl: abtauKennzahl, abtauWetter: abtauWetter, ABL: ABL, startGewollt: startGewollt, ABZ: ABZ, zielStufe: zielStufe,
             bedarfQ: bedarfQ, raumTrend: raumTrend, komfortSicher: komfortSicher, nutzenKurve: nutzenKurve, kindOf: kindOf, kaltQ: kaltQ, zielKalt: zielKalt, nachtMin: nachtMin, HL: HL, hochlaufSumme: hochlaufSumme,
             hhmm: hhmm, isoWeek: isoWeek, de: de, sg: sg,
             raumLage: raumLage, raumVerlauf: raumVerlauf, raumEnde: raumEnde, kurvenform: kurvenform, KF: KF, p2Summe: p2Summe, startModell: startModell, START: START, MINHZ: MINHZ, minHzOf: minHzOf, minHzTab: minHzTab,

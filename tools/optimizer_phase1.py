@@ -982,7 +982,7 @@ if (!qs) {
     } catch (e) { /* noch keine Datei */ }
     try {                                                                                            // Wechselzeit und Abtau-/Warmwasser-Ende ueberstehen einen Neustart
         var wj = JSON.parse(fs.readFileSync('/data/optimizer/watcher-state.json', 'utf8'));
-        if (wj) { qs.esc = {lastChg: wj.lastChg || 0, lastChgWhat: wj.lastChgWhat || ''}; qs.lastDefrostEnd = wj.lastDefrostEnd || 0; qs.lastDhwEnd = wj.lastDhwEnd || 0; if (wj.lastDefrostStart) { qs.lastDefrostStart = wj.lastDefrostStart; } }      // eine alte Sperre (blockUntil) gilt nicht mehr
+        if (wj) { qs.esc = {lastChg: wj.lastChg || 0, lastChgWhat: wj.lastChgWhat || ''}; qs.lastDefrostEnd = wj.lastDefrostEnd || 0; qs.lastDhwEnd = wj.lastDhwEnd || 0; if (wj.lastDefrostStart) { qs.lastDefrostStart = wj.lastDefrostStart; } if (wj.dfSR) { qs.dfSR = wj.dfSR; } if (wj.stPrev !== undefined) { qs.stPrev = wj.stPrev; } if (wj.echtStop) { qs.echtStop = wj.echtStop; } }      // eine alte Sperre (blockUntil) gilt nicht mehr
     } catch (e) { /* noch keine Datei */ }
     qs.born = now;
 }
@@ -1001,13 +1001,47 @@ var stat = function (lv) {
 };
 var FIELDS = ['hz', 'pel', 'pth', 'cop', 'vl', 'rl', 'svl', 'srl', 'dt', 'flow', 'at', 'fan'];
 // Wechsel erkennen: Verdichterstart/-ende, Abtauen, Warmwasser
-if (running && !qs.freqOn) { qs.lastStart = now; qs.runStart = now; if (qNow !== null) { stat(qNow).starts++; } }
-if (!running && qs.freqOn && qs.runStart) {
-    qs.runs.push([qs.runStart, Math.round((now - qs.runStart) / MS_MIN), qNow]);
+// abtau-starts 20.10.2026: die Verdichter-Stopps vor und nach jeder Abtauung (4-Wege-Ventil schaltet nur drucklos, Forum 4899279/2917785/3724609) sind weder Laufende
+// noch Start. Werte wie in der Entscheidungsmaschine (ENGINE.ABL): Signal binnen 2 min nach einem Stopp ohne Abschaltung ueber den Vorlauf, Neustart binnen 5 min
+// nach dem Signalende, Stillstand hoechstens 20 min. Sieht der Waechter keinen Stopp (Stillstand kuerzer als sein Takt), aendert sich nichts.
+var ABL = {vorMin: 2, nachMin: 5, maxMin: 20};
+function runEnde(t, q) {
+    var dm = Math.round((t - qs.runStart) / MS_MIN);
+    qs.runs.push([qs.runStart, dm, q]);
     qs.runs = qs.runs.filter(function (r) { return r[0] > now - 24 * 60 * MS_MIN; });
-    if (qNow !== null) { stat(qNow).runMin += Math.round((now - qs.runStart) / MS_MIN); }
-    qs.runStart = 0;
+    if (q !== null) { stat(q).runMin += dm; }
+    qs.runStart = 0; qs.echtStop = t;
+    return dm;
 }
+if (qs.ablU && (running || now - qs.ablU.t > ABL.vorMin * MS_MIN)) { qs.ablU = null; }
+if (qs.ablU && defrost) {                                                                   // Signal kurz nach dem Stopp: der Stopp gehoerte zur Abtauung (zuruecknehmen)
+    var ablLr = qs.runs[qs.runs.length - 1];
+    if (ablLr && ablLr[0] === qs.ablU.rs) { qs.runs.pop(); var ablSt = qs.ablU.st ? (qs[qs.ablU.st[0]] || {})[qs.ablU.st[1]] : null; if (ablSt) { ablSt.runMin -= qs.ablU.dm; } }
+    qs.runStart = qs.ablU.rs; qs.echtStop = qs.ablU.echtVor; qs.ablHalt = {t: qs.ablU.t, q: qs.ablU.q}; qs.ablU = null;
+}
+if (running && !qs.freqOn) {
+    if (qs.ablHalt && qs.runStart && now - qs.ablHalt.t <= ABL.maxMin * MS_MIN) { qs.ablHalt = null; }       // Neustart in oder nach der Abtauung: derselbe Lauf
+    else {
+        if (qs.ablHalt && qs.runStart) { runEnde(qs.ablHalt.t, qs.ablHalt.q); }
+        qs.ablHalt = null; qs.lastStart = now; qs.runStart = now; if (qNow !== null) { stat(qNow).starts++; }
+    }
+}
+if (!running && qs.freqOn && qs.runStart && !qs.ablHalt) {
+    if (defrost) { qs.ablHalt = {t: now, q: qNow}; }                                         // Stopp im Abtausignal: kein Laufende
+    else {
+        var ablRs = qs.runStart, ablEv = qs.echtStop || 0, ablDm = runEnde(now, qNow);
+        var ablTh = istVL !== null && solVL !== null && istVL - solVL >= 2.75;               // Abschaltung ueber den Vorlauf (Schwelle wie thermoStoppK): nie zuruecknehmen
+        qs.ablU = ablTh ? null : {t: now, rs: ablRs, dm: ablDm, q: qNow, st: (qNow !== null && band !== null) ? [hcMode === 1 ? 'kfE' : 'kf', qNow + '|' + band] : null, echtVor: ablEv};
+    }
+}
+if (!running && qs.ablHalt) {                                                                // Stillstand in der Abtauung: ohne Neustart endete der Lauf mit dem Stopp
+    var ablEnde = defrost ? 0 : (qs.defrost ? now : qs.lastDefrostEnd);
+    if (now - qs.ablHalt.t > ABL.maxMin * MS_MIN || (ablEnde && ablEnde >= qs.ablHalt.t && now - ablEnde > ABL.nachMin * MS_MIN)) { if (qs.runStart) { runEnde(qs.ablHalt.t, qs.ablHalt.q); } qs.ablHalt = null; }
+}
+// Starts_Today (HeishaMoNR) zaehlt den Wechsel in und aus dem Abtauen als je einen Start, auch ohne sichtbaren 0-Hz-Wert (Knoten "Log HP data": "läuft (übersprungen)"),
+// Panasonic zaehlt zwei Starts je Abtauung (2917785): Anzeige "ohne Abtauen" = Starts - 2 x Abtauungen seit dem letzten Zuruecksetzen von Starts_Today (Home Assistant 4607656)
+if (startsToday !== null) { if (qs.stPrev !== undefined && qs.stPrev !== null && startsToday < qs.stPrev) { qs.dfSR = 0; } qs.stPrev = startsToday; }
+if (defrost && !qs.defrost) { qs.dfSR = (qs.dfSR || 0) + 1; }
 if (defrost && !qs.defrost && qNow !== null) { stat(qNow).defrosts++; }
 if (!defrost && qs.defrost) { qs.lastDefrostEnd = now; }
 // ---------- Abtauzyklen festhalten (Grundlage fuer die Bewertung Comfort/Efficiency): Beginn, Dauer, Strom, Waerme, Einbruch von Vor-/Ruecklauf, Wiederaufheizzeit
@@ -1078,7 +1112,9 @@ if (rlErr !== null) {
 // Taktung der letzten 24 h
 var runs24 = qs.runs.filter(function (r) { return r[0] > now - 24 * 60 * MS_MIN; });
 var meanRun = runs24.length ? runs24.reduce(function (a, r) { return a + r[1]; }, 0) / runs24.length : null;
-var cycleBad = (rtLast !== null && rtLast < qn(Q.minRunMin, 20)) || (startsToday !== null && startsToday > qn(Q.maxStartsDay, 24));      // kurze Laeufe oder viele Starts
+var rtLastOk = rtLast !== null && !(qs.lastDefrostStart && qs.lastDefrostStart > (qs.echtStop || 0));        // abtau-starts: nach einer Abtauung ist compressor_last_runtime ein Stueck des Laufs, kein Laufende
+var startsOhne = startsToday !== null ? Math.max(0, startsToday - 2 * (qs.dfSR || 0)) : null;                  // ohne die zwei Starts je Abtauung
+var cycleBad = (rtLastOk && rtLast < qn(Q.minRunMin, 20)) || (startsOhne !== null && startsOhne > qn(Q.maxStartsDay, 24));      // kurze Laeufe oder viele Starts
 
 // ---------- Quellen der Quiet-Stufe (damit nichts unbemerkt gegen einen Regler arbeitet)
 var mq = G('MQTT') || {}, sol = G('F_SOLAR') || {};
@@ -1168,7 +1204,7 @@ if (!escDataOk) {
     } else if (escDef || escDhw || escDev === null || escDev < -escBand - 0.5) { ES.reachSince = 0; }
     escTxt = 'läuft ' + Math.round(escRunMin) + ' min' + (ES.late ? ' (Beginn unbekannt)' : '') + ' · Vorlauf ' + (escDev !== null ? sg(escDev, 1, 'K') + ' zum Soll' : '–') + ' · ' + (ES.reached !== null ? (ES.late ? 'Sollvorlauf erreicht' : 'Sollvorlauf erreicht nach ' + ES.reached + ' min') : 'Sollvorlauf noch nicht erreicht');
 }
-var escSave = JSON.stringify({lastChg: ES.lastChg, lastChgWhat: ES.lastChgWhat, lastDefrostEnd: qs.lastDefrostEnd, lastDhwEnd: qs.lastDhwEnd, lastDefrostStart: qs.lastDefrostStart || 0});   // Paket 2: Beginn der letzten Abtauung (Abstand im Abtau-Protokoll nach einem Neustart)
+var escSave = JSON.stringify({lastChg: ES.lastChg, lastChgWhat: ES.lastChgWhat, lastDefrostEnd: qs.lastDefrostEnd, lastDhwEnd: qs.lastDhwEnd, lastDefrostStart: qs.lastDefrostStart || 0, dfSR: qs.dfSR || 0, stPrev: qs.stPrev === undefined ? null : qs.stPrev, echtStop: qs.echtStop || 0});   // Paket 2: Beginn der letzten Abtauung (Abstand im Abtau-Protokoll nach einem Neustart)
 if (escSave !== ES.saved) { try { fs.mkdirSync('/data/optimizer', {recursive: true}); fs.writeFileSync('/data/optimizer/watcher-state.json', escSave); ES.saved = escSave; } catch (e) { /* kein Zugriff */ } }
 
 var rows = [
@@ -1184,7 +1220,7 @@ var rows = [
     ['COP', copQNow !== null ? f(copQNow, 1) : '–', '', 'Wärme ÷ Strom, Strom ' + ZQ_TXT + (copNow !== null ? ' (roh ' + f(copNow, 1) + (ZQ.aktiv && copNowK !== null ? ', ' + KORR_TXT + ' ' + f(copNowK, 1) : '') + ')' : '')],
     ['Flow · Pumpe (nur Beobachtung)', f(flw, 1, 'l/min') + ' · ' + (HP.Pump_Duty ? f(HP.Pump_Duty.v, 0) : '–') + ' / ' + (HP.Pump_Speed ? f(HP.Pump_Speed.v, 0, 'U/min') : '–'), ''],
     ['Kinderzimmer oben', 'Radiator ' + (kzRad === '' ? '–' : (kzRad ? 'an' : 'aus')) + ' · Heizlüfter ' + (kzFanOnline === 0 ? 'offline' : (kzFanOn === '' ? '–' : (kzFanOn ? 'an' + (kzFanW !== null ? ' (' + f(kzFanW, 0, 'W') + ')' : '') : 'aus'))), ''],
-    ['Taktung', 'heute ' + f(startsToday, 0) + ' Starts · Ø Lauf 24 h ' + (meanRun !== null ? f(meanRun, 0, 'min') : '–') + ' (' + runs24.length + ')', cycleBad ? 'warn' : ''],
+    ['Taktung', 'heute ' + f(startsToday, 0) + ' Starts' + (qs.dfSR ? ' (ohne Abtauen ' + f(startsOhne, 0) + ', ' + qs.dfSR + ' Abtauungen × 2)' : '') + ' · Ø Lauf 24 h ' + (meanRun !== null ? f(meanRun, 0, 'min') : '–') + ' (' + runs24.length + ')', cycleBad ? 'warn' : ''],
     ['Quiet aktuell', qNow !== null ? 'Stufe ' + qNow + ' seit ' + dur(now - qs.levelSince) + (deckelTxt ? ' · ' + deckelTxt : '') + (prio !== null ? ' · Priorität ' + (prio === 1 ? 'Leistung' : 'Lautstärke') : '') : '–', ''],
     ['Quiet-Regeln (Entscheidungsmaschine)', qRules, qRulesCls],
     ['Heizregelung', hcReco.text, hcReco.cls],

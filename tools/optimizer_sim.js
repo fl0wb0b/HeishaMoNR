@@ -852,6 +852,26 @@ check('Statistik wird gesichert (quiet-stats.json)', !!files['/data/optimizer/qu
 const lvSince = fstore.qs.levelSince, n3 = fstore.qs.kf['3|2'].n;
 Object.keys(fstore).forEach(k => delete fstore[k]); gstore.compressor_frequency = 0; collect(1);
 check('nach Neustart: Statistik und "seit wann Stufe 2" sind wieder da', fstore.qs.kf['3|2'].n === n3 && Math.abs(fstore.qs.levelSince - lvSince) < 11 * 60000, String(fstore.qs.kf['3|2'].n));
+// abtau-starts 20.10.2026: Verdichter-Stopps vor und nach der Abtauung (4-Wege-Ventil drucklos, Forum 4899279/2917785/3724609) sind kein Start und kein Laufende
+{
+  const abt = (spaet) => { world({TOP5_Main_Inlet_Temp: 24.3}); outs = []; collect(30);                 // 30 min Lauf auf Stufe 3 (1 Start)
+    const ph = [[spaet ? 0 : 1, 0], [1, 0], [1, 58], [1, 58], [1, 58], [1, 0], [1, 0], [1, 0], [0, 30]]; // Signal/Hz je Minute (spaet: Stopp eine Minute vor dem Signal)
+    collect(ph.length, i => { gstore.TOP26_Defrosting_State = ph[i][0]; gstore.compressor_frequency = ph[i][1]; }); collect(10); return JSON.parse(JSON.stringify(fstore.qs)); };
+  const A1 = abt(false), A2 = abt(true);
+  check('abtau-starts Quiet-Waechter: zwei Verdichter-Stopps im Abtausignal -> kein Laufende, kein zusaetzlicher Start (Kennfeld 1 Start), Abtauung gezaehlt; Stopp eine Minute vor dem Signal ebenso (zurueckgenommen)',
+        A1.runs.length === 0 && A1.kf['3|2'].starts === 1 && A1.kf['3|2'].defrosts === 1 && A1.kf['3|2'].runMin === 0 && A2.runs.length === 0 && A2.kf['3|2'].starts === 1 && A2.kf['3|2'].runMin === 0 && !A2.ablU && !A2.ablHalt,
+        JSON.stringify([A1.runs, A1.kf['3|2'].starts, A2.runs, A2.kf['3|2'].starts, A2.kf['3|2'].runMin]));
+  gstore.compressor_frequency = 0; collect(3);
+  check('... der Lauf endet erst beim echten Stopp und zaehlt durchgehend (>= 48 min)', fstore.qs.runs.length === 1 && fstore.qs.runs[0][1] >= 48 && fstore.qs.kf['3|2'].runMin >= 48, JSON.stringify(fstore.qs.runs));
+  world({TOP5_Main_Inlet_Temp: 24.3}); outs = []; collect(5);
+  collect(12, i => { gstore.TOP26_Defrosting_State = i < 8 ? 1 : 0; gstore.compressor_frequency = (i < 1 || (i >= 5 && i < 8)) ? 0 : 30; });
+  collect(12, i => { gstore.TOP26_Defrosting_State = i < 8 ? 1 : 0; gstore.compressor_frequency = (i < 1 || (i >= 5 && i < 8)) ? 0 : 30; });
+  gstore.Starts_Today = 26; gstore.compressor_last_runtime = 4; o = collect(1) || outs[outs.length - 1]; o = outs[outs.length - 1];
+  check('abtau-starts Taktung (Anzeige): Starts_Today zaehlt je Abtauung zwei Starts -> "ohne Abtauen" = 26 − 2 × 2 = 22 (unter 24, keine Warnfarbe); compressor_last_runtime 4 min nach einer Abtauung ist ein Stueck des Laufs, kein kurzer Lauf',
+        rowQ(o, 'Taktung').includes('heute 26 Starts (ohne Abtauen 22, 2 Abtauungen × 2)') && o[0].payload.rows.find(r => r[0] === 'Taktung')[2] === '' && fstore.qs.dfSR === 2, rowQ(o, 'Taktung'));
+  gstore.Starts_Today = 1; collect(1); gstore.compressor_frequency = 0; collect(3); gstore.compressor_last_runtime = 10; gstore.Starts_Today = 1; collect(1); o = outs[outs.length - 1];
+  check('... Starts_Today zurueckgesetzt -> Abtauzaehler 0; nach einem echten Stopp gilt compressor_last_runtime wieder (10 min -> Warnfarbe)', fstore.qs.dfSR === 0 && o[0].payload.rows.find(r => r[0] === 'Taktung')[2] === 'warn', rowQ(o, 'Taktung'));
+}
 // Protokoll
 world({TOP5_Main_Inlet_Temp: 24.3}); outs = []; collect(10);
 const csvRows = outs.filter(x => x[2]).map(x => x[2].payload), hdr = csvRows[0].split('\n')[0].split(',');
