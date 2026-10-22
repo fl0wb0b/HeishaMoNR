@@ -40,7 +40,7 @@ function tabellen() {
     L.push('| Basisrate b | aus Vergleichslagen „bleibt, wie es ist“, (k + 1)/(n + 2), erst ab ' + S.baseMinN + ' Vergleichen, vorher 0,5 |');
     L.push('| Mindestbeobachtung je Horizont | ' + String(S.teilMin).replace('.', ',') + ' des Horizonts, sonst neutral |');
     L.push('| Problem besteht / gelöst | ≥ ' + Math.round(S.trefferAnteil * 100) + ' % / ≤ ' + Math.round((1 - S.trefferAnteil) * 100) + ' % der gültigen Minuten, dazwischen neutral |');
-    L.push('| Wirkungsprognose | je Größe ±' + S.wirkung + ', nicht messbar 0, Kalibriermessung 0 |');
+    L.push('| Wirkungsprognose | je Größe ±' + S.wirkung + ', nicht messbar 0, Kalibriermessung 0; seit v6 Naturexperiment (Änderung ohne übernommenen Vorschlag der Regel, z. B. von Hand) 0 Punkte, getrennt gezählt |');
     L.push('| Schaden | ' + Object.keys(S.schaden).map(k => k + ' ' + S.schaden[k]).join(', ') + ' |');
     L.push('| Verpasst | ' + S.verpasst + ' (gezählt werden nur Minuten, in denen die Regel nicht durch eine eigene Sperre zurückgehalten wurde) |');
     const VS = S.verpasstSperre, own = {abstand: 'Mindestabstand (`gapMin`)', tageslimit: 'Tageslimit (`proTag`)', abkuehlzeit: 'Wartezeit (`pauseMin`)', haltezeit: 'Haltezeit (`haltMin`)', stabil: 'Stabilitätszeit (`stabilMin`)'};
@@ -55,6 +55,8 @@ function tabellen() {
     L.push('| Basisrate ≥ Prognose (seit v5) | je Horizont mit b ≥ p: Treffer neutral (0 Punkte, kein Beitrag zum Skill, Kennzahl „davon … Treffer neutral“); Fehlalarm Abzug gegen b = ' + String(S.fehlRefB).replace('.', ',') + ': 100 × [' + String(S.fehlRefB).replace('.', ',') + '² − p²] (p 0,7 → −24, p 0,8 → −39, geteilt durch die Anzahl Horizonte); b < p: Brier wie oben |');
     L.push('| Raumwerte in der Bewertung | bis ' + S.raumAlterMax + ' min alt (Shelly melden nur bei Änderung) |');
     L.push('| Eingriffe (Bewertung wird ab dort neutral) | Quiet, Verschiebung oder Soll (≥ 2 K) geändert; Komfortband geändert; Lüftungsverdacht (Raum fällt ≥ ' + String(S.lueftungK).replace('.', ',') + ' K in ≤ 60 min) |');
+    L.push('| Fremdursachen der Raum-Gegenprobe (seit v6) | Lüftungsverdacht auf dem geglätteten Raumwert ab ' + String(S.lueftungEmaK).replace('.', ',') + ' K in ≤ 60 min (≈ ≥ 1 K Rohwert; Räume mit eigener Nachheizung ab ' + String(S.lueftungK).replace('.', ',') + ' K), im ganzen Horizont und mit ' + S.lueftVorMin + ' min Vorgeschichte; „gelöst“ (o = 0) ist neutral, wenn vor der Lösung bei +1 K mindestens ' + S.sonneMin + ' min Sonne (Sonnenzeichen der Regel) bzw. bei −1 K mindestens ' + S.heizgrenzeMin + ' min Heizgrenze-Aus lag; gilt auch für die Vergleichslagen der Basisrate |');
+    L.push('| Freigabereife: Wirkung (seit v6) | Wirkungsfälle aus Übernahmen und Naturexperimente desselben Befehls (ohne die Gegenprobe „ohne Bedarf“) zählen zusammen, getrennt ausgewiesen; Naturexperimente bringen keine Punkte |');
     L.push('| Freigabereife (nur Anzeige) | ≥ ' + S.reife.faelle + ' bewertete Fälle, ≥ ' + S.reife.tage + ' Tage, Brier-Skill ≥ ' + String(S.reife.skill).replace('.', ',') + ', 0 × Schaden, ≤ ' + S.reife.verpasst + ' × verpasst, ≥ ' + S.reife.wirkFaelle + ' Wirkungsfälle mit Punkten > 0 (ohne Kalibrierung) |');
     return L.join('\n');
 }

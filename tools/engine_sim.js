@@ -331,7 +331,7 @@ console.log('--- (b) Punktesystem');
       { const Sx = copSeed(); let S = Sx; const outs = [];
         for (let i = 0; i < 40; i++) { const o = E.step(S, inp(T0 + i * MIN, {q: i < 20 ? 0 : 2, hz: i < 23 ? 24 : 17, pel: i < 23 ? 520 : 330, rt: 30 + i, soll: 30, sollKurve: 29.75, vl: 30, rl: 27.5, rooms: rooms()}), cfg); S = o.S; outs.push(o); }
         const ef = [].concat(...outs.map(o => o.scores)).filter(x => x.regel === 'quiet_strecken' && x.typ === 'wirkung');
-        check('Deckel/Laufzeit: Wirkungsmessung "Deckel" bei Quiet 0 -> 2 mit 24 Hz (Wirkung ab 22 Hz, hzTakt): <= 21 Hz binnen 10 min und -100 W (Minute 5–10) getroffen, gebucht unter der aktuellen Version (v5)', ef.length === 1 && /Quiet 0 → 2 bei 24 Hz/.test(ef[0].text) && ef[0].v === E.RULE.quiet_strecken.ver && ef[0].punkte === 20 && ef[0].teile.every(t => t.ergebnis === 'getroffen'), JSON.stringify(ef.map(x => [x.text, x.v, x.punkte]))); }
+        check('Deckel/Laufzeit: Wirkungsmessung "Deckel" bei Quiet 0 -> 2 mit 24 Hz (Wirkung ab 22 Hz, hzTakt): <= 21 Hz binnen 10 min und -100 W (Minute 5–10) getroffen, gebucht unter der aktuellen Version; seit Bewertung v6 ist der Wechsel von Hand ein Naturexperiment (gemessen +20, 0 Punkte, getrennt gezaehlt)', ef.length === 1 && /Quiet 0 → 2 bei 24 Hz/.test(ef[0].text) && ef[0].v === E.RULE.quiet_strecken.ver && ef[0].punkte === 0 && ef[0].roh === 20 && ef[0].naturexperiment === 1 && ef[0].teile.every(t => t.ergebnis === 'getroffen'), JSON.stringify(ef.map(x => [x.text, x.v, x.punkte, x.roh]))); }
       // Hebel Heizkurve +1 K: Takt belegt und Verdichter am Minimum (Quiet deckelt nichts mehr); Nutzen (vermiedene Starts) gegen Kosten (Vorlauf +1 K)
       const zyklus = (lauf, pause, o) => i => { const k = i % (lauf + pause), on = k < lauf; return inp(T0 + i * MIN, Object.assign(on ? {q: 3, hz: 17, rt: k, soll: 30, sollKurve: 29.75, vl: Math.round((30.5 + 3 * k / lauf) * 4) / 4, rl: 29, rooms: rooms()} : {q: 3, hz: 0, rt: 0, soll: 30, sollKurve: 29.75, vl: 28, rl: 27.5, pump: 1750, rooms: rooms()}, typeof o === 'function' ? o(i) : (o || {}))); };
       const Rz = runSeq(120, zyklus(20, 10)), fz = firstProp(Rz), pz = fz.p, Rz46 = runSeq(76, zyklus(20, 10));
@@ -371,7 +371,7 @@ console.log('--- (b) Punktesystem');
       Sv.sc.base.quiet_freigabe = {30: [20, 19], 60: [20, 19], 120: [20, 19]};
       R = runSeq(160, i => boost(i), Sv); const rpv = E.report(R.S).find(r => r.regel === 'quiet_freigabe'), av = allSc(R).find(x => x.typ === 'ausloeser');
       check('Regelversion v1 -> v' + E.RULE.quiet_freigabe.ver + ' im laufenden Zustand: v1-Summen bleiben unveraendert unter "quiet_freigabe|v1|s5" (-20, 1 verpasst), v' + E.RULE.quiet_freigabe.ver + ' zaehlt getrennt unter "quiet_freigabe|v' + E.RULE.quiet_freigabe.ver + '|s5", Bericht zeigt v' + E.RULE.quiet_freigabe.ver + '; die alte Basisrate (v1-Vergleichslagen) wird nicht verwendet (Schluessel "quiet_freigabe|v2", seit v2 dieselbe Ausloesung; der Abtau-Rueckstand von v3 und die eigene Nachheizung von v4 kommen hier nicht vor)',
-            R.S.sc.tot['quiet_freigabe|v1|s5'].punkte === -20 && R.S.sc.tot['quiet_freigabe|v' + E.RULE.quiet_freigabe.ver + '|s5'].faelle === 1 && rpv.v === E.RULE.quiet_freigabe.ver && rpv.verpasst === 0 && av && av.v === E.RULE.quiet_freigabe.ver && av.horizonte.every(h => h.b === 0.5) && !!R.S.sc.base['quiet_freigabe|v2'], JSON.stringify(Object.keys(R.S.sc.tot)) + ' ' + JSON.stringify(av && av.horizonte.map(h => h.b))); }
+            R.S.sc.tot['quiet_freigabe|v1|s5'].punkte === -20 && R.S.sc.tot['quiet_freigabe|v' + E.RULE.quiet_freigabe.ver + '|s' + E.SCORE_VER].faelle === 1 && rpv.v === E.RULE.quiet_freigabe.ver && rpv.verpasst === 0 && av && av.v === E.RULE.quiet_freigabe.ver && av.horizonte.every(h => h.b === 0.5) && !!R.S.sc.base['quiet_freigabe|v2'], JSON.stringify(Object.keys(R.S.sc.tot)) + ' ' + JSON.stringify(av && av.horizonte.map(h => h.b))); }
     // S6: Basisrate lernt aus Vergleichslagen: 8 kurze Episoden (Rueckstand 30 min, dann geloest) -> b fuer 60/120 min nahe 0 -> Treffer zaehlt viel
     let S = null; const ep = [];
     for (let k = 0; k < 8; k++) { for (let i = 0; i < 150; i++) { const t = k * 150 + i; const o = E.step(S, inp(T0 + t * MIN, {rt: 20 + i, soll: 31, sollKurve: 30.5, vl: i < 30 ? 29 : 31.5, rl: i < 30 ? 26.5 : 29.5, q: 3, hz: 16, block: 1, rooms: rooms({ki_oben: 21.2})}), cfg); S = o.S; } }   // v2: Vergleichslage mit Bedarf (Raum unter Minimum)
@@ -474,8 +474,8 @@ console.log('--- (b) Punktesystem');
       const hi5 = runSeq(160, i => boost(i), seed(19, 20)), hi4 = runSeq(160, i => boost(i), seed(19, 20), E.mergeCfg({sv: 4}));
       const a5 = fall(hi5), a4 = fall(hi4), rp5 = E.report(hi5.S).find(r => r.regel === 'quiet_freigabe');
       check('v5 Ablauf: Quiet-Freigabe bleibt 150 min am Deckel bei gelernter Basisrate 0,91 >= p 0,8 -> Treffer, 0 Punkte, alle Horizonte "neutral", Kennzahl trefferNeutral 1, kein Skill-Beitrag; cfg.sv = 4 rechnet denselben Fall nach (Treffer mit Minus, Datensatz sv 4)',
-            a5 && a5.ergebnis === 'treffer' && a5.punkte === 0 && a5.sv === 5 && a5.horizonte.every(h => h.bp === 'neutral' && h.punkte === 0) && a5.treffer_neutral === 1 && /Basisrate 0,9\d ≥ Prognose 0,80: neutral/.test(a5.text) &&
-            rp5.trefferNeutral === 1 && rp5.skillFaelle === 0 && rp5.skill === null && hi5.S.sc.tot['quiet_freigabe|v' + E.RULE.quiet_freigabe.ver + '|s5'].bs === 0 && a4 && a4.sv === 4 && a4.punkte < 0 && !a4.horizonte.some(h => h.bp) && hi4.outs[5].rec.sv === 4,
+            a5 && a5.ergebnis === 'treffer' && a5.punkte === 0 && a5.sv === E.SCORE_VER && a5.horizonte.every(h => h.bp === 'neutral' && h.punkte === 0) && a5.treffer_neutral === 1 && /Basisrate 0,9\d ≥ Prognose 0,80: neutral/.test(a5.text) &&
+            rp5.trefferNeutral === 1 && rp5.skillFaelle === 0 && rp5.skill === null && hi5.S.sc.tot['quiet_freigabe|v' + E.RULE.quiet_freigabe.ver + '|s' + E.SCORE_VER].bs === 0 && a4 && a4.sv === 4 && a4.punkte < 0 && !a4.horizonte.some(h => h.bp) && hi4.outs[5].rec.sv === 4,
             (a5 && a5.punkte) + ' / v4 ' + (a4 && a4.punkte));
       const lo5 = runSeq(160, i => boost(i, i >= 15 ? {vl: 38, rl: 35.5} : {}), seed(19, 20)), lo4 = runSeq(160, i => boost(i, i >= 15 ? {vl: 38, rl: 35.5} : {}), seed(19, 20), E.mergeCfg({sv: 4}));
       const f5 = fall(lo5), f4 = fall(lo4);
@@ -486,7 +486,7 @@ console.log('--- (b) Punktesystem');
       // Versionswechsel v4 -> v5 mitten in einem offenen Fall: der Fall endet mit v4 (Brier gegen b, "|s4"), die v5-Summen beginnen bei 0
       const W4 = runSeq(60, i => boost(i), seed(19, 20), E.mergeCfg({sv: 4})), W5 = runSeq(100, i => boost(60 + i), W4.S), aw = fall(W5);
       check('Versionswechsel v4 -> v5: offener Fall endet mit v4 (sv 4, Brier gegen b, unter "quiet_freigabe|v3|s4"), v5-Summen der Regel bleiben leer, Datensaetze ab dem Wechsel sv 5',
-            aw && aw.sv === 4 && aw.punkte < 0 && !aw.horizonte.some(h => h.bp) && W5.S.sc.tot['quiet_freigabe|v' + E.RULE.quiet_freigabe.ver + '|s4'].faelle === 1 && W5.S.sc.tot['quiet_freigabe|v' + E.RULE.quiet_freigabe.ver + '|s5'].faelle === 0 && W5.outs[0].rec.sv === 5 && E.report(W5.S).find(r => r.regel === 'quiet_freigabe').sv === 5,
+            aw && aw.sv === 4 && aw.punkte < 0 && !aw.horizonte.some(h => h.bp) && W5.S.sc.tot['quiet_freigabe|v' + E.RULE.quiet_freigabe.ver + '|s4'].faelle === 1 && W5.S.sc.tot['quiet_freigabe|v' + E.RULE.quiet_freigabe.ver + '|s' + E.SCORE_VER].faelle === 0 && W5.outs[0].rec.sv === E.SCORE_VER && E.report(W5.S).find(r => r.regel === 'quiet_freigabe').sv === E.SCORE_VER,
             aw && (aw.sv + ' ' + aw.punkte)); }
     const src = fs.readFileSync(path.join(__dirname, 'engine_core.js'), 'utf8'), bewertung = src.slice(src.indexOf('// ------------------------------------------------------------------ Punktesystem'), src.indexOf('// ------------------------------------------------------------------ Ein-Klick'));
     check('Verwerfen ist keine Bewertung: der Bewertungsteil des Kerns kennt weder Klicks noch den Uebernahme-Zustand (keine Nutzereingabe in den Punkten)', bewertung.length > 1000 && !/verworfen|lastClick|applyRequest|uebernehmen/.test(bewertung), bewertung.length + ' Zeichen geprueft');
@@ -1314,8 +1314,8 @@ console.log('--- (g) Raumeinfluss v3, Mindestfrequenz, Startschwelle, Abtau-Ruec
       S0.sc.tot['raum_offset|v2|s5'] = {rule: 'raum_offset', ver: 2, sv: 5, since: T0 - 3 * 86400000, punkte: -23.49, faelle: 9, bewertet: 7, treffer: 6, fehlalarm: 1, neutral: 2, bs: 0, bsRef: 0, schaden: 0, verpasst: 0, verpasstSperre: 1, wirkN: 0, wirkP: 0, kalib: 0, trefferNeutral: 4, skillN: 4};
       S0.rules.raum_offset.korrV = 1; S0.rules.raum_offset.korrSince = T0 - 300 * MIN; delete S0.rules.raum_offset.rv;      // Zustand vor 14.10.: Haltezeit des Phase-2-Vorschlags (+1 seit 5 h), ohne Versionsfeld
       const R = runSeq(3, i => inp(T0 + i * MIN, {rooms: RG()}), S0);
-      check('Versionswechsel v2 -> v' + E.RULE.raum_offset.ver + ': ein laufender, nicht uebernommener v2-Vorschlag endet beim Laden (nicht mehr klickbar, Arbitrierung frei, Eintrag in S.verWechsel), die Haltezeit des Phase-2-Vorschlags gilt nicht weiter (beginnt mit der Raumlage neu), die v2-Summen bleiben unter "raum_offset|v2|s5", die neue Version zaehlt unter "raum_offset|v' + E.RULE.raum_offset.ver + '|s5"',
-            !R.S.rules.raum_offset.prop && R.S.arb.owner === null && R.S.verWechsel && R.S.verWechsel[0].rule === 'raum_offset' && R.S.verWechsel[0].von === 2 && R.S.verWechsel[0].zu === E.RULE.raum_offset.ver && R.S.rules.raum_offset.rv === E.RULE.raum_offset.ver && R.S.rules.raum_offset.korrV === 0 && R.S.rules.raum_offset.korrSince === T0 && R.S.sc.tot['raum_offset|v2|s5'].punkte === -23.49 && !!R.S.sc.tot['raum_offset|v' + E.RULE.raum_offset.ver + '|s5'] && E.report(R.S).find(r => r.regel === 'raum_offset').v === E.RULE.raum_offset.ver,
+      check('Versionswechsel v2 -> v' + E.RULE.raum_offset.ver + ': ein laufender, nicht uebernommener v2-Vorschlag endet beim Laden (nicht mehr klickbar, Arbitrierung frei, Eintrag in S.verWechsel), die Haltezeit des Phase-2-Vorschlags gilt nicht weiter (beginnt mit der Raumlage neu), die v2-Summen bleiben unter "raum_offset|v2|s5", die neue Version zaehlt unter "raum_offset|v' + E.RULE.raum_offset.ver + '|s' + E.SCORE_VER + '"',
+            !R.S.rules.raum_offset.prop && R.S.arb.owner === null && R.S.verWechsel && R.S.verWechsel[0].rule === 'raum_offset' && R.S.verWechsel[0].von === 2 && R.S.verWechsel[0].zu === E.RULE.raum_offset.ver && R.S.rules.raum_offset.rv === E.RULE.raum_offset.ver && R.S.rules.raum_offset.korrV === 0 && R.S.rules.raum_offset.korrSince === T0 && R.S.sc.tot['raum_offset|v2|s5'].punkte === -23.49 && !!R.S.sc.tot['raum_offset|v' + E.RULE.raum_offset.ver + '|s' + E.SCORE_VER] && E.report(R.S).find(r => r.regel === 'raum_offset').v === E.RULE.raum_offset.ver,
             JSON.stringify(R.S.verWechsel)); 
       // laufende Uebernahme +1 K (noch mit v2 per Klick uebernommen): der v3-Rueckweg greift (ohne gespeicherte Bedarfsraeume zaehlen alle Raeume), applyTick schickt 0
       const S1 = E.newState(T0 - MIN); S1.shift = 1; S1.arb.applied = {rule: 'raum_offset', w: 1, von: 0, ts: T0 - MIN};
@@ -1344,9 +1344,13 @@ console.log('--- (g) Raumeinfluss v3, Mindestfrequenz, Startschwelle, Abtau-Ruec
       check('Mindestleistung je Segment (laufendes Minimum von warm nach kalt nur bis zur Sprungstelle): -3 °C 1,8 kW, ab -4 °C 2,3 kW (25 Hz), ab -10 °C 3,2 kW (35 Hz) - ein durchgehendes Minimum haette den Sprung verdeckt', g(-4, 0) === 1800 && g(-4, 1) === 2300 && g(-6, 1) === 2300 && g(-12, 2) === 3200 && (ml.find(x => x[0] === -4 && x[4] === 1) || [])[5] === 25, JSON.stringify(ml)); }
     // ---- g5 Abtau-Rueckstand als Bedarf (Efficiency haelt nach dem Abtauen ~20 min niedrig; Comfort faehrt selbst hoch)
     { const ab = hc => i => inp(T0 + i * MIN, {at: 3, hc: hc, q: 3, hz: i >= 20 && i < 28 ? 55 : 17, defrost: i >= 20 && i < 28 ? 1 : 0, rt: 200 + i, soll: 34, sollKurve: 34, vl: i >= 28 ? 30 : 33, rl: i >= 28 ? 27.5 : 30.5, rooms: RG()});
-      const Re = runSeq(80, ab(1)), Rc = runSeq(80, ab(0)), fe = Re.outs.findIndex(o => r0(o, 'quiet_freigabe').neu), pe = fe >= 0 ? Re.outs[fe].prop : null;
-      check('Abtau-Rueckstand (Efficiency, Quiet 3 am Deckel, Vorlauf 4 K unter Soll nach dem Abtauen 20-28): Bedarf "Abtau-Rueckstand" nach der 10-min-Abtausperre, Freigabe schrittweise Quiet 3 -> 2 (Messtabelle 21 Hz) in Minute 38; in Comfort kein Bedarf (faehrt selbst hoch), kein Vorschlag',
-            fe === 38 && pe.cmd.value === 2 && /Abtau-Rückstand \(Abtauen bis 06:28/.test(pe.warum) && Re.outs[30].d.bedQ.abtau && !Rc.outs.some(o => r0(o, 'quiet_freigabe').neu) && !Rc.outs[40].d.bedQ.ja, fe + ' · ' + (pe ? pe.warum : r0(Re.outs[45], 'quiet_freigabe').grund)); }
+      const c10 = E.mergeCfg({rules: {quiet_freigabe: {abtauSperreMin: 10}}});            // Quiet-Freigabe v6: Sperre nach dem Abtauen 60 min; mit 10 min wie bis v5
+      const Re = runSeq(80, ab(1), null, c10), Rc = runSeq(80, ab(0), null, c10), fe = Re.outs.findIndex(o => r0(o, 'quiet_freigabe').neu), pe = fe >= 0 ? Re.outs[fe].prop : null;
+      check('Abtau-Rueckstand (Efficiency, Quiet 3 am Deckel, Vorlauf 4 K unter Soll nach dem Abtauen 20-28), mit abtauSperreMin 10 (Verhalten bis v5): Bedarf "Abtau-Rueckstand" nach der 10-min-Abtausperre, Freigabe schrittweise Quiet 3 -> 2 (Messtabelle 21 Hz) in Minute 38; in Comfort kein Bedarf (faehrt selbst hoch), kein Vorschlag',
+            fe === 38 && pe.cmd.value === 2 && /Abtau-Rückstand \(Abtauen bis 06:28/.test(pe.warum) && Re.outs[30].d.bedQ.abtau && !Rc.outs.some(o => r0(o, 'quiet_freigabe').neu) && !Rc.outs[40].d.bedQ.ja, fe + ' · ' + (pe ? pe.warum : r0(Re.outs[45], 'quiet_freigabe').grund));
+      const R6 = runSeq(100, ab(1)), f6 = R6.outs.findIndex(o => r0(o, 'quiet_freigabe').neu), g6 = r0(R6.outs[50], 'quiet_freigabe');
+      check('Quiet-Freigabe v6 (wertung-lueften, Messung 20.10. 08:48–09:44): derselbe Abtau-Rueckstand -> 60 min nach dem Abtauende (bis 07:28) keine Freigabe, Sperre "Abtauen" nennt den Grund; kein "verpasst"',
+            f6 === -1 && g6.st === 'gesperrt' && /bis 07:28 keine Freigabe außer bei Heizstab-Nähe/.test(g6.grund) && !allSc(R6).some(x => x.regel === 'quiet_freigabe' && x.typ === 'verpasst'), f6 + ' · ' + g6.st + ' · ' + g6.grund); }
     // ---- g6 Sperre "Frequenzsprung bei Abtauwetter" (Pseudo-Abtauung nach langem Niedriglauf)
     { const lang = (q, hz, at, o) => i => inp(T0 + i * MIN, Object.assign({at: at, q: q, hz: hz, rt: 100 + i, soll: 34, sollKurve: 34, vl: 31.5, rl: 28.5, rooms: RG({ki_oben: i >= 60 ? 21.6 : 22.8})}, o || {}));
       const Ra = runSeq(110, lang(2, 20, 2)), ga = r0(Ra.outs[105], 'quiet_freigabe');
@@ -1855,6 +1859,52 @@ console.log('--- (x) abtau-starts: zwei Verdichter-Stopps je Abtauung zaehlen ni
     const Sx = JSON.parse(JSON.stringify(RA.outs[ab + 6].S)); delete Sx.abl; delete Sx.ablU;
     check('x7 Zustand einer aelteren Datei (ohne abl/ablU) wird ergaenzt und laeuft weiter', (() => { const S2 = E.fixState(Sx, T0 + (ab + 7) * MIN); const o = E.step(S2, seq(ab)(ab + 7)); return Array.isArray(o.S.abl.t) && o.S.ablU === null; })(), '');
 }
+// ================================================================== (y) wertung-lueften (22.10.2026): Bewertung v6, Gegenprobe der Raum-Prognosen mit Fremdursachen, Naturexperimente getrennt
+console.log('--- (y) Bewertung v6: Lueften im ganzen Horizont (geglaetteter Wert 0,6 K), Sonne bei +1 K, Heizgrenze-Aus bei -1 K, echter Fehlalarm bleibt, Naturexperimente');
+{   const lin = (i, a, b, va, vb) => i <= a ? va : (i >= b ? vb : va + (vb - va) * (i - a) / (b - a));
+    const fallR = R0 => [].concat(...R0.outs.map(o => o.scores)).find(x => x.typ === 'ausloeser' && x.regel === 'raum_offset');
+    const hz = f => f ? f.horizonte.map(h => h.h + ':' + h.o + '/' + h.punkte + ' ' + h.why).join(' | ') : 'kein Fall';
+    // -1 K in der Pause (Ueberschuss Schlafzimmer 22,4 > 22 + 0,2), Vorschlag in Minute 60; Horizonte enden in Minute 180/300/420
+    const minus = sch => i => inp(T0 + i * MIN, {hz: 0, rt: 0, pump: 1750, soll: 31, sollKurve: 30.5, vl: 29, rooms: rooms({schlaf: Math.round(sch(i) * 100) / 100})});
+    const lueft = i => lin(i, 260, 290, 22.4, 21.6);                       // Fenster in Minute 260–290: −0,8 K in 30 min (geglaettet), v5 sah erst ab 1 K
+    const L6 = runSeq(430, minus(lueft)), L5 = runSeq(430, minus(lueft), null, E.mergeCfg({sv: 5})), l6 = fallR(L6), l5 = fallR(L5);
+    check('v6: Lueften im Horizont 240 (Schlafzimmer −0,8 K in 30 min, Minute 260–290, geglaetteter Wert) -> Horizonte 240/360 neutral ("Lüftungsverdacht"), 120 Treffer; v5 (cfg.sv = 5) wertete 240/360 als "nicht mehr überheizt" mit Abzug',
+          l6 && l6.v === E.RULE.raum_offset.ver && l6.sv === 6 && l6.horizonte[0].o === 1 && l6.horizonte.slice(1).every(h => h.o === null && /Lüftungsverdacht \(Schlafzimmer −0,\d K in ≤ 60 min \(geglättet/.test(h.why)) && l6.ergebnis === 'treffer' && l6.punkte >= 0 &&
+          l5 && l5.sv === 5 && l5.horizonte.slice(1).every(h => h.o === 0 && h.punkte < 0), hz(l6) + ' || v5: ' + hz(l5));
+    const echt = i => lin(i, 100, 340, 22.4, 21.6);                         // langsames Auskuehlen 0,2 K/h, keine Fremdursache
+    const F6 = runSeq(430, minus(echt)), F5 = runSeq(430, minus(echt), null, E.mergeCfg({sv: 5})), f6 = fallR(F6), f5 = fallR(F5);
+    check('v6: echter Fehlalarm bleibt (Haus kuehlt ohne Fremdursache mit 0,2 K/h aus dem Ueberschuss, Verdichter steht in der normalen Pause) -> Fehlalarm mit denselben Punkten wie v5 (je Horizont −8 gegen Basisrate 0,5)',
+          f6 && f6.ergebnis === 'fehlalarm' && f6.horizonte.every(h => h.o === 0) && f5 && f6.punkte === f5.punkte && f6.punkte < -20, hz(f6) + ' || v5: ' + (f5 && f5.punkte));
+    const vorF = c => i => { const x = minus(() => 22.4)(i); x.rooms = rooms({schlaf: 22.4, ki_unten: Math.round(lin(i, 45, 75, 21.8, 21.1) * 100) / 100}); return x; };
+    const V6 = runSeq(430, vorF()), V5 = runSeq(430, vorF(), null, E.mergeCfg({sv: 5})), v6 = fallR(V6), v5 = fallR(V5);
+    check('v6: Sturz beginnt 15 min vor dem Fall und geht danach weiter (Kinderzimmer unten Minute 45–75 −0,7 K, nach dem Fall nur −0,35 K): mit der Vorgeschichte (60 min) Lueften, Fall neutral; v5 sah ihn nicht',
+          v6 && v6.ergebnis === 'neutral' && v6.horizonte.every(h => h.o === null && /Lüftungsverdacht \(Kinderzimmer unten/.test(h.why)) && v5 && !v5.horizonte.some(h => /Lüftungsverdacht/.test(h.why)), hz(v6) + ' || v5: ' + hz(v5));
+    // Raum mit eigener Nachheizung: das Relais bewegt ihn um 0,6–0,7 K, das ist kein Lueften (weiter ab 1 K)
+    const eig = sch => i => { const x = minus(echt)(i); x.rooms = rooms({schlaf: Math.round(echt(i) * 100) / 100, ki_oben: Math.round(lin(i, 200, 230, 22.9, 22.25) * 100) / 100}); x.rooms[0].eigeneHeizung = true; return x; };
+    const G6 = runSeq(430, eig()), g6 = fallR(G6);
+    check('v6: Raum mit eigener Nachheizung (Kinderzimmer oben −0,65 K in 30 min, Relais) ist kein Lueftungsverdacht (Schwelle bleibt 1 K): der echte Fehlalarm bleibt',
+          g6 && g6.ergebnis === 'fehlalarm' && !g6.horizonte.some(h => /Lüftungsverdacht/.test(h.why)), hz(g6));
+    // +1 K im Lauf (Bedarf Schlafzimmer 19,6 < 20 − 0,2); Sonne ab 11 Uhr (Bewoelkung 10 %), der Raum kommt 12:00–12:30 ins Band
+    const plus = (t0, sch) => i => inp(t0 + i * MIN, {soll: 31, sollKurve: 30.5, vl: 33, rt: 60 + i, wolken: 10, rooms: rooms({schlaf: Math.round(sch(i) * 100) / 100})});
+    const tag = T0 + 4 * 60 * MIN, nacht = T0 + 16 * 60 * MIN, erh = i => lin(i, 120, 150, 19.6, 20.4);
+    const S6 = runSeq(400, plus(tag, erh)), S5 = runSeq(400, plus(tag, erh), null, E.mergeCfg({sv: 5})), N6 = runSeq(400, plus(nacht, erh)), s6 = fallR(S6), s5 = fallR(S5), n6 = fallR(N6);
+    check('v6: +1 K, der Bedarfsraum kommt bei Sonne von selbst ins Band (Sonnenzeichen der Regel >= 30 min vor der Rueckkehr) -> diese Horizonte neutral ("Fremdursache: Sonne"), kein Fehlalarm; v5: Fehlalarm; dieselbe Lage nachts (keine Sonne): Fehlalarm auch in v6',
+          s6 && s6.ergebnis !== 'fehlalarm' && s6.horizonte.some(h => h.o === null && /Fremdursache: Sonne \d+ min/.test(h.why)) && !s6.horizonte.some(h => h.o === 0) && s5 && s5.ergebnis === 'fehlalarm' && n6 && n6.ergebnis === 'fehlalarm' && n6.punkte < 0,
+          hz(s6) + ' || v5: ' + (s5 && s5.ergebnis) + ' || Nacht: ' + hz(n6));
+    // -1 K, das Haus kuehlt im Heizgrenze-Aus (Pumpe steht) aus: keine Gegenfaktik der Verschiebung
+    const hg = i => { const x = minus(echt)(i); if (i >= 70) { x.pump = 0; } return x; };
+    const H6 = runSeq(430, hg), h6 = fallR(H6);
+    check('v6: -1 K, das Haus kuehlt im Heizgrenze-Aus (Pumpe steht ab Minute 70) aus -> "nicht mehr überheizt" ist neutral ("Fremdursache: Heizgrenze-Aus"), kein Fehlalarm',
+          h6 && h6.ergebnis === 'neutral' && h6.horizonte.every(h => h.o === null && /Fremdursache: Heizgrenze-Aus/.test(h.why)), hz(h6));
+    // Naturexperiment: Quiet 3 -> 0 von Hand mit Ruecklauf-Rueckstand (Wirkung gemessen, 0 Punkte, getrennt); cfg.sv = 5 bucht +Punkte als Regel-Wirkung
+    const hand = i => inp(T0 + i * MIN, {q: i < 10 ? 3 : 0, hz: i < 11 ? 17 : 30, pel: i < 11 ? 330 : 820, rt: 60 + i, soll: 32, sollKurve: 31.75, vl: i < 11 ? 28 : 28 + (i - 11) * 0.15, rl: 26, rooms: rooms()});
+    const N = runSeq(45, hand), Nv5 = runSeq(45, hand, null, E.mergeCfg({sv: 5})), wn = [].concat(...N.outs.map(o => o.scores)).filter(x => x.typ === 'wirkung' && x.regel === 'quiet_freigabe'), wv5 = [].concat(...Nv5.outs.map(o => o.scores)).filter(x => x.typ === 'wirkung' && x.regel === 'quiet_freigabe');
+    const rpN = E.report(N.S).find(r => r.regel === 'quiet_freigabe'), krN = rpN.kriterien.find(k => k.k === 'wirkung');
+    check('v6: Quiet 3 -> 0 von Hand (kein uebernommener Vorschlag) ist ein Naturexperiment: gemessen (roh > 0), 0 Punkte, "naturexperiment" im Punktebuch, Bericht natur.n 1 und wirkung.n 0, Summe 0; Freigabereife zaehlt es getrennt ("+ 1 nat."); v5 buchte die Punkte als Regel-Wirkung',
+          wn.length === 1 && wn[0].naturexperiment === 1 && wn[0].punkte === 0 && wn[0].roh > 0 && /Naturexperiment/.test(wn[0].text) && rpN.natur.n === 1 && rpN.natur.befehl === 1 && rpN.wirkung.n === 0 && rpN.punkte === 0 && /\+ 1 nat\./.test(krN.kurz) && /1 Naturexperimente des Befehls/.test(krN.text) &&
+          wv5.length === 1 && wv5[0].punkte === wn[0].roh && !wv5[0].naturexperiment, JSON.stringify(wn.map(x => [x.punkte, x.roh])) + ' · ' + krN.kurz + ' · v5 ' + JSON.stringify(wv5.map(x => x.punkte)));
+}
+
 // ================================================================== Replay der echten Daten (07.-10.10., 07.-12.10. oder 07.-13.10.; datensatzabhaengige Pruefungen je Zeitraum)
 let RP = null;
 if (fs.existsSync(path.join(dataDir, 'quiet-2026-10.csv'))) {

@@ -343,6 +343,7 @@ var ENGVIEW = (function (E) {
             var wn = r.wirkung.n - r.wirkung.kalib;
             if (r.art === 'befehl' && wn) { more.push('Wirkung ' + E.sg(r.wirkung.punkte, 0) + ' aus ' + wn + (wn === 1 ? ' Fall' : ' Fällen')); }
             if (r.art === 'befehl' && r.wirkung.kalib) { more.push(r.wirkung.kalib + ' Kalibrierfall' + (r.wirkung.kalib === 1 ? '' : 'e')); }
+            if (r.natur && r.natur.n) { more.push(r.natur.n + ' Naturexperiment' + (r.natur.n === 1 ? '' : 'e') + ' von Hand (gemessen ' + E.sg(r.natur.roh, 0) + ', 0 Punkte)'); }   // v6: getrennt, keine Regel-Wirkung
             var warn = []; if (r.schaden) { warn.push(r.schaden + ' × Schaden'); } if (r.verpasst) { warn.push(r.verpasst + ' × verpasst'); }
             var ok = r.kriterien.filter(function (k) { return k.ok; }).length;
             return {id: r.regel, name: (E.RULE[r.regel] || {}).kachel || (E.RULE[r.regel] || {}).kurz || r.regel, c: COL[r.regel], punkte: r.ohnePunkte ? '–' : E.sg(r.punkte, 1).replace(/^0,0$/, '0'), neg: !r.ohnePunkte && r.punkte < 0, sub: sub, more: more.join(' · '), warn: warn.join(' · '),
