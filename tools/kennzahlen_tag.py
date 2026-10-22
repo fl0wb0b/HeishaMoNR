@@ -56,6 +56,15 @@ def zahl(x):
     return v if v == v and abs(v) != float("inf") else None
 
 
+def fz(x, n=1):
+    """Zahl fuer Befundtexte mit Dezimalkomma (n Nachkommastellen); None oder keine Zahl -> '–'. Fehlte bis 22.10.2026
+    (NameError im Befund „Stromeffizienz“, sobald der 7-Tage-Vergleich erstmals Daten hatte)."""
+    v = zahl(x)
+    if v is None:
+        return "–"
+    return (("%." + str(int(n)) + "f") % v).replace(".", ",")
+
+
 def pel(r, korr=True):
     """Elektrische Leistung der Minute in W: TOP16, bei laufendem Verdichter + PEL_KORR_W (korr=False: Rohwert)."""
     if korr and QUELLE == "zaehler" and zahl(r.get("zaehler_wp_w")) is not None:
