@@ -1,0 +1,240 @@
+{
+ "tag": "2026-10-22",
+ "version": 2,
+ "maschine": 1,
+ "bewertung": 5,
+ "vorlaufTage": 7,
+ "einschwingenAb": "2026-10-15",
+ "minuten": 1440,
+ "statusMinuten": {
+  "quiet_freigabe": {
+   "bereit": 1440
+  },
+  "quiet_strecken": {
+   "inaktiv": 1440
+  },
+  "raum_offset": {
+   "bereit": 317,
+   "vorschlag": 124,
+   "inaktiv": 988,
+   "gesperrt": 11
+  },
+  "vorausschau": {
+   "gesperrt": 1440
+  },
+  "heizregelung": {
+   "inaktiv": 1140,
+   "bereit": 300
+  }
+ },
+ "vorschlaege": [
+  {
+   "zeit": "2026-10-22 01:45",
+   "regel": "raum_offset",
+   "was": "Heizkurve 0 → -1 K (Soll-Vorlauf 30 → 29 °C)",
+   "warum": "Überschuss seit 123 min: Überschuss: Kinderzimmer unten +0,4 K über Maximum; knappster Raum Kinderzimmer oben 1,4 K über Minimum · Pause · Phase 2: -1 K"
+  },
+  {
+   "zeit": "2026-10-22 06:15",
+   "regel": "raum_offset",
+   "was": "Heizkurve 0 → -1 K (Soll-Vorlauf 32 → 31 °C)",
+   "warum": "Überschuss seit 60 min: Überschuss: Kinderzimmer unten +0,3 K über Maximum; knappster Raum Kinderzimmer oben 0,9 K über Minimum · Phase 2: -1 K"
+  },
+  {
+   "zeit": "2026-10-22 12:59",
+   "regel": "raum_offset",
+   "was": "Heizkurve 0 → -1 K (Soll-Vorlauf 30 → 29 °C)",
+   "warum": "Überschuss seit 60 min: Überschuss: Kinderzimmer unten +0,2 K über Maximum; knappster Raum Schlafzimmer 1,1 K über Minimum · Pause · Phase 2: 0 K"
+  }
+ ],
+ "ereignisse": 6,
+ "punkte": [
+  {
+   "zeit": "2026-10-22 03:03:00",
+   "typ": "ausloeser",
+   "regel": "raum_offset",
+   "punkte": 0
+  },
+  {
+   "zeit": "2026-10-22 07:45:00",
+   "typ": "ausloeser",
+   "regel": "raum_offset",
+   "punkte": 0
+  },
+  {
+   "zeit": "2026-10-22 12:15:00",
+   "typ": "ausloeser",
+   "regel": "raum_offset",
+   "punkte": 0
+  },
+  {
+   "zeit": "2026-10-22 18:59:00",
+   "typ": "ausloeser",
+   "regel": "raum_offset",
+   "punkte": 0
+  }
+ ],
+ "stand": [
+  {
+   "regel": "quiet_freigabe",
+   "punkte": -16,
+   "faelle": 1,
+   "treffer": 0,
+   "fehlalarm": 1,
+   "reif": false
+  },
+  {
+   "regel": "quiet_strecken",
+   "punkte": 0,
+   "faelle": 0,
+   "treffer": 0,
+   "fehlalarm": 0,
+   "reif": false
+  },
+  {
+   "regel": "raum_offset",
+   "punkte": -66.14,
+   "faelle": 16,
+   "treffer": 11,
+   "fehlalarm": 3,
+   "reif": false
+  },
+  {
+   "regel": "vorausschau",
+   "punkte": 0,
+   "faelle": 0,
+   "treffer": 0,
+   "fehlalarm": 0,
+   "reif": false
+  },
+  {
+   "regel": "heizregelung",
+   "punkte": 0,
+   "faelle": 0,
+   "treffer": 0,
+   "fehlalarm": 0,
+   "reif": false
+  }
+ ],
+ "abgleichLive": {
+  "gemeinsam": 1439,
+  "regeln": {
+   "quiet_freigabe": {
+    "replayVersion": 5,
+    "liveVersionen": {
+     "v5": 1349,
+     "v6": 90
+    },
+    "minuten": 1439,
+    "vergleichbar": 1349,
+    "gleich": 1349,
+    "vorschlagLive": 0,
+    "vorschlagReplay": 0,
+    "gleichProzent": 100,
+    "bewertbar": true
+   },
+   "quiet_strecken": {
+    "replayVersion": 7,
+    "liveVersionen": {
+     "v7": 1439
+    },
+    "minuten": 1439,
+    "vergleichbar": 1439,
+    "gleich": 1439,
+    "vorschlagLive": 0,
+    "vorschlagReplay": 0,
+    "gleichProzent": 100,
+    "bewertbar": true
+   },
+   "raum_offset": {
+    "replayVersion": 6,
+    "liveVersionen": {
+     "v6": 1439
+    },
+    "minuten": 1439,
+    "vergleichbar": 1439,
+    "gleich": 1438,
+    "vorschlagLive": 124,
+    "vorschlagReplay": 124,
+    "gleichProzent": 99.9,
+    "bewertbar": true
+   },
+   "vorausschau": {
+    "replayVersion": 3,
+    "liveVersionen": {
+     "v3": 1439
+    },
+    "minuten": 1439,
+    "vergleichbar": 1439,
+    "gleich": 1439,
+    "vorschlagLive": 0,
+    "vorschlagReplay": 0,
+    "gleichProzent": 100,
+    "bewertbar": true
+   },
+   "heizregelung": {
+    "replayVersion": 3,
+    "liveVersionen": {
+     "v3": 1439
+    },
+    "minuten": 1439,
+    "vergleichbar": 1439,
+    "gleich": 1439,
+    "vorschlagLive": 0,
+    "vorschlagReplay": 0,
+    "gleichProzent": 100,
+    "bewertbar": true
+   }
+  },
+  "gleichProzent": 100,
+  "bewertbar": true,
+  "gleichProzentVergleichbar": 100,
+  "nichtBewertbar": [],
+  "grund": null,
+  "liveMinuten": 1439,
+  "eingang": "live",
+  "eingangAusLive": {
+   "tag": 1439,
+   "tagMinuten": 1440,
+   "gesamt": 11519,
+   "gesamtMinuten": 11520
+  },
+  "nurProtokoll": {
+   "gleichProzent": 99.4,
+   "gleichProzentVergleichbar": 99.4,
+   "regeln": {
+    "quiet_freigabe": 100,
+    "quiet_strecken": 100,
+    "raum_offset": 98.1,
+    "vorausschau": 99.3,
+    "heizregelung": 99.6
+   }
+  }
+ },
+ "raeume": {
+  "ki_oben": {
+   "name": "Kinderzimmer oben",
+   "minuten": 1440,
+   "ungueltig": 365,
+   "laengsteMin": 104
+  },
+  "ki_unten": {
+   "name": "Kinderzimmer unten",
+   "minuten": 1440,
+   "ungueltig": 342,
+   "laengsteMin": 62
+  },
+  "schlaf": {
+   "name": "Schlafzimmer",
+   "minuten": 1440,
+   "ungueltig": 7,
+   "laengsteMin": 6
+  },
+  "wohn": {
+   "name": "Wohnzimmer",
+   "minuten": 1440,
+   "ungueltig": 12,
+   "laengsteMin": 8
+  }
+ }
+}

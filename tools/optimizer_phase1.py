@@ -3776,6 +3776,46 @@ upsert(comment("opt_c_schema", "Anlagenschema (nur Anzeige): OPT_hp lesen → Ka
 upsert(inject("opt_i_schema", "alle 10 s", 10, 20, ["opt_schema"], 140, 2440))
 upsert(fn("opt_schema", "Anlagenschema: Werte lesen (nur Anzeige)", SCHEMA_JS + SCHEMA_FN_JS.replace("__COPKW__", COP_KW_JS), 1, [_schema_out], 440, 2440))
 
+# ---------------------------------------------------------------- Seite "Lernen" (lern-seite 23.10.2026): was der NAS-Container optimizer-tools nachts lernt (nur lesen)
+# Der Container laeuft bewusst ohne Netz (network_mode none, read_only) und bekommt kein eigenes Web-Dashboard; diese Seite liest seine Ergebnisdateien in
+# /data/optimizer-tools (status.json, training/wp_params_<tag>.json + kandidat_<tag>.json der letzten 14 Tage, kennzahlen/tage.csv, replay/<tag>.json,
+# letzter-lauf.log) alle 5 min. Daten und Darstellung: tools/lern_ui.js (reine Funktionen, in tools/optimizer_sim.js geprueft). Vier gleich breite Karten
+# (ENG_W, Masonry-Falle), Menuepunkt nach "Daten & Güte" (12,8 < SYSTEM 13). Die Karte "Auswertung NAS" auf Daten & Güte bleibt. Keine Regelwirkung, kein Speicher
+# ausser dem Lese-Cache der geparsten Parameterdateien (Knotenkontext, nach Dateizeit und -groesse).
+LERN_TAB = "opt_lern_ui_tab"
+LERN_UI_JS = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "lern_ui.js"), encoding="utf-8").read()
+upsert({"id": LERN_TAB, "type": "ui_tab", "name": "Lernen", "icon": "school", "order": 12.8, "disabled": False, "hidden": False})
+# [Gruppe, Titel, Vorlage, Art, Starthoehe in Einheiten, y im Editor]
+LERN_GROUPS = (("opt_g_lern_heute", "Heute gelernt", "opt_t_lern_heute", "heute", 17, 3800), ("opt_g_lern_param", "Was sich verändert", "opt_t_lern_param", "param", 15, 3840),
+               ("opt_g_lern_guete", "Güte je Außenband und Lernkurve", "opt_t_lern_guete", "guete", 9, 3880), ("opt_g_lern_replay", "Replay und Kennzahlen", "opt_t_lern_replay", "replay", 15, 3920))
+for _ord, _g in enumerate(LERN_GROUPS, start=1):
+    upsert({"id": _g[0], "type": "ui_group", "name": _g[1], "tab": LERN_TAB, "order": _ord, "disp": True, "width": ENG_W, "collapse": False, "className": ""})
+
+
+def lern_format(kind, node_id):
+    """Karte der Seite "Lernen": zeichnet die Nutzlast mit optLern (HTML aus reinen Funktionen) und passt sich danach sofort ein; schickt nichts."""
+    return ('<div class="optfit"><div id="ol_' + kind + '"></div></div>'
+            + "<script>" + LERN_UI_JS + "</script><script>(function (scope) {\n"
+            "var last = null;\n"
+            "function draw() { var el = document.getElementById('ol_" + kind + "'); if (el && last && last.payload && window.optLern) { window.optLern.mount(el, '" + kind + "', last.payload);"
+            " var F = window.__optFit; if (F && F.fns && F.fns['" + node_id + "']) { setTimeout(F.fns['" + node_id + "'], 60); } } }\n"
+            "scope.$watch('msg', function (m) { last = m; setTimeout(draw, 40); });\n"
+            "})(scope);</script>")
+
+
+LERN_FN_JS = LERN_UI_JS + r"""
+// Seite "Lernen": Ergebnisdateien des Containers optimizer-tools NUR LESEN (/data/optimizer-tools), je Karte eine Nachricht. Keine Regelwirkung.
+var OL = (typeof globalThis !== 'undefined' ? globalThis : this).optLern, cache = context.get('lern_cache') || {};
+var P = OL.daten(fs, Date.now(), cache, '/data/optimizer-tools');
+context.set('lern_cache', cache);
+return [{payload: P.heute}, {payload: P.param}, {payload: P.guete}, {payload: P.replay}];
+"""
+upsert(comment("opt_c_lern", "Seite Lernen: Ergebnisdateien des Containers optimizer-tools (nur lesen, alle 5 min)", 380, 3760))
+for _g in LERN_GROUPS:
+    upsert(eng_template(_g[2], _g[0], _g[1], _g[4], lern_format(_g[3], _g[2]), _g[5]))
+upsert(fn("opt_lern", "Seite Lernen: Container-Ergebnisse (nur lesen)", LERN_FN_JS, 4, [["opt_t_lern_heute"], ["opt_t_lern_param"], ["opt_t_lern_guete"], ["opt_t_lern_replay"]], 440, 3860, FS))
+upsert(inject("opt_i_lern", "alle 5 Minuten", 300, 30, ["opt_lern"], 140, 3860))
+
 # the new page also belongs into the menu configuration (SYSTEM > menu), otherwise it can not be hidden/shown there
 form = B.get("e35b7df78bc6f722")
 if form and not any(o["value"] == "Optimierung" for o in form["options"]):

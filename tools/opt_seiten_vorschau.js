@@ -121,7 +121,7 @@ Array.prototype.forEach.call(document.querySelectorAll('.tplsrc'), function (h) 
 
 // Seiten: [Tab, Titel, Datei, Schnappschuss der Maschine]; leere (ausgeblendete) Tabs werden uebersprungen
 const PAGES = [['a5be8588.b8fbc8', 'Übersicht', 'uebersicht', null], ['opt_ui_tab', 'Optimierung', 'optimierung', null], ['opt_eng_ui_tab', 'Optimierer', 'optimierer', 'B'], ['opt_eng_ui_tab', 'Optimierer', 'optimierer_vorschlag', 'A'],
-               ['opt_ui_tab_data', 'Daten & Güte', 'daten', null], ['opt_ui_tab_plan', 'Wärmefahrplan', 'waermefahrplan', null], ['opt_ui_tab_quiet', 'Quiet-Messwerte', 'quiet', null]];
+               ['opt_ui_tab_data', 'Daten & Güte', 'daten', null], ['opt_lern_ui_tab', 'Lernen', 'lernen', null], ['opt_ui_tab_plan', 'Wärmefahrplan', 'waermefahrplan', null], ['opt_ui_tab_quiet', 'Quiet-Messwerte', 'quiet', null]];
 // Karten der Entscheidungsmaschine: Nachrichten wie opt_engine sie schickt ({payload: V.card} usw.), aus dem Replay der Protokolle im Datenordner
 const ENG_KIND = {opt_t_eng_prop: 'card', opt_t_eng_rules: 'rules', opt_t_eng_score: 'score', opt_t_eng_mess: 'mess', opt_t_eng_log: 'log', opt_t_eng_cop: 'cop'};
 let SNAP = null;

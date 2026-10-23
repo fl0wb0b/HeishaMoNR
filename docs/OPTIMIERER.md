@@ -1702,3 +1702,14 @@ Nächtliches Training im Container `optimizer-tools` (`tools/wp_training_nacht.p
 - **Bindung** in der Dünn-Daten-Phase (unter 21 Tagen oder unter 3 Außentemperatur-Bändern mit je ≥ 300 Laufminuten): jeder Fit minimiert (Fehler/Bezugsfehler)² + λ · Σ((Wert − Vorwert)/(25 % des Vorwerts))², λ = 0,1 (`TRAINING_BINDUNG`); Grenzen der Fits wie bisher.
 - **Güte je Außentemperatur-Band** (< 0, 0…4, 4…8, 8…12, ≥ 12 °C) mit Minutenzahl, **Abdeckung** des 21-Tage-Fensters; leere Bänder „keine Daten, Zwilling extrapoliert“, Hinweis „Zwilling hat unter X °C keine Daten“ in `status.json` → `hinweise`. Ampel unverändert.
 - Tests: `node tools/wp_training_test.js [daten]`, `python3 tools/wp_training_nacht_test.py [daten]`, `docker/optimizer-tools/test.sh` (Abschnitt 7 prüft die neuen Felder).
+
+## 27. Seite „Lernen“ (23.10.2026, Branch `lern-seite`)
+
+Was der Container `optimizer-tools` nachts lernt, auf einer eigenen Dashboard-Seite (Menüpunkt nach „Daten & Güte“, `opt_lern_ui_tab`, Reihenfolge 12,8). Der Container bleibt ohne Netz und ohne eigenes Web-Dashboard; `opt_lern` liest alle 5 min nur seine Ergebnisdateien in `/data/optimizer-tools`. Daten und Darstellung stehen in `tools/lern_ui.js` (reine Funktionen, Prüfungen in `tools/optimizer_sim.js` mit `tools/fixtures/lern/`). Vier gleich breite Karten (17):
+
+- **Heute gelernt:** letzter Lauf und Schritte, Entscheidung des Gates, Güte Kandidat gegen bisher (8 Kennzahlen, Gate-Chips für Strom/Wasserkreis/Pause), Abdeckung je Außenband, Drift-Liste (aus `status.json`).
+- **Was sich verändert:** gelernte Parameter (`herkunft.*.fit`, Listen je Stelle, z. B. `raeume.wohn[3]`) aus den `wp_params_<tag>.json` der letzten 14 Tage: heute, Vortag, vor 7 Tagen, Verlauf, roh gelernt, Änderung; die 15 größten offen, der Rest, unveränderte und feste Werte zugeklappt.
+- **Güte je Außenband und Lernkurve:** Strom-RMSE, Wasserkreis-RMSE und Pause-Median-Fehler je Trainingstag aus `guete.test` der Parameterdateien (abgelehnte `kandidat_<tag>.json` hohl), Ampelgrenzen gestrichelt; Tabelle `guete_je_band`. Die Testtage wandern mit (letzte 4 Tage je Lauf).
+- **Replay und Kennzahlen:** Replay-Güte je Regel und Vorschläge (`replay/<tag>.json`), 7 Tage aus `kennzahlen/tage.csv`, Hinweise/Fehler, die letzten 15 Zeilen von `letzter-lauf.log`.
+
+Geparste Parameterdateien hält der Knoten im Kontext (`lern_cache`, nach Dateizeit und -größe). Für die Lernkurve ist keine neue Container-Datei nötig.

@@ -21,7 +21,12 @@ const fsMock = {
   writeFileSync: (p, data, opt) => { files[p] = {data: String(data), mode: (opt && opt.mode !== undefined) ? opt.mode : (files[p] ? files[p].mode : 0o644)}; },
   mkdirSync: () => {},
   chmodSync: (p, mode) => { if (files[p]) { files[p].mode = mode; } },
+  // Seite "Lernen" (lern-seite 23.10.2026): Ordner auflisten und Dateizeit/-groesse (Lese-Cache) wie das echte fs; fsCalls zaehlt die Lesezugriffe
+  readdirSync: (d) => { const pre = d.replace(/\/$/, '') + '/', n = Object.keys(files).filter(p => p.startsWith(pre) && !p.slice(pre.length).includes('/')).map(p => p.slice(pre.length));
+    if (!n.length) { const e = new Error("ENOENT: no such file or directory, scandir '" + d + "'"); e.code = 'ENOENT'; throw e; } return n; },
+  statSync: (p) => { if (!(p in files)) { const e = new Error("ENOENT: no such file or directory, stat '" + p + "'"); e.code = 'ENOENT'; throw e; } return {mtimeMs: files[p].mt || 1, size: String(files[p].data).length}; },
 };
+const L_UI = require('./lern_ui.js');                                         // Seite "Lernen": Darstellung fuer die Pruefungen (dieselbe Datei steckt im Knoten opt_lern)
 const sent = [];
 // Ein-Klick-Uebernahme des Optimierers (tools/engine_core.js, GESPERRT ausgeliefert): GENAU dieser eine mqtt-out-Knoten im Tab ist erlaubt. Er wird nur von
 // opt_apply gespeist (Klick in der Karte "Aktueller Vorschlag" bzw. 15-s-Takt), ist standardmaessig deaktiviert und nutzt einen eigenen Broker-Client.
@@ -2248,6 +2253,79 @@ console.log('\n--- Auswertung NAS (status.json des Containers optimizer-tools)')
   check('Lauf älter als 26 h: "veraltet" (warn), Sicherung ebenso', (o.payload.rows.find(r => r[0] === 'Letzter Lauf') || [])[2] === 'veraltet' && (o.payload.rows.find(r => r[0] === 'Sicherung') || [])[2] === 'veraltet', JSON.stringify(o.payload.rows.map(r => r.slice(0, 4))));
   NOW = new Date(2026, 9, 15, 22, 30, 0).getTime(); run('opt_nas', {});                      // Vorschau: echte Datei, frisch
   if (had) { files[SP] = had; } else { delete files[SP]; } NOW = nowKeep;
+})();
+
+// ---- Seite "Lernen" (lern-seite 23.10.2026): liest die Ergebnisdateien des Containers optimizer-tools (nur lesen), vier gleich breite Karten
+console.log('\n--- Seite Lernen (Ergebnisdateien des Containers optimizer-tools)');
+(() => {
+  const B0 = '/data/optimizer-tools', FX = path.join(__dirname, 'fixtures', 'lern'), nowKeep = NOW, keepFiles = {};
+  Object.keys(files).filter(p => p.startsWith(B0 + '/')).forEach(p => { keepFiles[p] = files[p]; delete files[p]; });
+  const ladeOrdner = (dir, unter) => fs.readdirSync(dir, {withFileTypes: true}).forEach(e => { const q = path.join(dir, e.name), z = unter + '/' + e.name; if (e.isDirectory()) { ladeOrdner(q, z); } else { files[B0 + z] = {data: fs.readFileSync(q, 'utf8'), mode: 0o644, mt: 1}; } });
+  const leeren = () => Object.keys(files).filter(p => p.startsWith(B0 + '/')).forEach(p => { delete files[p]; });
+  const NBl = id => ALLNODES.find(n => n.id === id), tab = NBl('opt_lern_ui_tab'), fnL = NBl('opt_lern'), inj = NBl('opt_i_lern');
+  const grp = ALLNODES.filter(n => n.type === 'ui_group' && n.tab === 'opt_lern_ui_tab').sort((a, b) => a.order - b.order), TPL = ['opt_t_lern_heute', 'opt_t_lern_param', 'opt_t_lern_guete', 'opt_t_lern_replay'];
+  const sysTab = ALLNODES.find(n => n.type === 'ui_tab' && n.name === 'SYSTEM'), dataTab = NBl('opt_ui_tab_data');
+  check('Seite Lernen: Menüpunkt „Lernen“ direkt nach „Daten & Güte“ (12,75 < 12,8 < SYSTEM), sichtbar; vier Gruppen 17 breit wie alle Optimierer-Karten (Masonry-Falle) in der Reihenfolge Heute gelernt, Was sich verändert, Güte je Außenband und Lernkurve, Replay und Kennzahlen; je Gruppe genau eine Vorlage (volle Breite, Einpass-Skript, schickt nichts)',
+        tab && tab.type === 'ui_tab' && tab.name === 'Lernen' && tab.order === 12.8 && tab.hidden === false && dataTab.order < tab.order && (!sysTab || tab.order < sysTab.order) &&
+        !ALLNODES.some(n => n.type === 'ui_tab' && n.id !== tab.id && n.order > dataTab.order && n.order < tab.order) &&
+        grp.map(g => g.name).join('|') === 'Heute gelernt|Was sich verändert|Güte je Außenband und Lernkurve|Replay und Kennzahlen' && grp.every(g => g.width === 17) &&
+        TPL.every((id, i) => { const t = NBl(id); return t && t.type === 'ui_template' && t.group === grp[i].id && t.width === 0 && t.height > 0 && ALLNODES.filter(n => n.group === grp[i].id).length === 1 && !/scope\.send/.test(t.format) && JSON.stringify(t.wires) === '[[]]' && t.format.includes("var id = '" + id + "'") && t.format.includes("window.optLern.mount(el, '") && t.format.includes('class="optfit"'); }),
+        grp.map(g => g.name + ':' + g.width).join(', '));
+  check('Knoten: opt_i_lern (alle 5 min) -> opt_lern (fs, nur lesen: kein writeFileSync/mkdirSync, kein global/flow.set; einziger Speicher der Lese-Cache im Knotenkontext) -> vier Karten',
+        inj && inj.repeat === '300' && JSON.stringify(inj.wires) === '[["opt_lern"]]' && fnL && fnL.libs.some(l => l.var === 'fs') && JSON.stringify(fnL.wires) === JSON.stringify(TPL.map(t => [t])) &&
+        !/writeFileSync|appendFileSync|unlinkSync|mkdirSync|flow\.set|global\.set|node\.send/.test(fnL.func) && (fnL.func.match(/context\.set\(/g) || []).length === 1, '');
+  leeren(); let o = null, e1 = null;
+  try { o = run('opt_lern', {}); } catch (e) { e1 = e.message; }
+  const H = (k, P) => L_UI.html(k, P);
+  check('Ordner fehlt: kein Fehler, vier Nachrichten; Karte 1 „kein Lauf“ (Bernstein), keine Sätze, Lernkurve leer, kein Replay',
+        e1 === null && Array.isArray(o) && o.length === 4 && o[0].payload.da === false && /kein Lauf/.test(H('heute', o[0].payload)) && /ol-warn/.test(H('heute', o[0].payload)) && o[1].payload.saetze === 0 && o[2].payload.kurve.length === 0 && o[3].payload.da === false &&
+        /Noch keine Parametersätze/.test(H('param', o[1].payload)) && /noch kein Replay/.test(H('replay', o[3].payload)), e1 || '');
+  files[B0 + '/status.json'] = {data: '{kaputt', mode: 0o644}; o = run('opt_lern', {});
+  check('status.json kein JSON: Chip Fehler (rot)', o[0].payload.da === false && /ol-bad/.test(H('heute', o[0].payload)) && /kein JSON/.test(H('heute', o[0].payload)), JSON.stringify(o[0].payload));
+  leeren(); ladeOrdner(FX, ''); NOW = new Date(2026, 9, 23, 8, 0, 0).getTime();
+  o = run('opt_lern', {});
+  // Lese-Cache (im Knoten: context 'lern_cache'; die Sim gibt jedem Lauf einen leeren Kontext, daher hier direkt mit derselben Funktion)
+  { let lies = 0; const zfs = Object.assign({}, fsMock, {readFileSync: (p, enc) => { if (/\/training\//.test(p)) { lies++; } return fsMock.readFileSync(p, enc); }}), cc = {};
+    const a = L_UI.daten(zfs, NOW, cc, B0), l1 = lies; lies = 0; const b = L_UI.daten(zfs, NOW, cc, B0), l2 = lies;
+    files[B0 + '/training/wp_params_2026-10-23.json'].mt = 2; lies = 0; L_UI.daten(zfs, NOW, cc, B0); const l3 = lies; files[B0 + '/training/wp_params_2026-10-23.json'].mt = 1;
+    check('Lese-Cache: Parameterdateien nur beim ersten Lauf bzw. nach einer Änderung (Zeit/Größe) neu gelesen, Ergebnis gleich wie ohne Cache (Knoten)', l1 === 4 && l2 === 0 && l3 === 1 && JSON.stringify(a) === JSON.stringify(b) && JSON.stringify(a.param) === JSON.stringify(o[1].payload) && Object.keys(cc).length === 4, [l1, l2, l3].join('/')); }
+  const [h1, p1, g1, r1] = o.map(m => m.payload), zl = n => p1.zeilen.find(z => z.n === n), gq = n => (h1.guete || []).find(g => g.name === n) || {};
+  check('echte Dateien (23.10. 06:41): Lauf 23.10. 06:41 · 104 s ok, fünf Schritte ok (Training 80 s), Entscheidung übernommen (aktiv 23.10., bisher 22.10.), Glättung ⅓, Bindung 0,10, Testtage 20.10.–23.10.',
+        h1.lauf.zeit === '23.10. 06:41' && h1.lauf.dauer === '104 s' && h1.lauf.ok && !h1.lauf.alt && h1.schritte.length === 5 && h1.schritte.every(s => s.ok) && h1.schritte[0].n === 'Training' && h1.schritte[0].dauer === '80 s' &&
+        h1.ent.ergebnis === 'übernommen' && h1.ent.aktiv === '23.10.' && h1.ent.bisher === '22.10.' && /⅓ je Nacht · Bindung 0,10/.test(H('heute', h1)) && h1.testTage === '20.10.–23.10.', JSON.stringify(h1.lauf));
+  check('Güte Kandidat gegen bisher: 8 Kennzahlen; Strom 19,7 gegen 19,8 W (−0,5 %, Gate ok, Grenze 40), Wasserkreis 0,961 gegen 1,02 K (Gate ok), Pause 16,5 gegen 16 min (+3,1 %, Gate ok), Freilauf als Zwilling / Messung; nur die drei Gate-Größen mit Chip',
+        h1.guete.length === 8 && gq('Strom TOP16 RMSE').k === 19.7 && gq('Strom TOP16 RMSE').b === 19.8 && gq('Strom TOP16 RMSE').gate === 'ok' && gq('Strom TOP16 RMSE').grenze === 40 && gq('Wasserkreis RMSE').gate === 'ok' && gq('Pause Median-Fehler').gate === 'ok' &&
+        h1.guete.filter(g => g.gate).length === 3 && gq('Freilauf kWh el Zwilling/Messung').fl === true && /<b>19,7<\/b><\/td><td>19,8<\/td><td class="okt">−0,5 %/.test(H('heute', h1)) && /<b>25,8 \/ 26,6<\/b>/.test(H('heute', h1)) && /\+3,1 %/.test(H('heute', h1)), JSON.stringify(gq('Strom TOP16 RMSE')));
+  check('Abdeckung 17 Tage (Dünn-Daten-Phase), 4 von 5 Bändern, < 0 °C extrapoliert (Bernstein); Drift gegen 22.10.: 2 von 70 auffällig (fanJeHz 4,96 → roh 5,83 → 5,25; pipeQ)',
+        h1.abdeckung.tage === 17 && h1.abdeckung.duenn && h1.abdeckung.ausreichend === 4 && h1.abdeckung.baender.length === 5 && !h1.abdeckung.baender[0].gut && h1.abdeckung.baender.slice(1).every(b => b.gut) &&
+        h1.drift.auffaellig === 2 && h1.drift.werte === 70 && h1.drift.liste.map(e => e.name).join() === 'fanJeHz,pipeQ' && /<code>fanJeHz<\/code><\/td><td>4,96<\/td><td>5,83<\/td><td class="warnt">\+17,5 %<\/td><td><b>5,25<\/b>/.test(H('heute', h1)), JSON.stringify(h1.drift.liste[0]));
+  check('Parameter-Verlauf: 3 Sätze 16.10.–23.10. (Kandidat 21.10. nicht als Satz), Spalten 23.10. / 22.10. / 16.10. (vor 7 Tagen), nur gelernte Werte (fit) offen, nach Änderung sortiert, fanJeHz mit Drift-Chip und Verlauf (3 Punkte), höchstens 15 offen, Rest zugeklappt',
+        p1.saetze === 3 && p1.von === '16.10.' && p1.bis === '23.10.' && p1.k0 === '23.10.' && p1.k1 === '22.10.' && p1.k7 === '16.10.' && p1.gelernt > 70 && zl('fanJeHz') && zl('fanJeHz').drift && zl('fanJeHz').sp.length === 3 &&
+        Math.abs(zl('fanJeHz').v0 - 5.250328) < 1e-9 && zl('fanJeHz').h === 'M' && zl('fanJeHz').e === 'U/min je Hz' && p1.zeilen.every((z, i, a) => { const w = x => Math.abs(x.d7 !== null ? x.d7 : (x.d1 !== null ? x.d1 : 0)); return !i || w(a[i - 1]) >= w(z); }) &&
+        p1.zeilen.length + p1.gleich.length === p1.gelernt && !p1.zeilen.some(z => z.n === 'hzMinFrost[0][0]') && p1.fest.some(x => x.n === 'hzMinFrost' && x.h === 'F') && p1.gleich.some(g => g.n === 'startK') &&
+        (H('param', p1).match(/<details data-k="rest">/g) || []).length === (p1.zeilen.length > 15 ? 1 : 0) && /<polyline/.test(H('param', p1)) && /Glättung ⅓ · Bindung 0,10/.test(H('param', p1)), p1.zeilen.slice(0, 4).map(z => z.n).join());
+  check('Einheiten der Listenwerte: flowEff[1] l/min, raeume.wohn[4] min, raeume.wohn[7] K (ab „K…“), fanQ[2] U/min', (() => { const all = p1.zeilen.concat(p1.gleich), e = n => (all.find(z => z.n === n) || {}).e;
+        return e('flowEff[1]') === 'l/min' && e('raeume.wohn[4]') === 'min' && e('raeume.wohn[7]') === 'K' && e('fanQ[2]') === 'U/min'; })(), '');
+  check('Lernkurve: 4 Läufe (16., 21. abgelehnt, 22., 23.10.), Strom/Wasserkreis/Pause aus guete.test, Ampelgrenzen 40 W / 1,5 K / 30 min; drei Diagramme, abgelehnter Kandidat hohl in Bernstein; Güte je Außenband 5 Zeilen (< 0 °C ohne Daten)',
+        g1.kurve.map(k => k.tag + k.art).join() === '16.10.p,21.10.k,22.10.p,23.10.p' && g1.kurve[3].strom === 19.7 && g1.kurve[3].wk === 0.961 && g1.kurve[3].pause === 16.5 && g1.kurve[1].ent === 'abgelehnt' &&
+        g1.grenzen.strom === 40 && g1.grenzen.wk === 1.5 && g1.grenzen.pause === 30 && (H('guete', g1).match(/<svg viewBox/g) || []).length === 3 && /stroke="#b45309"/.test(H('guete', g1)) &&
+        g1.baender.length === 5 && !g1.baender[0].daten && /<td>19,6<\/td><td>0,857<\/td><td[^>]*>16,5<\/td>/.test(H('guete', g1)), g1.kurve.map(k => k.tag + ':' + k.strom).join());
+  check('Replay 22.10.: 100,0 % gleich wie live, 3 Vorschläge (Raumeinfluss 01:45 …), 5 Regeln (Raumeinfluss 99,9 %); Kennzahlen 7 Tage neueste zuerst (22.10.: 8,00 kWh, COP 5,19, Komfort 180 min · Wohnzimmer in Bernstein); 4 Hinweise; Log 15 Zeilen zugeklappt',
+        r1.prozent === 100 && r1.vorschlaege === 3 && r1.liste.length === 3 && r1.liste[0].zeit === '01:45' && r1.liste[0].regel === 'Raumeinfluss' && r1.regeln.length === 5 && r1.regeln[2].p === 99.9 &&
+        r1.tage.length === 7 && r1.tage[0].tag === '22.10.' && r1.tage[6].tag === '16.10.' && /<td class="l">22\.10\.<\/td><td title="4…12 °C">8,1<\/td><td>8,00<\/td><td>41,5<\/td><td><b>5,19<\/b>/.test(H('replay', r1)) &&
+        /<span class="warnt">180 min · Wohnzimmer<\/span>/.test(H('replay', r1)) && r1.hinweise.length === 4 && r1.log.length === 15 && /<details data-k="log">/.test(H('replay', r1)) && /100,0 % gleich wie live/.test(H('replay', r1)), JSON.stringify(r1.tage[0]));
+  check('Rot nur für Fehler: ohne Fehler kein rotes Element auf der ganzen Seite; Dezimalkomma (kein „19.7“ o. ä. in sichtbaren Zahlen)', ['heute', 'param', 'guete', 'replay'].every((k, i) => !/ol-bad|badt|#c62828/.test(H(k, o[i].payload))) &&
+        !/>\s*\d+\.\d+\s*(%|W|K|min)?\s*</.test(['heute', 'guete', 'replay'].map((k, i) => H(k, [h1, g1, r1][i])).join('')), '');
+  { const J = JSON.parse(files[B0 + '/status.json'].data); J.training.entscheidung.ergebnis = 'abgelehnt'; J.training.entscheidung.verletzt = ['pause']; J.fehler = ['replay: Zeitlimit 10 min überschritten']; J.letzter_lauf.ok = false; J.letzter_lauf.schritte.replay.ok = false; J.letzter_lauf.schritte.replay.fehler = 'Zeitlimit';
+    files[B0 + '/status.json'] = {data: JSON.stringify(J), mode: 0o644, mt: 3}; const oF = run('opt_lern', {}), hF = H('heute', oF[0].payload), rF = H('replay', oF[3].payload);
+    check('Fehlerfälle: abgelehnt (Bernstein) mit Gate „verletzt“ bei Pause, Lauf und Schritt Replay mit Fehler (rot), Fehlermeldung rot vor den Hinweisen',
+          /ol-chip ol-warn"[^>]*>abgelehnt/.test(hF) && (oF[0].payload.guete.find(g => g.name === 'Pause Median-Fehler') || {}).gate === 'verletzt' && /ol-chip ol-bad"[^>]*>Lauf 23\.10\. 06:41/.test(hF) && /ol-chip ol-bad"[^>]*>Fehler/.test(hF) &&
+          /<span class="badt">replay: Zeitlimit/.test(rF) && rF.indexOf('badt') < rF.indexOf('#b45309'), ''); }
+  ladeOrdner(FX, ''); NOW = new Date(2026, 9, 24, 9, 0, 0).getTime(); o = run('opt_lern', {});
+  check('Lauf älter als 26 h: Chip Bernstein (veraltet), nicht rot', o[0].payload.lauf.alt === true && /ol-chip ol-warn"[^>]*>Lauf 23\.10\. 06:41/.test(H('heute', o[0].payload)), '');
+  // Vorschau: OPT_LERN_DATEN=<Ordner mit den echten Dateien der NAS> -> letzte Nachricht je Karte aus diesen Dateien (statt der groessten aus dem Lauf)
+  if (process.env.OPT_LERN_DATEN && UI_DUMP) { leeren(); ladeOrdner(process.env.OPT_LERN_DATEN, ''); NOW = +process.env.OPT_LERN_JETZT || new Date(2026, 9, 23, 8, 0, 0).getTime(); TPL.forEach(t => { delete UI_DUMP[t]; }); run('opt_lern', {}); }
+  leeren(); Object.assign(files, keepFiles); NOW = nowKeep;
 })();
 
 // ---- Zeitleiste (18.10.2026): Zustandsleiste (opt_zustand -> zwei ui_statetrail-Widgets) und Sonnenstand (opt_sonne_in -> sun-position -> opt_sonne)
