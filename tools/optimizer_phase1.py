@@ -199,7 +199,7 @@ var d = {
     plan: __PLAN__,
     cop: __COP__,                                    // COP-Korrektur: W, die TOP16 im Lauf fehlen (Forum 189605, Annahme 80 W)
     zaehler: __ZAEHLER__,                            // Stromzaehler Shelly 3EM-63 Gen3 (cop-ziel 17.10.2026): Topic, Broker, Klemmen, Quelle (Standard heishamon)
-    energy: {vrmMaxAgeH: 4, evccMaxAgeH: 6, batteryInstance: 278,
+    energy: {vrmMaxAgeH: 4, evccMaxAgeH: 6, batteryInstance: 278, evccUrl: 'http://10.10.10.128:7070',          // evccUrl: Optimierer-Plan von evcc, nur GET /api/state (evcc-abgleich 25.10.2026)
              tariff: {buy: [['00:00', '05:00', 0.21], ['05:00', '24:00', 0.31]], sell: 0.06, source: 'VRM Dynamic ESS (fester HT/NT-Tarif)'},       // Kaufpreis EUR/kWh je Zeitfenster, Verkaufspreis
              battery: {capacityKwh: 43, maxChargeKw: 12, maxDischargeKw: 12, costEurKwh: 0.01}, grid: {importKw: 32, exportKw: 32}},          // Werte aus VRM Dynamic ESS (fuer spaetere Phasen)
     calcAT: {wNow: 0.5, wHist: 0.25, wFc: 0.25, minHistH: 6},
@@ -647,6 +647,11 @@ var rows = [
     ['Daten PV-Prognose', pvSeries.length ? pvSrc + (pvOk ? '' : ' (zu kurz)') + ' · reicht ' + f(pvCov, 0, 'h') + ' voraus' : 'keine · VRM: ' + (vrm.status || 'nicht konfiguriert'), warnS(pvOk)],
     ['VRM-Abruf', (vrm.status || 'nicht konfiguriert') + (vrmAge !== null ? ' · ' + ageTxt(vrmAge) : ''), vrm.status === 'OK' ? 'ok' : '']
 ];
+// evcc-Abgleich (25.10.2026): Optimierer-Plan von evcc (opt_evcc, alle 15 min) -> Datenlage wie bei den anderen Quellen; nicht erreichbar: letzter Stand mit Alter, ab 60 min veraltet
+var EVP = global.get('OPT_evcc_plan') || {}, evIn = null;
+try { evIn = EVC.planIn(EVP.plan || null, EVP.abruf || null, now, cfg); } catch (e) { evIn = {da: false, fehler: 'Auswertung: ' + e.message, zeile: {k: 'evcc', v: 'kein Plan', c: 'warn', t: ''}}; }
+rows.push(['Daten evcc-Plan', evIn.da ? (evIn.veraltet ? 'veraltet' : 'ok') + ' · Alter ' + ageTxt(evIn.alterMin * MS_MIN) + (EVP.abruf && !EVP.abruf.ok && EVP.abruf.fehler ? ' · letzter Abruf: ' + EVP.abruf.fehler : '') + ' · reicht ' + f(Math.max(0, (evIn.bis - now) / H), 0, 'h') + ' voraus'
+                                    : (EVP.abruf ? 'kein Plan · ' + (EVP.abruf.fehler || 'keine Daten') : 'noch nicht abgerufen'), warnS(evIn.da && !evIn.veraltet)]);
 var vi = flow.get('vrmInfo');
 var out = [{payload: {rows: rows}}, null, null, {payload: (!vi || !vi.hasToken) ? 'Noch kein VRM-Token gespeichert. Token und Installations-ID oben eintragen und auf SPEICHERN klicken.'
     : 'Token gespeichert (' + vi.tokenLen + ' Zeichen) · Installation ' + vi.id + ' · Abruf: ' + (vrm.status || 'noch nicht abgerufen') + (vrmAge !== null ? ' (Alter ' + ageTxt(vrmAge) + ')' : '')}, null];
@@ -741,10 +746,15 @@ FQ_H.forEach(function (h) {
 fqRows.push(['Gesammelt', fqHist.length + ' Stunden Ist-Werte · ' + fqSn.length + ' Prognose-Schnappschüsse', '']);
 var fqTab = FQ_H.map(function (h) { var a = fq.at[h], g = fq.pv[h]; return ['+' + h + ' h', a && a.n >= 3 ? (a.bias / a.n >= 0 ? '+' : '') + f(a.bias / a.n, 1, 'K') : '–', a && a.n >= 3 ? f(a.abs / a.n, 1, 'K') : '–', a ? a.n : 0,
     g && g.n >= 3 ? f(100 * g.fc / g.act, 0, '%') : '–', g && g.n >= 3 ? f(g.abs / g.n, 0, 'W') : '–', g ? g.n : 0]; });   // ui-daten 18.10.: Tabelle Horizont x (Aussentemperatur, PV)
-out[4] = {payload: {rows: fqRows, tab: fqTab, pvQuelle: pvSrc === '–' ? 'Prognose' : pvSrc.split(' ')[0], sammel: fqHist.length + ' Stunden Ist-Werte · ' + fqSn.length + ' Prognose-Schnappschüsse'}};
+var EQ = global.get('OPT_evcc_q') || null;                                     // evcc-Abgleich: taegliche Pruefung (opt_evcc_q) als weitere Zeilen der Tabelle (Waermepumpe, Vortag)
+out[4] = {payload: {rows: fqRows, tab: fqTab, pvQuelle: pvSrc === '–' ? 'Prognose' : pvSrc.split(' ')[0], sammel: fqHist.length + ' Stunden Ist-Werte · ' + fqSn.length + ' Prognose-Schnappschüsse',
+                    ev: EQ && Array.isArray(EQ.zeilen) ? EQ.zeilen : [], evTag: EQ && EQ.tag ? 'Vortag ' + EQ.tag.slice(8, 10) + '.' + EQ.tag.slice(5, 7) + '.' : 'Vortag',
+                    evTitel: 'Strom Wärmepumpe je Viertelstunde gegen den Zähler (zaehler_wp_w): evcc-Prognose „' + (EQ && EQ.titel ? EQ.titel : 'Panasonic Leisha') + '“ ~6 h vorher bzw. letzter Plan vor Mitternacht, Modell = Wärmefahrplan (Strom = Bedarf ÷ COP) letzter Schnappschuss vor Mitternacht' +
+                            (EQ && EQ.mess && EQ.mess.kwh !== null ? ' · gemessen ' + f(EQ.mess.kwh, 2, 'kWh') + ' in ' + EQ.mess.n + ' Viertelstunden' : '') + (EQ && EQ.hinweis ? ' · ' + EQ.hinweis : '')}};
 global.set('OPT_plan_in', {ts: now, price: pSlots ? pSlots.filter(function (s) { return s.e > now - 2 * H && s.s < now + 40 * H; }).map(function (s) { return [s.s, s.e, s.p]; }) : null, priceSrc: pSrc,
     pv: pvSeries.length ? pvSeries.filter(function (s) { return s.t + s.dt > now - 2 * H && s.t < now + 40 * H; }).map(function (s) { return [s.t, Math.round(s.w), s.dt]; }) : null, pvSrc: pvSrc,
-    pvNow: pv, soc: soc, socSrc: socSrc, liveOk: liveOk, grid: grid, batP: batP, vrmHpKwh: hpK});
+    pvNow: pv, soc: soc, socSrc: socSrc, liveOk: liveOk, grid: grid, batP: batP, vrmHpKwh: hpK,
+    evcc: evIn});                                                                // evcc-Abgleich: Akku-Minimum, Netzbezugs-/Einspeisefenster, PV-Prognose evcc, Kennzahlenzeile (nur Eingang/Anzeige)
 function G0(k) { return global.get(k); }
 function num0(v) { v = Number(v); return (v === null || v === undefined || !isFinite(v)) ? null : v; }
 function jload(file, dflt) { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { return dflt; } }
@@ -2203,7 +2213,9 @@ if (P.status === 'ok') {                                                        
            {k: 'Außen 24 h', v: f(sm2.atMin, 0) + ' … ' + f(sm2.atMax, 0, '°C'), s: 'Prognose (Fühler-angeglichen)'},
            {k: 'PV-Prognose 24 h', v: sm2.pv !== null ? f(sm2.pv, 0, 'kWh') : '–', s: sm2.pv !== null ? 'Anzeige' : 'keine Prognose'}];
 }
-out[0] = {payload: {rows: rows, plan: tab, chart: chartD, kpi: kpi, korr: KORR_TXT}};
+// evcc-Abgleich (25.10.2026): Kennzahlenzeile aus dem evcc-Plan (OPT_plan_in.evcc von opt_energy) - nur Anzeige, der Fahrplan rechnet ohne sie
+var evZ = (piFresh && PI.evcc && PI.evcc.zeile) ? PI.evcc.zeile : {k: 'evcc', v: 'kein Plan', c: 'warn', t: 'Kein Optimierer-Plan von evcc (OPT_plan_in.evcc fehlt oder ist älter als 5 min)'};
+out[0] = {payload: {rows: rows, plan: tab, chart: chartD, kpi: kpi, korr: KORR_TXT, evcc: evZ}};
 // Gebaeudemodell fuer die Entscheidungsmaschine (Regel Vorausschau): Lernstand, Gate, coefActivate; Sonne/Wind-Koeffizienten nur bei aktivem Modell
 var cfX = pl.learn.coef || {}, cfK = coefSafe((cfX.aktiv && cfX.n >= 3) ? (cfX.maeWind !== null && cfX.maeWind !== undefined ? {bs: cfX.bsW || 0, bw: cfX.bw || 0} : {bs: cfX.bs || 0, bw: 0}) : {bs: 0, bw: 0});
 // Lernstand (B Lern-Gate, D Drift/Rueckfall) fuer die Seite "Optimierer", Karte "Messwerte & Lernen": dieselben Groessen wie die Zeilen "Lern-Gate" und
@@ -2701,7 +2713,10 @@ TABLE = ('<div class="optfit"><div class="optkv"><div class="kv" ng-repeat="r in
 
 FQ_TABLE = ('<div class="optfit optpt optfq"><table title="{{msg.payload.sammel}}"><tr><th></th><th colspan="3">Außentemperatur (OWM)</th><th colspan="3">PV ({{msg.payload.pvQuelle}})</th></tr>'
             '<tr><th>Horizont</th><th>Abw.</th><th>Fehler</th><th>n</th><th>Prognose / Ist</th><th>Fehler</th><th>n</th></tr>'
-            '<tr ng-repeat="z in msg.payload.tab track by $index"><td>{{z[0]}}</td><td>{{z[1]}}</td><td>{{z[2]}}</td><td>{{z[3]}}</td><td>{{z[4]}}</td><td>{{z[5]}}</td><td>{{z[6]}}</td></tr></table>'
+            '<tr ng-repeat="z in msg.payload.tab track by $index"><td>{{z[0]}}</td><td>{{z[1]}}</td><td>{{z[2]}}</td><td>{{z[3]}}</td><td>{{z[4]}}</td><td>{{z[5]}}</td><td>{{z[6]}}</td></tr>'
+            # evcc-Abgleich 25.10.2026: Strom der Waermepumpe am Vortag (taegliche Pruefung opt_evcc_q), dieselben 7 Spalten, Bewertung ok/Hinweis (Bernstein)/Warnung (Rot)
+            '<tr ng-if="msg.payload.ev && msg.payload.ev.length"><th title="{{msg.payload.evTitel}}">WP-Strom {{msg.payload.evTag}}</th><th>Prognose kWh</th><th>Messung kWh</th><th>Abw.</th><th>7 Tage</th><th colspan="2">Bewertung</th></tr>'
+            '<tr ng-repeat="z in msg.payload.ev track by $index" title="{{z[7]}}"><td>{{z[0]}}</td><td>{{z[1]}}</td><td>{{z[2]}}</td><td>{{z[3]}}</td><td>{{z[4]}}</td><td colspan="2" ng-class="z[6]">{{z[5]}}</td></tr></table>'
             '</div>')   # ui-daten 18.10.2026: Prognoseguete als Tabelle; ui-review-b 20.10.2026: Sammelzeile ("240 Stunden Ist-Werte ...") nur noch als Tooltip der Tabelle
 
 
@@ -3065,6 +3080,7 @@ upsert(inject("opt_i_nas", "alle 5 Minuten", 300, 25, ["opt_nas"], 140, 580))
 
 PLAN_TPL = """<div class="optp optfit">
 <div class="kpi" ng-if="msg.payload.kpi.length"><div class="tile" ng-repeat="t in msg.payload.kpi track by $index" title="{{t.t}}"><div class="k">{{t.k}}</div><div class="v">{{t.v}}</div><div class="s" title="{{t.s}}">{{t.s}}</div></div></div>
+<div class="sum" ng-if="msg.payload.evcc"><span class="k">{{msg.payload.evcc.k}}</span><span class="v" ng-class="msg.payload.evcc.c" title="{{msg.payload.evcc.t}}">{{msg.payload.evcc.v}}</span></div>
 <div id="optch_plan" style="min-height:120px"></div>
 <div class="sec" style="cursor:pointer" ng-click="plOpen = !plOpen">Details und Modell {{plOpen ? '▾' : '▸'}}</div>
 <div class="sum" ng-if="plOpen"><span ng-repeat-start="r in msg.payload.rows track by $index" class="k">{{r[0]}}</span><span ng-repeat-end class="v" ng-class="r[2]" title="{{r[3]}}">{{r[1]}}</span></div>
@@ -3310,13 +3326,14 @@ upsert(fn("opt_owm_save", "Zugangsdaten speichern", OWM_SAVE_JS, 4,
 
 # ---------------------------------------------------------------- energy and prices: display and log only, no effect on the control
 # live values from the Venus MQTT (passive: this tab only listens), prices from evcc, PV forecast from the VRM API (token entered in the dashboard)
+EVCC_CORE_JS = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "evcc_core.js"), encoding="utf-8").read()      # evcc-Abgleich: reine Funktionen (tools/evcc_core_test.js)
 upsert(comment("opt_c6", "Energie & Preise: Venus-MQTT (live), evcc (Preise), VRM-API (PV-Prognose) - nur Anzeige und Protokoll", 380, 1360))
 for _i, (_t, _b) in enumerate((("N/+/system/0/#", BROKER), ("evcc/site/+", "opt_broker_nas"), ("evcc/site/forecast/+", "opt_broker_nas"), ("evcc/site/battery/soc", "opt_broker_nas"), ("N/+/battery/278/Soc", BROKER))):
     upsert({"id": f"opt_mqtt_en{_i}", "type": "mqtt in", "z": TAB, "name": "", "topic": _t, "qos": "0", "datatype": "auto-detect",
             "broker": _b, "nl": False, "rap": True, "rh": 0, "inputs": 0, "x": 160, "y": 1400 + 50 * _i, "wires": [["opt_en_in"]]})
 upsert(fn("opt_en_in", "Energiewerte lesen (nur lesen)", EN_IN_JS, 0, [], 440, 1425, FS))
 upsert(inject("opt_i_en", "jede Minute", 60, 30, ["opt_energy"], 140, 1540))
-upsert(fn("opt_energy", "Energie & Preise auswerten", ENERGY_JS, 5, [["opt_t_en"], ["opt_f_en"], ["opt_f_fc"], ["opt_ui_vrmstatus"], ["opt_t_fq"]], 440, 1540, FS))
+upsert(fn("opt_energy", "Energie & Preise auswerten", EVCC_CORE_JS + ENERGY_JS, 5, [["opt_t_en"], ["opt_f_en"], ["opt_f_fc"], ["opt_ui_vrmstatus"], ["opt_t_fq"]], 440, 1540, FS))
 for _fid, _name, _y in (("opt_f_en", "Energie-Protokoll", 1500), ("opt_f_fc", "Prognose-Schnappschüsse", 1580)):
     upsert({"id": _fid, "type": "file", "z": TAB, "name": _name, "filename": "filename", "filenameType": "msg", "appendNewline": False,
             "createDir": True, "overwriteFile": "false", "encoding": "utf8", "x": 760, "y": _y, "wires": [[]]})
@@ -3333,6 +3350,99 @@ upsert({"id": "opt_http_vrm", "type": "http request", "z": TAB, "name": "VRM-API
 upsert({"id": "opt_catch_vrm", "type": "catch", "z": TAB, "name": "", "scope": ["opt_http_vrm"], "uncaught": False,
         "x": 640, "y": 1720, "wires": [["opt_vrm_parse"]]})
 upsert(fn("opt_vrm_parse", "VRM-Antwort auswerten", VRM_PARSE_JS, 1, [[]], 880, 1660))
+# ---------------------------------------------------------------- evcc-Abgleich (25.10.2026, Nutzer-Go "1 bauen" + "taeglich pruefen"): NUR LESEN, keine Regelwirkung
+# alle 15 min GET /api/state?jq=... (evopt, Akku-Ladestand, Netzpreis) -> OPT_evcc_plan + evcc-plan-YYYY-MM.jsonl; ab 00:10 Pruefung des Vortags je Viertelstunde
+# (evcc-Leisha 6 h / Tag, Modell Tag gegen zaehler_wp_w) -> evcc-quality.json, OPT_evcc_q (Tabelle "Prognoseguete", Hinweis der Maschine); OPT_plan_in.evcc (Waermefahrplan)
+EVCC_REQ_JS = r"""
+// evcc-Abgleich: Optimierer-Plan von evcc NUR LESEN (GET /api/state mit jq-Auszug: evopt, Akku-Ladestand, Netzpreis, Version). Es wird nichts an evcc gesendet.
+var cfg = global.get('OPT_cfg') || {}, E = cfg.energy || {};
+var base = String(E.evccUrl || 'http://10.10.10.128:7070').replace(/\/+$/, '');
+if (!/^https?:\/\/[^\/\s?#]+$/.test(base)) { var ep = global.get('OPT_evcc_plan') || {}; ep.abruf = {ts: Date.now(), ok: false, fehler: 'evcc-Adresse ungültig'}; global.set('OPT_evcc_plan', ep); return null; }
+var JQ = '{evopt: .evopt, soc: .battery.soc, tariffGrid: .tariffGrid, version: .version}';
+return {topic: 'evcc', url: base + '/api/state?jq=' + encodeURIComponent(JQ), payload: ''};
+"""
+EVCC_JS = r"""
+// evcc-Abgleich: Antwort einordnen -> OPT_evcc_plan {plan (kompakt), abruf {ts, ok, fehler}} und eine Zeile je Abruf in evcc-plan-YYYY-MM.jsonl.
+// Fehler setzen nur den Abruf-Status, der letzte gueltige Plan bleibt (und altert; ab 60 min "veraltet", siehe opt_energy).
+var now = Date.now(), cfg = global.get('OPT_cfg') || {}, EP = global.get('OPT_evcc_plan') || {};
+function p2(x) { return (x < 10 ? '0' : '') + x; }
+var d = new Date(now), month = d.getFullYear() + '-' + p2(d.getMonth() + 1);
+var ab = {ts: now, ok: false, fehler: null, http: msg.statusCode === undefined ? null : msg.statusCode};
+if (msg.error) { ab.fehler = 'nicht erreichbar (' + String((msg.error && msg.error.message) || msg.error).slice(0, 80) + ')'; }
+else if (typeof msg.statusCode === 'string' && !/^\d+$/.test(msg.statusCode)) { ab.fehler = 'nicht erreichbar (' + msg.statusCode + ')'; }     // Verbindungsfehler (z. B. ECONNREFUSED) am Ausgang des http-request-Knotens
+else if (Number(msg.statusCode) !== 200) { ab.fehler = 'HTTP ' + msg.statusCode; }
+else {
+    var body = msg.payload;
+    if (typeof body === 'string') { try { body = JSON.parse(body); } catch (e) { body = null; } }
+    var k = null;
+    try { k = EVC.kompakt(body, now, cfg); } catch (e) { k = {fehler: 'Auswertung: ' + e.message}; }
+    if (k.fehler) { ab.fehler = k.fehler; } else { ab.ok = true; EP.plan = k.plan; }
+}
+var doppelt = !ab.ok && EP.abruf && !EP.abruf.ok && now - EP.abruf.ts < 10000;          // derselbe Fehler kommt ueber den catch-Knoten und den Ausgang: eine Protokollzeile
+EP.abruf = ab;
+global.set('OPT_evcc_plan', EP);
+if (doppelt) { return null; }
+var line = ab.ok ? EVC.zeile(EP.plan) : {t: Math.round(now / 1000), fehler: ab.fehler, letzter: EP.plan ? Math.round(EP.plan.ts / 1000) : null};
+return {filename: '/data/optimizer/evcc-plan-' + month + '.jsonl', payload: JSON.stringify(line) + '\n'};
+"""
+EVCC_Q_JS = r"""
+// evcc-Abgleich, taegliche Pruefung (Nutzerwunsch 25.10.2026): ab 00:10 einmal am Tag fuer den Vortag (und fehlende Tage der letzten 7) je Viertelstunde:
+// evcc-Leisha-Prognose ~6 h vorher und aus dem letzten Plan vor Mitternacht, Modell (Waermefahrplan: Strom = Bedarf / COP, letzter Schnappschuss vor Mitternacht)
+// gegen den Stromzaehler der Waermepumpe (zaehler_wp_w je Minute aus quiet-YYYY-MM.csv). Ergebnis: evcc-quality.json, OPT_evcc_q. Nur lesen, keine Regelwirkung.
+var now = Date.now(), MIN = 60000, H = 3600000, cfg = global.get('OPT_cfg') || {};
+function p2(x) { return (x < 10 ? '0' : '') + x; }
+function monat(t) { var d = new Date(t); return d.getFullYear() + '-' + p2(d.getMonth() + 1); }
+function lies(f) { try { return String(fs.readFileSync(f, 'utf8')); } catch (e) { return ''; } }
+var Q = flow.get('evq');
+if (!Q) { try { Q = JSON.parse(fs.readFileSync('/data/optimizer/evcc-quality.json', 'utf8')); } catch (e) { Q = null; } }
+if (!Q || typeof Q !== 'object' || !Array.isArray(Q.tage)) { Q = {ver: EVC.VER, tage: [], lauf: null}; }
+var h0 = EVC.tag0(now), heute = EVC.ymd(h0), C = EVC.cfgOf(cfg), neu = 0;
+if (now - h0 >= 10 * MIN && Q.lauf !== heute) {
+    var offen = [];
+    for (var k = 7; k >= 1; k--) { var dd = new Date(h0); dd.setDate(dd.getDate() - k); var d0 = dd.getTime(); if (!Q.tage.some(function (x) { return x.tag === EVC.ymd(d0); })) { offen.push(d0); } }
+    if (offen.length) {
+        var von = offen[0] - (C.vorlaufH + 2) * H, bis = h0, ms = {}, cache = {};
+        offen.forEach(function (d0) { ms[monat(d0)] = 1; ms[monat(d0 - (C.vorlaufH + 2) * H)] = 1; });
+        var evcc = [], modell = [];
+        Object.keys(ms).forEach(function (m) {
+            lies('/data/optimizer/evcc-plan-' + m + '.jsonl').split('\n').forEach(function (l) {
+                var mt = /^\{"t":(\d+)/.exec(l); if (!mt || mt[1] * 1000 < von || mt[1] * 1000 > bis || l.indexOf('"fehler"') >= 0) { return; }
+                try { var p = EVC.ausZeile(JSON.parse(l)); if (p) { evcc.push(p); } } catch (e) { /* kaputte Zeile */ }
+            });
+            lies('/data/optimizer/plan-snapshots-' + m + '.jsonl').split('\n').forEach(function (l) {
+                var mt = /^\{"t0":(\d+)/.exec(l); if (!mt || +mt[1] < von || +mt[1] > bis) { return; }
+                try { var s = JSON.parse(l); if (s && Array.isArray(s.slots)) { modell.push({t0: s.t0, t: s.t, cols: s.cols, slots: s.slots}); } } catch (e) { /* kaputte Zeile */ }
+            });
+        });
+        offen.forEach(function (d0) {
+            var m = monat(d0); if (cache[m] === undefined) { cache[m] = lies('/data/optimizer/quiet-' + m + '.csv'); }
+            var d1 = EVC.folgeTag(d0), r = EVC.tag({d0: d0, d1: d1, mess: EVC.messViertel(cache[m], d0, d1, C), evcc: evcc, modell: modell, cfg: cfg});
+            Q.tage.push(r); neu++;
+        });
+        Q.tage.sort(function (a, b) { return a.d0 - b.d0; });
+        while (Q.tage.length > C.tageBehalten) { Q.tage.shift(); }
+        Q.tage.forEach(function (x, i) { if (i < Q.tage.length - C.viertelTage) { delete x.viertel; } });   // Viertelstunden nur der letzten 14 Tage
+    }
+    Q.lauf = heute; Q.aktualisiert = now; Q.ver = EVC.VER;
+    try { fs.mkdirSync('/data/optimizer', {recursive: true}); fs.writeFileSync('/data/optimizer/evcc-quality.json', JSON.stringify(Q)); } catch (e) { node.warn('evcc-quality.json: ' + e.message); }
+}
+flow.set('evq', Q);
+var U = EVC.uebersicht(Q, now, cfg), EPq = global.get('OPT_evcc_plan') || {};
+global.set('OPT_evcc_q', {ts: now, lauf: Q.lauf, tag: U.tag, zeilen: U.zeilen, hinweis: U.hinweis, mittel: U.mittel, mess: U.mess, titel: EPq.plan && EPq.plan.leishaTitel ? EPq.plan.leishaTitel : C.heizung});
+return neu ? {payload: neu + ' Tag(e) geprüft'} : null;
+"""
+upsert(comment("opt_c_evcc", "evcc-Abgleich: Optimierer-Plan von evcc nur lesen (GET alle 15 min), tägliche Prüfung evcc/Modell gegen den Zähler - nur Anzeige und Protokoll", 380, 4160))
+upsert(inject("opt_i_evcc", "evcc-Plan abrufen (15 min)", 900, 50, ["opt_evcc_req"], 140, 4200))
+upsert(fn("opt_evcc_req", "evcc-Anfrage (nur GET)", EVCC_REQ_JS, 1, [["opt_http_evcc"]], 400, 4200))
+upsert({"id": "opt_http_evcc", "type": "http request", "z": TAB, "name": "evcc /api/state (lesen)", "method": "GET", "ret": "obj", "paytoqs": "ignore",
+        "url": "", "tls": "", "persist": False, "proxy": "", "insecureHTTPParser": False, "authType": "", "senderr": False,
+        "headers": [], "x": 640, "y": 4200, "wires": [["opt_evcc"]]})
+upsert({"id": "opt_catch_evcc", "type": "catch", "z": TAB, "name": "", "scope": ["opt_http_evcc"], "uncaught": False, "x": 640, "y": 4240, "wires": [["opt_evcc"]]})
+upsert(fn("opt_evcc", "evcc-Plan auswerten und protokollieren", EVCC_CORE_JS + EVCC_JS, 1, [["opt_f_evcc"]], 880, 4200))
+upsert({"id": "opt_f_evcc", "type": "file", "z": TAB, "name": "evcc-Plan-Protokoll", "filename": "filename", "filenameType": "msg", "appendNewline": False,
+        "createDir": True, "overwriteFile": "false", "encoding": "utf8", "x": 1100, "y": 4200, "wires": [[]]})
+upsert(inject("opt_i_evcc_q", "Prüfung evcc/Modell (ab 00:10)", 600, 90, ["opt_evcc_q"], 140, 4300))
+upsert(fn("opt_evcc_q", "Prüfung evcc/Modell gegen Zähler (täglich)", EVCC_CORE_JS + EVCC_Q_JS, 1, [[]], 440, 4300, FS))
 head_vrm = head_fmt
 if line and re.search(r"<left>[^<]*</left>", head_fmt):
     head_vrm = re.sub(r"(<left>)[^<]*(</left>)", r"\1VRM (PV-Prognose für die Optimierung)\2", head_fmt)
@@ -3474,6 +3584,13 @@ if (msg.topic !== 'anzeige') {
     files.push({filename: '/data/optimizer/decisions-' + month + '.jsonl', payload: JSON.stringify(o.rec) + '\n'});
     if (o.scores.length) { files.push({filename: '/data/optimizer/scores-' + month + '.jsonl', payload: o.scores.map(function (x) { return JSON.stringify(x); }).join('\n') + '\n'}); }
     var evl = o.ev.slice();
+    // evcc-Abgleich (25.10.2026): Hinweis "evcc unterschaetzt die Waermepumpe um x % (7 Tage)" aus der taeglichen Pruefung (opt_evcc_q, OPT_evcc_q) - nur Hinweis, keine Regel,
+    // keine Punkte, nicht im Kern; Ereignis beim An- und Ausgehen wie die Waechter
+    var EQh = global.get('OPT_evcc_q'), evH = (EQh && typeof EQh.hinweis === 'string' && EQh.hinweis) ? EQh.hinweis : null, EH = ST.evccHw = ST.evccHw || {an: false, seit: 0, txt: ''};
+    if (evH && !EH.an) { EH.an = true; EH.seit = now; evl.push(['optimierer_hinweis', 'evcc: ' + evH]); }
+    else if (!evH && EH.an) { EH.an = false; evl.push(['optimierer_hinweis_ende', 'evcc: erledigt (' + hm(EH.seit) + '–' + hm(now) + ')']); }
+    if (evH) { EH.txt = evH; }
+    if (EH.an) { o.hinweise = (o.hinweise || []).concat([{id: 'evcc', seit: EH.seit, text: EH.txt}]); }          // in OPT_engine.hinweise wie die Waechter
     o.scores.forEach(function (x) { evl.push(['optimierer_punkte', x.regel + ' ' + x.typ + ' ' + (x.punkte > 0 ? '+' : '') + x.punkte + ': ' + x.text]); });
     if (evl.length) {
         var ef = '/data/optimizer/quiet-events-' + month + '.csv', eh = '';
@@ -3497,6 +3614,14 @@ flow.set('eng', ST);
 if (!ST.last) { return null; }
 // ---------- Anzeige (Karten-Daten aus ENGVIEW.build, gezeichnet in den Vorlagen mit optEngUi); Lernstand des Waermefahrplans aus OPT_plan (nur lesen)
 var V = ENGVIEW.build({now: now, last: ST.last, S: ST.S, V: ST.V, AP: global.get('OPT_apply') || {}, enabled: global.get('OPT_apply_enabled') === true, cfg: cfg, plan: G('OPT_plan') || null});
+(function () {                                                                    // evcc-Abgleich: Kachel unter "Räume und Wächter" (Prognose der Wärmepumpe in evcc gegen den Zähler, 7 Tage)
+    var EQ = global.get('OPT_evcc_q'), m = EQ && EQ.mittel ? (EQ.mittel.e6 && EQ.mittel.e6.tage ? [EQ.mittel.e6, '6 h'] : (EQ.mittel.eT && EQ.mittel.eT.tage ? [EQ.mittel.eT, 'Tag'] : null)) : null;
+    if (!V.mess || !Array.isArray(V.mess.raum)) { return; }
+    var a = m && typeof m[0].abw === 'number' && isFinite(m[0].abw) ? m[0].abw : null, an = !!(ST.evccHw && ST.evccHw.an);
+    V.mess.raum.push({k: 'evcc-Akkuplan', v: an ? 'Hinweis' : (a === null ? '–' : 'ok'), vc: an ? 'warn' : (a === null ? '' : 'ok'),
+                      s: a === null ? 'sammelt' : 'WP ' + (a > 0 ? '+' : '') + String(Math.round(a)).replace('-', '−') + ' % · ' + m[0].tage + ' T. (' + m[1] + ')',
+                      title: an ? ST.evccHw.txt : 'Prognose der Wärmepumpe in evcc gegen den Stromzähler (tägliche Prüfung 00:10, 7 Tage); Hinweis ab 20 % Abweichung aus mindestens 3 Tagen, damit der Akkuplan von evcc eingeordnet werden kann (keine Regel)'});
+})();
 return [{payload: V.card}, {payload: V.rules}, {payload: V.score}, {payload: V.log}, files.length ? files : null, {payload: V.mess}, {payload: V.cop}];
 """
 

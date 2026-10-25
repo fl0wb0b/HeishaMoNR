@@ -2205,6 +2205,17 @@ if (flowsFile) {
     check('"Übernahme sperren" (Not-Aus im Dashboard): apply.json enabled=false, Regeln bleiben, OPT_apply_enabled false', JSON.parse(files['/data/optimizer/apply.json']).enabled === false && JSON.parse(files['/data/optimizer/apply.json']).rules[0] === 'quiet_freigabe' && gstore.OPT_apply_enabled === false, files['/data/optimizer/apply.json']);
     r = click('uebernehmen', {id: p2.id, sum: p2.sum});
     check('nach dem Sperren: Klick sendet nichts', !r[0] && /Hauptschalter/.test(r[1].payload), r[1].payload);
+    // evcc-Abgleich (25.10.2026): Hinweis der Maschine aus der taeglichen Pruefung (OPT_evcc_q von opt_evcc_q) - nur Hinweis in der Huelle, keine Regel, kein Kern
+    { world(); const HT = 'evcc unterschätzt die Wärmepumpe um 38 % (7 Tage, 6 h Vorlauf, 3 Tage mit Daten) – den Akkuplan von evcc entsprechend einordnen';
+      gstore.OPT_evcc_q = {ts: NOW, hinweis: HT, mittel: {e6: {abw: -38.2, tage: 3}, eT: {abw: -20, tage: 3}, mT: {abw: 4, tage: 3}}};
+      const Re = minute(2), ef = Object.keys(files).find(f => /quiet-events-2026-10\.csv$/.test(f)), kE = Re.eng[1][5].payload.raum.find(x => x.k === 'evcc-Akkuplan');
+      check('Huelle evcc-Abgleich: Hinweis aus OPT_evcc_q in OPT_engine.hinweise (id evcc), Ereignis "optimierer_hinweis" genau einmal in quiet-events, Kachel "evcc-Akkuplan" (Hinweis, Bernstein, WP −38 % · 3 T. (6 h)); keine Regel',
+            gstore.OPT_engine.hinweise.some(h => h.id === 'evcc' && h.text === HT) && ((files[ef] || '').match(/optimierer_hinweis,evcc: evcc unterschätzt die Wärmepumpe um 38 %/g) || []).length === 1 &&
+            !!kE && kE.v === 'Hinweis' && kE.vc === 'warn' && kE.s === 'WP −38 % · 3 T. (6 h)' && kE.title === HT && !gstore.OPT_engine.rules.some(r => /evcc/.test(r.id)), JSON.stringify(kE));
+      gstore.OPT_evcc_q = {ts: NOW, hinweis: null, mittel: {e6: {abw: -10, tage: 3}}}; const Re2 = minute(1), kE2 = Re2.eng[0][5].payload.raum.find(x => x.k === 'evcc-Akkuplan');
+      delete gstore.OPT_evcc_q; const Re3 = minute(1), kE3 = Re3.eng[0][5].payload.raum.find(x => x.k === 'evcc-Akkuplan');
+      check('... unter 20 %: Hinweis endet (Ereignis "optimierer_hinweis_ende"), Kachel ok; ohne Pruefung: Kachel "–" (sammelt)', !gstore.OPT_engine.hinweise.some(h => h.id === 'evcc') && /optimierer_hinweis_ende,evcc: erledigt/.test(files[ef] || '') &&
+            kE2 && kE2.v === 'ok' && kE2.s === 'WP −10 % · 3 T. (6 h)' && kE3 && kE3.v === '–' && kE3.s === 'sammelt', JSON.stringify([kE2, kE3])); }
     // 7) Verwerfen: blendet aus, sendet nichts, Punkte bleiben unberuehrt (nach dem Zeitsprung laeuft ein alter Notfall-Vorschlag ab: 60 min Wartezeit, dann neu)
     NOW += 3 * 3600000; world(); minute(75);
     const scoreBefore = JSON.stringify(E.report(fstores.opt_engine.eng.S));

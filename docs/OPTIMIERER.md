@@ -1713,3 +1713,38 @@ Was der Container `optimizer-tools` nachts lernt, auf einer eigenen Dashboard-Se
 - **Replay und Kennzahlen:** Replay-Güte je Regel und Vorschläge (`replay/<tag>.json`), 7 Tage aus `kennzahlen/tage.csv`, Hinweise/Fehler, die letzten 15 Zeilen von `letzter-lauf.log`.
 
 Geparste Parameterdateien hält der Knoten im Kontext (`lern_cache`, nach Dateizeit und -größe). Für die Lernkurve ist keine neue Container-Datei nötig.
+
+## 28. evcc-Abgleich (25.10.2026, Branch `evcc-abgleich`)
+
+Nutzer-Go 25.10.2026: „1 bauen“ und „das würde ich täglich prüfen lassen“. **Nur lesen, nur Anzeige und Protokoll.** Es wird nichts an evcc gesendet, und keine Entscheidung ändert sich.
+
+**Einheiten (geprüft an echten Zahlen, evcc 0.318.1):** Jeder Schritt hat Energie in Wh. Der erste Schritt ist angebrochen (z. B. 136 s), alle weiteren haben 900 s.
+- `gt` ist die Summe der `demandDetails` (Haus + BWWP + Leisha).
+- `res.batteries[0].charging_power/discharging_power` sind trotz des Namens ebenfalls Wh je Schritt: Entladen = `gt` ohne PV, × 4 = `battery.suggestion.discharge` in W.
+- `state_of_charge` ist in Wh und gilt am Ende des Schritts. Das Minimum stimmt mit `battery.forecast.lowest` überein.
+- `p_N`/`p_E` sind in EUR/Wh, im Netzpreis mit HT/NT (31,78/21,8 ct).
+- Die Leisha-Prognose liegt bei 60 Wh je Viertelstunde, also 240 W. Real laufen 360–400 W.
+
+| Knoten | Typ | Rolle |
+|---|---|---|
+| `opt_i_evcc` → `opt_evcc_req` → `opt_http_evcc` (+ `opt_catch_evcc`) → `opt_evcc` → `opt_f_evcc` | inject 900 s, function, http request (GET), function, file | Liest `GET <evccUrl>/api/state?jq={evopt, soc: .battery.soc, tariffGrid, version}` (≈ 12 KB statt 84 KB). Schreibt den kompakten Plan nach `OPT_evcc_plan` = {plan, abruf {ts, ok, fehler}} und eine Zeile je Abruf nach `evcc-plan-YYYY-MM.jsonl` (≈ 3,6 KB, Zeiten in s, Werte in Wh, Preise in EUR/kWh, gleiche Werte als eine Zahl; bei Fehlern `{t, fehler, letzter}`). |
+| `opt_i_evcc_q` → `opt_evcc_q` | inject 600 s, function | Tägliche Prüfung ab 00:10, einmal am Tag. Prüft den Vortag und fehlende Tage der letzten 7 je Viertelstunde, Ergebnis in `evcc-quality.json` (60 Tage, Viertelstunden der letzten 14) und `OPT_evcc_q`. |
+| `opt_energy` | function | Zeile „Daten evcc-Plan“ auf „Energie & Preise“. Ist der letzte gültige Plan älter als 60 min, steht er auf „veraltet“. Schreibt `OPT_plan_in.evcc` und die Zeilen der Prognosegüte. |
+| `opt_plan` | function | Kennzahlenzeile `evcc-Plan: Akku-Minimum 07:15 bei 6,2 kWh · Netzbezug geplant – · Einspeisung –` unter den Kacheln. Ohne Plan steht dort „evcc: kein Plan“. Der Fahrplan rechnet ohne sie. |
+| `opt_engine` (Hülle, nicht der Kern) | function | Hinweis „evcc unterschätzt die Wärmepumpe um x % (7 Tage …)“ in `OPT_engine.hinweise` (id `evcc`), mit Ereignis in quiet-events. Dazu die Kachel „evcc-Akkuplan“ unter „Räume und Wächter“. Keine Regel, keine Punkte. |
+
+Die reinen Funktionen stehen in `tools/evcc_core.js`, die Tests in `tools/evcc_core_test.js` (echte Antwort in `tools/fixtures/evcc_state_2510.json`) sowie in `optimizer_sim.js` und `engine_sim.js`. Die Vorschau mit echten Daten baut `tools/evcc_vorschau.js`.
+
+**Prüfung je Viertelstunde des Tages** (23/24/25 h). Die Messung kommt aus `zaehler_wp_w` in `quiet-YYYY-MM.csv`: Mittel der Minutenwerte × 0,25 h, ab 10 Minuten je Viertelstunde. Die doppelte 02-Stunde bei der Zeitumstellung wird über die Reihenfolge der Zeilen erkannt. Verglichen werden:
+- **evcc 6 h:** der Schnappschuss, dessen `updated` am nächsten an Schritt − 6 h liegt (± 45 min).
+- **evcc Tag:** der jüngste Plan vor Mitternacht, höchstens 6 h alt. evcc rechnet nur 23 h voraus, also werden ≈ 92 von 96 Viertelstunden abgedeckt.
+- **Modell Tag:** der Plan-Schnappschuss (`plan-snapshots`, Spalte `strom` = Bedarf ÷ COP, kWh je Slot) mit der jüngsten Zeit vor Mitternacht.
+- **Modell 6 h:** wird nur in die Datei geschrieben.
+
+Abweichung = Summe Prognose ÷ Summe Messung − 1, nur über Viertelstunden mit beiden Werten. Ein Tag zählt ab 75 % der Viertelstunden. Das 7-Tage-Mittel ist energiegewichtet.
+
+Bewertung: ok unter 15 %, Hinweis bis 30 % (Bernstein), Warnung darüber (Rot). Der Hinweis der Maschine erscheint ab 20 % im 7-Tage-Mittel aus mindestens 3 Tagen. Er nutzt die 6-h-Werte, ersatzweise die Tagesprognose. Alle Schwellen sind ANNAHMEN des Auftrags und lassen sich in `config.json` unter `evcc` überschreiben. Die evcc-Adresse steht in `energy.evccUrl`.
+
+**Grenzen:**
+- Das Modell rechnet nur Heizstrom: Bedarf ÷ COP mit +80 W im Lauf, ohne Standby von 15–34 W und ohne Abtau-Abzug. Der Zähler misst alles.
+- Die evcc-Zeilen füllen sich erst ab dem ersten vollen Tag nach dem Einspielen.

@@ -2422,5 +2422,76 @@ console.log('\n--- Zeitleiste: Zustandsleiste und Sonnenstand');
   NOW = nowKeep;
 })();
 
+// evcc-Abgleich (25.10.2026): Optimierer-Plan von evcc nur lesen (opt_evcc_req/opt_http_evcc/opt_evcc), Datenlage und Eingang des Waermefahrplans (opt_energy, opt_plan),
+// taegliche Pruefung evcc/Modell gegen den Zaehler (opt_evcc_q) und die Zeilen der Prognoseguete. Echte evcc-Antwort: tools/fixtures/evcc_state_2510.json
+(() => {
+  const nowKeep = NOW, M = 60000, HH = 3600000, NBx = id => ALLNODES.find(n => n.id === id), EVC = require('./evcc_core.js');
+  const RAW = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'evcc_state_2510.json'), 'utf8'));
+  const tabN = ALLNODES.filter(n => n.z === 'opt_tab');
+  check('evcc (Flow): Inject 900 s -> opt_evcc_req -> http request (GET, URL aus der Nachricht) -> opt_evcc (+ catch) -> Datei-Knoten; Pruefung opt_evcc_q alle 600 s; alle http-request-Knoten des Tabs nur GET',
+        NBx('opt_i_evcc').repeat === '900' && JSON.stringify(NBx('opt_i_evcc').wires) === '[["opt_evcc_req"]]' && JSON.stringify(NBx('opt_evcc_req').wires) === '[["opt_http_evcc"]]' && NBx('opt_http_evcc').method === 'GET' && NBx('opt_http_evcc').url === '' &&
+        JSON.stringify(NBx('opt_http_evcc').wires) === '[["opt_evcc"]]' && JSON.stringify(NBx('opt_catch_evcc').scope) === '["opt_http_evcc"]' && JSON.stringify(NBx('opt_catch_evcc').wires) === '[["opt_evcc"]]' && JSON.stringify(NBx('opt_evcc').wires) === '[["opt_f_evcc"]]' &&
+        NBx('opt_f_evcc').type === 'file' && NBx('opt_i_evcc_q').repeat === '600' && JSON.stringify(NBx('opt_i_evcc_q').wires) === '[["opt_evcc_q"]]' && tabN.filter(n => n.type === 'http request').every(n => n.method === 'GET'), '');
+  NOW = Date.parse('2026-10-25T19:02:37+01:00');
+  const rq = run('opt_evcc_req', {}), jq = rq ? decodeURIComponent(rq.url.split('jq=')[1] || '') : '';
+  const cfgKeep = gstore.OPT_cfg.energy.evccUrl; gstore.OPT_cfg.energy.evccUrl = 'http://10.10.10.128:7070/x?y'; const rqBad = run('opt_evcc_req', {}), abBad = (gstore.OPT_evcc_plan || {}).abruf; gstore.OPT_cfg.energy.evccUrl = cfgKeep;
+  check('evcc-Anfrage: GET http://10.10.10.128:7070/api/state?jq=… nur evopt, Akku-Ladestand, Netzpreis, Version; ungueltige Adresse in der Konfiguration -> kein Abruf, Fehler im Abruf-Status', rq && rq.url.indexOf('http://10.10.10.128:7070/api/state?jq=') === 0 &&
+        jq === '{evopt: .evopt, soc: .battery.soc, tariffGrid: .tariffGrid, version: .version}' && rqBad === null && abBad && abBad.fehler === 'evcc-Adresse ungültig', rq && rq.url);
+  delete gstore.OPT_evcc_plan;
+  const o1 = run('opt_evcc', {statusCode: 200, payload: JSON.stringify(RAW)}), EP1 = gstore.OPT_evcc_plan, L1 = o1 ? JSON.parse(o1.payload) : {};
+  check('evcc-Antwort: OPT_evcc_plan (kompakt: Zeitstempel, Leisha, Haus, BWWP, PV, Preis, Akku laden/entladen, Ladestand, Netzbezug/Einspeisung), eine Zeile je Abruf in evcc-plan-2026-10.jsonl (< 4 KB)',
+        EP1 && EP1.abruf.ok && EP1.plan.n === 93 && EP1.plan.leisha[1] === 60 && ['haus', 'bwwp', 'pv', 'preis', 'laden', 'entladen', 'soc', 'bezug', 'einspeisung'].every(k => Array.isArray(EP1.plan[k])) &&
+        o1.filename === '/data/optimizer/evcc-plan-2026-10.jsonl' && o1.payload.endsWith('\n') && o1.payload.length < 4000 && L1.t === Math.round(NOW / 1000) && L1.zeit0 === Math.round(Date.parse('2026-10-25T18:57:44+01:00') / 1000), o1 && o1.payload.length);
+  NOW += 20 * M; const o2 = run('opt_evcc', {error: {message: 'connect ECONNREFUSED 10.10.10.128:7070'}}), EP2 = gstore.OPT_evcc_plan, L2 = JSON.parse(o2.payload);
+  const o2b = run('opt_evcc', {statusCode: 'ECONNREFUSED', payload: 'Error: connect ECONNREFUSED'});                // derselbe Fehler am Ausgang des http-request-Knotens: keine zweite Zeile
+  NOW += 15000; const o3 = run('opt_evcc', {statusCode: 502, payload: 'Bad Gateway'}); NOW += 15000; const o4 = run('opt_evcc', {statusCode: 200, payload: '{"version":"0.318.1"}'}); NOW -= 30000;
+  check('evcc nicht erreichbar / HTTP 502 / ohne evopt: letzter Plan bleibt, Abruf-Status mit Grund, Protokollzeile mit Fehler und Zeit des letzten Plans', EP2.plan.n === 93 && EP2.plan.ts === NOW - 20 * M && L2.fehler === 'nicht erreichbar (connect ECONNREFUSED 10.10.10.128:7070)' &&
+        L2.letzter === Math.round((NOW - 20 * M) / 1000) && o2b === null && JSON.parse(o3.payload).fehler === 'HTTP 502' && /evopt fehlt/.test(JSON.parse(o4.payload).fehler) && gstore.OPT_evcc_plan.abruf.ok === false, JSON.stringify(L2));
+  let e = run('opt_energy', {}), r = e[0].payload.rows.find(x => x[0] === 'Daten evcc-Plan');
+  check('Energie & Preise: Zeile "Daten evcc-Plan" (ok · Alter 20 min · letzter Abruf: Grund · reicht … voraus); OPT_plan_in.evcc mit Akku-Minimum 07:00 / 6,54 kWh, Fenstern, PV-Prognose evcc (W)',
+        r && /^ok · Alter 20 min · letzter Abruf: evcc liefert keinen Optimierer-Plan \(evopt fehlt\) · reicht 2[0-9] h voraus$/.test(r[1]) && r[2] === 'ok' && gstore.OPT_plan_in.evcc.da && gstore.OPT_plan_in.evcc.socMin.kwh === 6.54 &&
+        EVC.hhmm(gstore.OPT_plan_in.evcc.socMin.t) === '07:00' && Array.isArray(gstore.OPT_plan_in.evcc.bezug) && gstore.OPT_plan_in.evcc.pvSrc === 'evcc' && gstore.OPT_plan_in.evcc.pv.length > 80, r && r[1]);
+  let pl = run('opt_plan', {});
+  check('Waermefahrplan: Kennzahlenzeile "evcc-Plan: Akku-Minimum 07:00 bei 6,5 kWh · Netzbezug geplant – · Einspeisung –" (nur Anzeige, Tooltip mit Stand)', pl && pl[0] && pl[0].payload.evcc && pl[0].payload.evcc.k === 'evcc-Plan' &&
+        pl[0].payload.evcc.v === 'Akku-Minimum 07:00 bei 6,5 kWh · Netzbezug geplant – · Einspeisung –' && /Stand 18:57 \(Optimal\)/.test(pl[0].payload.evcc.t), pl && pl[0] && JSON.stringify(pl[0].payload.evcc));
+  NOW += 50 * M; e = run('opt_energy', {}); r = e[0].payload.rows.find(x => x[0] === 'Daten evcc-Plan'); pl = run('opt_plan', {});
+  check('evcc 70 min ohne gueltigen Plan: Datenlage "veraltet" (Bernstein), Kennzahlenzeile "… · veraltet (70 min)"', r && r[1].indexOf('veraltet · Alter 70 min') === 0 && r[2] === 'warn' && /· veraltet \(70 min\)$/.test(pl[0].payload.evcc.v) && pl[0].payload.evcc.c === 'warn', r && r[1]);
+  const piKeep = gstore.OPT_plan_in; delete gstore.OPT_evcc_plan; e = run('opt_energy', {}); r = e[0].payload.rows.find(x => x[0] === 'Daten evcc-Plan'); pl = run('opt_plan', {});
+  check('ohne evcc-Abruf: "noch nicht abgerufen", Kennzahlenzeile "evcc: kein Plan"', r && r[1] === 'noch nicht abgerufen' && r[2] === 'warn' && pl[0].payload.evcc.k === 'evcc' && pl[0].payload.evcc.v === 'kein Plan', r && r[1]);
+  const tpl = NBx('opt_t_plan').format, fqT = NBx('opt_t_fq').format;
+  check('Vorlagen: Plan-Karte zeigt die Kennzahlenzeile unter den Kacheln (k/v mit Tooltip), Prognoseguete hat einen Block "WP-Strom Vortag" mit 7 Spalten und farbiger Bewertung (ok/warn/bad)',
+        tpl.indexOf('<div class="sum" ng-if="msg.payload.evcc"><span class="k">{{msg.payload.evcc.k}}</span><span class="v" ng-class="msg.payload.evcc.c" title="{{msg.payload.evcc.t}}">{{msg.payload.evcc.v}}</span></div>') > tpl.indexOf('class="kpi"') && tpl.indexOf('msg.payload.evcc') < tpl.indexOf('optch_plan') &&
+        fqT.includes('ng-repeat="z in msg.payload.ev track by $index"') && fqT.includes('WP-Strom {{msg.payload.evTag}}') && fqT.includes('<td colspan="2" ng-class="z[6]">{{z[5]}}</td>') && (fqT.match(/<\/table>/g) || []).length === 1, '');
+  // taegliche Pruefung: Zaehler 400 W (22.–24.10.), evcc-Plaene alle 15 min mit 60 Wh (240 W) je Viertelstunde, Plan-Schnappschuesse stuendlich 0,1 kWh je Slot
+  const Q = 900000, D22 = new Date(2026, 9, 22).getTime(), D25 = new Date(2026, 9, 25).getTime(), p2 = x => (x < 10 ? '0' : '') + x;
+  const st = t => { const d = new Date(t); return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()) + ' ' + p2(d.getHours()) + ':' + p2(d.getMinutes()) + ':05'; };
+  let csv = 'zeit,quiet_aktuell,zaehler_wp_w\n'; for (let t = D22; t < D25 + 30 * M; t += M) { csv += st(t) + ',2,400\n'; }
+  let evl = ''; for (let t = D22 - 8 * HH + 7 * M; t < D25 + 5 * M; t += Q) { const z0 = t, d = [Math.round((Math.ceil(z0 / Q) * Q - z0) / 1000)]; for (let i = 0; i < 92; i++) { d.push(900); }
+    evl += JSON.stringify({t: Math.round(t / 1000) + 20, upd: Math.round(t / 1000), zeit0: Math.round(z0 / 1000), dt: d, leisha: 60}) + '\n'; }
+  evl += JSON.stringify({t: Math.round(D25 / 1000) - 60, fehler: 'HTTP 502', letzter: 1}) + '\n';
+  let sn = ''; for (let t0 = D22 - 8 * HH; t0 < D25; t0 += HH) { const sl = []; for (let i = 0; i < 104; i++) { sl.push([(t0 + i * Q) / 1000, 7, 0.1]); } sn += JSON.stringify({t0: t0, s0: t0, t: t0 + 20000, cols: ['t', 'at', 'strom'], meta: {}, slots: sl}) + '\n'; }
+  files['/data/optimizer/quiet-2026-10.csv'] = {data: csv}; files['/data/optimizer/evcc-plan-2026-10.jsonl'] = {data: evl}; files['/data/optimizer/plan-snapshots-2026-10.jsonl'] = {data: sn};
+  delete files['/data/optimizer/evcc-quality.json']; delete fstore.evq; delete gstore.OPT_evcc_q;
+  NOW = D25 + 5 * M; run('opt_evcc_q', {});
+  check('Pruefung vor 00:10: nichts ausgewertet, keine Datei; OPT_evcc_q mit leeren Zeilen', !files['/data/optimizer/evcc-quality.json'] && gstore.OPT_evcc_q && gstore.OPT_evcc_q.lauf === null && gstore.OPT_evcc_q.zeilen.length === 3 && gstore.OPT_evcc_q.zeilen.every(z => z[1] === '–'), JSON.stringify(gstore.OPT_evcc_q && gstore.OPT_evcc_q.lauf));
+  NOW = D25 + 12 * M; const q1 = run('opt_evcc_q', {}), QF = JSON.parse(files['/data/optimizer/evcc-quality.json'].data), t24 = QF.tage.find(x => x.tag === '2026-10-24');
+  check('Pruefung 00:12: Vortag und fehlende Tage der letzten 7 (18.–24.10.) ausgewertet und in evcc-quality.json; 24.10.: Messung 9,6 kWh, evcc 6 h 5,76 kWh (96 Viertelstunden), evcc Tag 5,52 kWh (Plan 23:52 reicht 23 h: 92 Viertelstunden), Modell 9,6 kWh',
+        q1 && q1.payload === '7 Tag(e) geprüft' && QF.lauf === '2026-10-25' && QF.tage.length === 7 && t24 && t24.mess.kwh === 9.6 && t24.reihen.e6.n === 96 && t24.reihen.e6.p === 5.76 && t24.reihen.eT.p === 5.52 && t24.reihen.eT.n === 92 && t24.reihen.mT.p === 9.6 && t24.viertel.mess.length === 96,
+        JSON.stringify(t24 && t24.reihen));
+  const EQ = gstore.OPT_evcc_q;
+  check('OPT_evcc_q: Zeilen "evcc Leisha (6 h)" −40 % (3 Tage) Warnung (Rot), "Modell (Tag)" 0 % ok; Hinweis "evcc unterschätzt die Wärmepumpe um 40 % (7 Tage, 6 h Vorlauf, 3 Tage mit Daten)"',
+        EQ.tag === '2026-10-24' && EQ.zeilen[0].slice(0, 7).join('|') === 'evcc Leisha (6 h)|5,8|9,6|−40 %|−40 % (3 T.)|Warnung|bad' && EQ.zeilen[2].slice(3, 7).join('|') === '0 %|0 % (3 T.)|ok|ok' &&
+        /^evcc unterschätzt die Wärmepumpe um 40 % \(7 Tage, 6 h Vorlauf, 3 Tage mit Daten\)/.test(EQ.hinweis || ''), JSON.stringify(EQ.zeilen.map(z => z.slice(0, 7))) + ' ' + EQ.hinweis);
+  const n1 = files['/data/optimizer/evcc-quality.json'].data; NOW += 10 * M; delete fstore.evq; const q2 = run('opt_evcc_q', {});
+  check('Pruefung laeuft einmal am Tag (auch nach einem Neustart: Lauf steht in der Datei)', q2 === null && files['/data/optimizer/evcc-quality.json'].data === n1, '');
+  gstore.OPT_plan_in = piKeep; e = run('opt_energy', {});
+  const fqp = e[4].payload;
+  check('Prognoseguete (Daten & Güte): drei neue Zeilen fuer den Vortag (Prognose/Messung kWh, Abw., 7 Tage, Bewertung), Tabellenkopf "WP-Strom Vortag 24.10.", Tooltip mit Messung und Hinweis',
+        fqp.ev.length === 3 && fqp.evTag === 'Vortag 24.10.' && fqp.ev[0][5] === 'Warnung' && fqp.ev[0][6] === 'bad' && /gemessen 9,60 kWh in 96 Viertelstunden/.test(fqp.evTitel) && /unterschätzt die Wärmepumpe um 40 %/.test(fqp.evTitel) && fqp.tab.length === 5, fqp.evTitel);
+  ['/data/optimizer/quiet-2026-10.csv', '/data/optimizer/evcc-plan-2026-10.jsonl', '/data/optimizer/plan-snapshots-2026-10.jsonl', '/data/optimizer/evcc-quality.json'].forEach(f => { delete files[f]; });
+  delete fstore.evq; delete gstore.OPT_evcc_q; delete gstore.OPT_evcc_plan;
+  NOW = nowKeep;
+})();
+
 console.log('\nERGEBNIS:', assertFails === 0 ? 'alle Pruefungen bestanden' : assertFails + ' Pruefung(en) fehlgeschlagen');
 process.exit(assertFails ? 1 : 0);
