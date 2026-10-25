@@ -191,14 +191,15 @@ var EVC = (function () {
         var zeilen = [], mittel = {};
         REIHEN.forEach(function (R) {
             var k = R[0], last7 = T.filter(function (d) { return d.d0 > tag0(now) - (C.mittelTage + 0.5) * 24 * H; }).filter(function (d) { return gueltig(d.reihen[k], d.nQ, C); });
-            var sp = 0, sm = 0; last7.forEach(function (d) { sp += d.reihen[k].p; sm += d.reihen[k].m; });
-            var a7 = last7.length ? abw(sp, sm) : null, r = L ? L.reihen[k] : null, ok1 = L && gueltig(r, L.nQ, C), a1 = ok1 ? abw(r.p, r.m) : null;
-            var bw = bewertung(have(a7) ? a7 : a1, C);
-            mittel[k] = {abw: a7, tage: last7.length};
+            var sp = 0, sm = 0, sa = 0; last7.forEach(function (d) { sp += d.reihen[k].p; sm += d.reihen[k].m; sa += Math.abs(abw(d.reihen[k].p, d.reihen[k].m)); });
+            var a7 = last7.length ? abw(sp, sm) : null, f7 = last7.length ? sa / last7.length : null, r = L ? L.reihen[k] : null, ok1 = L && gueltig(r, L.nQ, C), a1 = ok1 ? abw(r.p, r.m) : null;
+            var bw = bewertung(have(f7) ? f7 : a1, C);                                                   // Bewertung nach dem mittleren Tagesfehler (Betrag), damit sich Tage mit + und − nicht aufheben
+            mittel[k] = {abw: a7, fehler: f7, tage: last7.length};
             zeilen.push([R[1], ok1 ? de(r.p, 1) : '–', ok1 ? de(r.m, 1) : '–', ok1 ? sg(a1, 0) + ' %' : (r && r.n ? 'zu wenig (' + Math.round(100 * r.n / L.nQ) + ' %)' : '–'),
                          have(a7) ? sg(a7, 0) + ' % (' + last7.length + ' T.)' : '–', bw[0], bw[1],
                          (L ? 'Vortag ' + L.tag.slice(8, 10) + '.' + L.tag.slice(5, 7) + '.: ' : '') + (r ? r.n + ' von ' + L.nQ + ' Viertelstunden mit Prognose und Messung' + (have(r.mae) ? ', mittlerer Fehler ' + de(r.mae, 0) + ' W' : '') : 'keine Daten') +
-                         ' · Bewertung nach dem 7-Tage-Mittel (sonst Vortag): ok unter ' + C.okPct + ' %, Hinweis bis ' + C.warnPct + ' %, Warnung darüber']);
+                         (have(f7) ? ' · 7 Tage: Summe ' + sg(a7, 0) + ' %, mittlerer Tagesfehler ' + de(f7, 0) + ' %' : '') +
+                         ' · Bewertung nach dem mittleren Tagesfehler der 7 Tage (sonst Vortag): ok unter ' + C.okPct + ' %, Hinweis bis ' + C.warnPct + ' %, Warnung darüber']);
         });
         var h = null, src = mittel.e6.tage >= C.hinweisMinTage ? ['e6', '6 h Vorlauf'] : (mittel.eT.tage >= C.hinweisMinTage ? ['eT', 'Tagesprognose'] : null);
         if (src && have(mittel[src[0]].abw) && Math.abs(mittel[src[0]].abw) > C.hinweisPct) {

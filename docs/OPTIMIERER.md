@@ -1743,7 +1743,7 @@ Die reinen Funktionen stehen in `tools/evcc_core.js`, die Tests in `tools/evcc_c
 
 Abweichung = Summe Prognose ÷ Summe Messung − 1, nur über Viertelstunden mit beiden Werten. Ein Tag zählt ab 75 % der Viertelstunden. Das 7-Tage-Mittel ist energiegewichtet.
 
-Bewertung: ok unter 15 %, Hinweis bis 30 % (Bernstein), Warnung darüber (Rot). Der Hinweis der Maschine erscheint ab 20 % im 7-Tage-Mittel aus mindestens 3 Tagen. Er nutzt die 6-h-Werte, ersatzweise die Tagesprognose. Alle Schwellen sind ANNAHMEN des Auftrags und lassen sich in `config.json` unter `evcc` überschreiben. Die evcc-Adresse steht in `energy.evccUrl`.
+Bewertung nach dem mittleren Tagesfehler (Betrag) der 7 Tage, sonst nach dem Vortag, damit sich Tage mit + und − nicht aufheben: ok unter 15 %, Hinweis bis 30 % (Bernstein), Warnung darüber (Rot). Der Hinweis der Maschine erscheint ab 20 % im 7-Tage-Mittel aus mindestens 3 Tagen. Er nutzt die 6-h-Werte, ersatzweise die Tagesprognose. Alle Schwellen sind ANNAHMEN des Auftrags und lassen sich in `config.json` unter `evcc` überschreiben. Die evcc-Adresse steht in `energy.evccUrl`.
 
 **Grenzen:**
 - Das Modell rechnet nur Heizstrom: Bedarf ÷ COP mit +80 W im Lauf, ohne Standby von 15–34 W und ohne Abtau-Abzug. Der Zähler misst alles.
