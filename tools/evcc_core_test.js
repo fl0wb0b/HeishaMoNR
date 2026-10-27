@@ -85,6 +85,14 @@ check('Tag: Modell Tag = letzter Plan-Schnappschuss vor Mitternacht (23:00), Str
 check('Tag: Viertelstunden in der Datei (Messung, e6, eT, mT, m6)', T.viertel.mess.length === 100 && T.viertel.eT.filter(x => x === null).length === 8 && T.viertel.e6[T.viertel.e6.indexOf(50)] === 50, '');
 check('Tag: ohne Schnappschuesse vor Mitternacht (aelter als 6 h zaehlt nicht) -> evcc Tag leer', EVC.tag({d0: D0, d1: D1, mess: M, evcc: EV.filter(p => p.upd < D0 - 7 * H || p.upd >= D0), modell: [], cfg: {}}).reihen.eT.n === 0, '');
 
+// ---- Hausakku bei angestecktem Fahrzeug (27.10.2026: Auto an Index 0 ohne s_capacity, Hausakku an Index 1)
+const RAWF = JSON.parse(JSON.stringify(RAW));
+const auto = {c_max: 11000, c_min: 4140, charge_from_grid: true, d_max: 0, p_a: 0.000194238, s_initial: 25200, s_max: 48000, s_min: 0};
+RAWF.evopt.req.batteries = [auto, RAWF.evopt.req.batteries[0]];
+RAWF.evopt.res.batteries = [{charging_power: RAWF.evopt.res.batteries[0].charging_power.map(() => 0), discharging_power: RAWF.evopt.res.batteries[0].discharging_power.map(() => 0), state_of_charge: RAWF.evopt.res.batteries[0].state_of_charge.map(() => 25200)}, RAWF.evopt.res.batteries[0]];
+const PF = EVC.kompakt(RAWF, NOW, {}).plan;
+check('Hausakku: bei angestecktem Fahrzeug wird der Eintrag mit s_capacity genommen (Index 1), nicht das Auto', PF && PF.akkuIndex === 1 && PF.fahrzeuge === 1 && PF.kapWh === 45000 && PF.sStartWh === 18000 && PF.soc[0] === 17938 && PF.entladen[1] === 358, PF ? JSON.stringify({i: PF.akkuIndex, f: PF.fahrzeuge, kap: PF.kapWh, s0: PF.soc[0], e1: PF.entladen[1]}) : 'kein Plan');
+
 // ---- Uebersicht, Bewertung, Hinweis
 const mk = (k, pr, n) => { const d0 = new Date(2026, 9, 25 - k).getTime(); return {tag: EVC.ymd(d0), d0: d0, nQ: 96, mess: {kwh: 8, n: 96}, reihen: {e6: {p: 8 * (1 + pr), m: 8, n: n === undefined ? 96 : n}, eT: {p: 8 * (1 + pr / 2), m: 8, n: 96}, mT: {p: 8.4, m: 8, n: 96}}}; };
 const N26 = new Date(2026, 9, 26, 0, 15).getTime();

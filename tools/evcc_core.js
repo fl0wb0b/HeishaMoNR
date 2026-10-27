@@ -49,7 +49,12 @@ var EVC = (function () {
         var dd = Array.isArray(dt.demandDetails) ? dt.demandDetails : [], hz = dd.filter(function (x) { return x && x.type === 'heating'; });
         var le = dd.filter(function (x) { return x && x.type === 'heating' && x.title === C.heizung; })[0] || (hz.length === 1 ? hz[0] : null);
         var hs = dd.filter(function (x) { return x && x.type === 'home'; })[0], ww = hz.filter(function (x) { return x !== le; });
-        var b = (Array.isArray(rs.batteries) && rs.batteries[0]) || {}, bq = (Array.isArray(rq.batteries) && rq.batteries[0]) || {};
+        // Hausakku finden: evcc stellt angesteckte Fahrzeuge als weitere "batteries" voran (ohne s_capacity, d_max 0; gesehen 27.10.2026:
+        // Auto 25,2/48 kWh an Index 0, Hausakku an Index 1). Der Hausakku ist der Eintrag mit s_capacity; sonst der letzte, sonst Index 0.
+        var rqb = Array.isArray(rq.batteries) ? rq.batteries : [], rsb = Array.isArray(rs.batteries) ? rs.batteries : [], bi = -1;
+        for (var k = 0; k < rqb.length; k++) { if (rqb[k] && have(num(rqb[k].s_capacity))) { bi = k; break; } }
+        if (bi < 0) { bi = rqb.length ? rqb.length - 1 : 0; }
+        var b = rsb[bi] || {}, bq = rqb[bi] || {};
         var rW = function (a) { return a ? a.map(function (x) { return Math.round(x); }) : null; };
         var sumW = function (L) { if (!L.length) { return null; } var o = []; for (var i = 0; i < n; i++) { var s = 0; for (var j = 0; j < L.length; j++) { var v = L[j] && arr(L[j].values, n); if (!v) { return null; } s += v[i]; } o.push(Math.round(s)); } return o; };
         var upd = Date.parse(e.updated);
@@ -58,7 +63,7 @@ var EVC = (function () {
                        preis: pN ? pN.map(function (x) { return rd(x * 1000, 10000); }) : null, einsp: pE ? pE.map(function (x) { return rd(x * 1000, 10000); }) : null,
                        laden: rW(arr(b.charging_power, n)), entladen: rW(arr(b.discharging_power, n)), soc: rW(arr(b.state_of_charge, n)),
                        bezug: rW(arr(rs.grid_import, n)), einspeisung: rW(arr(rs.grid_export, n)),
-                       kapWh: num(bq.s_capacity), sMinWh: num(bq.s_min), sStartWh: num(bq.s_initial), status: rs.status ? String(rs.status) : null, ziel: rd(num(rs.objective_value), 1000),
+                       kapWh: num(bq.s_capacity), sMinWh: num(bq.s_min), sStartWh: num(bq.s_initial), akkuIndex: bi, fahrzeuge: Math.max(0, rqb.length - 1), status: rs.status ? String(rs.status) : null, ziel: rd(num(rs.objective_value), 1000),
                        socPct: num(r.soc !== undefined ? r.soc : (r.battery && r.battery.soc)), tarif: num(r.tariffGrid), version: r.version ? String(r.version) : null}};
     }
     // Protokollzeile (eine je Abruf): Zeiten in Sekunden, Zeitstempel als Beginn + dt (Sekunden je Schritt), Felder wie im Plan (Wh je Schritt, Preise EUR/kWh);
