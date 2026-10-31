@@ -1365,7 +1365,9 @@ var cfg = global.get('OPT_cfg');
 if (!cfg) { return null; }
 var PC = cfg.plan || {};
 __COPKW__
-var PLAN_VER = 14;                                                                                // bei jeder Aenderung der Plan-Felder erhoehen: aeltere Plaene im Speicher werden dann sofort neu gerechnet
+var PLAN_VER = 15;                                                                                // bei jeder Aenderung der Plan-Felder erhoehen: aeltere Plaene im Speicher werden dann sofort neu gerechnet
+// PLAN_VER 15 (31.10.2026, Temperatur-Restkorrektur): je Slot Aussentemperatur = Prognose (OWM + Tagesgang + Anker, geschrumpft) + gelernter Rest (Fuehler − Prognose) je Vorlauf und Stunde
+//   (7 Tage, Backtest 20.–30.10.: Bias 6 h +0,69 → +0,07 K, Fehler 1,71 → 1,35 K); Schnappschuss-Spalte at_roh = ohne Rest, plan-eval prog_aussen_roh
 // PLAN_VER 14 (16.10.2026, Winterpaket): je Slot zusaetzlich COP und Strom mit Abtau-Abzug (copAb = COP · (1 − abtauAbzug · Abtaurisiko)); COP, Strom und Schnappschuss unveraendert
 // PLAN_VER 13 (15.10.2026, Entscheidung 2): Gebaeudemodell UA * (T_innen - T_aussen) - Gewinne statt UA * max(0, 15 - T_aussen); Prognose mit Tagesgang Fuehler - OWM
 // PLAN_VER 12 (14.10.2026): COP-Kennfeld und Strom je Slot mit der COP-Korrektur (COP_KW je Laufminute); Schnappschuss-meta cop_korr_w kennzeichnet die Version
@@ -1625,6 +1627,37 @@ function tgProfil(rows, d0, tage) {
     if (S.some(function (x) { return x[1] < 2 * tage; })) { return null; }
     return S.map(function (x) { return Math.round(x[0] / x[1] * 100) / 100; });
 }
+// Temperatur-Restkorrektur (PLAN_VER 15): Rest = Fuehler − Prognose (ohne Rest) je Vorlauf-Stuetzstelle (1/3/6/12/24 h) und Stunde, abklingend gemittelt
+// (M: 20.–30.10. Prognose nachts +1,6 K zu warm, tags −1,0 K bei 6 h; Tagesmittel +0,7…+1,1 K je nach Vorlauf). Je Stunde und Vorlauf 4 Werte am Tag -> lambda = exp(−1/28) ≈ 7 Tage.
+var AT_REST_HZ = [1, 3, 6, 12, 24], AT_REST_LAMBDA = Math.exp(-1 / 28), AT_REST_N0 = 8, AT_REST_MAX = 3;   // N0: Daempfung bei wenigen Werten (A); ±3 K Deckel (A)
+function atRestLern(L, hour, r) {
+    if (!ok(r) || Math.abs(r) > 10 || AT_REST_HZ.indexOf(L) < 0) { return; }
+    var R = pl.learn.atRest = pl.learn.atRest || {}, k = String(L), b = R[k] = R[k] || {}, h = String(hour), e = b[h] || [0, 0];
+    b[h] = [e[0] * AT_REST_LAMBDA + r, e[1] * AT_REST_LAMBDA + 1];
+}
+function atRestWert(L, hour) {                                                                       // Korrektur in K fuer Vorlauf L (h) und Stunde; zwischen den Stuetzstellen linear, unter 1 h von 0 aufwachsend
+    var R = pl.learn.atRest; if (!R || pn('atRestAktiv', 1) === 0) { return 0; }                     // cfg.plan.atRestAktiv = 0 schaltet die Korrektur ab (Werte lernen weiter)
+    function c(h) { var b = R[String(h)], e = b && b[String(hour)]; return (e && e[1] > 0) ? clamp(e[0] / e[1] * e[1] / (e[1] + AT_REST_N0), -AT_REST_MAX, AT_REST_MAX) : 0; }
+    if (L <= 0) { return 0; }
+    if (L <= AT_REST_HZ[0]) { return c(AT_REST_HZ[0]) * L / AT_REST_HZ[0]; }
+    for (var i = 1; i < AT_REST_HZ.length; i++) { if (L <= AT_REST_HZ[i]) { return lerp(L, AT_REST_HZ[i - 1], c(AT_REST_HZ[i - 1]), AT_REST_HZ[i], c(AT_REST_HZ[i])); } }
+    return c(AT_REST_HZ[AT_REST_HZ.length - 1]);
+}
+function atRestStart() {                                                                              // einmalig ohne gelernten Stand: die letzten 7 Tage aus plan-eval nachlernen (ist_aussen − prog_aussen_roh bzw. prog_aussen)
+    if (pl.learn.atRest) { return; }
+    pl.learn.atRest = {}; var von = now - 7 * 86400000, rows = [], mm = new Date(now); mm.setDate(1);
+    [new Date(mm.getFullYear(), mm.getMonth() - 1, 1), mm].forEach(function (d) {
+        try { rows = rows.concat(parseCsv(fs.readFileSync('/data/optimizer/plan-eval-' + d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '.csv', 'utf8'))); } catch (e) { /* keine Datei */ }
+    });
+    var n = 0;
+    rows.forEach(function (r) {
+        var m = /^(\d{4})-(\d\d)-(\d\d) (\d\d):(\d\d)/.exec(r.slot_start || ''); if (!m) { return; }
+        var t = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]).getTime(), L = num(r.vorlauf_soll_h), ist = num(r.ist_aussen), roh = num(r.prog_aussen_roh); if (roh === null) { roh = num(r.prog_aussen); }
+        if (t < von || t > now || L === null || ist === null || roh === null) { return; }
+        atRestLern(L, +m[4], ist - roh); n++;
+    });
+    pl.learn.atRestBoot = {ts: now, n: n}; pl.lastSave = 0;
+}
 function biasFeat(hour, wind, pvW, cl) {                                                             // Merkmale der Fuehlerkorrektur OWM -> Fuehler: [1, Wind, Sonne, Nacht, Nacht*klar]
     var night = (hour >= 20 || hour < 6) ? 1 : 0, clear = isN(cl) ? 1 - Math.min(100, Math.max(0, cl)) / 100 : 0.5, sun = isN(pvW) ? Math.min(1.5, Math.max(0, pvW / 15000)) : 0;
     return [1, isN(wind) ? wind : 0, sun, night, night * clear];
@@ -1720,7 +1753,7 @@ var ACT_Z = ['ist_strom_zaehler_kwh', 'ist_zaehler_min'];                       
 var ACT_COLS = ['ist_aussen', 'ist_pv_w', 'ist_preis', 'ist_cop', 'ist_waerme_kwh', 'ist_strom_kwh', 'ist_abtauungen', 'ist_ww_min', 'ist_verdichter_min', 'ist_hz', 'ist_quiet_stufe', 'ist_soc', 'ist_waerme_gesamt_kwh', 'ist_strom_heizen_kwh', 'ist_abtau_min', 'ist_abtau_strom_kwh', 'ist_abtau_waerme_kwh', 'ist_spreizung', 'ist_vl_abweichung', 'ist_pumpe_u_min', 'ist_heizregelung']
     .concat(roomIds.map(function (id) { return 'ist_raum_' + id; }))
     .concat(['ist_wind_ms', 'ist_bewoelkung_pct', 'ist_aussen_owm', 'ist_aussen_regel', 'ist_t_custom']);       // Fahrplan v2: Wind, Bewoelkung, OWM-Temperatur, Regelwert T_outside, eigener Fuehler (nur anhaengen)
-var EV_COLS2 = ['prog_wind_ms', 'prog_bewoelkung_pct', 'prog_aussen_korr', 'prog_sonne_kwh', 'prog_bedarf_basis_kwh', 'prog_bedarf_kand_kwh', 'prog_strom_kwh', 'prog_cop_korr_w'].concat(ACT_K);   // prog_cop_korr_w: Korrektur, mit der der Schnappschuss rechnete (leer = vor PLAN_VER 12, roh)                       // Vergleichsspalten hinter den Ist-Werten (nur anhaengen; prog_strom_kwh seit PLAN_VER 11)
+var EV_COLS2 = ['prog_wind_ms', 'prog_bewoelkung_pct', 'prog_aussen_korr', 'prog_sonne_kwh', 'prog_bedarf_basis_kwh', 'prog_bedarf_kand_kwh', 'prog_strom_kwh', 'prog_cop_korr_w'].concat(ACT_K).concat(['prog_aussen_roh']);   // prog_aussen_roh seit PLAN_VER 15: Aussentemperatur ohne Restkorrektur   // prog_cop_korr_w: Korrektur, mit der der Schnappschuss rechnete (leer = vor PLAN_VER 12, roh)                       // Vergleichsspalten hinter den Ist-Werten (nur anhaengen; prog_strom_kwh seit PLAN_VER 11)
 function csvOut(file, head, lines) {                                                           // Kopfzeile einmal je Datei (und bei geaenderten Spalten neu)
     var needHead = true, key = file + '|' + head;
     pl.heads = pl.heads || {};
@@ -1776,6 +1809,7 @@ if (pl.acc && pl.acc.s !== s0) {                                                
             var k = Math.round((a.s - sn.s0) / Q15); if (k < 0 || k >= sn.slots.length) { return; }
             var sl = sn.slots[k], K = sn.cols;
             var g = function (name) { return sl[K.indexOf(name)]; };
+            if (L > 0 && isN(actual.at)) { var aRoh = isN(g('at_roh')) ? g('at_roh') : g('at'); if (isN(aRoh)) { atRestLern(L, new Date(a.s).getHours(), actual.at - aRoh); } }   // Restkorrektur lernt gegen die Prognose OHNE Rest (sonst schwingt sie)
             if ((L === 6 || L === 24) && isN(g('bedarf_basis')) && isN(g('bedarf_kand')) && isN(actual.th) && sn.meta && sn.meta.modell_ver === MODELL_VER) {   // nur Schnappschuesse des jetzigen Gebaeudemodells   // Tagesbilanz des Waermebedarf-Modells: Plan-Modell gegen Kandidat (Sonne/Wind) bei 6 und 24 h Vorlauf
                 var abD = dayStart(a.s); pl.ab = pl.ab || {d0: abD};
                 if (pl.ab.d0 !== abD) { pl.learn.ab = (pl.learn.ab || []).concat([pl.ab]).slice(-21); abTag(pl.ab); pl.lastSave = 0; pl.ab = {d0: abD}; }
@@ -1784,7 +1818,7 @@ if (pl.acc && pl.acc.s !== s0) {                                                
             }
             var recT = {1: 'VORZIEHEN', 0: 'NORMAL', '-1': 'VERSCHIEBEN'}[g('rec')] || '', qT = g('quiet') === undefined || g('quiet') === null ? '' : String(g('quiet')).replace(/,/g, ';');
             evLines.push([stamp(a.s), L, c((a.s - sn.t) / H, 2), stamp(sn.t), c(g('at'), 2), c(g('rh'), 0), c(g('cop'), 2), c(g('price'), 4), c(g('pv'), 0), c(g('bedarf'), 3), c(g('plan'), 3), c(g('kosten'), 2), c(g('defrost'), 2), c(g('taupunkt'), 1), c(g('kosten_basis'), 2), c(g('strafe_defrost'), 2), c(g('strafe_unsicher'), 2), c(g('reserve_hinten'), 3), c(g('reserve_vorn'), 3),
-                          c(g('conf_at'), 2), c(g('conf_pv'), 2), c(g('att'), 0), recT, c(g('offset'), 1), qT].concat(aVals).concat([c(g('wind'), 1), c(g('wolken'), 0), c(g('at_korr'), 2), c(g('sonne_kwh'), 3), c(g('bedarf_basis'), 3), c(g('bedarf_kand'), 3), c(g('strom'), 3), sn.meta && ok(sn.meta.cop_korr_w) ? String(sn.meta.cop_korr_w) : ''].concat(kVals)).join(','));
+                          c(g('conf_at'), 2), c(g('conf_pv'), 2), c(g('att'), 0), recT, c(g('offset'), 1), qT].concat(aVals).concat([c(g('wind'), 1), c(g('wolken'), 0), c(g('at_korr'), 2), c(g('sonne_kwh'), 3), c(g('bedarf_basis'), 3), c(g('bedarf_kand'), 3), c(g('strom'), 3), sn.meta && ok(sn.meta.cop_korr_w) ? String(sn.meta.cop_korr_w) : ''].concat(kVals).concat([c(g('at_roh'), 2)])).join(','));
         });
         if (evLines.length) { out[2] = csvOut('/data/optimizer/plan-eval-' + mo + '.csv', 'slot_start,' + EV_COLS.join(',') + ',' + ACT_COLS.join(',') + ',' + EV_COLS2.join(','), evLines); }
     }
@@ -2064,6 +2098,7 @@ function buildPlan() {
     raw.forEach(function (x) {
         var cA = confAt(cAt, x.L), cP = confAt(cPv, x.L);
         var atE = cA * x.atF + (1 - cA) * atRef, rhE = cA * (x.rhF === null ? rhRef : x.rhF) + (1 - cA) * rhRef;   // je schlechter die Prognose, desto weniger weicht sie vom Tagesmittel ab
+        var atRoh = atE; atE = atRoh + atRestWert(x.L, new Date(x.t).getHours());                                 // PLAN_VER 15: gelernter Rest Fuehler − Prognose je Vorlauf und Stunde
         var vl = curve(atE), copM = CT.at(atE), cg = carnot(atE, vl), copSrc = copM !== null ? 'Messung' : 'Carnot';
         var cop = copM !== null ? copM : (cg === null ? 3 : eta * cg);
         cop = clamp(cop, 1.5, copMax);
@@ -2080,7 +2115,7 @@ function buildPlan() {
             atK = atO + dHat + rest * Math.exp(-x.L / tauA);
         }
         var riskS = defr(atE, rhE), copAb = cop * (1 - ABZ_PLAN * riskS);                              // Winterpaket: Abtau-Abzug (Waerme beim Abtauen/Wiederaufheizen ist keine Nutzwaerme)
-        slots.push({t: x.t, L: x.L, at: atE, atRaw: x.atF, rh: rhE, dew: dewp(atE, rhE), vl: vl, cop: cop, copSrc: copSrc, el: bedarf / cop, copAb: copAb, elAb: bedarf / copAb, pv: x.pv, wind: x.windF, cl: x.clF, atK: atK, sun: sunE, solK: solK, winK: winK, bas: bas, kand: kand, solU: solU, winU: winU, bedarf: bedarf, risk: defr(atE, rhE), cA: cA, cP: cP});
+        slots.push({t: x.t, L: x.L, at: atE, atRaw: x.atF, rh: rhE, dew: dewp(atE, rhE), vl: vl, cop: cop, copSrc: copSrc, el: bedarf / cop, copAb: copAb, elAb: bedarf / copAb, pv: x.pv, wind: x.windF, cl: x.clF, atK: atK, sun: sunE, solK: solK, winK: winK, bas: bas, kand: kand, solU: solU, winU: winU, bedarf: bedarf, risk: defr(atE, rhE), cA: cA, cP: cP, atRoh: atRoh});
     });
     // Kennzahlen (24 h)
     var sumB = 0, sumEl = 0, sumElAb = 0, sumSol = 0, sumWin = 0, pvKwh = 0, pvN = 0, atMin = null, atMax = null, copMin = null, copMaxV = null, maxD = null;
@@ -2106,6 +2141,7 @@ function buildPlan() {
     return P;
 }
 
+atRestStart();                                                                                   // PLAN_VER 15: Restkorrektur beim ersten Lauf aus plan-eval der letzten 7 Tage vorbelegen
 if (!pl.plan || pl.planSlot !== s0 || pl.plan.status !== 'ok' || pl.plan.ver !== PLAN_VER) {
     pl.plan = buildPlan(); pl.planSlot = s0;
 }
@@ -2113,14 +2149,14 @@ var P = pl.plan;
 
 // ---------- Schnappschuss: je Stunde eine Vorschau mit allen Eingaengen (bleibt unveraendert, wird nur fuer den spaeteren Vergleich gelesen)
 // Review-Paket 13.10.2026 (PLAN_VER 11): ohne Preis, Plan, Kosten, Empfehlung, Offset, Quiet und Reserve; neu Strom je Slot
-var SNAP_COLS = ['t', 'at', 'rh', 'cop', 'pv', 'bedarf', 'strom', 'defrost', 'conf_at', 'conf_pv', 'taupunkt', 'wind', 'wolken', 'at_korr', 'sonne_kwh', 'solar_kand_kwh', 'wind_kand_kwh', 'bedarf_basis', 'bedarf_kand'];
+var SNAP_COLS = ['t', 'at', 'rh', 'cop', 'pv', 'bedarf', 'strom', 'defrost', 'conf_at', 'conf_pv', 'taupunkt', 'wind', 'wolken', 'at_korr', 'sonne_kwh', 'solar_kand_kwh', 'wind_kand_kwh', 'bedarf_basis', 'bedarf_kand', 'at_roh'];   // at_roh seit PLAN_VER 15 (nur angehaengt)
 var hourNow = Math.floor(now / H) * H;
 if (P.status === 'ok' && P.slots && pl.snapHour !== hourNow) {
     var snap = {t0: hourNow, s0: P.s0, t: now, status: 'ok', cols: SNAP_COLS, slots: P.slots.map(function (x) {
         return [x.t, Math.round(x.at * 100) / 100, Math.round(x.rh), Math.round(x.cop * 100) / 100, x.pv === null ? null : Math.round(x.pv), Math.round(x.bedarf * 1000) / 1000, Math.round(x.el * 1000) / 1000, Math.round(x.risk * 100) / 100,
                 Math.round(x.cA * 100) / 100, Math.round(x.cP * 100) / 100, Math.round(x.dew * 10) / 10,
                 ok(x.wind) ? Math.round(x.wind * 10) / 10 : null, ok(x.cl) ? Math.round(x.cl) : null, ok(x.atK) ? Math.round(x.atK * 100) / 100 : null,
-                Math.round(x.sun * 1000) / 1000, Math.round(x.solK * 1000) / 1000, Math.round(x.winK * 1000) / 1000, Math.round(x.bas * 1000) / 1000, Math.round(x.kand * 1000) / 1000];
+                Math.round(x.sun * 1000) / 1000, Math.round(x.solK * 1000) / 1000, Math.round(x.winK * 1000) / 1000, Math.round(x.bas * 1000) / 1000, Math.round(x.kand * 1000) / 1000, ok(x.atRoh) ? Math.round(x.atRoh * 100) / 100 : null];
     }), meta: {plan_ver: PLAN_VER, modell_ver: MODELL_VER, plan_slots: 96, el_model_24h_kwh: Math.round(P.elModel * 100) / 100, vrm_hp_24h_kwh: P.vrmHp, model: P.model, cop_quelle: P.sum.copSrc, cop_korr_w: COP_KW, res: {at_min: 180, rh_min: 180, pv_min: P.sum.pvRes},
             conf_at: P.conf.at.map(function (a) { return [a.h, Math.round(a.c * 100) / 100, a.n]; }), conf_pv: P.conf.pv.map(function (a) { return [a.h, Math.round(a.c * 100) / 100, a.n]; })}};
     pl.snaps = (pl.snaps || []).filter(function (x) { return x.t0 > now - pn('snapKeepH', 27) * H; });
@@ -2172,6 +2208,11 @@ if (P.status === 'ok') {
             txt = 'jetzt ' + sgn(dN, 1, 'K') + ' · Wind ' + sgn(cc[1], 2, 'K je m/s') + ' · Sonne ' + sgn(cc[2], 1, 'K') + ' · Nacht ' + sgn(cc[3], 1, 'K') + ' · Nacht klar ' + sgn(cc[4], 1, 'K') + ' · ' + bi.days + ' Tage · Fehler OWM ' + f(bi.maeZero, 2, 'K') + ' / Korrektur ' + f(bi.maeMod, 2, 'K') + ' · ' + (bi.aktiv ? 'aktiv' : 'Kandidat');
         }
         rows.splice(rows.findIndex(function (r) { return r[0] === 'Gebäudemodell'; }) + 1, 0, ['Fühlerkorrektur', txt, cls]);
+        var hN = new Date(now).getHours(), R = pl.learn.atRest || {}, nR = 0, mn = null, mx = null;                   // Temperatur-Restkorrektur (PLAN_VER 15): aktiv im Plan
+        Object.keys(R).forEach(function (L) { Object.keys(R[L]).forEach(function (h) { var e = R[L][h]; nR += e[1]; }); });
+        for (var hh = 0; hh < 24; hh++) { var v6 = atRestWert(6, hh); if (mn === null || v6 < mn) { mn = v6; } if (mx === null || v6 > mx) { mx = v6; } }
+        rows.splice(rows.findIndex(function (r) { return r[0] === 'Fühlerkorrektur'; }) + 1, 0, ['Temperatur-Rest', pn('atRestAktiv', 1) === 0 ? 'aus (cfg.plan.atRestAktiv = 0), lernt weiter' : nR < 1 ? 'noch keine Werte (lernt ab jetzt)' :
+            'jetzt +6 h ' + sgn(atRestWert(6, (hN + 6) % 24), 1, 'K') + ' · +24 h ' + sgn(atRestWert(24, hN), 1, 'K') + ' · 6 h über den Tag ' + sgn(mn, 1) + '…' + sgn(mx, 1, 'K') + ' · ' + Math.round(nR / (4 * 5)) + ' Tage · aktiv (Fühler − Prognose je Vorlauf und Stunde, ~7 Tage)', '']);
     })();
     (function () {                                                                                 // A/B des Waermebedarf-Modells (Tageswaerme gegen Ist): bisheriges Modell gegen Kandidat mit Sonne/Wind
         var days = (pl.learn.ab || []), txt;
