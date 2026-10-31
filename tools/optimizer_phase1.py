@@ -749,7 +749,7 @@ var fqTab = FQ_H.map(function (h) { var a = fq.at[h], g = fq.pv[h]; return ['+' 
 var EQ = global.get('OPT_evcc_q') || null;                                     // evcc-Abgleich: taegliche Pruefung (opt_evcc_q) als weitere Zeilen der Tabelle (Waermepumpe, Vortag)
 out[4] = {payload: {rows: fqRows, tab: fqTab, pvQuelle: pvSrc === '–' ? 'Prognose' : pvSrc.split(' ')[0], sammel: fqHist.length + ' Stunden Ist-Werte · ' + fqSn.length + ' Prognose-Schnappschüsse',
                     ev: EQ && Array.isArray(EQ.zeilen) ? EQ.zeilen : [], evTag: EQ && EQ.tag ? 'Vortag ' + EQ.tag.slice(8, 10) + '.' + EQ.tag.slice(5, 7) + '.' : 'Vortag',
-                    evTitel: 'Strom Wärmepumpe je Viertelstunde gegen den Zähler (zaehler_wp_w): evcc-Prognose „' + (EQ && EQ.titel ? EQ.titel : 'Panasonic Leisha') + '“ ~6 h vorher bzw. letzter Plan vor Mitternacht, Modell = Wärmefahrplan (Strom = Bedarf ÷ COP) letzter Schnappschuss vor Mitternacht' +
+                    evTitel: 'Strom Wärmepumpe je Viertelstunde gegen den Zähler (zaehler_wp_w): evcc-Prognose „' + (EQ && EQ.titel ? EQ.titel : 'Panasonic Leisha') + '“ ~6 h vorher bzw. letzter Plan vor Mitternacht, Modell = Wärmefahrplan (Strom = Bedarf ÷ COP, plus Standby im Stillstand und Abtau-Abzug × Abtaurisiko) letzter Schnappschuss vor Mitternacht' +
                             (EQ && EQ.mess && EQ.mess.kwh !== null ? ' · gemessen ' + f(EQ.mess.kwh, 2, 'kWh') + ' in ' + EQ.mess.n + ' Viertelstunden' : '') + (EQ && EQ.hinweis ? ' · ' + EQ.hinweis : '')}};
 global.set('OPT_plan_in', {ts: now, price: pSlots ? pSlots.filter(function (s) { return s.e > now - 2 * H && s.s < now + 40 * H; }).map(function (s) { return [s.s, s.e, s.p]; }) : null, priceSrc: pSrc,
     pv: pvSeries.length ? pvSeries.filter(function (s) { return s.t + s.dt > now - 2 * H && s.t < now + 40 * H; }).map(function (s) { return [s.t, Math.round(s.w), s.dt]; }) : null, pvSrc: pvSrc,
@@ -3387,7 +3387,7 @@ return {filename: '/data/optimizer/evcc-plan-' + month + '.jsonl', payload: JSON
 """
 EVCC_Q_JS = r"""
 // evcc-Abgleich, taegliche Pruefung (Nutzerwunsch 25.10.2026): ab 00:10 einmal am Tag fuer den Vortag (und fehlende Tage der letzten 7) je Viertelstunde:
-// evcc-Leisha-Prognose ~6 h vorher und aus dem letzten Plan vor Mitternacht, Modell (Waermefahrplan: Strom = Bedarf / COP, letzter Schnappschuss vor Mitternacht)
+// evcc-Leisha-Prognose ~6 h vorher und aus dem letzten Plan vor Mitternacht, Modell (Waermefahrplan: Strom = Bedarf / COP + Standby im Stillstand + Abtau-Abzug, letzter Schnappschuss vor Mitternacht)
 // gegen den Stromzaehler der Waermepumpe (zaehler_wp_w je Minute aus quiet-YYYY-MM.csv). Ergebnis: evcc-quality.json, OPT_evcc_q. Nur lesen, keine Regelwirkung.
 var now = Date.now(), MIN = 60000, H = 3600000, cfg = global.get('OPT_cfg') || {};
 function p2(x) { return (x < 10 ? '0' : '') + x; }
@@ -3399,6 +3399,7 @@ if (!Q || typeof Q !== 'object' || !Array.isArray(Q.tage)) { Q = {ver: EVC.VER, 
 var h0 = EVC.tag0(now), heute = EVC.ymd(h0), C = EVC.cfgOf(cfg), neu = 0;
 if (now - h0 >= 10 * MIN && Q.lauf !== heute) {
     var offen = [];
+    Q.tage = Q.tage.filter(function (x) { return x.ver === EVC.VER || !(x.d0 >= h0 - 7.5 * 24 * H); });   // VER 2 (31.10.2026): Tage der letzten Woche aus einer aelteren Fassung neu rechnen (fairer Modellwert)
     for (var k = 7; k >= 1; k--) { var dd = new Date(h0); dd.setDate(dd.getDate() - k); var d0 = dd.getTime(); if (!Q.tage.some(function (x) { return x.tag === EVC.ymd(d0); })) { offen.push(d0); } }
     if (offen.length) {
         var von = offen[0] - (C.vorlaufH + 2) * H, bis = h0, ms = {}, cache = {};

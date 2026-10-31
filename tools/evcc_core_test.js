@@ -108,5 +108,16 @@ check('Bewertung: < 15 % ok, 15–30 % Hinweis (Bernstein), > 30 % Warnung (Rot)
 check('Uebersicht: Tag mit zu wenig Viertelstunden (< 75 %) zaehlt nicht, Zeile zeigt "zu wenig (50 %)"', (() => { const u = EVC.uebersicht({tage: [mk(0, -0.4, 48)]}, N26, {}); return u.zeilen[0][3] === 'zu wenig (50 %)' && u.zeilen[0][4] === '–'; })(), '');
 check('Uebersicht: aeltere Tage als 7 zaehlen nicht im Mittel; leere Datei -> Striche', (() => { const u = EVC.uebersicht({tage: [mk(9, 0.9), mk(0, -0.1)]}, N26, {}); const v = EVC.uebersicht({tage: []}, N26, {}); return u.zeilen[0][4] === '−10 % (1 T.)' && v.zeilen.every(z => z[1] === '–' && z[5] === '–'); })(), '');
 
+// ---- Fairer Modellwert (VER 2, 31.10.2026): Standby in Viertelstunden ohne geplanten Strom, Abtau-Abzug wie elAb im Fahrplan
+{
+    const t0 = Date.parse('2026-10-29T03:00:00+01:00'), sn = {t0: t0, t: t0 + 20000, cols: ['t', 'at', 'strom', 'defrost'], slots: [[t0 / 1000, 0, 0.1, 1], [(t0 + Q) / 1000, 0, 0.1, 0], [(t0 + 2 * Q) / 1000, 12, 0, 0], [(t0 + 3 * Q) / 1000, 0, 0.1, 0.5]]};
+    const alt = {t0: t0, t: t0 + 20000, cols: ['t', 'at', 'strom'], slots: [[t0 / 1000, 0, 0.1], [(t0 + Q) / 1000, 12, 0]]};
+    const w = (s, i, cfg) => EVC.modellWert(s, t0 + i * Q, EVC.cfgOf(cfg || {}));
+    check('Modellwert: Abtaurisiko 1 -> Strom / (1 − 0,10) = 111,1 Wh; Risiko 0 -> 100 Wh; Risiko 0,5 -> 105,3 Wh', Math.abs(w(sn, 0) - 111.11) < 0.05 && w(sn, 1) === 100 && Math.abs(w(sn, 3) - 105.26) < 0.05, [w(sn, 0), w(sn, 1), w(sn, 3)].join('/'));
+    check('Modellwert: Plan ohne Strom -> Standby 16 W x 0,25 h = 4 Wh (Zaehler misst den Stillstand)', w(sn, 2) === 4, w(sn, 2));
+    check('Modellwert: Schnappschuss ohne Spalte defrost (aeltere Fassung) -> wie bisher, Standby bleibt', w(alt, 0) === 100 && w(alt, 1) === 4, w(alt, 0) + '/' + w(alt, 1));
+    check('Modellwert: cfg.evcc.standbyW 0 und abtauAbzug 0 -> alter Wert (100 / 0 Wh); abtauAbzug 0,3 -> 142,9 Wh', w(sn, 0, {evcc: {abtauAbzug: 0}}) === 100 && w(sn, 2, {evcc: {standbyW: 0}}) === 0 && Math.abs(w(sn, 0, {evcc: {abtauAbzug: 0.3}}) - 142.86) < 0.05, '');
+    check('Modellwert: ohne Argument C (alte Aufrufer) gelten die Standardwerte', Math.abs(EVC.modellWert(sn, t0) - 111.11) < 0.05 && EVC.VER === 2, EVC.modellWert(sn, t0));
+}
 console.log('\nERGEBNIS evcc_core_test: ' + ok + ' OK, ' + fail + ' FAIL');
 process.exit(fail ? 1 : 0);

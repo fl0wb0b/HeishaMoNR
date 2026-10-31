@@ -13,12 +13,15 @@
 //   EVC.tag(o)                        Vergleich eines Tages je Viertelstunde: evcc 6 h, evcc Tag, Modell Tag (+ Modell 6 h nur in der Datei) gegen die Messung
 //   EVC.uebersicht(Q, now)            Tabellenzeilen (Vortag, 7-Tage-Mittel, Bewertung) und Hinweis „evcc unterschaetzt die Waermepumpe um x %“
 var EVC = (function () {
-    var VER = 1, MIN = 60000, Q = 900000, H = 3600000;
+    var VER = 2, MIN = 60000, Q = 900000, H = 3600000;
     // ANNAHMEN (Schwellen des Auftrags 25.10.2026): veraltet nach 60 min; Netzbezug/Einspeisung zaehlt ab 25 Wh je Viertelstunde (100 W); 6-h-Vorlauf: Schnappschuss
     // 6 h ± 45 min vor dem Schritt; Tagesprognose: juengster Schnappschuss vor Mitternacht (hoechstens 6 h alt); ein Tag zaehlt mit mindestens 75 % der Viertelstunden;
     // Messung einer Viertelstunde ab 10 Minutenwerten; Bewertung ok < 15 %, Hinweis 15–30 %, Warnung > 30 %; Engine-Hinweis ab 20 % im 7-Tage-Mittel aus mindestens 3 Tagen
+    // VER 2 (31.10.2026, fairer Modellwert): der Zaehler misst auch Stillstand und Abtauen, der Fahrplan-Strom (Bedarf / COP) nicht. Deshalb je Viertelstunde:
+    // + standbyW x 0,25 h, wenn der Fahrplan 0 Strom vorsieht (gemessen 17.–31.10.: 16 W Median im Stillstand mit laufender Pumpe, 3 W ohne; im Lauf steckt der
+    // Stillstandsanteil schon in pelKorrW), und / (1 − abtauAbzug x Abtaurisiko) wie elAb im Fahrplan (29.10.: 4 Abtauungen = 0,44 kWh direkt + Wiederaufheizen ≈ 11 % des Tages).
     var STD = {veraltetMin: 60, schwelleWh: 25, vorlaufH: 6, vorlaufTolMin: 45, tagMaxAlterH: 6, minAnteil: 0.75, messMinN: 10, okPct: 15, warnPct: 30, hinweisPct: 20,
-               hinweisMinTage: 3, mittelTage: 7, tageBehalten: 60, viertelTage: 14, heizung: 'Panasonic Leisha'};
+               hinweisMinTage: 3, mittelTage: 7, tageBehalten: 60, viertelTage: 14, standbyW: 16, abtauAbzug: 0.10, heizung: 'Panasonic Leisha'};
     var REIHEN = [['e6', 'evcc Leisha (6 h)'], ['eT', 'evcc Leisha (Tag)'], ['mT', 'Modell (Tag)']];
     function num(v) { if (v === null || v === undefined || v === '' || typeof v === 'boolean') { return null; } v = Number(v); return isFinite(v) ? v : null; }
     function have(v) { return v !== null && v !== undefined && isFinite(v); }
@@ -157,9 +160,12 @@ var EVC = (function () {
     // ---------- Prognosen je Viertelstunde
     function idx(p) { if (!p._ix) { var m = {}; for (var i = 0; i < p.n; i++) { if (Math.abs(p.dt[i] - 900) <= 1) { m[p.zeit[i]] = i; } } Object.defineProperty(p, '_ix', {value: m, enumerable: false}); } return p._ix; }
     function evccWert(p, t) { if (!p || !p.leisha) { return null; } var i = idx(p)[t]; return i === undefined ? null : p.leisha[i]; }
-    function modellWert(s, t) { if (!s || !Array.isArray(s.slots)) { return null; } var ic = (s.cols || []).indexOf('strom'); if (ic < 0) { return null; }
-        if (!s._ix) { var m = {}; s.slots.forEach(function (r) { m[r[0] * 1000] = r[ic]; }); Object.defineProperty(s, '_ix', {value: m, enumerable: false}); }
-        var v = s._ix[t]; return have(num(v)) ? v * 1000 : null; }                                                   // Plan-Schnappschuss: Strom kWh je Slot -> Wh
+    function modellWert(s, t, C0) { if (!s || !Array.isArray(s.slots)) { return null; } var ic = (s.cols || []).indexOf('strom'), ir = (s.cols || []).indexOf('defrost'); if (ic < 0) { return null; }
+        if (!s._ix) { var m = {}; s.slots.forEach(function (r) { m[r[0] * 1000] = [r[ic], ir < 0 ? null : r[ir]]; }); Object.defineProperty(s, '_ix', {value: m, enumerable: false}); }
+        var C = C0 || STD, a = s._ix[t], v = a ? num(a[0]) : null;
+        if (!have(v)) { return null; }                                                                           // Plan-Schnappschuss: Strom kWh je Slot -> Wh
+        var risk = a && have(num(a[1])) ? Math.min(1, Math.max(0, num(a[1]))) : 0, abz = Math.min(0.5, Math.max(0, C.abtauAbzug));
+        return v * 1000 / (1 - abz * risk) + (v <= 0 ? Math.max(0, C.standbyW) * 0.25 : 0); }                   // + Abtauen (wie elAb im Fahrplan) + Standby, wenn der Plan 0 vorsieht
     function naechster(L, ziel, tol, zeitOf, wert, t) {                                              // Schnappschuss mit Zeit am naechsten zu ziel (± tol), der den Schritt t enthaelt
         var best = null, bd = null;
         L.forEach(function (s) { var d = Math.abs(zeitOf(s) - ziel); if (d <= tol && (bd === null || d < bd) && wert(s, t) !== null) { best = s; bd = d; } });
@@ -173,8 +179,9 @@ var EVC = (function () {
         var eT = juengsterVor(ev, o.d0, C.tagMaxAlterH * H, eZ), mT = juengsterVor(md, o.d0, C.tagMaxAlterH * H, mZ), tol = C.vorlaufTolMin * MIN;
         var V = {e6: [], eT: [], mT: [], m6: []};
         M.zeit.forEach(function (t) {
-            var ziel = t - C.vorlaufH * H, s6 = naechster(ev, ziel, tol, eZ, evccWert, t), m6 = naechster(md, ziel, tol, mZ, modellWert, t);
-            V.e6.push(s6 ? evccWert(s6, t) : null); V.eT.push(eT ? evccWert(eT, t) : null); V.mT.push(mT ? modellWert(mT, t) : null); V.m6.push(m6 ? modellWert(m6, t) : null);
+            var mW = function (s, tt) { return modellWert(s, tt, C); };
+            var ziel = t - C.vorlaufH * H, s6 = naechster(ev, ziel, tol, eZ, evccWert, t), m6 = naechster(md, ziel, tol, mZ, mW, t);
+            V.e6.push(s6 ? evccWert(s6, t) : null); V.eT.push(eT ? evccWert(eT, t) : null); V.mT.push(mT ? mW(mT, t) : null); V.m6.push(m6 ? mW(m6, t) : null);
         });
         var res = {tag: ymd(o.d0), d0: o.d0, nQ: M.nQ, mess: null, reihen: {}, quellen: {eT: eT ? eZ(eT) : null, mT: mT ? mZ(mT) : null}, ver: VER};
         var mk = 0, mn = 0; M.wh.forEach(function (w) { if (w !== null) { mk += w; mn++; } });
@@ -203,6 +210,7 @@ var EVC = (function () {
             zeilen.push([R[1], ok1 ? de(r.p, 1) : '–', ok1 ? de(r.m, 1) : '–', ok1 ? sg(a1, 0) + ' %' : (r && r.n ? 'zu wenig (' + Math.round(100 * r.n / L.nQ) + ' %)' : '–'),
                          have(a7) ? sg(a7, 0) + ' % (' + last7.length + ' T.)' : '–', bw[0], bw[1],
                          (L ? 'Vortag ' + L.tag.slice(8, 10) + '.' + L.tag.slice(5, 7) + '.: ' : '') + (r ? r.n + ' von ' + L.nQ + ' Viertelstunden mit Prognose und Messung' + (have(r.mae) ? ', mittlerer Fehler ' + de(r.mae, 0) + ' W' : '') : 'keine Daten') +
+                         (k === 'mT' ? ' · Wärmefahrplan: Strom = Bedarf ÷ COP, plus Standby ' + de(C.standbyW, 0) + ' W in Viertelstunden ohne geplanten Strom und Abtau-Abzug ' + de(100 * C.abtauAbzug, 0) + ' % × Abtaurisiko (seit 31.10.2026)' : '') +
                          (have(f7) ? ' · 7 Tage: Summe ' + sg(a7, 0) + ' %, mittlerer Tagesfehler ' + de(f7, 0) + ' %' : '') +
                          ' · Bewertung nach dem mittleren Tagesfehler der 7 Tage (sonst Vortag): ok unter ' + C.okPct + ' %, Hinweis bis ' + C.warnPct + ' %, Warnung darüber']);
         });
