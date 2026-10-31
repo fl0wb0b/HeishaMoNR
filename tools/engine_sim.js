@@ -17,6 +17,10 @@ function check(name, cond, info) { console.log((cond ? 'OK   ' : 'FAIL ') + name
 const MIN = 60000;
 const T0 = new Date(2026, 9, 12, 6, 0, 0).getTime();
 const cfg = E.defaults();
+// Raumeinfluss v7 (31.10.2026): +1 K erst ab bedTiefK (0,5 K) unter Minimum. Die Mechanik-Pruefungen der Regel (Arbitrierung, Frist, Startbefehl, Sonne, Szenarien) arbeiten mit
+// Bedarfsraeumen 0,25-0,4 K unter Minimum; sie laufen mit der Ausloesetiefe von v6 (bedTiefK = kaltK), damit sie die Mechanik weiter pruefen. Die v7-Tiefe selbst pruefen
+// die Faelle in Abschnitt (v7) mit E.defaults() (Standardwerte).
+cfg.rules.raum_offset.bedTiefK = cfg.rules.raum_offset.kaltK;
 const cfgV4 = E.mergeCfg({rules: {quiet_strecken: {hzHoch: 22}}});     // Effizienz-Deckel mit der Schwelle von v4 (22 Hz ohne Takt): die Mechanik der Regel bleibt so pruefbar; v5 (28 Hz) in Abschnitt (g)
 
 // ------------------------------------------------------------------ Hilfen: Eingabe bauen
@@ -224,7 +228,7 @@ console.log('--- (a) Mehrtages-Simulation (Anlagenmodell, Fake-Uhr)');
       check('... mit "Klick" (Quiet 3 fuer 4 h, dann zurueck auf die vorherige Stufe 0): Wirkungsfaelle unter der aktuellen Version (Verdichter <= 21 Hz binnen 10 min, -100 W), weniger Starts als ohne Klick (Anlagenmodell der Sim); hoechstens 3 Uebernahmen je Tag (Tageslimit R5)', VA.errors === 0 && wa.length >= 1 && wa.every(x => x.v === E.RULE.quiet_strecken.ver && x.punkte === 20) && VA.starts < V4.starts && ['14', '15', '16', '17', '18', '19', '20', '21'].every(dd => wa.filter(x => x.t.slice(8, 10) === dd).length <= 3), 'Starts ' + VA.starts + ' gegen ' + V4.starts + ', Wirkung ' + wa.map(x => x.punkte).join('/') + ', Vorschlaege ' + pa.length); }
     const D = plantSim(5, {at: 4, cool: 1.5});
     basisBericht('5 Tage kaelter', D); basisBericht('4 Tage mild', A); basisBericht('3 Tage Boost', B);
-    { const D4 = plantSim(5, {at: 4, cool: 1.5, cfg: E.mergeCfg({sv: 4})}), r5 = E.report(D.S), r4 = E.report(D4.S, 4), g = (r, id) => r.find(x => x.regel === id);
+    { const D4 = plantSim(5, {at: 4, cool: 1.5, cfg: E.mergeCfg({sv: 4, rules: {raum_offset: {bedTiefK: 0.2}}})}), r5 = E.report(D.S), r4 = E.report(D4.S, 4), g = (r, id) => r.find(x => x.regel === id);
       const hz = D.scores.filter(s => s.typ === 'ausloeser' && s.regel === 'quiet_freigabe').reduce((a, s) => a.concat(s.horizonte), []);
       check('v5 im 5-Tage-Kaelte-Szenario (Befund 12.10.: v4 Raumeinfluss 14 Treffer -122, Quiet-Freigabe 15 Treffer -71): Raumeinfluss (v3) Treffer neutral bis auf die vor dem Lernen der Basisrate, keine Minuspunkte; Quiet-Freigabe ohne Treffer-Abzug (Treffer-Horizonte bei b >= p 0 Punkte, vor dem Lernen der Basisrate Plus; Minus nur aus einzelnen Fehl-Horizonten mit vollem Abzug -13); v4 nachrechenbar',
             g(r5, 'raum_offset').treffer >= 10 && g(r5, 'raum_offset').trefferNeutral >= g(r5, 'raum_offset').treffer - 2 && g(r5, 'raum_offset').punkte >= 0 && g(r4, 'raum_offset').punkte < -100 &&
@@ -638,7 +642,7 @@ const allScores = R => [].concat.apply([], R.outs.map(o => o.scores));
     const RV = E.RULE.vorausschau;
     check('Regelwerk: Vorausschau v3 (Gebaeudemodell v3, 15.10.2026) ist Befehlsregel der Groesse "shift" (nur -1 K, Richtung soll_runter, eigene Basisrate "vorausschau|v3") mit Sperren Modell-Gate, Vorrang, Gegenrichtung; der Zweck nennt, warum +1 K gestrichen ist (Kurve wird alle 5 min nachgefuehrt, Raeume bei Kaelte ueber der Bandmitte, Hochlauf +48 %) und das Gebaeudemodell v3; Raumeinfluss v5 nimmt an der Arbitrierung teil',
           RV && RV.ver === 3 && RV.groesse === 'shift' && RV.art === 'befehl' && RV.richtung === 'soll_runter' && RV.basis === 'vorausschau|v3' && RV.kurz === 'Vorausschau −1 K' && /ohne den Zweig \+1 K/.test(RV.zweck) && /alle 5 min/.test(RV.zweck) && /Bandmitte/.test(RV.zweck) && /\+48 %/.test(RV.zweck) && /T_innen − T_außen\) − Gewinne/.test(RV.zweck) &&
-          ['modell', 'vorrang', 'gegenrichtung'].every(x => RV.sperren.includes(x)) && E.RULE.raum_offset.ver === 6 && ['vorrang', 'gegenrichtung'].every(x => E.RULE.raum_offset.sperren.includes(x)) && RV.befehl.name === 'SetZ1HeatRequestTemperature', RV.sperren.join(','));
+          ['modell', 'vorrang', 'gegenrichtung'].every(x => RV.sperren.includes(x)) && E.RULE.raum_offset.ver === 7 && ['vorrang', 'gegenrichtung'].every(x => E.RULE.raum_offset.sperren.includes(x)) && RV.befehl.name === 'SetZ1HeatRequestTemperature', RV.sperren.join(','));
     const iVs = E.RULES.findIndex(x => x.id === 'vorausschau');
     // Gate geschlossen: nie ein Vorschlag, nur Anzeige; Vergleichslagen fuer die Basisrate laufen trotzdem mit
     let R = runD(300, i => inp(T0 + i * MIN, {vs: vsx(VSK.down, {gate: 0, n: 1})}));
@@ -672,7 +676,7 @@ const allScores = R => [].concat.apply([], R.outs.map(o => o.scores));
           sp.length === 2 && sp[0].rule === 'vorausschau' && sp[0].i === 30 && R.outs[90].snap.vorausschau === null && stAt(R, 120, 'raum_offset').st === 'bereit' && /ohne Komfort-Notfall erst nach 240 min/.test(stAt(R, 200, 'raum_offset').grund) && stAt(R, 200, 'raum_offset').naechste.bis === T0 + 330 * MIN && sp[1].rule === 'raum_offset' && sp[1].i === 330 && sp[1].p.cmd.value === 1 && !twoShift(R),
           JSON.stringify(sp.map(x => [x.i, x.rule, x.p.cmd.value])) + ' | ' + stAt(R, 200, 'raum_offset').grund);
     // ... mit Komfort-Notfall (Schlafzimmer 0,4 K unter Minimum, Haltezeit hier 20 min): die Vorausschau zieht sofort zurueck, der Raumeinfluss darf nach der gemeinsamen Mindesthaltezeit
-    R = runD(300, i => k1(i, j => rooms({schlaf: j >= 100 ? 19.6 : 20.4})), undefined, E.mergeCfg({rules: {raum_offset: {stabilMin: 20}}}));
+    R = runD(300, i => k1(i, j => rooms({schlaf: j >= 100 ? 19.6 : 20.4})), undefined, E.mergeCfg({rules: {raum_offset: {stabilMin: 20, bedTiefK: 0.2}}}));
     sp = shiftProps(R);
     check('Konflikt mit Komfort-Notfall (Raum 0,4 K unter Minimum, Haltezeit 20 min): Vorausschau endet sofort (Minute 100), Raumeinfluss +1 K nach der gemeinsamen Mindesthaltezeit (Minute 160), nicht schon nach der Haltezeit (Minute 120)',
           sp.length === 2 && sp[0].rule === 'vorausschau' && R.outs[100].snap.vorausschau === null && sp[1].rule === 'raum_offset' && sp[1].i === 160 && stAt(R, 159, 'raum_offset').locks.includes('gegenrichtung') && !twoShift(R), JSON.stringify(sp.map(x => [x.i, x.rule, x.p.cmd.value])));
@@ -1887,7 +1891,7 @@ console.log('--- (y) Bewertung v6: Lueften im ganzen Horizont (geglaetteter Wert
     // +1 K im Lauf (Bedarf Schlafzimmer 19,6 < 20 − 0,2); Sonne ab 11 Uhr (Bewoelkung 10 %), der Raum kommt 12:00–12:30 ins Band
     const plus = (t0, sch) => i => inp(t0 + i * MIN, {soll: 31, sollKurve: 30.5, vl: 33, rt: 60 + i, wolken: 10, rooms: rooms({schlaf: Math.round(sch(i) * 100) / 100})});
     const tag = T0 + 4 * 60 * MIN, nacht = T0 + 16 * 60 * MIN, erh = i => lin(i, 120, 150, 19.6, 20.4);
-    const S6 = runSeq(400, plus(tag, erh)), S5 = runSeq(400, plus(tag, erh), null, E.mergeCfg({sv: 5})), N6 = runSeq(400, plus(nacht, erh)), s6 = fallR(S6), s5 = fallR(S5), n6 = fallR(N6);
+    const S6 = runSeq(400, plus(tag, erh)), S5 = runSeq(400, plus(tag, erh), null, E.mergeCfg({sv: 5, rules: {raum_offset: {bedTiefK: 0.2}}})), N6 = runSeq(400, plus(nacht, erh)), s6 = fallR(S6), s5 = fallR(S5), n6 = fallR(N6);
     check('v6: +1 K, der Bedarfsraum kommt bei Sonne von selbst ins Band (Sonnenzeichen der Regel >= 30 min vor der Rueckkehr) -> diese Horizonte neutral ("Fremdursache: Sonne"), kein Fehlalarm; v5: Fehlalarm; dieselbe Lage nachts (keine Sonne): Fehlalarm auch in v6',
           s6 && s6.ergebnis !== 'fehlalarm' && s6.horizonte.some(h => h.o === null && /Fremdursache: Sonne \d+ min/.test(h.why)) && !s6.horizonte.some(h => h.o === 0) && s5 && s5.ergebnis === 'fehlalarm' && n6 && n6.ergebnis === 'fehlalarm' && n6.punkte < 0,
           hz(s6) + ' || v5: ' + (s5 && s5.ergebnis) + ' || Nacht: ' + hz(n6));
@@ -1905,6 +1909,61 @@ console.log('--- (y) Bewertung v6: Lueften im ganzen Horizont (geglaetteter Wert
           wv5.length === 1 && wv5[0].punkte === wn[0].roh && !wv5[0].naturexperiment, JSON.stringify(wn.map(x => [x.punkte, x.roh])) + ' · ' + krN.kurz + ' · v5 ' + JSON.stringify(wv5.map(x => x.punkte)));
 }
 
+// ================================================================== (z) Regeln 31.10.2026: Heizregelung v4 (kein Comfort in ein zu warmes Haus), Raumeinfluss v7 (Bedarfstiefe, eigene Nachheizung)
+console.log('--- (z) Heizregelung v4 und Raumeinfluss v7 (Bewertungen 29./31.10.2026)');
+{
+    const dcfg = E.defaults(), c6 = E.mergeCfg({rules: {raum_offset: {bedTiefK: 0.2}}}), c3 = E.mergeCfg({rules: {heizregelung: {warmUeberK: 99}}});   // Standardwerte; v6-Tiefe bzw. ohne v4-Grenze zum Vergleich
+    check('z0 Regelwerk 31.10.2026: Heizregelung v4 (warmUeberK 0,5 K), Raumeinfluss v7 (bedTiefK 0,5 K, eigenNachMitte 1), Basisraten-Schluessel unveraendert (heizregelung|v3, raum_offset|v3, raum_offset|v5|minus: die Vergleichslagen bleiben), Herkunft mit Messung',
+          E.RULE.heizregelung.ver === 4 && E.RULE.raum_offset.ver === 7 && dcfg.rules.heizregelung.warmUeberK === 0.5 && dcfg.rules.raum_offset.bedTiefK === 0.5 && dcfg.rules.raum_offset.eigenNachMitte === 1 && dcfg.rules.raum_offset.kaltK === 0.2 &&
+          E.RULE.heizregelung.basis === 'heizregelung|v3' && E.RULE.raum_offset.basis === 'raum_offset|v3' && E.RULE.raum_offset.basisMinus === 'raum_offset|v5|minus' &&
+          ['warmUeberK'].every(k => /MESSUNG/.test(E.RULE.heizregelung.schwellen.find(x => x.key === k).herkunft)) && ['bedTiefK', 'eigenNachMitte'].every(k => /MESSUNG/.test(E.RULE.raum_offset.schwellen.find(x => x.key === k).herkunft)) &&
+          /v4 \(31\.10\.2026/.test(E.RULE.heizregelung.zweck) && /v7 \(31\.10\.2026/.test(E.RULE.raum_offset.zweck), E.RULES.map(R => R.id + ' v' + R.ver).join(', '));
+    // ---- Heizregelung v4: Fall 31.10. 02:40 (Heizstab-Naehe bei 0 °C = Heater_On_Outdoor_Temp, Dauerlauf, Efficiency 17 Hz, Vorlauf 3,5 K unter Soll, Kinderzimmer unten +0,60 K ueber Maximum)
+    const RHz = o => { o = o || {}; return [
+        {id: 'ki_oben', name: 'Kinderzimmer oben', t: 22.8, age: 10, valid: true, min: 22, max: 23.5, active: true},
+        {id: 'ki_unten', name: 'Kinderzimmer unten', t: 21.0, age: 52, valid: true, min: 20, max: 22, active: true},
+        {id: 'schlaf', name: 'Schlafzimmer', t: 21.0, age: 10, valid: true, min: 20, max: 22, active: true},
+        {id: 'wohn', name: 'Wohnzimmer', t: 21.8, age: 10, valid: true, min: 20, max: 23.5, active: true}].map(r => Object.assign({}, r, o[r.id] !== undefined ? {t: o[r.id]} : {})); };
+    const T31 = new Date(2026, 9, 31, 2, 0, 0).getTime(), hrz = o => r0(o, 'heizregelung');
+    const nacht = (rm, o) => i => inp(T31 + i * MIN, Object.assign({at: 0, q: 0, hc: 1, hz: 17, rt: 600 + i, soll: 33, sollKurve: 33, vl: 29.5, rl: 28, dT: 3, rooms: RHz(rm)}, o || {}));
+    const hzP = R => R.outs.map((o, i) => [i, o]).filter(x => hrz(x[1]).neu).map(x => ({i: x[0], p: x[1].prop, b: hrz(x[1]).bed}));   // b: Bedingungen [Kurzname, erfuellt, Text]
+    { const Rw = runSeq(60, nacht({ki_unten: 22.6}), null, dcfg), Rb = runSeq(60, nacht({ki_unten: 22.5}), null, dcfg), R3 = runSeq(60, nacht({ki_unten: 22.6}), null, c3);
+      const sw = allScores(Rw).filter(x => x.regel === 'heizregelung'), s3 = allScores(R3).filter(x => x.regel === 'heizregelung'), g = hrz(Rw.outs[30]);
+      check('z1 Heizregelung v4, Fall 31.10. 02:40 nachgestellt (Heizstab-Naehe bei 0 °C, Kinderzimmer unten +0,60 K ueber Maximum): kein Comfort-Vorschlag, Grund nennt Raum und Schadensgrenze, kein Schaden "Raum ueber Maximum + 0,5 K"; v3 (ohne Grenze) schlug vor und bekam den Schaden -20',
+            hzP(Rw).length === 0 && g.st === 'bereit' && /Kinderzimmer unten \+0,60 K über Maximum: Comfort heizt ein schon zu warmes Haus weiter \(Schadensgrenze der Bewertung: Maximum \+ 0,5 K\)/.test(g.grund) && !sw.some(x => x.typ === 'schaden') &&
+            hzP(R3).length === 1 && s3.some(x => x.typ === 'schaden' && x.arten.indexOf('zu_warm') >= 0 && x.punkte === -20),
+            g.grund + ' · v4: ' + sw.map(x => x.typ + ' ' + x.punkte).join(', ') + ' · v3: ' + s3.map(x => x.typ + ' ' + x.punkte).join(', '));
+      const pb = hzP(Rb);
+      check('z2 ... Raum genau an der Grenze (Kinderzimmer unten +0,50 K, wie 29.10. 02:39, Treffer ohne Schaden): Comfort-Vorschlag wie bisher (Heizstab-Naehe, nach der Anlaufsperre), Bedingung "kein Raum zu warm" erfuellt, kein Schaden',
+            pb.length === 1 && pb[0].p.cmd.value === 0 && /Heizstab-Nähe/.test(pb[0].p.warum) && pb[0].b.some(b0 => b0[0] === 'kein Raum zu warm' && b0[1] === 1) && !allScores(Rb).some(x => x.regel === 'heizregelung' && x.typ === 'schaden'),
+            pb.length ? pb[0].i + ' min: ' + pb[0].p.warum : hrz(Rb.outs[59]).grund); }
+    { const Rk = runSeq(40, nacht({ki_unten: 22.6}, {at: -1}), null, dcfg), pk = hzP(Rk), wk = pk.length ? pk[0].b.find(b0 => b0[0] === 'kein Raum zu warm') : null;
+      check('z3 ... Ausnahme: Aussen -1 °C unter Heater_On_Outdoor_Temp 0 °C (Heizstab kann anlaufen): Comfort trotz Kinderzimmer unten +0,60 K (Nutzer: Comfort vor Heizstab; Schaden Heizstab -50 gegen zu warm -20), Bedingung nennt die Ausnahme',
+            pk.length === 1 && wk && wk[1] === 1 && /Heizstab kann anlaufen \(Außen -1 °C unter Heater_On_Outdoor_Temp 0 °C\): Comfort vor Heizstab/.test(wk[2]), wk ? wk[2] : hrz(Rk.outs[39]).grund); }
+    { const lauf6 = (rm) => i => inp(T0 + i * MIN, {at: 6, q: 0, hc: 1, hz: 17, rt: 5 + i, soll: 33, sollKurve: 33, vl: 30.5, rl: 28, dT: 3, rooms: RHz(rm)});
+      const Ra = runSeq(40, lauf6({schlaf: 19.6, ki_unten: 22.6}), null, dcfg), Rn = runSeq(40, lauf6({schlaf: 19.6}), null, dcfg), pn = hzP(Rn);
+      check('z4 ... Raum-Bedarf (Schlafzimmer 0,4 K unter Minimum) bei 6 °C, aber Kinderzimmer unten +0,60 K ueber Maximum: kein Comfort (keine Heizstab-Ausnahme); ohne den warmen Raum Comfort wie h1 (Laufminute 25/26)',
+            hzP(Ra).length === 0 && /Kinderzimmer unten \+0,60 K über Maximum/.test(hrz(Ra.outs[39]).grund) && pn.length === 1 && 5 + pn[0].i >= 25 && 5 + pn[0].i <= 26, hrz(Ra.outs[39]).grund + ' · ohne: ' + pn.map(x => 5 + x.i).join()); }
+    // ---- Raumeinfluss v7, +1 K: Fall 28.10. 21:37 (Schlafzimmer ~0,45 K unter Minimum, Dauerlauf) und 29.10. 10:00 (Schlafzimmer ~0,75 K unter Minimum)
+    const roP = R => R.outs.map((o, i) => [i, o]).filter(x => r0(x[1], 'raum_offset').neu).map(x => ({i: x[0], p: x[1].prop, b: r0(x[1], 'raum_offset').bed}));
+    { const Rf = runSeq(130, i => inp(T0 + i * MIN, {rooms: rooms({schlaf: 19.55})}), null, dcfg), R6 = runSeq(130, i => inp(T0 + i * MIN, {rooms: rooms({schlaf: 19.55})}), null, c6), gf = r0(Rf.outs[120], 'raum_offset'), p6 = roP(R6);
+      check('z5 Raumeinfluss v7, Fall 28.10. 21:37 nachgestellt (Schlafzimmer 0,45 K unter Minimum, im Lauf, 130 min): kein +1 K, Bedarf besteht ("bereit"), Grund nennt die Tiefe; mit der v6-Tiefe (bedTiefK 0,2) +1 K nach der Haltezeit (60 min)',
+            roP(Rf).length === 0 && gf.st === 'bereit' && /Schlafzimmer erst 0,45 K unter Minimum \(Vorschlag ab 0,5 K/.test(gf.grund) && Rf.outs[120].rec.abl.raum === 1 && p6.length === 1 && p6[0].p.cmd.value === 1 && p6[0].i === 60,
+            gf.grund + ' · v6: ' + p6.map(x => x.i + ' ' + x.p.cmd.value).join()); }
+    { const Rt = runSeq(90, i => inp(T0 + i * MIN, {rooms: rooms({schlaf: 19.25})}), null, dcfg), pt = roP(Rt), ct = pt.length ? pt[0].b.find(b0 => b0[0] === 'Bedarf tief genug') : null;
+      check('z6 ... Fall 29.10. 10:00 (Schlafzimmer 0,75 K unter Minimum, Treffer): +1 K wie bisher nach 60 min, Bedingung "Bedarf tief genug" erfuellt, Bedarfsraum Schlafzimmer',
+            pt.length === 1 && pt[0].i === 60 && pt[0].p.cmd.value === 1 && ct && ct[1] === 1 && /Schlafzimmer 0,8 K/.test(ct[2]) && JSON.stringify(pt[0].p.bed) === '["schlaf"]', pt.length ? pt[0].i + ' ' + pt[0].p.was : r0(Rt.outs[89], 'raum_offset').grund); }
+    { const Rd = runSeq(120, i => inp(T0 + i * MIN, {rooms: rooms({schlaf: i < 90 ? 19.6 : 19.45})}), null, dcfg), pd = roP(Rd);
+      check('z7 ... Bedarf seit 90 min knapp (0,4 K), dann tiefer (0,55 K): +1 K sofort in Minute 90 (die Haltezeit zaehlt ab dem Bedarf, nicht ab der Tiefe)', pd.length === 1 && pd[0].i === 90 && pd[0].p.cmd.value === 1, pd.map(x => x.i).join() + ' · ' + r0(Rd.outs[80], 'raum_offset').grund); }
+    // ---- Raumeinfluss v7, -1 K: "alle ueber der Bandmitte" nicht aus einem Raum, der gerade selbst nachheizt (Kinderzimmer oben, eigene Nachheizung, Radiator-Relais an)
+    const warmE = o => { const x = rooms(Object.assign({ki_oben: 23.0, ki_unten: 21.5, schlaf: 21.5}, o || {})); x[0].eigeneHeizung = true; return x; };
+    { const Ra = runSeq(130, i => inp(T0 + i * MIN, {kzRad: 1, rooms: warmE()}), null, dcfg), Rz = runSeq(130, i => inp(T0 + i * MIN, {kzRad: 0, rooms: warmE()}), null, dcfg), R0 = runSeq(130, i => inp(T0 + i * MIN, {kzRad: 1, rooms: warmE()}), null, E.mergeCfg({rules: {raum_offset: {eigenNachMitte: 0}}}));
+      const Ru = runSeq(130, i => inp(T0 + i * MIN, {kzRad: 1, rooms: warmE({ki_unten: 22.3})}), null, dcfg), ga = r0(Ra.outs[120], 'raum_offset'), pz = roP(Rz), p0 = roP(R0), pu = roP(Ru);
+      check('z8 Raumeinfluss v7, -1 K: alle Raeume ueber der Bandmitte, Kinderzimmer oben (eigene Nachheizung) +0,25 K darueber bei Radiator-Relais an -> kein -1 K ("eigene Nachheizung läuft"); Relais aus -> -1 K nach 60 min; eigenNachMitte 0 -> wie v6; ein Raum ueber Maximum (Kinderzimmer unten +0,3 K) loest trotz Relais aus',
+            roP(Ra).length === 0 && ga.st === 'bereit' && /Kinderzimmer oben \+0,3 K über der Bandmitte, aber die eigene Nachheizung läuft \(Radiator-Relais an\)/.test(ga.grund) &&
+            pz.length === 1 && pz[0].i === 60 && pz[0].p.cmd.value === -1 && p0.length === 1 && p0[0].p.cmd.value === -1 && pu.length === 1 && pu[0].p.cmd.value === -1 && !pu[0].b.some(b0 => b0[0] === 'nicht aus eigener Nachheizung'),
+            ga.grund + ' · Relais aus: ' + pz.map(x => x.i).join() + ' · v6: ' + p0.map(x => x.i).join() + ' · ueber Max: ' + pu.map(x => x.i).join()); }
+}
 // ================================================================== Replay der echten Daten (07.-10.10., 07.-12.10. oder 07.-13.10.; datensatzabhaengige Pruefungen je Zeitraum)
 let RP = null;
 if (fs.existsSync(path.join(dataDir, 'quiet-2026-10.csv'))) {
