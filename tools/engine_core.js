@@ -84,9 +84,9 @@ var ENGINE = (function () {
     // PL = OPT_plan {model: {n, minDays, gate, why, aktiv, bs, bw, ua, tbal, ti, windTot}}  (Gate und coefActivate des Waermefahrplans; seit Modell v3 (15.10.2026): tbal = Bilanzpunkt
     //      T_innen − Gewinne/UA, damit ua·max(0, tbal − T) = max(0, UA·(T_innen − T) − Gewinne) – dasselbe Gebaeudemodell wie der Plan; ti = T_innen fuer das Wind-Merkmal)
     // PI = OPT_plan_in {pv: [[Beginn, W, Dauer ms], ...]}                       (PV-Prognose; nur mit aktivem Modell verwendet)
-    // -> {age, at: [jetzt, +1 h ... +6 h] (an den Fuehler angeglichen, wie der Fahrplan: Versatz klingt mit 4 h ab), n, minDays, gate, ua, tbal, ti, aktiv
+    // -> {age, at: [jetzt, +1 h ... +VS_H] (v4: Stundenmittel der Fahrplan-Aussentemperatur mit Restkorrektur, quelle 'fahrplan'; sonst OWM an den Fuehler angeglichen, Versatz klingt mit 4 h ab, quelle 'owm'), n, minDays, gate, ua, tbal, ti, aktiv
     //     [, bs, bw, windTot, wind[], pv[]]}  Sonne und Wind stehen NUR mit aktivem Modell im Datensatz; ohne coefActivate kann die Regel sie nicht verwenden.
-    var VS_H = 6;
+    var VS_H = 24, VS_PLAN_MAX_MIN = 20;
     // Grenzen wie im Waermefahrplan (coefSafe, Nutzerentscheidung 13.10.2026, nicht gemessen): bs <= 0,5 (oberes Ende tvofi-Bereich), bw <= 0,0125 kWh/(K*m/s*h)
     // (~ +5 % Waermeverlust je m/s bei UA 0,25 kW/K); Wind zaehlt erst ueber 4 m/s (Idee ClimateOptimizer WIND_DEADBAND_MS). OPT_plan.model.windTot hat Vorrang.
     var VS_LIM = {bs: 0.5, bw: 0.0125, windTot: 4};
@@ -105,7 +105,15 @@ var ENGINE = (function () {
         var o = {age: Math.round((now - num(W.f_ts)) / MIN), at: [], n: have(num(M.n)) ? num(M.n) : 0, minDays: have(num(M.minDays)) ? num(M.minDays) : 10, gate: (M.gate === true || M.gate === 1) ? 1 : 0,
                  ua: have(num(M.ua)) ? r2(num(M.ua)) : null, tbal: have(num(M.tbal)) ? num(M.tbal) : null, aktiv: aktiv ? 1 : 0};
         if (have(num(M.ti))) { o.ti = num(M.ti); }                                  // Modell v3: T_innen (Wind-Merkmal (T_innen − T) wie im Fahrplan)
-        for (var h = 0; h <= VS_H; h++) { var x = h === 0 && have(atN) ? atN : ip(now + h * 3600000, 1); o.at.push(have(x) ? Math.round((h === 0 ? x : x + anchor * Math.exp(-h / 4)) * 10) / 10 : null); }
+        var sl = (PL && PL.status === 'ok' && Array.isArray(PL.slots) && have(num(PL.ts)) && now - num(PL.ts) <= VS_PLAN_MAX_MIN * MIN) ? PL.slots : null;
+        function planAt(t) { var s = 0, n = 0; sl.forEach(function (x) { var a = num(x[5]); if (have(a) && x[0] >= t - 30 * MIN && x[0] < t + 30 * MIN) { s += a; n++; } }); return n >= 2 ? s / n : null; }
+        var reihe = []; if (sl) { for (var hp = 1; hp <= VS_H; hp++) { var ax = planAt(now + hp * 3600000); if (!have(ax)) { reihe = null; break; } reihe.push(ax); } } else { reihe = null; }
+        o.quelle = reihe ? 'fahrplan' : 'owm';                                       // v4: Fahrplan-Reihe mit Restkorrektur (enthaelt Anker und Rest schon), sonst OWM mit Anker
+        for (var h = 0; h <= VS_H; h++) {
+            if (h === 0 && have(atN)) { o.at.push(Math.round(atN * 10) / 10); continue; }
+            if (reihe && h > 0) { o.at.push(Math.round(reihe[h - 1] * 10) / 10); continue; }
+            var x = ip(now + h * 3600000, 1); o.at.push(have(x) ? Math.round((h === 0 ? x : x + anchor * Math.exp(-h / 4)) * 10) / 10 : null);
+        }
         if (aktiv) {                                                                // Sonne/Wind nur mit coefActivate (und offenem Gate, das prueft der Fahrplan)
             o.bs = have(num(M.bs)) ? Math.min(VS_LIM.bs, Math.max(0, num(M.bs))) : 0; o.bw = have(num(M.bw)) ? Math.min(VS_LIM.bw, Math.max(0, num(M.bw))) : 0; o.wind = []; o.pv = [];   // harte Grenzen wie im Fahrplan
             o.windTot = have(num(M.windTot)) ? Math.max(0, num(M.windTot)) : VS_LIM.windTot;
@@ -678,22 +686,24 @@ var ENGINE = (function () {
             }
         },
         {
-            id: 'vorausschau', ver: 3, kachel: 'Vorausschau', kurz: 'Vorausschau −1 K', name: 'Vorausschau (Heizkurve −1 K)', art: 'befehl', groesse: 'shift', richtung: 'soll_runter', prio: 5, basis: 'vorausschau|v3',
+            id: 'vorausschau', ver: 4, kachel: 'Vorausschau', kurz: 'Vorausschau −1 K', name: 'Vorausschau (Heizkurve −1 K)', art: 'befehl', groesse: 'shift', richtung: 'soll_runter', prio: 5, basis: 'vorausschau|v4',
             zweck: 'Senkt die Heizkurve um 1 K, bevor der Wärmebedarf WETTERBEDINGT sinkt (Milderung; Sonne und Wind nur mit freigegebenem Modell, coefActivate; der gewöhnliche Tagesgang ist herausgerechnet, die Uhrzeit allein löst nichts aus), solange alle Räume im Band liegen und der kälteste Raum Luft über seinem Minimum hat. Läuft erst mit offenem Gate des Gebäudemodells, nie gegen den aktuellen Raumzustand und nie gegen eine Verschiebung einer anderen Regel (Arbitrierung). Seit v2 (Review-Paket 13.10.2026) ohne den Zweig +1 K vor erwartetem Mehrbedarf: Die Anlage führt die Heizkurve selbst alle 5 min mit der Fühler-Außentemperatur nach (0,375 K Vorlauf je K, Verzug ≤ 5 min), die Heizkörper haben wenig Speichermasse, und bei Kälte lagen die Räume ohnehin 0,4–1,6 K über ihrer Bandmitte (unter 4 °C Kinderzimmer unten 90 % der Zeit über Maximum); +1 K hätte überheizte Räume weiter geheizt. Unter Quiet 0 löst +1 K bei Vorlauf unter Soll außerdem einen Hochlauf aus (11.10. 03:10: +48 % Strom), die Kosten waren unterschätzt. Nur −1 K zeigt in die Energie-Richtung. v3 (15.10.2026, Entscheidung 2): Bedarfsänderung aus dem Gebäudemodell v3 des Wärmefahrplans, UA · (T_innen − T_außen) − Gewinne (gelernt; bis v2 UA · max(0, 15 °C − T_außen)): zwischen 15 °C und dem Bilanzpunkt (~19–20 °C) zählt eine Milderung jetzt mit; Regel und Schwellen unverändert, eigene Basisrate „vorausschau|v3“.',
-            eingaenge: ['Wettervorhersage OWM (+1 … +6 h, an den Außenfühler angeglichen)', 'gewöhnlicher Tagesgang (gemessene Außentemperatur bis 7 Vortage)', 'Gebäudemodell v3 des Wärmefahrplans (UA, Bilanzpunkt T_innen − Gewinne/UA, Gate, coefActivate)', 'Sonne (PV-Prognose) und Wind nur mit coefActivate', 'Räume (alle gültig, eigenes Band)', 'Verschiebung der Anlage (TOP27) und Eigentümer der Verschiebung', 'Soll-Vorlauf'],
+            eingaenge: ['Außentemperatur des Wärmefahrplans (+1 … +24 h, mit Restkorrektur; Rückfall: Wettervorhersage OWM an den Außenfühler angeglichen, wenn der Plan älter als 20 min oder nicht ok ist; Quelle steht im Text)', 'gewöhnlicher Tagesgang (gemessene Außentemperatur bis 7 Vortage)', 'Gebäudemodell v3 des Wärmefahrplans (UA, Bilanzpunkt T_innen − Gewinne/UA, Gate, coefActivate)', 'Sonne (PV-Prognose) und Wind nur mit coefActivate', 'Räume (alle gültig, eigenes Band)', 'Verschiebung der Anlage (TOP27) und Eigentümer der Verschiebung', 'Soll-Vorlauf'],
             sperren: ['anlauf', 'daten', 'stoerung', 'modell', 'mqtt_sperre', 'abtauen', 'warmwasser', 'sanftanlauf', 'laufbeginn', 'heizgrenze_aus', 'regler', 'vorrang', 'gegenrichtung', 'abstand', 'tageslimit', 'abkuehlzeit', 'takt', 'heizstab'],
             befehl: {name: 'SetZ1HeatRequestTemperature', topic: 'panasonic_heat_pump/commands/SetZ1HeatRequestTemperature'},
             schwellen: [
-                {key: 'deltaK', std: 2, einheit: 'K', herkunft: 'Bedarfsänderung aus dem Wetter als Außentemperatur-Äquivalent (Mittel des Fensters gegen jetzt, beide um den gewöhnlichen Tagesgang bereinigt); OWM weicht vom Fühler 1,5–1,9 K ab (08.–10.10.), darunter ist die Vorhersage kein Signal; ANNAHME'},
+                {key: 'deltaK', std: 1.5, einheit: 'K', herkunft: 'v4 M: Backtest Oktober 2026 (Fahrplan-Reihe, Fenster +6…+24 h, echt = Fühler ≥ 1 K milder, Tagesgang-bereinigt): 1,5 K → 30 von 38 Auslösungen echt (79 %, beide Monatshälften ≥ 76 %; 2 K 81 %, 1 K 76 %); gewählt von Kevin 02.11.2026. 1,5 K Außentemperatur = halber Soll-Schritt der Heizkurve (8 K auf 24 K, 1 K Soll je 3 K); Bedarfsänderung aus dem Wetter als Außentemperatur-Äquivalent (Mittel des Fensters gegen jetzt, beide um den gewöhnlichen Tagesgang bereinigt); OWM weicht vom Fühler 1,5–1,9 K ab (08.–10.10.), darunter ist die Vorhersage kein Signal; ANNAHME'},
                 {key: 'tagesgangTage', std: 3, einheit: 'Vortage', herkunft: 'Der gewöhnliche Tagesgang wird aus den Vortagen gelernt (Abweichung jeder Uhrzeit vom 24-h-Mittel); mit nur einem Vortag steckt dessen Wetter darin (Replay: Kaltfront 08.10. abends erschien am 09.10. als −5 K); ANNAHME'},
-                {key: 'vonH', std: 2, einheit: 'h', herkunft: 'Fensterbeginn: −1 K wirkt über Lauf und Pause erst nach 1–3 h im Raum (Speichermasse 7–10 kWh/K, Opus); ANNAHME'},
-                {key: 'bisH', std: 5, einheit: 'h', herkunft: 'Fensterende: OWM liefert 3-h-Punkte, das Vertrauen fällt mit dem Vorlauf (Fahrplan: 1 − h/48); ANNAHME'},
+                {key: 'vonH', std: 6, einheit: 'h', herkunft: 'v4 M: Backtest Oktober 2026: ab +6 h 69–81 % echte Milderungen, +2…+5 h nur 32–35 %, +3…+12 h 52–63 %; −1 K wirkt über Lauf und Pause erst nach 1–3 h im Raum (Speichermasse 7–10 kWh/K)'},
+                {key: 'bisH', std: 24, einheit: 'h', herkunft: 'v4 M: Backtest Oktober 2026: +6…+24 h als einziges Fenster in beiden Monatshälften über 70 % (+6…+12 h: 52–55 % in der ersten Hälfte); Lambda nutzt 24 h; Reihe aus dem Wärmefahrplan (26 h, Restkorrektur je Vorlauf)'},
                 {key: 'reserveK', std: 0.3, einheit: 'K', herkunft: 'Luft im Band: der kälteste Raum liegt mindestens 0,3 K über seinem Minimum (wie guardK des früheren Fahrplans); ANNAHME'},
                 {key: 'prognoseMaxMin', std: 120, einheit: 'min', herkunft: 'Fahrplan: Vorhersage gilt bis 2 h nach dem Abruf'},
                 {key: 'haltMin', std: 30, einheit: 'min', herkunft: 'Vorhersage muss mindestens einen weiteren Abruf überstehen; ANNAHME'},
                 {key: 'minVlC', std: 29, einheit: '°C', herkunft: 'Nutzervorgabe 08.10.: Soll-Vorlauf nie unter 29 °C (Heizkörper)'},
+                {key: 'abtauAtC', std: 3, einheit: '°C', herkunft: 'wie Raumeinfluss (RE-6): unter 3 °C −1 K nur mit Rücklauf ≥ rlMinC'},
+                {key: 'rlMinC', std: 28, einheit: '°C', herkunft: 'wie Raumeinfluss (RE-6); ANNAHME'},
                 {key: 'proTag', std: 2, einheit: 'Vorschläge', herkunft: 'Schreibbudget gemeinsam mit dem Raumeinfluss (Opus: höchstens 6 Schreibbefehle/Tag); ANNAHME'},
-                {key: 'gueltigMin', std: 180, einheit: 'min', herkunft: 'Fensterende 5 h minus Fensterbeginn 2 h; ANNAHME'},
+                {key: 'gueltigMin', std: 180, einheit: 'min', herkunft: 'v3: Fensterende 5 h minus Fensterbeginn 2 h; v4 unverändert (Entwurf 02.11.2026); ANNAHME'},
                 {key: 'pauseMin', std: 180, einheit: 'min', herkunft: 'ANNAHME'},
                 {key: 'maxDauerMin', std: 360, einheit: 'min', herkunft: 'Rückweg spätestens nach 6 h (wie Raumeinfluss, ANNAHME)'}
             ],
@@ -716,6 +726,7 @@ var ENGINE = (function () {
                     return {inaktiv: tgw};
                 }
                 // v2 (Review-Paket 13.10.2026): nur noch -1 K vor einer Milderung; ein erwarteter Mehrbedarf ist kein Ausloeser mehr (die Anlage fuehrt die Kurve selbst nach)
+                var vq = v.quelle === 'owm' ? 'OWM, Fahrplan fehlt' : 'Fahrplan';                // v4: Quelle der Reihe sichtbar (Kachel und Vorschlag)
                 var thr = rs.prop ? c.deltaK / 2 : c.deltaK;                                   // laufender Vorschlag: Hysterese (halbe Schwelle), kein Flattern
                 var act = d.rooms.filter(function (r) { return r.active; }), allValid = act.length > 0 && act.every(function (r) { return r.valid && have(r.min) && have(r.max); });
                 var out = act.filter(function (r) { return r.valid && ((have(r.min) && r.t < r.min) || (have(r.max) && r.t > r.max)); });
@@ -723,16 +734,17 @@ var ENGINE = (function () {
                 act.forEach(function (r) { if (!r.valid) { return; } if (cold === null || r.t - r.min < cold.t - cold.min) { cold = r; } if (warm === null || r.max - r.t < warm.max - warm.t) { warm = r; } });
                 var resv = cold ? cold.t - cold.min : null, sollNeu = have(d.soll) ? d.soll - 1 : null;
                 var cond = [
-                    {k: 'bedarf', kz: 'Bedarfsänderung', t: 'Vorhersage: Bedarf sinkt um mindestens ' + de(thr, 1) + ' K', tn: 'Vorhersage: Bedarf ' + sg(dk, 1) + ' K (Schwelle −' + de(thr, 1) + ' K' + (dk > 0 ? '; vor Mehrbedarf seit v2 keine Verschiebung' : '') + ')', ok: -dk >= thr, ist: r2(-dk), soll: thr, op: '>=', u: 'K', dyn: true},
+                    {k: 'bedarf', kz: 'Bedarfsänderung', t: 'Vorhersage (' + vq + '): Bedarf sinkt um mindestens ' + de(thr, 1) + ' K', tn: 'Vorhersage (' + vq + '): Bedarf ' + sg(dk, 1) + ' K (Schwelle −' + de(thr, 1) + ' K' + (dk > 0 ? '; vor Mehrbedarf seit v2 keine Verschiebung' : '') + ')', ok: -dk >= thr, ist: r2(-dk), soll: thr, op: '>=', u: 'K', dyn: true},
                     {k: 'raeume', kz: 'Räume gültig', t: 'alle aktiven Räume gültig', tn: 'nicht alle Räume gültig', ok: allValid},
                     {k: 'band', kz: 'Räume im Band', hart: true, t: 'alle Räume im Komfortband', tn: out.length ? out[0].name + ' außerhalb des Bandes (' + de(out[0].t, 1) + ' °C)' : 'Raumlage unbekannt', ok: allValid && out.length === 0},
                     {k: 'reserve', kz: 'Luft im Band', t: 'kältester Raum mindestens ' + de(c.reserveK, 1) + ' K über Minimum', tn: cold ? cold.name + ' nur ' + de(resv, 1) + ' K über Minimum' : 'kein Raum', ok: have(resv) && resv >= c.reserveK - 1e-9, ist: r2(resv), soll: c.reserveK, op: '>=', u: 'K', dyn: true},
                     {k: 'untergrenze', kz: 'Soll-Vorlauf neu', t: 'Soll-Vorlauf bleibt mindestens ' + de(c.minVlC, 0) + ' °C', tn: 'Soll-Vorlauf würde ' + de(sollNeu, 0) + ' °C (Untergrenze ' + de(c.minVlC, 0) + ' °C)', ok: have(sollNeu) && sollNeu >= c.minVlC - 1e-9, ist: r2(sollNeu), soll: c.minVlC, op: '>=', u: '°C', dyn: true}
                 ];
+                if (have(d.at) && d.at < c.abtauAtC) { cond.push({k: 'ruecklauf', kz: 'Rücklauf', t: 'Rücklauf mindestens ' + de(c.rlMinC, 0) + ' °C (Abtauen unter ' + de(c.abtauAtC, 0) + ' °C)', tn: 'Rücklauf ' + de(d.rl, 1) + ' °C unter ' + de(c.rlMinC, 0) + ' °C bei Außen ' + de(d.at, 0) + ' °C (RE-6)', ok: have(d.rl) && d.rl >= c.rlMinC}); }
                 var lead = warm, f = vsFenster(v, c), tg = 0; for (var hh = c.vonH; hh <= c.bisH; hh++) { tg += d.vsBase.at[hh]; } tg = tg / (c.bisH - c.vonH + 1);
                 var e = {cond: cond, halt: c.haltMin, wert: -1, von: d.shift, dir: 'soll_runter', lead: lead ? lead.name : '',
                          was: 'Heizkurve 0 → −1 K (Soll-Vorlauf ' + de(d.soll, 0) + ' → ' + de(sollNeu, 0) + ' °C)',
-                         warum: 'Vorhersage +' + c.vonH + '…+' + c.bisH + ' h Ø ' + de(f.at, 1) + ' °C statt ' + de(v.at[0], 1) + ' °C jetzt, gewöhnlicher Tagesgang ' + sg(tg - d.vsBase.at[0], 1) + ' K: Bedarf ' + sg(dk, 1) + ' K aus dem Wetter' + (v.aktiv ? ' (mit Sonne/Wind)' : '') + '; ' + (lead ? lead.name + ' ' + de(lead.max - lead.t, 1) + ' K unter Maximum' : '')};
+                         warum: 'Vorhersage (' + vq + ') +' + c.vonH + '…+' + c.bisH + ' h Ø ' + de(f.at, 1) + ' °C statt ' + de(v.at[0], 1) + ' °C jetzt, gewöhnlicher Tagesgang ' + sg(tg - d.vsBase.at[0], 1) + ' K: Bedarf ' + sg(dk, 1) + ' K aus dem Wetter' + (v.aktiv ? ' (mit Sonne/Wind)' : '') + '; ' + (lead ? lead.name + ' ' + de(lead.max - lead.t, 1) + ' K unter Maximum' : '')};
                 if (gv) { e.vorab = gv; }
                 return e;
             }

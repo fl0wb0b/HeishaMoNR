@@ -2269,7 +2269,7 @@ var lern = (function () {
             drift: {n: L.n || 0, up: r1(L.up && L.up.s), dn: r1(L.dn && L.dn.s), upAn: !!(L.up && L.up.an), dnAn: !!(L.dn && L.dn.an), h: DRIFT.h},
             rueckfall: (rf && now < rf.bis) ? {ts: rf.ts, bis: rf.bis} : null, rb: (cfX.aktiv && L.rb) ? {s: r1(L.rb.s), h: DRIFT.rbH} : null};
 })();
-global.set('OPT_plan', {ts: now, s0: P.s0, status: P.status, slots: P.slots ? P.slots.map(function (x) { return [x.t, Math.round(x.bedarf * 1000) / 1000, Math.round(x.cop * 100) / 100, Math.round(x.el * 1000) / 1000, x.cA]; }) : null,      // Slot: [Zeit, Waerme kWh, COP, Strom kWh, Vertrauen]
+global.set('OPT_plan', {ts: now, s0: P.s0, status: P.status, slots: P.slots ? P.slots.map(function (x) { return [x.t, Math.round(x.bedarf * 1000) / 1000, Math.round(x.cop * 100) / 100, Math.round(x.el * 1000) / 1000, x.cA, ok(x.at) ? Math.round(x.at * 100) / 100 : null, ok(x.atRoh) ? Math.round(x.atRoh * 100) / 100 : null]; }) : null,      // Slot: [Zeit, Waerme kWh, COP, Strom kWh, Vertrauen]
                         model: {n: cfX.n || 0, minDays: pn('coefMinDays', 10), gate: !!(cfX.gate && cfX.gate.ok), why: (cfX.gate && cfX.gate.why) || [], aktiv: !!cfX.aktiv, bs: cfK.bs, bw: cfK.bw,
                                 ua: Math.round(MDL.ua * 10000) / 10000, g: Math.round(MDL.g * 1000) / 1000, ti: Math.round(MDL.ti * 100) / 100, tbal: Math.round(BIL * 100) / 100, windTot: WIND_TOT, ver: MODELL_VER}, lern: lern});   // Modell v3: tbal = Bilanzpunkt T_innen - Gewinne/UA (ua * max(0, tbal - T) = max(0, UA * (T_innen - T) - Gewinne))
 flow.set('plan', pl);
