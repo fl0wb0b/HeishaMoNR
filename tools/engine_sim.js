@@ -23,7 +23,8 @@ const cfg = E.defaults();
 cfg.rules.raum_offset.bedTiefK = cfg.rules.raum_offset.kaltK;
 const VS3 = {vonH: 2, bisH: 5, deltaK: 2};                                    // Vorausschau v4: Mechanik-Pruefungen mit Fenster und Schwelle von v3 (Vorhersagen mit 7 Stuetzstellen); v4 selbst prueft Abschnitt (vs4)
 Object.assign(cfg.rules.vorausschau, VS3);
-const cfgV4 = E.mergeCfg({rules: {quiet_strecken: {hzHoch: 22}}});     // Effizienz-Deckel mit der Schwelle von v4 (22 Hz ohne Takt): die Mechanik der Regel bleibt so pruefbar; v5 (28 Hz) in Abschnitt (g)
+cfg.rules.quiet_strecken.paarTage = 0;                                       // Deckel/Laufzeit v8: Mechanik-Pruefungen ohne Messung und Effizienzwahl; v8 selbst prueft Abschnitt (q8)
+const cfgV4 = E.mergeCfg({rules: {quiet_strecken: {hzHoch: 22, paarTage: 0}}});     // Effizienz-Deckel mit der Schwelle von v4 (22 Hz ohne Takt): die Mechanik der Regel bleibt so pruefbar; v5 (28 Hz) in Abschnitt (g)
 
 // ------------------------------------------------------------------ Hilfen: Eingabe bauen
 function rooms(o) {
@@ -87,6 +88,46 @@ console.log('--- (vs4) Vorausschau v4');
     check('vs4.9 Quelle sichtbar: Bedingung und Vorschlagstext nennen "Fahrplan" bzw. "OWM, Fahrplan fehlt"', /^Vorhersage \(Fahrplan\)/.test(qF.cond[0].t) && /^Vorhersage \(Fahrplan\) \+6…\+24 h/.test(qF.warum) && /^Vorhersage \(OWM, Fahrplan fehlt\)/.test(qO.cond[0].tn) && /^Vorhersage \(OWM, Fahrplan fehlt\)/.test(qO.warum), String(qF.warum).slice(0, 60) + ' | ' + qO.cond[0].tn);
     check('vs4.10 Plan muss bis +24 h reichen: Plan mit 20 h Slots -> Rueckfall OWM (keine halbe Fahrplan-Reihe)', v4({ts: now - MIN, status: 'ok', slots: slots4(80, true)}).quelle === 'owm', '');
     check('vs4.8 ab 3 °C keine Ruecklauf-Bedingung', !E.RULE.vorausschau.eval(Object.assign(dR4(25), {at: 3}), dc, {prop: null}).cond.some(x => x.k === 'ruecklauf'), '');
+}
+
+// ================================================================== (q8) Deckel/Laufzeit v8
+console.log('--- (q8) Deckel/Laufzeit v8');
+{
+    const zelle = (cop, min) => [100, 100 * cop, min, 0];
+    const T8 = {copT: {'2026-10-20': {'Efficiency|3|3…7': zelle(5.5, 60), 'Efficiency|0|3…7': zelle(5, 60)}, '2026-10-21': {'Efficiency|3|3…7': zelle(5, 60), 'Efficiency|0|3…7': zelle(5.2, 60)}, '2026-10-22': {'Efficiency|3|3…7': zelle(5, 20), 'Efficiency|0|3…7': zelle(5, 60)}}};
+    const P8 = E.paarVergleich(T8, 'Efficiency', '3…7', 3, 0, 0, false, 30);
+    check('q8.1 paarVergleich: nur Tage mit beiden Stufen ab 30 min, Median und positive Tage', P8.tage === 2 && P8.pos === 1 && JSON.stringify(P8.werte) === '[10,-3.8]' && P8.median === 3.1, JSON.stringify(P8));
+    check('q8.2 paarVergleich ohne Daten: 0 Tage, Median null, kein Fehler', (() => { const p = E.paarVergleich({}, 'Comfort', '3…7', 3, 0, 60, false, 30); return p.tage === 0 && p.median === null; })(), '');
+    const Tz = {copT: {'2026-10-20': {'Comfort|3|3…7': [100, 500, 60, 0], 'Comfort|0|3…7': [100, 500, 60, 0, null, null, 200, 60, 100]}}};
+    check('q8.3 paarVergleich mit Stromzaehler: Zaehlerwert (Spalten 6-8) statt Rohwert', E.paarVergleich(Tz, 'Comfort', '3…7', 3, 0, 60, true, 30).werte[0] === 25, JSON.stringify(E.paarVergleich(Tz, 'Comfort', '3…7', 3, 0, 60, true, 30).werte));
+    const c8 = E.defaults().rules.quiet_strecken, leer = {tage: 0, median: null, pos: 0, werte: []};
+    const d8 = o => Object.assign({q: 0, hz: 20, running: true, runMin: 90, takt: {takt: false}, lastRunMin: 300, lastPauseMin: 60, lastRunThermo: false, starts3h: 0, shift: 0, soll: 30, vl: 30, rlRueck: 0, at: 6, hc: 1, now: new Date(2026, 10, 3, 12).getTime(), notK: 0.3, bedQ: {ja: false}, tc: null, copSum: {}, paarQ: leer, rooms: [{id: 'a', name: 'A', t: 21, min: 20, max: 22, active: true, valid: true, age: 5}]}, o || {});
+    const ev8 = (o, rs) => E.RULE.quiet_strecken.eval(d8(o), c8, Object.assign({prop: null, hebel: null, since: 0}, rs || {}));
+    const offen = e => e.cond.filter(x => !x.ok).map(x => x.k);
+    const m8 = ev8();
+    check('q8.4 Quiet 0, 6 °C, 20 Hz, keine Paare: Messvorschlag Quiet 3 fuer 120 min, ohne Prognose, alle Bedingungen erfuellt', m8.wert === 3 && m8.maxDauerMin === 120 && m8.ohnePrognose === true && /Messung/.test(m8.was) && offen(m8).length === 0, offen(m8).join());
+    check('q8.5 kein Messvorschlag unter 60 min Lauf, bei Abtauwetter oder zum zweiten Mal am selben Tag', offen(ev8({runMin: 59})).includes('laufMin') && offen(ev8({abtauW: {ja: true, txt: 'x'}})).includes('abtau') && offen(ev8({}, {messTag: '2026-11-03'})).includes('messTag'), '');
+    check('q8.6 kein Messvorschlag bei 3 °C und darunter, ab 11 °C, bei Quiet 3 oder mit paarTage 0: zurueck auf den Weg ab 28 Hz', !ev8({at: 3}).ohnePrognose && !ev8({at: 11}).ohnePrognose && !!ev8({q: 3}).inaktiv && !E.RULE.quiet_strecken.eval(d8(), Object.assign({}, c8, {paarTage: 0}), {prop: null, hebel: null, since: 0}).ohnePrognose, '');
+    const ef = ev8({paarQ: {tage: 3, median: 3, pos: 2, werte: [3, 5, -1]}});
+    check('q8.7 3 Tage, Median +3 %, 2 positive: Effizienzwahl ohne Frequenzschwelle, Dauer wie der Deckel', /Effizienzwahl/.test(ef.was) && ef.maxDauerMin === c8.maxDauerMin && offen(ef).length === 0, ef.was);
+    check('q8.8 Median unter +3 % oder nur ein positiver Tag: keine Effizienzwahl', !ev8({paarQ: {tage: 3, median: 2.9, pos: 2, werte: []}}).ohnePrognose && !ev8({paarQ: {tage: 3, median: 3, pos: 1, werte: []}}).ohnePrognose, '');
+    check('q8.9 Messvorschlag endet, wenn die Aussentemperatur das Band verlaesst (kein alter Vorschlag bei 11 °C)', !ev8({at: 11}, {prop: {hebel: 'quiet', ohnePrognose: true}}).ohnePrognose, '');
+    check('q8.10 Aussentemperatur unbekannt: kein Messvorschlag, kein Fehler', !ev8({at: null, paarQ: null}).ohnePrognose, '');
+    const rs8 = {prop: {hebel: 'quiet', ohnePrognose: true}, hebel: null, since: 0}; E.RULE.quiet_strecken.eval(d8(), c8, rs8);
+    const rt8 = JSON.parse(JSON.stringify(rs8)); rt8.prop = null;
+    check('q8.11 Merker "heute schon gemessen" wird gesetzt und uebersteht das Speichern im Kontext (JSON)', rs8.messTag === '2026-11-03' && offen(E.RULE.quiet_strecken.eval(d8(), c8, rt8)).includes('messTag'), JSON.stringify(rt8));
+    const Rm8 = runSeq(95, i => inp(T0 + i * MIN, {q: 0, hz: 18, at: 6, hc: 1, rt: i + 1, soll: 30, sollKurve: 30, vl: 30, rl: 28, rooms: rooms()}), null, E.defaults());
+    const fm = Rm8.outs.findIndex(o => r0(o, 'quiet_strecken').neu);
+    check('q8.12 in der Maschine: Messvorschlag nach 60 min Lauf und 10 min Haltezeit; Fall ohne Prognose (Kennung mess, Horizont = Messdauer 120 min)', fm >= 60 && fm <= 72 && Rm8.outs[fm].prop.ohnePrognose === true && Rm8.outs[fm].prop.cmd.value === 3 && Rm8.S.sc.cases.some(c => c.rule === 'quiet_strecken' && c.mess === 1 && c.h.length === 1 && c.h[0] === 120), fm + ' ' + (fm >= 0 ? Rm8.outs[fm].prop.was : r0(Rm8.outs[94], 'quiet_strecken').grund));
+
+    const kiU = i => (i < 80 ? 20.6 : 20.6 - 0.009 * (i - 80));                      // langsam fallend (unter der Lueftungs-Erkennung), ab Minute ~180 mehr als 0,3 K unter Minimum
+    const Rd8 = runSeq(200, i => inp(T0 + i * MIN, {q: 0, hz: 18, at: 6, hc: 1, rt: i + 1, soll: 30, sollKurve: 30, vl: 30, rl: 28, rooms: rooms({ki_unten: kiU(i)})}), null, E.defaults());
+    const sd8 = [].concat(...Rd8.outs.map(o => o.scores || [])).filter(s => s.regel === 'quiet_strecken');
+    const au8 = sd8.find(s => s.typ === 'ausloeser'), sch8 = sd8.find(s => s.typ === 'schaden');
+    check('q8.13 Messvorschlag zaehlt nicht als Treffer oder Fehlalarm (neutral, 0 Punkte), ein Schaden in der Messdauer (Raum > 0,3 K unter Minimum) wird mit Punkten gebucht', !!au8 && au8.ergebnis === 'neutral' && au8.punkte === 0 && !!sch8 && sch8.arten.includes('zu_kalt') && sch8.punkte < 0, JSON.stringify(sd8.map(s => [s.typ, s.ergebnis || s.arten, s.punkte])));
+    const pk = ev8({hz: 20, paarQ: {tage: 3, median: -1.2, pos: 1, werte: [-3, -1.2, 2]}}), pkH = pk.cond.find(x => x.k === 'hoch');
+    const pk2 = ev8({hz: 20, at: 1, paarQ: {tage: 1, median: 4, pos: 1, werte: [4]}}), pk2H = pk2.cond && pk2.cond.find(x => x.k === 'hoch');
+    check('q8.14 Kachel zeigt den Vergleich: 3 Tage mit Median <= 0 -> "kein Vorteil, Messung beendet", kein Messvorschlag; unter 3 °C "1 von 3 Tagen ... (hier keine Messung)"', !pk.ohnePrognose && /Q3 gegen Q0 \(Efficiency, 3…7 °C\): 3 von 3 Tagen, Median -1,2 %: kein Vorteil, Messung beendet/.test(pkH.tn) && !!pk2H && /1 von 3 Tagen, Median \+4,0 % \(hier keine Messung\)/.test(pk2H.tn), (pkH && pkH.tn) + ' | ' + (pk2H && pk2H.tn));
 }
 
 // ================================================================== (a) Regeln, Sperren, Datensaetze

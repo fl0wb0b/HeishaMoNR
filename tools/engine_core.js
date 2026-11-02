@@ -409,7 +409,47 @@ var ENGINE = (function () {
         return {ok: ok, raum: r0, p: p, t: 'Start gewollt: ' + (r0 ? r0.name + ' ' + de(r0.min - r0.t, 1) + ' K unter Minimum' : 'Bedarfsraum') + ', Pause seit ' + de(p, 0) + ' min (mindestens ' + c.startPauseMin + '): +1 K startet die Wärmepumpe',
                 tn: 'Pause: +1 K wäre ein Startbefehl (Soll-Anhebung umgeht die Einschaltschwelle) – nur mit Bedarfsraum unter Minimum und Pause ≥ ' + c.startPauseMin + ' min (' + (!r0 ? 'kein Bedarfsraum unter Minimum' : (have(p) ? 'Pause erst ' + de(p, 0) + ' min' : 'Pausenbeginn unbekannt')) + '), sonst erst im Lauf'};
     }
-    // Schwelle des Effizienz-Deckels (v5): ohne Takt hzHoch (28 Hz), mit belegtem Takt hzTakt (22 Hz); bei Frost mindestens Mindestfrequenz + 3 Hz (keine Stufe deckelt darunter)
+    // Deckel/Laufzeit v8: Quiet 3 gegen Quiet 0 am selben Tag, je Modus und Band (S.takt.copT). Mittel ueber Tage waere Wetter, nicht Stufe.
+        function paarVergleich(T, mod, band, a, b, kw, zq, minMin) {
+            var D = (T && T.copT) || {}, w = [];
+            function cp(x) { var e = zq ? (x[6] || 0) + x[0] - (x[8] || 0) + (x[2] - (x[7] || 0)) * kw / 60 : x[0] + x[2] * kw / 60; return e > 0 ? x[1] / e : null; }
+            Object.keys(D).sort().forEach(function (dk) {
+                var xa = D[dk][mod + '|' + a + '|' + band], xb = D[dk][mod + '|' + b + '|' + band];
+                if (!xa || !xb || xa[2] < minMin || xb[2] < minMin) { return; }
+                var ca = cp(xa), cb = cp(xb); if (have(ca) && have(cb)) { w.push(Math.round((ca / cb - 1) * 1000) / 10); }
+            });
+            var s = w.slice().sort(function (x, y) { return x - y; }), n = s.length;
+            return {tage: n, median: n ? (n % 2 ? s[(n - 1) / 2] : Math.round((s[n / 2 - 1] + s[n / 2]) * 5) / 10) : null, pos: w.filter(function (x) { return x > 0; }).length, werte: w};
+        }
+        function paarTxt(d, c, P) {                                                     // v8: Stand des Vergleichs Quiet 3 gegen 0 fuer die Kachel (Weg Deckel)
+            if (!P || !c.paarTage || !have(d.at)) { return ''; }
+            var t = ' · Q3 gegen Q0 (' + modusOf(d.hc) + ', ' + bandOf(d.at) + ' °C): ' + Math.min(P.tage, c.paarTage) + ' von ' + c.paarTage + ' Tagen' + (P.tage ? ', Median ' + sg(P.median, 1) + ' %' : '');
+            if (P.tage < c.paarTage) { return t + (d.at <= c.atMinC || d.at >= c.messAtMaxC ? ' (hier keine Messung)' : ''); }
+            return t + (P.median <= 0 ? ': kein Vorteil, Messung beendet' : (P.median >= c.paarVorteilPct && P.pos >= 2 ? '' : ': kein belegter Vorteil'));
+        }
+        function quietWeg(d, c, hoch) {                                                  // 'deckel' (wie v7), 'messung' oder 'effizienz'
+            var P = d.paarQ, o = {weg: 'deckel', P: P};
+            if (hoch || d.q !== 0 || !P || !c.paarTage || !have(d.at) || d.at <= c.atMinC || d.at >= c.messAtMaxC) { return o; }
+            if (P.tage < c.paarTage) { o.weg = 'messung'; }
+            else if (P.median >= c.paarVorteilPct && P.pos >= 2) { o.weg = 'effizienz'; }
+            return o;
+        }
+        function quietMessEval(d, c, rs, wg, takt) {
+            var B = d.bedQ, ks = komfortSicher(d, c), ruhe = !d.bedT || d.now - d.bedT >= c.ruheMin * MIN, P = wg.P, mess = wg.weg === 'messung', pt = 'Quiet 3 gegen 0, ' + P.tage + ' von ' + c.paarTage + ' Tagen' + (P.tage ? ', Median ' + sg(P.median, 1) + ' %' : '');
+            var abt = !!(d.abtauW && d.abtauW.ja), lm = mess ? c.messLaufMin : c.laufMin;
+            var cond = [{k: 'lauf', kz: 'Verdichter läuft', t: 'Verdichter läuft', tn: 'Verdichter steht', ok: d.running},
+                {k: 'laufMin', kz: 'Laufzeit', t: 'Lauf seit mindestens ' + lm + ' min', tn: 'Lauf erst ' + de(d.runMin, 0) + ' von ' + lm + ' min', ok: d.runMin >= lm, ist: r2(d.runMin), soll: lm, op: '>=', u: 'min', dyn: true},
+                {k: 'keinBedarf', kz: 'kein Bedarf', t: 'kein Bedarf und Rücklauf höchstens ' + de(c.rlRueckMaxK, 1) + ' K unter Soll', tn: B.ja ? 'Bedarf: ' + B.txt : 'Bedarf: Rücklauf ' + rueckTxt(d.rlRueck), ok: !B.ja && have(d.rlRueck) && d.rlRueck <= c.rlRueckMaxK},
+                {k: 'komfort', kz: 'Komfort sicher', t: 'alle Räume mindestens ' + de(c.komfortK, 1) + ' K über Minimum', tn: ks.txt, ok: ks.ok},
+                {k: 'ruhe', kz: 'Ruhe nach Bedarf', t: 'seit ' + c.ruheMin + ' min kein Bedarf', tn: 'Bedarf zuletzt ' + hhmm(d.bedT), ok: ruhe},
+                {k: 'abtau', kz: 'Abtauwetter', t: 'kein Abtauwetter', tn: 'Abtauwetter: ' + (d.abtauW ? d.abtauW.txt : ''), ok: !abt},
+                {k: 'takt', kz: 'Takt', t: 'kein Takt belegt', tn: 'Takt belegt: erst stabil messen', ok: !takt}];
+            if (mess) { cond.push({k: 'messTag', kz: 'Messung heute', t: 'heute noch kein Messvorschlag', tn: 'heute schon ein Messvorschlag', ok: !!rs.prop || rs.messTag !== ymd(d.now)}); }
+            return {cond: cond, halt: c.haltMin, wert: 3, von: d.q, groesse: 'quiet', hebel: 'quiet', dir: 'weniger_leistung', maxDauerMin: mess ? c.messDauerMin : c.maxDauerMin, ohnePrognose: true,
+                    was: 'Quiet-Stufe ' + d.q + ' → 3 (' + (mess ? 'Messung' : 'Effizienzwahl') + ')', warum: (mess ? 'Noch nicht belegt: ' : 'Belegt: ') + pt + ' (' + modusOf(d.hc) + ', ' + bandOf(d.at) + ' °C)',
+                    erwartung: mess ? 'Vergleichstag für Quiet 3 gegen Quiet 0; Wirkung offen' : 'Gemessener Median ' + sg(P.median, 1) + ' % COP', rueckweg: 'Automatisch zurück auf Quiet ' + d.q + ' nach spätestens ' + de((mess ? c.messDauerMin : c.maxDauerMin) / 60, 0) + ' h, früher bei Bedarf.'};
+        }
+// Schwelle des Effizienz-Deckels (v5): ohne Takt hzHoch (28 Hz), mit belegtem Takt hzTakt (22 Hz); bei Frost mindestens Mindestfrequenz + 3 Hz (keine Stufe deckelt darunter)
     function hzSchwelle(d, c, takt) {
         var b = takt ? c.hzTakt : c.hzHoch, mh = have(d.at) ? minHzAt(d, d.at) : null, hz = b, txt = takt ? 'Takt belegt' : 'ohne Takt';
         if (mh && have(mh.hz) && mh.hz + 3 > hz) { hz = mh.hz + 3; txt += ', Mindestfrequenz ' + mh.hz + ' Hz bei ' + de(d.at, 0) + ' °C'; }
@@ -502,7 +542,7 @@ var ENGINE = (function () {
             }
         },
         {
-            id: 'quiet_strecken', ver: 7, kachel: 'Deckel/Laufzeit', kurz: 'Deckel/Laufzeit', name: 'Effizienz-Deckel und Laufzeit (Quiet höher oder Heizkurve +1 K)', art: 'befehl', groesse: 'quiet', richtung: 'weniger_leistung', prio: 2,
+            id: 'quiet_strecken', ver: 8, kachel: 'Deckel/Laufzeit', kurz: 'Deckel/Laufzeit', name: 'Effizienz-Deckel und Laufzeit (Quiet höher oder Heizkurve +1 K)', art: 'befehl', groesse: 'quiet', richtung: 'weniger_leistung', prio: 2,
             basis: 'quiet_strecken|v5', basisKurve: 'quiet_strecken|v4|kurve',
             zweck: 'Zwei Hebel, gewählt nach Lage. Quiet höher (Effizienz-Deckel): läuft der Verdichter ohne Bedarf mit 28 Hz oder mehr – bei belegtem Takt schon ab 22 Hz – (vor allem in den ersten 3 h eines Laufs bei Mildwetter), deckelt die niedrigste Stufe, die laut Messdaten unter 22 Hz hält. v5 (14.10.2026): Nach der COP-Korrektur (+80 W im Lauf, Forum 189605) ist der COP-Vorteil bei 22–27 Hz nicht mehr belegt (−0,3…+4,8 % gegen 16–17 Hz, roh −3…−7 %: das Vorzeichen hängt an der Korrektur), ab 28 Hz bleibt er bei jeder Korrektur zwischen 0 und 80 W negativ (−3 % korrigiert, −5…−15 % roh); 22–27 Hz deckelt die Regel deshalb nur noch, wenn Takt belegt ist (dann zählt die längere Laufzeit). Bei Frost deckelt keine Stufe unter die Mindestfrequenz (≤ −4 °C 25 Hz, ≤ −10 °C 35 Hz, Forum 4593782/4596796): die Schwelle steigt dort auf Mindestfrequenz + 3 Hz. Quiet senkt am Minimum außerdem den Lüfter (−60…−110 U/min, −10…−16 W; ein COP-Unterschied ist dort nicht messbar). Heizkurve +1 K (Laufzeit): läuft der Verdichter schon unter 22 Hz und ist Takt belegt, hilft Quiet nicht; +1 K hebt Abschalt- und Startschwelle (längere Läufe, kürzere Pausen) und kostet Strom, deshalb nur, wenn der geschätzte Nutzen (vermiedene Starts) die Kosten übersteigt. Beide Hebel nie gleichzeitig aus einem Vorschlag. v6 (15.10.2026, Paket 2): ein Raum mit Sonnenfenster in der Sonne (wie Raumeinfluss v5) zählt für +1 K nicht als „über der Bandmitte“ und beendet ein übernommenes +1 K nicht. v7 (16.10.2026, Winterpaket): bei Abtauwetter (−5 bis unter 10 °C, Feuchte ≥ 80 % oder Rohr außen ≤ 0 °C) deckelt Quiet höher nur stufenweise (eine Stufe je Vorschlag); +1 K in der Pause ist ein Startbefehl (Soll-Anhebung umgeht die Einschaltschwelle, Forum 3969412/4131809, 11.10. 19:10) und kommt nur, wenn ein Start gewollt ist (Bedarfsraum unter Minimum, Pause ≥ 20 min, keine Kaltstart-Sperre bei Abtauwetter ≤ 4 °C), sonst nur im Lauf.',
             eingaenge: ['Quiet-Stufe', 'Heizregelung', 'Verdichterfrequenz', 'Rücklauf-Rückstand', 'Räume (Bedarf, Verlauf, Luft im Band)', 'Außentemperatur', 'letzte Läufe (Dauer, Stopp-Art), Pausen, Starts', 'Daten je Heizregelung × Quiet × Außenband (Takt-Messung: Minuten, COP, gehaltener Deckel)', 'Verschiebung der Anlage (TOP27) und Eigentümer (Arbitrierung)'],
@@ -534,7 +574,13 @@ var ENGINE = (function () {
                 {key: 'maxDauerMin', std: 480, einheit: 'min', herkunft: 'Quiet höher: Rückweg spätestens nach 8 h (≈ zwei Zyklen: Median Lauf 184 min, Pausen 57–158 min); früher bei Bedarf, Rücklauf-Rückstand oder ≤ 3 °C; ANNAHME'},
                 {key: 'maxDauerKurveMin', std: 360, einheit: 'min', herkunft: '+1 K: Rückweg spätestens nach 6 h (wie Raumeinfluss und Vorausschau); früher bei Heizstab-Nähe, wenn ein Raum mehr als 0,3 K über die Bandmitte steigt oder der Takt ausbleibt; ANNAHME'},
                 {key: 'kurveTaktZyklen', std: 2, einheit: 'Läufe', herkunft: '+1 K: Rückweg, wenn nach der Übernahme zwei Läufe ohne Takt-Beleg endeten (beide mindestens kurzerLaufMin lang; Regel-Review B5); ANNAHME'},
-                {key: 'bedarfRlK', std: 2.5, einheit: 'K', herkunft: 'Rückweg Quiet: Rücklauf-Rückstand ≥ 2,5 K seit 15 min = Leistung wird gebraucht (Quiet 0 lief 07.–13.10. ab 2,5 K immer über 20 Hz)'}
+                {key: 'bedarfRlK', std: 2.5, einheit: 'K', herkunft: 'Rückweg Quiet: Rücklauf-Rückstand ≥ 2,5 K seit 15 min = Leistung wird gebraucht (Quiet 0 lief 07.–13.10. ab 2,5 K immer über 20 Hz)'},
+                {key: 'paarTage', std: 3, einheit: 'Tage', herkunft: 'v8: Entscheidung erst ab 3 Tagen mit Quiet 0 und Quiet 3 im selben Modus und Band; 0 schaltet Messung und Effizienzwahl aus; ANNAHME'},
+                {key: 'paarMinMin', std: 30, einheit: 'min', herkunft: 'v8: je Stufe mindestens 30 stabile Laufminuten, damit ein Tag als Paar zählt; ANNAHME'},
+                {key: 'paarVorteilPct', std: 3, einheit: '%', herkunft: 'v8: Median der Tagesunterschiede ab +3 % gilt als Vorteil (Einzelbeobachtung Oktober 442 → 457 W bei gleicher Frequenz); ANNAHME'},
+                {key: 'messLaufMin', std: 60, einheit: 'min', herkunft: 'v8: Messvorschlag erst nach 60 min Lauf, nicht in der Hochlaufphase; ANNAHME'},
+                {key: 'messDauerMin', std: 120, einheit: 'min', herkunft: 'v8: Messung 120 min, dann automatisch zurück; ANNAHME'},
+                {key: 'messAtMaxC', std: 11, einheit: '°C', herkunft: 'v8: gemessen wird unter 11 °C (Bänder 3…7 und 7…11 °C; ab 11 °C sprach der einzige Vergleichstag gegen Quiet 3); ANNAHME'}
             ],
             erwartung: 'Quiet höher: Verdichter ≤ 21 Hz binnen 10 min, elektrische Leistung −100 W oder mehr (nach Quiet-Wechseln nach oben fiel die Frequenz binnen 5–15 min, 08.10. 09:38, 12.10. 09:30); COP-Vorteil nur ab 28 Hz belegt (korrigiert +3 %, roh +5…+15 %), darunter zählt die Laufzeit. Heizkurve +1 K: Soll-Vorlauf +1 K binnen 3 min; Lauf länger, Pause kürzer (Messaufgabe, nicht gemessen)',
             rueckweg: 'Quiet höher: automatisch zurück auf die vorherige Stufe bei Bedarf (Raum unter Minimum oder fallend, Heizstab-Nähe, Boost), bei Rücklauf-Rückstand ≥ 2,5 K seit 15 min, bei Außentemperatur ≤ 3 °C, spätestens nach 8 h. Heizkurve +1 K: zurück auf 0 K bei Heizstab-Nähe (Außen unter Heater_On_Outdoor_Temp + 2 K), wenn ein Raum mehr als 0,3 K über die Bandmitte steigt, wenn zwei Läufe ohne Takt endeten, spätestens nach 6 h.',
@@ -544,6 +590,8 @@ var ENGINE = (function () {
             eval: function (d, c, rs) {
                 if (!have(d.q)) { return {inaktiv: 'Quiet-Stufe unbekannt'}; }
                 var takt = taktBeleg(d, c), hs = hzSchwelle(d, c, takt), hoch = have(d.hz) && d.hz >= hs.hz, taktTxt = [];
+                if (rs.prop && rs.prop.ohnePrognose) { rs.messTag = ymd(d.now); rs.ohneT = d.now; }             // v8: hoechstens ein Messvorschlag je Tag
+                var wg = quietWeg(d, c, hoch);
                 var hebel = rs.prop && rs.prop.hebel ? rs.prop.hebel : ((hoch || !takt) ? 'quiet' : 'shift');
                 if (rs.hebel !== hebel) { rs.hebel = hebel; rs.since = 0; }                   // Hebelwechsel: Haltezeit beginnt neu
                 if (d.lastRunThermo && have(d.lastRunMin) && d.lastRunMin < c.kurzerLaufMin) { taktTxt.push('letzter Lauf nur ' + de(d.lastRunMin, 0) + ' min (Abschaltung über den Vorlauf)'); }
@@ -553,9 +601,10 @@ var ENGINE = (function () {
                 var cMin = {k: 'laufMin', kz: 'Laufzeit', t: 'Lauf seit mindestens ' + c.laufMin + ' min', tn: 'Startphase: Lauf erst ' + de(d.runMin, 0) + ' von ' + c.laufMin + ' min', ok: d.runMin >= c.laufMin, ist: r2(d.runMin), soll: c.laufMin, op: '>=', u: 'min', dyn: true};
                 if (hebel === 'quiet') {
                     if (d.q >= 3) { return {inaktiv: 'Quiet steht schon auf 3'}; }
-                    var B = d.bedQ, zl = zielDeckel(d, c), z = zl.ziel, ks = komfortSicher(d, c), ruhe = !d.bedT || d.now - d.bedT >= c.ruheMin * MIN;
+                    if (wg.weg !== 'deckel') { return quietMessEval(d, c, rs, wg, takt); }
+                    var B = d.bedQ, zl = zielDeckel(d, c), z = zl.ziel, ks = komfortSicher(d, c), ruhe = !d.bedT || d.now - d.bedT >= c.ruheMin * MIN, pq = paarTxt(d, c, wg.P);
                     var cond = [cLauf, cMin,
-                        {k: 'hoch', kz: 'Frequenz', t: 'Verdichter mit ' + hs.hz + ' Hz oder mehr (' + hs.txt + ')', tn: 'Verdichter bei ' + de(d.hz, 0) + ' Hz (Schwelle ' + hs.hz + ' Hz: ' + hs.txt + ')', ok: hoch, ist: d.hz, soll: hs.hz, op: '>=', u: 'Hz', dyn: true},
+                        {k: 'hoch', kz: 'Frequenz', t: 'Verdichter mit ' + hs.hz + ' Hz oder mehr (' + hs.txt + ')', tn: 'Verdichter bei ' + de(d.hz, 0) + ' Hz (Schwelle ' + hs.hz + ' Hz: ' + hs.txt + ')' + pq, ok: hoch, ist: d.hz, soll: hs.hz, op: '>=', u: 'Hz', dyn: true},
                         {k: 'keinBedarf', kz: 'kein Bedarf', t: 'kein Bedarf und Rücklauf höchstens ' + de(c.rlRueckMaxK, 1) + ' K unter Soll', tn: B.ja ? 'Bedarf: ' + B.txt : 'Bedarf: Rücklauf ' + rueckTxt(d.rlRueck), ok: !B.ja && have(d.rlRueck) && d.rlRueck <= c.rlRueckMaxK, ist: B.ja ? null : r2(d.rlRueck), soll: c.rlRueckMaxK, op: '<=', u: 'K', dyn: !B.ja},
                         {k: 'komfort', kz: 'Komfort sicher', t: 'alle Räume mindestens ' + de(c.komfortK, 1) + ' K über Minimum', tn: ks.txt, ok: ks.ok},
                         {k: 'ruhe', kz: 'Ruhe nach Bedarf', t: 'seit ' + c.ruheMin + ' min kein Bedarf', tn: 'Bedarf zuletzt ' + hhmm(d.bedT) + ' (Ruhe bis ' + hhmm(d.bedT + c.ruheMin * MIN) + ')', ok: ruhe},
@@ -1694,6 +1743,7 @@ var ENGINE = (function () {
             if (Array.isArray(e.bed)) { p.bed = e.bed; }                                                              // Raumeinfluss v3: Bedarfsraeume (Rueckweg nur ueber diese, Regel-Review B2)
             if (have(e.hzS)) { p.hzS = e.hzS; }                                                                      // Deckel/Laufzeit v5: Frequenzschwelle der Ausloesung (Bewertung)
             if (e.hart) { p.hart = true; }                                                                           // Notfall (Wartezeit danach nur fuer einen neuen Notfall verkuerzt)
+            if (e.ohnePrognose) { p.ohnePrognose = true; }                                                          // Deckel/Laufzeit v8: Messung und Effizienzwahl ohne Prognose-Punkte (Schaeden zaehlen)
             if (e.einmal) { p.einmal = true; }                                                                       // Heizregelung -> Efficiency: Normalzustand, die Uebernahme endet mit der Bestaetigung (kein Rueckweg)
             p.sum = checksum(p);
             rs.prop = p; res.neu = true;
@@ -2262,6 +2312,7 @@ var ENGINE = (function () {
         if (!(S.takt && S.takt.nl && S.takt.nl.laeuft)) { S.takt = taktStep(S.takt, inp, cfg.takt); }     // waehrend des Nachladens fuehrt die Datei, nicht die Live-Eingabe
         d.takt = taktKennzahlen(S.takt, now, cfg.takt);
         d.copKw = copKw(cfg); d.tc = cfg.takt; d.copSum = copSumme(S.takt, cfg.takt, now, d.copKw, zqOf(cfg));
+        d.paarQ = have(d.at) ? paarVergleich(S.takt, modusOf(d.hc), bandOf(d.at), 3, 0, d.copKw, zqOf(cfg), cfg.rules.quiet_strecken.paarMinMin) : null;
         d.cz = copZielStep(S, {t: now, hz: inp.hz, vl: inp.vl, rl: inp.rl, soll: inp.soll, at: inp.at, pel: inp.pel, pth: inp.pth, defrost: inp.defrost, dhw: inp.dhw, heater: inp.heaterI,
                                rh: d.rh, pv: d.pv, zw: inp.zw, zAge: inp.zAge, hpAge: inp.hpAge}, cfg);                      // COP: Ziel und Ist mit Zerlegung (nur Kennzahl, cop-ziel 17.10.2026)   // Daten je Heizregelung x Quiet x Band (COP korrigiert): Zielstufen und Deckel der Quiet-Regeln
         lagStep(S, d, now); kbStep(S, d, now);                                          // Wirkzeit und Heizkurven-Bias (nur Auswertung)
@@ -2597,6 +2648,7 @@ var ENGINE = (function () {
             sc.cases.push({id: p.id, rule: r.id, v: R.ver, sv: sv, t0: now, p: prog.p, h: prog.h.slice(), txt: prog.text, bk: bkOf(R, vt), dir: p.dir, done: [], hr: [], pts: 0,
                            tr: newTracker(r.id, now, {lead: lead, dir: p.dir, kind: kindOf(r.id, r.id === 'heizregelung' ? vt : hb, R.ver), H: Math.max.apply(null, prog.h), cap: cap, bed: p.bed || null, hzS: have(p.hzS) ? p.hzS : (r.id === 'heizregelung' ? cfg.rules.heizregelung.hochHz : null)}, d), dmg: r.locks.length ? ['sperre_verletzt'] : []});
             if (sv >= 6) { fuInit(sc.cases[sc.cases.length - 1].tr, S, now); }      // v6: Gegenprobe mit Fremdursachen
+            if (p.ohnePrognose) { var CM = sc.cases[sc.cases.length - 1]; CM.mess = 1; CM.h = [have(p.maxDauerMin) ? p.maxDauerMin : 120]; CM.txt = 'Messvorschlag ohne Prognose (nur Schäden zählen)'; }   // Deckel/Laufzeit v8: kein Treffer/Fehlalarm, Schaeden ueber die ganze Messdauer
         });
         // 2) Faelle fortschreiben, Horizonte abschliessen
         sc.cases.forEach(function (C) {
@@ -2605,7 +2657,7 @@ var ENGINE = (function () {
             C.h.forEach(function (h) {
                 if (C.done.indexOf(h) >= 0 || now - C.t0 < h * MIN) { return; }
                 C.done.push(h);
-                var oc = outcome(C.tr, h), br = baseRate(sc, C.bk || C.rule, h), pts = 0, np = ohnePunkte(C.rule, C.sv), bp = '';
+                var oc = C.mess ? {o: null, why: 'Messvorschlag, keine Prognose'} : outcome(C.tr, h), br = baseRate(sc, C.bk || C.rule, h), pts = 0, np = ohnePunkte(C.rule, C.sv), bp = '';
                 if (oc.o !== null && !np) {
                     var hp = hPunkte(C.p, br.b, oc.o, C.sv || 1), bRef = hp.bRef; bp = hp.bp;
                     if (bRef !== null) {
@@ -2704,7 +2756,8 @@ var ENGINE = (function () {
                 }
             }
             if (d.q > d.qFrom && d.q >= 1 && d.running && have(S._hzPrev) && S._hzPrev >= cfg.rules.quiet_strecken.hzTakt) {      // seit v3 jede Erhoehung (Zielstufe 1, 2 oder 3); ab 22 Hz (v5: hzTakt)
-                sc.eff.push({rule: 'quiet_strecken', t0: now, art: 'deckel', pel0: S._pelPrev, kal: isKal('quiet_strecken', now), natur: d.qBy !== 'quiet_strecken', m: {}, text: 'Quiet ' + d.qFrom + ' → ' + d.q + ' bei ' + de(S._hzPrev, 0) + ' Hz'});
+                var qsR = S.rules.quiet_strecken, qMess = d.qBy === 'quiet_strecken' && !!qsR && (qsR.prop ? !!qsR.prop.ohnePrognose : (have(qsR.ohneT) && now - qsR.ohneT <= 30 * MIN));   // v8: Wirkung eines Messvorschlags ohne Punkte
+                sc.eff.push({rule: 'quiet_strecken', t0: now, art: 'deckel', pel0: S._pelPrev, kal: isKal('quiet_strecken', now), natur: d.qBy !== 'quiet_strecken', mess: qMess ? 1 : 0, m: {}, text: 'Quiet ' + d.qFrom + ' → ' + d.q + ' bei ' + de(S._hzPrev, 0) + ' Hz' + (qMess ? ' (Messvorschlag)' : '')});
             }
         }
         if (d.shiftChanged && have(d.shiftFrom) && Math.abs(d.shift - d.shiftFrom) === 1 && d.fresh && !(d.ssFremd && !d.shiftBy)) {   // wertung-wirkung: Bewegungen des Sanftanlaufs zaehlen nicht als Regel-Wirkung
@@ -2787,17 +2840,18 @@ var ENGINE = (function () {
     function closeEffect(E, parts, sc, recs, now) {
         E.closed = true;
         var nat = (E.sv || 1) >= 6 && !!E.natur;
-        var raw = parts.reduce(function (a, x) { return a + x[1] * SCORE.wirkung; }, 0), pts = (E.kal || nat) ? 0 : raw;
+        var mess = !nat && !!E.mess, raw = parts.reduce(function (a, x) { return a + x[1] * SCORE.wirkung; }, 0), pts = (E.kal || nat || mess) ? 0 : raw;
         var T = tot(sc, E.rule, RULE[E.rule].ver, E.sv || 1);
         if (nat) {
             T.naturN = (T.naturN || 0) + 1;
             if (E.kal) { T.naturKal = (T.naturKal || 0) + 1; }
             else { T.naturP = r2((T.naturP || 0) + raw); if (E.art !== 'ohne_bedarf') { T.naturBef = (T.naturBef || 0) + 1; T.naturBefP = r2((T.naturBefP || 0) + raw); } }
-        } else { T.wirkN++; T.wirkP = r2(T.wirkP + pts); if (E.kal) { T.kalib++; } }
+        } else if (mess) { T.messN = (T.messN || 0) + 1; T.messP = r2((T.messP || 0) + raw); }                // Deckel/Laufzeit v8: Messvorschlag gemessen, keine Regel-Wirkung, 0 Punkte
+        else { T.wirkN++; T.wirkP = r2(T.wirkP + pts); if (E.kal) { T.kalib++; } }
         var rec = {t: iso(now), typ: 'wirkung', regel: E.rule, v: RULE[E.rule].ver, sv: E.sv || 1, ab: iso(E.t0), kalibrierfall: E.kal ? 1 : 0, punkte: pts, roh: raw,
                         teile: parts.map(function (x) { return {prognose: x[0], ergebnis: x[1] > 0 ? 'getroffen' : (x[1] < 0 ? 'daneben' : 'nicht messbar'), messung: x[2]}; }),
                         text: E.text + ': ' + parts.map(function (x) { return x[0] + ' → ' + (x[1] > 0 ? 'getroffen' : (x[1] < 0 ? 'daneben' : 'nicht messbar')) + ' (' + x[2] + ')'; }).join(' · ') + (E.kal ? ' · Kalibrierfall: das Modell stammt aus genau dieser Messung, 0 Punkte' : '') +
-                              (nat ? ' · Naturexperiment (Änderung ohne übernommenen Vorschlag der Regel): gemessen und getrennt gezählt, keine Regel-Wirkung, 0 Punkte' : '')};
+                              (nat ? ' · Naturexperiment (Änderung ohne übernommenen Vorschlag der Regel): gemessen und getrennt gezählt, keine Regel-Wirkung, 0 Punkte' : '') + (mess ? ' · Messvorschlag: gemessen, 0 Punkte' : '')};
         if (nat) { rec.naturexperiment = 1; }
         book(sc, recs, rec, now);
     }
@@ -3206,7 +3260,7 @@ var ENGINE = (function () {
 
     return {VER: VER, SCORE_VER: SCORE_VER, RULES: RULES, RULE: RULE, LOCKS: LOCKS, LOCK_CFG: LOCK_CFG, SCORE: SCORE, WHITELIST: WHITELIST, APPLY: APPLY,
             brier: brier, hPunkte: hPunkte, vorschau: vorschau, bedarfK: bedarfK, VS_LIM: VS_LIM, PLAUS: PLAUS, tagesgang: tagesgang, defaults: defaults, mergeCfg: mergeCfg, newState: newState, fixState: fixState, step: step, report: report, STILLGELEGT: STILLGELEGT, UEB: UEB, uebStep: uebStep, uebSumme: uebSumme, HCW: HCW, hcHinweis: hcHinweis, TAKT: TAKT, TAKT_SCHWELLEN: TAKT_SCHWELLEN, taktCfg: taktCfg, taktNew: taktNew, taktStep: taktStep, taktKennzahlen: taktKennzahlen, mindestLeistung: mindestLeistung, copSumme: copSumme, copTabelle: copTabelle, COP_KORR: COP_KORR, copKw: copKw, pelKorr: pelKorr, korrTxt: korrTxt, bandOf: bandOf, modusOf: modusOf, nlNeu: nlNeu, nlZeilen: nlZeilen, nlEnde: nlEnde, HG: HG, heizgrenzeBeob: heizgrenzeBeob, LAG: LAG, lagMessen: lagMessen, lagStep: lagStep, KB: KB, kbTag: kbTag, kbStep: kbStep, snapshot: snapshot, unsnap: unsnap,
-            checksum: checksum, newApply: newApply, applyRequest: applyRequest, applyTick: applyTick, fortsetzung: fortsetzung, gOfCmd: gOfCmd, iso: iso, ymd: ymd, zielDeckel: zielDeckel, zielFrei: zielFrei, deckelOf: deckelOf, deckelTab: deckelTab, DECKEL: DECKEL,
+            checksum: checksum, newApply: newApply, applyRequest: applyRequest, applyTick: applyTick, fortsetzung: fortsetzung, gOfCmd: gOfCmd, iso: iso, ymd: ymd, zielDeckel: zielDeckel, paarVergleich: paarVergleich, zielFrei: zielFrei, deckelOf: deckelOf, deckelTab: deckelTab, DECKEL: DECKEL,
             abtauKennzahl: abtauKennzahl, abtauWetter: abtauWetter, ABL: ABL, startGewollt: startGewollt, ABZ: ABZ, zielStufe: zielStufe,
             bedarfQ: bedarfQ, raumTrend: raumTrend, komfortSicher: komfortSicher, nutzenKurve: nutzenKurve, kindOf: kindOf, kaltQ: kaltQ, zielKalt: zielKalt, nachtMin: nachtMin, HL: HL, hochlaufSumme: hochlaufSumme,
             hhmm: hhmm, isoWeek: isoWeek, de: de, sg: sg,
