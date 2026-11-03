@@ -3,12 +3,14 @@
 
 Befehle (docker compose run --rm optimizer-tools <befehl> [--tag JJJJ-MM-TT]):
   dienst      Standard: Zeitplan (ZEITPLAN, Standard 06:40) und danach jeweils „nacht“; holt einen verpassten Lauf nach (NACHHOLEN=1)
-  nacht       Training (Tag = heute), Gütegrad des Ziel-COP (cop_eta, heute), Replay (gestern), Kennzahlen (gestern), Sicherung der Protokolle, dann status.json
+  nacht       Training (Tag = heute), Gütegrad des Ziel-COP (cop_eta, heute), Replay (gestern), Kennzahlen (gestern), Anlagen-Gesundheit (gestern),
+              Sicherung der Protokolle, dann status.json
   alles       wie nacht, dazu Kennzahlen aller Tage und Replays der fehlenden Tage (höchstens 31) nachrechnen (Erstinstallation)
   training    nur Training des Anlagen-Zwillings (mit cop_eta)
   cop_eta     nur Gütegrad, dT_verd und Frequenzfaktor des Ziel-COP -> /ergebnis/training/cop_eta.json (cop-ziel 17.10.2026)
   replay      nur Replay der Entscheidungsmaschine für einen Tag (Standard: gestern)
   kennzahlen  nur Tageskennzahlen (Standard: gestern; --alle für alle Tage)
+  gesundheit  nur Anlagen-Gesundheit (Fühlerversatz, Wasserdruck, Durchfluss, Verdampfer, Kältekreis, Gütegrad, Stromzähler; Standard: gestern; --alle)
   sicherung   nur die Sicherung der Protokolle nach /ergebnis/sicherung (tar.gz, Allowlist, SICHERUNG_TAGE Tage)
   status      status.json ausgeben
   gesund      Healthcheck (Dienst lebt, Datenordner lesbar)
@@ -42,7 +44,7 @@ AUFBEWAHREN_TAGE = int(os.environ.get("AUFBEWAHREN_TAGE", "120"))
 SICHERUNG_TAGE = int(os.environ.get("SICHERUNG_TAGE", "120"))                 # tägliche Archive so lange behalten ...
 SICHERUNG_MONATSERSTE = os.environ.get("SICHERUNG_MONATSERSTE", "1") == "1"   # ... das Archiv vom 1. jedes Monats (enthält den Vormonat komplett) unbegrenzt
 SICHERUNG_VORMONAT_TAGE = 7                                                   # Monatsdateien des Vormonats bis zum 7. mitsichern
-TIMEOUT = {"training": 1200, "cop_eta": 300, "replay": 600, "kennzahlen": 600, "sicherung": 600}   # Sekunden je Schritt (N100: Training ~1–5 min, Replay ~30 s, Kennzahlen ~5 s, Sicherung ~10 s)
+TIMEOUT = {"training": 1200, "cop_eta": 300, "replay": 600, "kennzahlen": 600, "gesundheit": 300, "sicherung": 600}   # Sekunden je Schritt (N100: Training ~1–5 min, Replay ~30 s, Kennzahlen ~5 s, Sicherung ~10 s)
 STATUS_FORMAT = 2                                                             # Aufbau von status.json, siehe README „status.json“
 # Ergebnisordner auf der NAS: Unterordner im Node-RED-Datenvolume; einmalig anzulegen (ohne root, als node-red):
 ANLEGEN_HILFE = "docker exec node_red-node-red-1 sh -c 'mkdir -p /data/optimizer-tools && chmod 2775 /data/optimizer-tools'"
@@ -191,6 +193,11 @@ def cmd_sicherung(tag):
 
 def cmd_kennzahlen(tag, alle=False):
     return [sys.executable, os.path.join(TOOLS, "kennzahlen_tag.py"), "--daten", DATEN, "--ergebnis", ERGEBNIS, "--tag", tag.isoformat()] + (["--alle"] if alle else [])
+
+
+def cmd_gesundheit(tag, alle=False):
+    """Anlagen-Gesundheit (02.11.2026): schleichende Veränderungen gegen den Bezug derselben Lage -> /ergebnis/gesundheit/<tag>.json."""
+    return [sys.executable, os.path.join(TOOLS, "gesundheit_tag.py"), "--daten", DATEN, "--ergebnis", ERGEBNIS, "--tag", tag.isoformat()] + (["--alle"] if alle else [])
 
 
 # ------------------------------------------------------------------ Sicherung der Protokolle
@@ -381,6 +388,19 @@ def baue_status(lauf=None, dienst=None):
             if F.get("daten.luecken_ueber_10min"):
                 hinweise.append("Minutenprotokoll %s: %d Lücken über 10 min (größte %s min)" % (j.get("tag"), F["daten.luecken_ueber_10min"], F.get("daten.groesste_luecke_min")))
     S["datenluecken"] = luecken
+    S["gesundheit"] = None                                        # Anlagen-Gesundheit (02.11.2026), jüngster Tag
+    o = os.path.join(ERGEBNIS, "gesundheit")
+    gt = sorted(f[:10] for f in (os.listdir(o) if os.path.isdir(o) else []) if re.match(r"^\d{4}-\d{2}-\d{2}\.json$", f))
+    if gt:
+        j = lies_json(os.path.join(o, gt[-1] + ".json")) or {}
+        S["gesundheit"] = {"tag": j.get("tag"), "datei": "gesundheit/%s.json" % gt[-1], "bezug_tage": (j.get("bezug") or {}).get("tage_mit_daten"),
+                           "abweichung": {k: (x or {}).get("abweichung") for k, x in (j.get("werte") or {}).items()},
+                           "trend": {k: (x or {}).get("median") for k, x in (j.get("trend") or {}).items()},
+                           "befunde": [{"schwere": b.get("schwere"), "pruefung": b.get("pruefung"), "titel": b.get("titel")} for b in j.get("befunde") or []],
+                           "befunde_anzahl": j.get("befunde_anzahl")}
+        for b in j.get("befunde") or []:
+            if b.get("schwere") in ("hinweis", "warnung"):
+                hinweise.append("Gesundheit %s: %s%s" % (j.get("tag"), "WARNUNG " if b["schwere"] == "warnung" else "", b.get("titel")))
     sich = lies_json(os.path.join(ERGEBNIS, "sicherung", "letzte.json"))
     S["sicherung"] = {k: sich.get(k) for k in ("tag", "datei", "bytes", "sha256", "dateien", "bytes_roh", "geprueft", "archive", "aeltestes", "belegt_mb")} if sich else None
     fr = luecken["frische"]
@@ -448,6 +468,9 @@ def lauf(art, argv):
     if art in ("nacht", "alles", "kennzahlen"):
         kt = tag - dt.timedelta(days=1) if (tag and art != "kennzahlen") else (tag or gestern)
         plan.append(("kennzahlen", cmd_kennzahlen(kt, alle=(art == "alles" or "--alle" in argv))))
+    if art in ("nacht", "alles", "gesundheit"):
+        gt = tag - dt.timedelta(days=1) if (tag and art != "gesundheit") else (tag or gestern)
+        plan.append(("gesundheit", cmd_gesundheit(gt, alle=(art == "alles" or "--alle" in argv))))
     if art in ("nacht", "alles", "sicherung"):
         plan.append(("sicherung", cmd_sicherung(tag or heute())))
     if not os.path.isdir(DATEN):
@@ -630,7 +653,7 @@ def main(argv):
             print("Fehler: Sicherung: %s" % e, flush=True)
             return 1
         return 0
-    if befehl in ("nacht", "alles", "training", "cop_eta", "replay", "kennzahlen", "sicherung"):
+    if befehl in ("nacht", "alles", "training", "cop_eta", "replay", "kennzahlen", "gesundheit", "sicherung"):
         signal.signal(signal.SIGTERM, beende)
         return lauf(befehl, argv[2:])
     if befehl == "status":

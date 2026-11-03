@@ -8,6 +8,8 @@ Ein kleiner Container für die NAS. Er rechnet jede Nacht drei Dinge aus den Pro
    Eingänge sind die Eingaben, die die Live-Maschine selbst protokolliert hat (`decisions-*.jsonl` → `in`); verglichen wird nur, wo live dieselbe Regelversion lief (Abschnitt „Replay-Güte“).
 3. **Tageskennzahlen** des Vortags (`tools/kennzahlen_tag.py`): dieselben Fakten wie der Bonsai-Beobachter (Läufe, Pausen, kWh el mit +80 W und th, COP, kWh/Kh mit Komfort-Toleranz 0,3 K/30 min, Räume gegen Bänder, Abtauungen, Heizstab, Quiet-/Heizregelungs-Anteile, Entscheidungen/Punkte, Datenlücken) und die festen Regel-Befunde.
 
+5. **Anlagen-Gesundheit** des Vortags (`tools/gesundheit_tag.py`, 02.11.2026): prüft, ob die Anlage noch so arbeitet wie in den Bezugstagen (Tag −42 … −8) **bei gleicher Lage** (Außentemperatur, Frequenz, Quiet, Pumpenstufe). Acht Prüfungen, Abschnitt „Anlagen-Gesundheit“.
+
 4. **Sicherung der Protokolle**: tägliches `tar.gz` der Monatsdateien und Zustands-JSON (Allowlist, ohne Geheimnisse) mit Prüfsumme.
 
 Alles ist deterministisch. Im Container läuft **kein Sprachmodell** und es gibt **kein Netz**. Bonsai auf dem PC kann die Ergebnisse lesen und kommentieren.
@@ -20,6 +22,7 @@ Alles ist deterministisch. Im Container läuft **kein Sprachmodell** und es gibt
 | danach | Gütegrad des Ziel-COP (`cop_eta`, cop-ziel 17.10.2026) | heute, Fenster 21 Tage | 2–3 s (PC 0,7 s) |
 | danach | Replay | gestern, Einschwingen 7 Tage (zweimal: Live-Eingänge und nur Protokolle) | 30–40 s |
 | danach | Kennzahlen | gestern | 2–4 s |
+| danach | Anlagen-Gesundheit | gestern, Bezug Tag −42 … −8 | 1–3 s (PC 0,3 s je Tag) |
 | danach | Sicherung | Monatsdateien des laufenden Monats (bis zum 7. auch des Vormonats) | 1–3 s |
 | danach | `status.json` | – | – |
 
@@ -45,6 +48,8 @@ replay/<tag>.md                 Replay-Bericht des Tages (120 Tage behalten)
 replay/<tag>.json               Zusammenfassung: Status-Minuten, Vorschläge, Punkte, Abgleich mit live, Raumfühler-Lücken
 kennzahlen/<tag>.json           Fakten (Schlüssel wie im Beobachter), Läufe, Lücken, Abtauungen, Befunde
 kennzahlen/tage.csv             eine Zeile je Tag (aus allen <tag>.json neu gebaut)
+gesundheit/<tag>.json           Anlagen-Gesundheit: Tageswert und Abweichung je Prüfung, 5-Tage-Trend, stehende Fühler, Abtau-Fakten, Befunde
+gesundheit/tage.csv             eine Zeile je Tag (Abweichung und Trend je Prüfung)
 sicherung/daten-<tag>.tar.gz    Sicherung der Protokolle (+ .sha256), 120 Tage; Archive vom 1. eines Monats unbegrenzt
 sicherung/letzte.json           Inhalt, Größe und Prüfsumme der letzten Sicherung
 ```
@@ -75,6 +80,7 @@ Wird nach jedem Lauf und beim Start des Dienstes neu geschrieben (atomar: erst `
 | `replay.guete` | `bewertbar` (bool), `prozent` (Status gleich live über die bewertbaren Regeln; **`null`, wenn nicht bewertbar**), `grund` (warum nicht), `nicht_bewertbar` (Regel-IDs), `regeln.<id>` `{bewertbar, prozent, minuten, grund}`, `eingang_live_minuten` |
 | `kennzahlen` | `tag`, Strom/Wärme kWh, COP, kWh/Kh, Abweichung 7 Tage, Komfort, Läufe, Starts, Abtauungen, Heizstab, Außen-Mittel, Befunde |
 | `datenluecken` | **`frische`** (jüngste Zeile in `quiet-*.csv`, `alter_min`), **`minutenprotokoll`** (`luecken_ueber_10min`, `groesste_luecke_min`, `liste`), **`raumfuehler`** (`raeume.<id>` `{ungueltig_min, laengste_min}` am Replay-Tag) |
+| `gesundheit` | `tag`, `datei`, `bezug_tage`, `abweichung` und `trend` je Prüfung, `befunde` (`schwere`, `pruefung`, `titel`), `befunde_anzahl`; Hinweise/Warnungen stehen zusätzlich in `hinweise` (setzen `ok` nicht auf `false`) |
 | `sicherung` | `tag`, `datei`, `bytes`, **`sha256`**, `dateien`, `bytes_roh`, `geprueft`, `archive`, `aeltestes`, `belegt_mb` |
 
 Fehlt ein Teil (z. B. noch kein Training), steht dort `null`.
@@ -286,3 +292,31 @@ Das Skript prüft:
 - einen Lasttest mit 5 × 8 synthetischen Tagen (`lastdaten.py`; voller Oktober plus Monatswechsel).
 
 Das Skript startet nur lokale Container mit denselben Einstellungen wie `compose.yml`.
+
+## Anlagen-Gesundheit (02.11.2026)
+
+Frage: Kann die Anlage heute noch, was sie vor Wochen konnte? Kältemittelverlust, ein zugesetzter Schmutzfänger, Laub am Verdampfer, Wasserverlust
+oder ein wandernder Fühler kosten je 3–15 % und fallen sonst erst auf, wenn es zu spät ist. Jede Prüfung vergleicht den Tag mit den Bezugstagen
+(Tag −42 … −8, die letzte Woche nicht, damit eine schleichende Veränderung den Bezug nicht mitzieht) **in derselben Lage**. Ein Befund entsteht
+erst, wenn der Median der letzten 5 Tage mit Wert über der Schwelle liegt; mit weniger als 5 Bezugstagen nur „lernt noch“.
+
+| Prüfung | Messung | Lage | Schwelle Hinweis / Warnung | Mögliche Ursache |
+|---|---|---|---|---|
+| `fuehler_versatz` | Vorlauf − Rücklauf in Pausen ≥ 10 min mit Pumpe (Mittelwert) | – | 0,15 / 0,30 K | Fühler wandert, sitzt lose |
+| `wasserdruck` | Wasserdruck in Pausen | Wassertemperatur (2 K) | 0,10 / 0,20 bar | Leck, Sicherheitsventil, Ausdehnungsgefäß |
+| `hydraulik` | Durchfluss | Pumpenstufe (5er), Lauf/Pause | 8 / 15 % | Schmutzfänger, Luft, Ventile |
+| `verdampfer` | Außenluft − Rohr außen, nur AT ≥ 5 °C (eisfrei) | Entzug je Lüfterdrehzahl, Außenband | 1 / 2 K | Laub, Schmutz, Lüfter |
+| `heissgas` | Heißgas − Vorlauf im ruhigen Lauf | 3 Hz, Außenband, Quiet | 3 / 6 K | Kältemittel, Verdichter |
+| `expansionsventil` | Öffnung im ruhigen Lauf | 3 Hz, Außenband, Quiet | 15 / 25 Schritte | Kältemittelmenge |
+| `guetegrad` | COP / Carnot (Vorlauf gegen Rohr außen), Stunden ≥ 40 min, nur mit Stromzähler | 6 Hz | 6 / 10 % | Effizienz insgesamt |
+| `stromzaehler` | Zähler − TOP16 im ruhigen Lauf | 6 Hz | 25 / 50 W | Zähler, Wandler, Firmware |
+
+Dazu „stehende Fühler“ (bei laufendem Verdichter keine Änderung, Grenzen je Fühler 30–600 min) und Abtau-Fakten des Tages.
+Ruhiger Lauf = Verdichter ≥ 20 min an, ≥ 30 min nach Abtauen, kein Warmwasser, kein Heizstab.
+
+Schwellen sind ANNAHMEN: rund das Doppelte der größten 5-Tage-Abweichung 07.10.–02.11.2026 (keine bekannte Störung). Rechnung über diesen Zeitraum:
+kein Hinweis, keine Warnung. `tools/gesundheit_tag_test.py [Datenordner]` prüft an einer synthetischen Anlage und an echten Daten mit eingebauten
+Störungen (Fühler +0,5 K, Druck −0,35 bar, Durchfluss −25 %, Rohr −3 K, Expansionsventil +30, Zähler +70 W), dass genau die passende Prüfung meldet,
+frühestens am 3. Tag der Störung. Grenzen: Der Verdampfer hat im Abtauwetter keine eisfreie Lage (kein Wert), und die Schwellen erkennen keine
+Veränderungen unterhalb der Tagesstreuung (z. B. Kältemittelverlust erst, wenn das Ventil im Mittel ≥ 15 Schritte weiter öffnet).
+

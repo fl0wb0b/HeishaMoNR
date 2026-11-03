@@ -3086,6 +3086,18 @@ if (RG) {
                RG.bewertbar && ok(RG.prozent) ? (RG.prozent >= 99 ? 'ok' : 'Abweichung') : 'offen', RG.bewertbar && ok(RG.prozent) ? (RG.prozent >= 99 ? 'ok' : 'warn') : 'warn',
                regT.join(' · ') + (ok(R.vorschlaege) ? ' · Vorschläge ' + R.vorschlaege : '')]);
 } else { rows.push(['Replay-Güte', R ? dm(R.tag) + ' · ohne Güte' : 'noch keins', '–', '', '']); }
+// Anlagen-Gesundheit (02.11.2026, Container-Schritt gesundheit): schleichende Veraenderungen gegen den Bezug derselben Lage
+var GH = st.gesundheit || null;
+if (GH) {
+    var ghB = (Array.isArray(GH.befunde) ? GH.befunde : []).filter(function (b) { return b && (b.schwere === 'warnung' || b.schwere === 'hinweis'); });
+    var ghW = ghB.some(function (b) { return b.schwere === 'warnung'; }), ghLern = ok(GH.bezug_tage) && GH.bezug_tage < 5;
+    var ghE = {fuehler_versatz: ['Fühler', 'K', 2], wasserdruck: ['Druck', 'bar', 2], hydraulik: ['Durchfluss', '%', 1], verdampfer: ['Verdampfer', 'K', 1],
+               heissgas: ['Heißgas', 'K', 1], expansionsventil: ['Exp.-Ventil', 'Schr.', 0], guetegrad: ['Gütegrad', '%', 1], stromzaehler: ['Zähler', 'W', 0]};
+    var ghT = Object.keys(ghE).map(function (k) { var v = (GH.trend || {})[k]; return ghE[k][0] + ' ' + (ok(v) ? (v >= 0 ? '+' : '') + f(v, ghE[k][2]) + ' ' + ghE[k][1] : '–'); });
+    rows.push(['Gesundheit', dm(GH.tag) + ' · ' + (ghLern ? 'lernt noch (' + GH.bezug_tage + ' Bezugstage)' : (ghB.length ? ghB.map(function (b) { return b.titel; }).join(', ') : 'unauffällig')),
+               ghLern ? 'lernt' : (ghW ? 'Warnung' : (ghB.length ? 'Hinweis' : 'ok')), ghLern ? '' : (ghW ? 'fehler' : (ghB.length ? 'warn' : 'ok')),
+               '5-Tage-Median gegen den Bezug derselben Lage (' + (GH.bezug_tage || 0) + ' Tage): ' + ghT.join(' · ') + ' · Datei ' + (GH.datei || '–')]);
+}
 // Datenluecken: Minutenprotokoll und Raumfuehler
 var DL = st.datenluecken || {}, MP = DL.minutenprotokoll || null, FR = DL.frische || null, RF = DL.raumfuehler || null;
 if (MP || FR) {
