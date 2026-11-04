@@ -65,6 +65,41 @@ console.log('--- (a8) -1 K im Dauerlauf');
     check('a8.7 gespeicherte Konfiguration ohne die neuen Werte: Standardwerte greifen, kein NaN', altCfg.locks.dauerMin === 120 && altCfg.locks.taktKDauer === 2 && E.step(null, inp(T0, {rt: 200}), altCfg).d.sollRunterK === 1, '');
 }
 
+// ================================================================== (v9) Raumeinfluss v9: +1 K im Dauerlauf nur bei Vorlauf <= Soll +1 K, bei Waermeverteilung nur Hinweis
+console.log('--- (v9) +1 K im Dauerlauf');
+{
+    // Schlafzimmer 0,6 K unter Minimum (ueber bedTiefK und verteilNotK); Lauf seit rt Minuten. Auswertung 04.11.2026 (berichte/plus1k-wirkung).
+    const lauf9 = (rt, vl, soll, o, c) => runSeq(75, i => inp(T0 + i * MIN, Object.assign({at: 4, q: 3, hz: 17, rt: rt + i, soll: soll, sollKurve: soll, vl: vl, rl: 29, rooms: rooms({schlaf: 19.4})}, o || {})), null, c);
+    // Pause 40 min (Start in der Pause abgeschaltet), dann Lauf mit Vorlauf +1,5 K: Bedarf ist ab Laufminute 20 stabil, also im Laufbeginn
+    const cfgP = JSON.parse(JSON.stringify(cfg)); cfgP.rules.raum_offset.startPauseMin = 9999;
+    const beginn9 = rm => runSeq(75, i => inp(T0 + i * MIN, i < 40 ? {at: 6, q: 3, hz: 0, rt: 0, soll: 32, sollKurve: 32, vl: 29, rl: 28, rooms: rooms(rm)}
+                                                                  : {at: 6, q: 3, hz: 17, rt: i - 40, soll: 32, sollKurve: 32, vl: 33.5, rl: 29, rooms: rooms(rm)}), null, cfgP);
+    const plus9 = R => R.outs.some(o => o.prop && o.prop.rule === 'raum_offset');
+    const g9 = R => r0(R.outs[74], 'raum_offset').grund || '';
+    check('v9.1 Dauerlauf 200 min, Vorlauf genau Soll +1,0 K: +1 K wird vorgeschlagen', plus9(lauf9(200, 33, 32)), g9(lauf9(200, 33, 32)));
+    const R2 = lauf9(200, 33.25, 32);
+    check('v9.2 Dauerlauf 200 min, Vorlauf +1,25 K: kein +1 K, die Kachel sagt warum (weder Frequenz noch Raum)', !plus9(R2) && /weder Frequenz noch Raum/.test(g9(R2)), g9(R2));
+    const R3 = lauf9(200, null, 32);
+    check('v9.3 Dauerlauf, Vorlauf fehlt: Daten-Sperre, kein +1 K, kein NaN im Text', !plus9(R3) && !/NaN/.test(g9(R3)), g9(R3));
+    const R4 = lauf9(200, 32.5, 32);
+    check('v9.4 Dauerlauf, Vorlauf +0,5 K (wie 04.11. 19:45 vor dem Befehl): +1 K bleibt erlaubt', plus9(R4), g9(R4));
+    const R5 = beginn9({schlaf: 19.4});
+    check('v9.5 Laufbeginn (Lauf unter 45 min) mit Vorlauf +1,5 K: +1 K wie bis v8 (wirkt ueber die Stoppschwelle)', plus9(R5) && R5.outs.find(o => o.prop && o.prop.rule === 'raum_offset').d.runMin < 45, g9(R5));
+    const R6 = runSeq(75, i => inp(T0 + i * MIN, i < 10 ? {at: 6, q: 3, hz: 17, rt: 300 + i, soll: 32, sollKurve: 32, vl: 32, rl: 29, rooms: rooms({schlaf: 19.4})}      // Lauf, dann Pause ab Minute 10
+                                                    : {at: 6, q: 3, hz: 0, rt: 0, soll: 32, sollKurve: 32, vl: 29, rl: 28, rooms: rooms({schlaf: 19.4})}));
+    check('v9.6 Pause: +1 K bleibt ein gewollter Start (startet die Waermepumpe)', R6.outs.some(o => o.prop && o.prop.rule === 'raum_offset' && /startet die Wärmepumpe/.test(o.prop.was || '')), g9(R6));
+    const R7 = lauf9(200, 32, 32, {rooms: rooms({schlaf: 19.4, ki_unten: 22.4})}), h7 = R7.outs[74].hinweise.find(h => h.id === 'verteilung');
+    check('v9.7 Waermeverteilung im Dauerlauf (Schlafzimmer 0,6 K unter Minimum, Kinderzimmer unten 0,4 K ueber Maximum): kein +1 K trotz verteilNotK, Kachel nennt Abgleich/Thermostatventile, Hinweis bleibt',
+          !plus9(R7) && /Wärmeverteilungsproblem im Dauerlauf/.test(g9(R7)) && /Thermostatventile/.test(g9(R7)) && !/Komfort vor Energie/.test(g9(R7)) && !!h7, g9(R7) + ' | ' + (h7 ? h7.text : 'kein Hinweis'));
+    const R8 = beginn9({schlaf: 19.4, ki_unten: 22.4});
+    check('v9.8 Waermeverteilung am Laufbeginn: +1 K wie bis v8 (Komfort vor Energie ab verteilNotK)', plus9(R8), g9(R8));
+    const R9 = lauf9(200, 32, 32, {rooms: rooms({schlaf: 19.7, ki_unten: 22.4})});
+    check('v9.9 Waermeverteilung knapp (Schlafzimmer 0,3 K unter Minimum) im Dauerlauf: kein +1 K wie bisher', !plus9(R9) && /Wärmeverteilungsproblem/.test(g9(R9)), g9(R9));
+    const altCfg9 = E.mergeCfg({rules: {raum_offset: {kaltK: 0.2}}});
+    check('v9.10 gespeicherte Konfiguration ohne die neuen Werte: plusVorlaufK 1,0 K und plusLaufMin 45 min greifen, Version 9',
+          altCfg9.rules.raum_offset.plusVorlaufK === 1 && altCfg9.rules.raum_offset.plusLaufMin === 45 && E.RULE.raum_offset.ver === 9, '');
+}
+
 // ================================================================== (vs4) Vorausschau v4
 console.log('--- (vs4) Vorausschau v4');
 {
@@ -189,7 +224,8 @@ console.log('--- (a) Sperren (jede Regel erbt sie)');
     { const R = runSeq(90, i => inp(T0 + i * MIN, i < 70 ? {hz: 0, rt: 0, pump: 1750, soll: 31, sollKurve: 30.5, vl: 29, rooms: rooms({schlaf: 22.4})} : {soll: 31, sollKurve: 30.5, vl: 31.5, rt: i - 70, rooms: rooms({schlaf: 22.4})}));
       const f = R.outs.findIndex(o => r0(o, 'raum_offset').neu), r = r0(R.outs[70], 'raum_offset');
       check('Raumeinfluss v3: Pausen-Variante -1 K (Vorschlag in der Pause nach 60 min Ueberschuss); laeuft der Verdichter mit Vorlauf ueber Soll an, zieht die Sperre Takt-Gefahr den Vorschlag zurueck (nach -1 K +1,5 K)', f === 60 && R.outs[60].prop.cmd.value === -1 && /Pause/.test(R.outs[60].prop.warum) && r.st === 'gesperrt' && /Takt-Gefahr.*nach −1 K \+1,50 K/.test(r.grund), f + ' · ' + r.grund); }
-    { const R = runSeq(75, i => inp(T0 + i * MIN, {soll: 31, sollKurve: 30.5, vl: 33, rooms: rooms({ki_oben: 21.5})})); const r = r0(R.outs[74], 'raum_offset'); check('Takt-Gefahr gilt nicht fuer +1 K (hebt den Abstand zur Abschaltgrenze): Vorschlag trotz Vorlauf +2 K', r.st === 'vorschlag', r.grund); }
+    { const cT = JSON.parse(JSON.stringify(cfg)); cT.rules.raum_offset.plusVorlaufK = 9;                 // v9-Bedingung (Dauerlauf: Vorlauf <= Soll +1 K) aus, damit nur die Sperre Takt-Gefahr geprueft wird (v9 selbst: Abschnitt v9)
+      const R = runSeq(75, i => inp(T0 + i * MIN, {soll: 31, sollKurve: 30.5, vl: 33, rooms: rooms({ki_oben: 21.5})}), null, cT); const r = r0(R.outs[74], 'raum_offset'); check('Takt-Gefahr gilt nicht fuer +1 K (hebt den Abstand zur Abschaltgrenze): Vorschlag trotz Vorlauf +2 K', r.st === 'vorschlag', r.grund); }
     { const R = runSeq(75, i => inp(T0 + i * MIN, {at: 0, soll: 33, sollKurve: 33.1, vl: 31, rooms: rooms({ki_oben: 21.5})})); const r = r0(R.outs[74], 'raum_offset'); check('Heizstab-Naehe: +1 K bei 0 °C und Vorlauf 2 K unter Soll -> gesperrt (nach +1 K 3 K unter Soll)', r.st === 'gesperrt' && /Heizstab-Nähe/.test(r.grund), r.grund); }
     { const R = runSeq(75, i => inp(T0 + i * MIN, {soll: 38, sollKurve: 29.75, rooms: rooms({ki_oben: 21.5})})); const r = r0(R.outs[74], 'raum_offset'); check('Handeingriff am Soll (38 statt Kurve 29,75 °C): Raumregel gesperrt', r.st === 'gesperrt' && /Handeingriff/.test(r.grund), r.grund); }
     { const R = runSeq(75, i => inp(T0 + i * MIN, {heatMode: 1, rooms: rooms({ki_oben: 21.5})})); check('kein Heizkurvenmodus (TOP76 != 0): Raumregel gesperrt', /kein Heizkurvenmodus/.test(r0(R.outs[74], 'raum_offset').grund), r0(R.outs[74], 'raum_offset').grund); }
@@ -727,7 +763,7 @@ const allScores = R => [].concat.apply([], R.outs.map(o => o.scores));
     const RV = E.RULE.vorausschau;
     check('Regelwerk: Vorausschau v3 (Gebaeudemodell v3, 15.10.2026) ist Befehlsregel der Groesse "shift" (nur -1 K, Richtung soll_runter, eigene Basisrate "vorausschau|v3") mit Sperren Modell-Gate, Vorrang, Gegenrichtung; der Zweck nennt, warum +1 K gestrichen ist (Kurve wird alle 5 min nachgefuehrt, Raeume bei Kaelte ueber der Bandmitte, Hochlauf +48 %) und das Gebaeudemodell v3; Raumeinfluss v5 nimmt an der Arbitrierung teil',
           RV && RV.ver === 4 && RV.groesse === 'shift' && RV.art === 'befehl' && RV.richtung === 'soll_runter' && RV.basis === 'vorausschau|v4' && RV.kurz === 'Vorausschau −1 K' && /ohne den Zweig \+1 K/.test(RV.zweck) && /alle 5 min/.test(RV.zweck) && /Bandmitte/.test(RV.zweck) && /\+48 %/.test(RV.zweck) && /T_innen − T_außen\) − Gewinne/.test(RV.zweck) &&
-          ['modell', 'vorrang', 'gegenrichtung'].every(x => RV.sperren.includes(x)) && E.RULE.raum_offset.ver === 8 && ['vorrang', 'gegenrichtung'].every(x => E.RULE.raum_offset.sperren.includes(x)) && RV.befehl.name === 'SetZ1HeatRequestTemperature', RV.sperren.join(','));
+          ['modell', 'vorrang', 'gegenrichtung'].every(x => RV.sperren.includes(x)) && E.RULE.raum_offset.ver === 9 && ['vorrang', 'gegenrichtung'].every(x => E.RULE.raum_offset.sperren.includes(x)) && RV.befehl.name === 'SetZ1HeatRequestTemperature', RV.sperren.join(','));
     const iVs = E.RULES.findIndex(x => x.id === 'vorausschau');
     // Gate geschlossen: nie ein Vorschlag, nur Anzeige; Vergleichslagen fuer die Basisrate laufen trotzdem mit
     let R = runD(300, i => inp(T0 + i * MIN, {vs: vsx(VSK.down, {gate: 0, n: 1})}));
@@ -1975,7 +2011,7 @@ console.log('--- (y) Bewertung v6: Lueften im ganzen Horizont (geglaetteter Wert
     check('v6: Raum mit eigener Nachheizung (Kinderzimmer oben −0,65 K in 30 min, Relais) ist kein Lueftungsverdacht (Schwelle bleibt 1 K): der echte Fehlalarm bleibt',
           g6 && g6.ergebnis === 'fehlalarm' && !g6.horizonte.some(h => /Lüftungsverdacht/.test(h.why)), hz(g6));
     // +1 K im Lauf (Bedarf Schlafzimmer 19,6 < 20 − 0,2); Sonne ab 11 Uhr (Bewoelkung 10 %), der Raum kommt 12:00–12:30 ins Band
-    const plus = (t0, sch) => i => inp(t0 + i * MIN, {soll: 31, sollKurve: 30.5, vl: 33, rt: 60 + i, wolken: 10, rooms: rooms({schlaf: Math.round(sch(i) * 100) / 100})});
+    const plus = (t0, sch) => i => inp(t0 + i * MIN, {soll: 31, sollKurve: 30.5, vl: 32, rt: 60 + i, wolken: 10, rooms: rooms({schlaf: Math.round(sch(i) * 100) / 100})});   // v9: Vorlauf +1 K (Dauerlauf erlaubt +1 K nur bis Soll +1 K)
     const tag = T0 + 4 * 60 * MIN, nacht = T0 + 16 * 60 * MIN, erh = i => lin(i, 120, 150, 19.6, 20.4);
     const S6 = runSeq(400, plus(tag, erh)), S5 = runSeq(400, plus(tag, erh), null, E.mergeCfg({sv: 5, rules: {raum_offset: {bedTiefK: 0.2}}})), N6 = runSeq(400, plus(nacht, erh)), s6 = fallR(S6), s5 = fallR(S5), n6 = fallR(N6);
     check('v6: +1 K, der Bedarfsraum kommt bei Sonne von selbst ins Band (Sonnenzeichen der Regel >= 30 min vor der Rueckkehr) -> diese Horizonte neutral ("Fremdursache: Sonne"), kein Fehlalarm; v5: Fehlalarm; dieselbe Lage nachts (keine Sonne): Fehlalarm auch in v6',
@@ -2000,7 +2036,7 @@ console.log('--- (z) Heizregelung v4 und Raumeinfluss v7 (Bewertungen 29./31.10.
 {
     const dcfg = E.defaults(), c6 = E.mergeCfg({rules: {raum_offset: {bedTiefK: 0.2}}}), c3 = E.mergeCfg({rules: {heizregelung: {warmUeberK: 99}}});   // Standardwerte; v6-Tiefe bzw. ohne v4-Grenze zum Vergleich
     check('z0 Regelwerk 31.10.2026: Heizregelung v4 (warmUeberK 0,5 K), Raumeinfluss v7 (bedTiefK 0,5 K, eigenNachMitte 1), Basisraten-Schluessel unveraendert (heizregelung|v3, raum_offset|v3, raum_offset|v5|minus: die Vergleichslagen bleiben), Herkunft mit Messung',
-          E.RULE.heizregelung.ver === 4 && E.RULE.raum_offset.ver === 8 && dcfg.rules.heizregelung.warmUeberK === 0.5 && dcfg.rules.raum_offset.bedTiefK === 0.5 && dcfg.rules.raum_offset.eigenNachMitte === 1 && dcfg.rules.raum_offset.kaltK === 0.2 &&
+          E.RULE.heizregelung.ver === 4 && E.RULE.raum_offset.ver === 9 && dcfg.rules.heizregelung.warmUeberK === 0.5 && dcfg.rules.raum_offset.bedTiefK === 0.5 && dcfg.rules.raum_offset.eigenNachMitte === 1 && dcfg.rules.raum_offset.kaltK === 0.2 &&
           E.RULE.heizregelung.basis === 'heizregelung|v3' && E.RULE.raum_offset.basis === 'raum_offset|v3' && E.RULE.raum_offset.basisMinus === 'raum_offset|v5|minus' &&
           ['warmUeberK'].every(k => /MESSUNG/.test(E.RULE.heizregelung.schwellen.find(x => x.key === k).herkunft)) && ['bedTiefK', 'eigenNachMitte'].every(k => /MESSUNG/.test(E.RULE.raum_offset.schwellen.find(x => x.key === k).herkunft)) &&
           /v4 \(31\.10\.2026/.test(E.RULE.heizregelung.zweck) && /v7 \(31\.10\.2026/.test(E.RULE.raum_offset.zweck), E.RULES.map(R => R.id + ' v' + R.ver).join(', '));
