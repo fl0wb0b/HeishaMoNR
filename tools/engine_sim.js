@@ -103,6 +103,15 @@ console.log('--- (v9) kein +1 K im Dauerlauf');
     check('v9.8 Waermeverteilung am Laufbeginn: +1 K wie bis v8 (Komfort vor Energie ab verteilNotK)', plus9(R8), g9(R8));
     const R9 = lauf9(200, 33, 32, {rooms: rooms({schlaf: 22.4})});
     check('v9.9 −1 K im Dauerlauf unveraendert (Ueberschuss, Vorlauf +1,0 K, wie a8.2)', R9.outs.some(o => o.prop && o.prop.rule === 'raum_offset' && o.prop.cmd.value === -1), g9(R9));
+    // Kimi-Pruefung 04.11.: die Bewertung darf den bewusst unterlassenen Vorschlag im Dauerlauf nicht als "verpasst" buchen
+    const lauf9L = (n, c) => runSeq(n, i => inp(T0 + i * MIN, {at: 4, q: 3, hz: 17, rt: 200 + i, soll: 32, sollKurve: 32, vl: 32, rl: 29, rooms: rooms({schlaf: 19.4})}), null, c);
+    const sc11 = [].concat.apply([], lauf9L(240, cfg9).outs.map(o => o.scores)).filter(s => /^verpasst/.test(s.typ) && s.regel === 'raum_offset');
+    check('v9.11 Dauerlauf 240 min, Schlafzimmer 0,6 K unter Minimum, kein warmer Raum: kein "verpasst" fuer den Raumeinfluss (bewusst kein +1 K)', sc11.length === 0, sc11.map(s => s.typ + ' ' + s.punkte).join(','));
+    const cV = JSON.parse(JSON.stringify(cfg9)); cV.rules.raum_offset.plusLaufMin = 1e9; cV.rules.raum_offset.stabilMin = 9999;
+    const sc11b = [].concat.apply([], lauf9L(240, cV).outs.map(o => o.scores)).filter(s => s.typ === 'verpasst' && s.regel === 'raum_offset');
+    check('v9.11b Gegenprobe: dieselbe Lage ohne Dauerlauf-Sperre und ohne Vorschlag (Haltezeit nie erreicht) bucht weiter "verpasst" -20', sc11b.length === 1 && sc11b[0].punkte === -20, sc11b.map(s => s.typ + ' ' + s.punkte).join(','));
+    const R12 = lauf9(200, 32, 32, {hc: 0});
+    check('v9.12 Dauerlauf in Comfort: kein +1 K, die Kachel nennt keine Efficiency-Messung als Grund', !plus9(R12) && /für Comfort nicht gemessen/.test(g9(R12)) && !/Efficiency hält/.test(g9(R12)), g9(R12));
     const altCfg9 = E.mergeCfg({rules: {raum_offset: {kaltK: 0.2}}});
     check('v9.10 gespeicherte Konfiguration ohne den neuen Wert: plusLaufMin 45 min greift, Version 9',
           altCfg9.rules.raum_offset.plusLaufMin === 45 && altCfg9.rules.raum_offset.plusVorlaufK === undefined && E.RULE.raum_offset.ver === 9, '');
@@ -634,6 +643,9 @@ console.log('--- Nachpruefung: Ruecklese-Timeout, Flackern des Raumvorschlags');
     check('Ruecklese-Timeout, Anlage steht weiter auf dem Ausgangswert: Warnung, Uebernahme beendet (kein Dauerblock der Groesse Quiet), kein Befehl', t1.send.length === 0 && t1.A.aktiv === null && /Keine Bestätigung/.test(t1.A.alarm.text), JSON.stringify(t1.A.aktiv));
     const t2 = E.applyTick(JSON.parse(JSON.stringify(A)), {now: NOWx, plant: {q: 2, hpAge: 0.3, block: 0}});
     check('Ruecklese-Timeout, Anlage meldet einen dritten Wert: Uebernahme bleibt (unbestaetigt), "Zurücksetzen" moeglich', t2.send.length === 0 && t2.A.aktiv && t2.A.aktiv.unbestaetigt === true, JSON.stringify(t2.A.aktiv));
+    const t2b = E.applyTick(JSON.parse(JSON.stringify(t2.A)), {now: NOWx + 60000, plant: {q: 2, hpAge: 0.3, block: 0}});
+    check('Kimi-Pruefung 04.11.: unbestaetigte Uebernahme, die Anlage bleibt auf dem dritten Wert (Handeingriff) -> wie eine fremde Aenderung: Warnung, Uebernahme beendet, kein Befehl, also auch nach der Frist kein Rueckweg, der den Handwert ueberschreibt',
+          t2b.send.length === 0 && !t2b.A.aktiv && !Object.keys(t2b.A.ak || {}).length && /von außen auf 2/.test((t2b.A.alarm || {}).text || ''), JSON.stringify({aktiv: t2b.A.aktiv, ak: t2b.A.ak, alarm: t2b.A.alarm && t2b.A.alarm.text}));
     const pq = {id: 'quiet_freigabe@x', rule: 'quiet_freigabe', ver: 1, art: 'befehl', ts: NOWx, bis: NOWx + 60 * MIN, cmd: {name: 'SetQuietMode', topic: 'panasonic_heat_pump/commands/SetQuietMode', value: 0}, von: 3, was: 'x'}; pq.sum = E.checksum(pq);
     const c3 = E.applyRequest(t1.A, {topic: 'uebernehmen', payload: {id: pq.id, sum: pq.sum}}, {now: NOWx + 11 * MIN, enabled: true, rules: ['quiet_freigabe'], eng: {ts: NOWx + 11 * MIN, prop: pq, locks: {}}, plant: {q: 3, hpAge: 0.3, block: 0}});
     check('... danach ist ein neuer Klick fuer Quiet wieder moeglich (nicht "schon eine Übernahme aktiv")', c3.send.length === 1, c3.toast && c3.toast.text);
@@ -892,7 +904,7 @@ console.log('--- (d) Sonne/Wind nur mit coefActivate, Bewertung und Neutralitaet
     R = runD(330, neu); sc = allScores(R).filter(s => s.regel === 'raum_offset' && /^verpasst/.test(s.typ));
     check('Neutralitaet (v3): Raumeinfluss 180 min lang nur durch die Gegenregel (uebernommene -1 K der Vorausschau) und eigene Wartezeiten gesperrt -> "verpasst_sperre" 0 Punkte mit Sperre "vorrang", kein "verpasst"',
           sc.length === 1 && sc[0].typ === 'verpasst_sperre' && sc[0].punkte === 0 && sc[0].sperre.includes('vorrang') && !/\bverpasst"/.test(JSON.stringify(sc)) && stAt(R, 150, 'raum_offset').locks[0] === 'vorrang', sc.map(s => s.t + ' ' + s.typ + ' ' + JSON.stringify(s.sperre)).join(' | '));
-    R = runD(330, neu, undefined, E.mergeCfg({sv: 2, rules: {vorausschau: VS3}})); sc = allScores(R).filter(s => s.regel === 'raum_offset' && /^verpasst/.test(s.typ));
+    R = runD(330, neu, undefined, E.mergeCfg({sv: 2, rules: {vorausschau: VS3, raum_offset: {plusLaufMin: 1e9}}})); sc = allScores(R).filter(s => s.regel === 'raum_offset' && /^verpasst/.test(s.typ));   // v9-Dauerlauf aus wie in der Mechanik (cfg oben)
     check('... mit den Bewertungsregeln v2 (cfg.sv = 2) waere dieselbe Lage "verpasst" -20 (Gegenregel-Sperren entschuldigten dort nicht): v3 aendert genau das', sc.some(s0 => s0.typ === 'verpasst' && s0.punkte === -20 && s0.sv === 2), sc.map(s => s.t + ' ' + s.typ + ' ' + s.punkte).join(' | '));
     R = runD(330, i => { const x = neu(i); if (i >= 200) { x.rooms = rooms({ki_oben: 20.8}); } return x; }); sc = allScores(R).filter(s => s.regel === 'raum_offset' && /^verpasst/.test(s.typ));
     check('... Schaden hebt auch die Gegenregel-Entschuldigung auf: Raum 1,2 K unter Minimum -> "verpasst" -20 mit Schaden "komfort"', sc.some(s => s.typ === 'verpasst' && s.punkte === -20 && JSON.stringify(s.schaden) === '["komfort"]'), sc.map(s => s.t + ' ' + s.typ + ' ' + s.punkte).join(' | '));
@@ -2039,10 +2051,10 @@ console.log('--- (y) Bewertung v6: Lueften im ganzen Horizont (geglaetteter Wert
 }
 
 // ================================================================== (z) Regeln 31.10.2026: Heizregelung v4 (kein Comfort in ein zu warmes Haus), Raumeinfluss v7 (Bedarfstiefe, eigene Nachheizung)
-console.log('--- (z) Heizregelung v4 und Raumeinfluss v7 (Bewertungen 29./31.10.2026)');
+console.log('--- (z) Heizregelung v4 und Raumeinfluss v7 (Raumeinfluss seit v9 mit Dauerlauf-Sperre, Abschnitt v9) (Bewertungen 29./31.10.2026)');
 {
-    const dcfg = E.defaults(), c6 = E.mergeCfg({rules: {raum_offset: {bedTiefK: 0.2, plusLaufMin: 1e9}}}), c3 = E.mergeCfg({rules: {heizregelung: {warmUeberK: 99}}});
-    dcfg.rules.raum_offset.plusLaufMin = 1e9;                                   // v9: die Faelle hier pruefen +1 K im Lauf (Tiefe v7); die Dauerlauf-Sperre prueft Abschnitt (v9)   // Standardwerte; v6-Tiefe bzw. ohne v4-Grenze zum Vergleich
+    const dcfg = E.defaults(), c6 = E.mergeCfg({rules: {raum_offset: {bedTiefK: 0.2, plusLaufMin: 1e9}}}), c3 = E.mergeCfg({rules: {heizregelung: {warmUeberK: 99}}});   // Standardwerte; v6-Tiefe bzw. ohne v4-Grenze zum Vergleich
+    dcfg.rules.raum_offset.plusLaufMin = 1e9;                                   // v9: die Faelle hier pruefen +1 K im Lauf (Tiefe v7); die Dauerlauf-Sperre prueft Abschnitt (v9)
     check('z0 Regelwerk 31.10.2026: Heizregelung v4 (warmUeberK 0,5 K), Raumeinfluss v7 (bedTiefK 0,5 K, eigenNachMitte 1), Basisraten-Schluessel unveraendert (heizregelung|v3, raum_offset|v3, raum_offset|v5|minus: die Vergleichslagen bleiben), Herkunft mit Messung',
           E.RULE.heizregelung.ver === 4 && E.RULE.raum_offset.ver === 9 && dcfg.rules.heizregelung.warmUeberK === 0.5 && dcfg.rules.raum_offset.bedTiefK === 0.5 && dcfg.rules.raum_offset.eigenNachMitte === 1 && dcfg.rules.raum_offset.kaltK === 0.2 &&
           E.RULE.heizregelung.basis === 'heizregelung|v3' && E.RULE.raum_offset.basis === 'raum_offset|v3' && E.RULE.raum_offset.basisMinus === 'raum_offset|v5|minus' &&

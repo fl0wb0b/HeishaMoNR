@@ -702,7 +702,7 @@ var ENGINE = (function () {
                 var up = ziel > d.shift, sollNeu = have(d.soll) ? d.soll + (ziel - d.shift) : null, vlS = have(d.vl) && have(d.soll) ? d.vl - d.soll : null;
                 var dauer = up && d.running && d.runMin >= c.plusLaufMin;                   // v9: +1 K im Dauerlauf (nach dem Laufbeginn)
                 if (dauer) { return {inaktiv: L.verteil ? 'Wärmeverteilungsproblem im Dauerlauf, kein +1 K: ' + L.code.replace(/ \(Komfort vor Energie: [^)]*\)/, ' – +1 K bringt dem kalten Raum in 3 h höchstens 0,1 K und heizt den warmen mit (gemessen), hydraulischen Abgleich/Thermostatventile prüfen')
-                                                    : 'Dauerlauf seit ' + de(d.runMin, 0) + ' min: kein +1 K, es ändert im Dauerlauf weder Frequenz noch Raum (gemessen 10.10.–04.11.: Efficiency hält 17 Hz bis etwa 2 K Rückstand, Räume höchstens +0,1 K in 3 h) – ' + L.code}; }
+                                                    : 'Dauerlauf seit ' + de(d.runMin, 0) + ' min: kein +1 K' + (d.hc === 0 ? ' (für Comfort nicht gemessen, nur 3–4 Tage Daten)' : ', es ändert im Dauerlauf weder Frequenz noch Raum (gemessen 10.10.–04.11.: Efficiency hält 17 Hz bis etwa 2 K Rückstand, Räume höchstens +0,1 K in 3 h)') + ' – ' + L.code}; }
                 var stab = rs.korrSince ? mins(d.now - rs.korrSince) : 0, ruhig = !d.kurveChg || d.now - d.kurveChg >= c.kurveRuhigMin * MIN;
                 var cond = [
                     {k: 'stabil', kz: up ? 'Bedarf stabil' : 'Überschuss stabil', t: (up ? 'Bedarf' : 'Überschuss') + ' seit mindestens ' + c.stabilMin + ' min', tn: (up ? 'Bedarf' : 'Überschuss') + ' erst seit ' + stab + ' von ' + c.stabilMin + ' min (' + L.code + ')', ok: stab >= c.stabilMin, ist: stab, soll: c.stabilMin, op: '>=', u: 'min', dyn: true},
@@ -1186,7 +1186,7 @@ var ENGINE = (function () {
             var not = o.bedL.some(function (y) { return y.r.t <= y.r.min - c.verteilNotK + 1e-9; });
             o.dir = (!o.verteil || not) ? 1 : 0;
             o.code = 'Bedarf: ' + o.bedL.map(function (y) { return nm(y, -1) + ' zum Minimum' + (have(y.kh) ? ' (' + sg(y.kh, 1) + ' K/h)' : ''); }).join(', ') + eigTxt() +
-                     (o.verteil ? '; Wärmeverteilung: ' + o.ueberL.map(nmS).join(', ') + (not ? ' (Komfort vor Energie: ' + c.verteilNotK + ' K unter Minimum)' : ' – Heizkurve hilft nicht, hydraulischen Abgleich/Thermostatventile prüfen') : '');
+                     (o.verteil ? '; Wärmeverteilung: ' + o.ueberL.map(nmS).join(', ') + (not ? ' (Komfort vor Energie: ' + de(c.verteilNotK, 1) + ' K unter Minimum)' : ' – Heizkurve hilft nicht, hydraulischen Abgleich/Thermostatventile prüfen') : '');
         } else if (o.kaltL.length) {                                                                   // nur Raeume mit eigener Nachheizung kalt: kein +1 K, aber auch kein -1 K
             o.code = o.kaltL.map(function (y) { return nm(y, -1); }).join(', ') + ' zum Minimum, aber eigene Nachheizung (kein Bedarf für das Haus)' +
                      (o.verteil ? '; Wärmeverteilung: ' + o.ueberL.map(nmS).join(', ') + ' – Heizkurve hilft nicht, hydraulischen Abgleich/Thermostatventile prüfen' : '');
@@ -2925,7 +2925,8 @@ var ENGINE = (function () {
                 var Lm = d.raum && !d.raum.keine ? d.raum.rooms : [];
                 var cold = Lm.filter(function (y) { return y.ok && !y.lueft && !y.eigen && y.r.t <= y.r.min - 0.5; }).map(function (y) { return y.r; });
                 var warm = Lm.filter(function (y) { return y.ok && y.r.t > y.r.max + 0.3; });
-                cond = d.fresh && cold.length > 0 && warm.length === 0; need = 180; lead = cold.length ? cold[0].name : '';
+                var dauer9 = have(c.plusLaufMin) && d.running && d.runMin >= c.plusLaufMin;   // v9: im Dauerlauf schlaegt die Regel bewusst kein +1 K vor (Grenze, kein "verpasst", wie minVlC RE-4)
+                cond = d.fresh && cold.length > 0 && warm.length === 0 && !dauer9; need = 180; lead = cold.length ? cold[0].name : '';
             }
             if (R.id === 'heizregelung') {                                               // Notfall in Efficiency (Heizstab-Naehe oder Raum >= notK unter Minimum), Efficiency traege mit Rueckstand, Quiet laesst zu: 20 min
                 var Hm = d.hcL || {};
@@ -3243,7 +3244,7 @@ var ENGINE = (function () {
                 }
                 continue;
             }
-            if (a.bestaetigt && have(ist2) && ist2 !== a.value && fresh(plant)) {            // fremde Aenderung: nicht zuruecksetzen, nur warnen und die Uebernahme beenden
+            if ((a.bestaetigt || (a.unbestaetigt && ist2 !== a.von)) && have(ist2) && ist2 !== a.value && fresh(plant)) {   // fremde Aenderung (auch nach unbestaetigter Uebernahme ein dritter Wert): nicht zuruecksetzen, nur warnen und die Uebernahme beenden
                 if (a.zurueck && ist2 === a.von) { delete A.ak[g]; continue; }                // (Zuruecksetzen schon erledigt)
                 A.alarm = {ts: now, text: W2.text + ' wurde von außen auf ' + ist2 + ' geändert (Übernahme ' + a.value + '). Kein automatischer Rückweg.'};
                 out.toast = {text: A.alarm.text, color: 'orange'}; out.log.push({t: iso(now), aktion: 'fremde_aenderung', befehl: a.name, soll: a.value, ist: ist2}); delete A.ak[g]; continue;
