@@ -1720,7 +1720,13 @@ console.log('--- (h) Heizregelung: Komfortbedarf, Abtau-Rueckstand, Heizstab-Nae
             P.length === 1 && p && p.rule === 'heizregelung' && p.cmd.name === 'SetHeatingControl' && p.cmd.value === 0 && p.von === 1 && p.hart === true && 5 + P[0].i >= 25 && 5 + P[0].i <= 26 && rec.abl.hc === 1 && /mindestens 23 Hz binnen 5 min/.test(p.erwartung) && /Schlafzimmer/.test(p.warum) && E.checksum(p) === p.sum,
             P.map(x => (5 + x.i) + ' min: ' + (R.outs[x.i].prop || {}).was).join(', ') + ' · ' + (p ? p.warum : hr(R.outs[39]).grund)); }
     { const R = runSeq(40, i => lauf(i, {rt: 50 + i}));
-      check('h1b ... ab Laufminute 45 regelt Efficiency selbst hoch (Boost 10.10.: 29 -> 34 Hz binnen 2 min in Laufminute 68): kein Comfort-Vorschlag, Grund nennt die Laufminute', !propOf(R).length && /regelt ab Laufminute 45 selbst hoch/.test(hr(R.outs[39]).grund), hr(R.outs[39]).grund); }
+      check('h1b v5 (05.11.2026): auch nach Laufminute 45 Comfort, wenn Efficiency trotz Rueckstand bei 17 Hz bleibt (bis v4 galt "regelt ab Laufminute 45 selbst hoch"; Auswertung 10.10.–04.11.: Efficiency haelt bis etwa 2 K Rueckstand 17 Hz)', propOf(R).length === 1 && !/Laufminute 45/.test(hr(R.outs[39]).grund), propOf(R).map(x => (R.outs[x.i].prop || {}).was).join() + ' · ' + hr(R.outs[39]).grund); }
+    // h1v5 Heizregelung v5 (Kevin 05.11.2026 "Comfort bei Rueckstand"): Dauerlauf (Laufminute 300+), Schlafzimmer 0,4 K unter Minimum
+    { const D = (o) => runSeq(40, i => lauf(i, Object.assign({rt: 300 + i}, o || {}))), hrv = R => hr(R.outs[39]);
+      const Ra = D(), Rb = D({vl: 32.5, rl: 30.5}), Rc = D({hz: 25});
+      check('h1v5.1 Dauerlauf, Rueckstand Vorlauf 2,5 K / Ruecklauf 2 K, Efficiency bei 17 Hz: Comfort-Vorschlag (SetHeatingControl = 0)', propOf(Ra).length === 1 && (Ra.outs[propOf(Ra)[0].i].prop || {}).cmd.value === 0, hrv(Ra).grund);
+      check('h1v5.2 Dauerlauf ohne Rueckstand (Vorlauf 0,5 K unter Soll): kein Comfort (ohne Rueckstand aendert Comfort die Frequenz nicht, 12./13.10.)', propOf(Rb).length === 0 && /Vorlauf|Rückstand|Rücklauf/.test(hrv(Rb).grund), hrv(Rb).grund);
+      check('h1v5.3 Dauerlauf, Efficiency regelt schon hoch (25 Hz): kein Comfort', propOf(Rc).length === 0 && /regelt schon hoch/.test(hrv(Rc).grund), hrv(Rc).grund); }
     { const R = runSeq(40, i => lauf(i, {q: 3})), P = propOf(R), qf = R.outs.map(o => r0(o, 'quiet_freigabe')).filter(r => r.neu);
       check('h1c ... unter Quiet 3 (Deckel 17 Hz bindet auch Comfort, 13.10. 21:00): zuerst die Quiet-Freigabe (Vorschlag Quiet 3 -> 0), die Heizregelung schlaegt nicht vor ("zuerst die Quiet-Freigabe")',
             !P.length && qf.length === 1 && /zuerst die Quiet-Freigabe/.test(hr(R.outs[39]).grund), hr(R.outs[39]).grund); }
@@ -1894,8 +1900,8 @@ console.log('--- (w) Winterpaket: Abtauwetter bis unter 10 °C, kein Comfort nac
     const lw = o => i => inp(T0 + i * MIN, Object.assign({at: 6, rh: 70, pipeOut: 2, q: 0, hc: 1, hz: 17, rt: 5 + i, soll: 33, sollKurve: 33, vl: 30.5, rl: 28, dT: 3, rooms: RW({schlaf: 19.6})}, typeof o === 'function' ? o(i) : (o || {})));
     // w2 Heizregelung v3: Kaltstart, nach dem Abtauen, Abtauwetter
     { const R3 = runSeq(60, lw({at: 3})), R5 = runSeq(60, lw({at: 5})), P3 = props(R3, 'heizregelung'), P5 = props(R5, 'heizregelung'), g30 = r0(R3.outs[30], 'heizregelung'), g45 = r0(R3.outs[45], 'heizregelung');
-      check('w2a Kaltstart (v3): bei WP-AT 3 °C (trocken) kein Comfort in den ersten 45 Laufminuten – gesperrt „Frequenzsprung bei Abtauwetter oder Kaltstart“ (Kaltstart …, bis Laufminute 45), danach regelt Efficiency selbst hoch; bei 5 °C Comfort wie bisher in Laufminute 25',
-            !P3.length && g30.st === 'gesperrt' && g30.locks.indexOf('abtausprung') >= 0 && /Kaltstart: Außen \(WP\) 3 °C, Lauf 35 von 45 min/.test(g30.grund) && /regelt ab Laufminute 45 selbst hoch/.test(g45.grund) && P5.length === 1 && 5 + P5[0].i === 25,
+      check('w2a Kaltstart (v3): bei WP-AT 3 °C (trocken) kein Comfort in den ersten 45 Laufminuten – gesperrt „Frequenzsprung bei Abtauwetter oder Kaltstart“ (Kaltstart …, bis Laufminute 45); seit v5 danach Comfort, wenn der Rueckstand bleibt; bei 5 °C Comfort wie bisher in Laufminute 25',
+            P3.length >= 1 && 5 + P3[0].i >= 45 && g30.st === 'gesperrt' && g30.locks.indexOf('abtausprung') >= 0 && /Kaltstart: Außen \(WP\) 3 °C, Lauf 35 von 45 min/.test(g30.grund) && P5.length === 1 && 5 + P5[0].i === 25,
             g30.grund + ' · ' + g45.grund + ' · 5 °C: ' + P5.map(x => 5 + x.i).join(',')); }
     { const cT = E.mergeCfg({rules: {heizregelung: {traegeMin: 120}}}), df = i => i >= 15 && i < 23;
       const R = runSeq(70, lw(i => ({hz: df(i) ? 55 : 17, defrost: df(i) ? 1 : 0})), null, cT), P = props(R, 'heizregelung'), g40 = r0(R.outs[40], 'heizregelung');
@@ -2084,9 +2090,9 @@ console.log('--- (z) Heizregelung v4 und Raumeinfluss v7 (Raumeinfluss seit v9 m
 {
     const dcfg = E.defaults(), c6 = E.mergeCfg({rules: {raum_offset: {bedTiefK: 0.2, plusLaufMin: 1e9}}}), c3 = E.mergeCfg({rules: {heizregelung: {warmUeberK: 99}}});   // Standardwerte; v6-Tiefe bzw. ohne v4-Grenze zum Vergleich
     dcfg.rules.raum_offset.plusLaufMin = 1e9;                                   // v9: die Faelle hier pruefen +1 K im Lauf (Tiefe v7); die Dauerlauf-Sperre prueft Abschnitt (v9)
-    check('z0 Regelwerk 31.10.2026: Heizregelung v4 (warmUeberK 0,5 K), Raumeinfluss v7 (bedTiefK 0,5 K, eigenNachMitte 1), Basisraten-Schluessel unveraendert (heizregelung|v3, raum_offset|v3, raum_offset|v5|minus: die Vergleichslagen bleiben), Herkunft mit Messung',
-          E.RULE.heizregelung.ver === 4 && E.RULE.raum_offset.ver === 9 && dcfg.rules.heizregelung.warmUeberK === 0.5 && dcfg.rules.raum_offset.bedTiefK === 0.5 && dcfg.rules.raum_offset.eigenNachMitte === 1 && dcfg.rules.raum_offset.kaltK === 0.2 &&
-          E.RULE.heizregelung.basis === 'heizregelung|v3' && E.RULE.raum_offset.basis === 'raum_offset|v3' && E.RULE.raum_offset.basisMinus === 'raum_offset|v5|minus' &&
+    check('z0 Regelwerk 31.10.2026: Heizregelung v4 (warmUeberK 0,5 K), Raumeinfluss v7 (bedTiefK 0,5 K, eigenNachMitte 1), Basisraten-Schluessel raum_offset|v3, raum_offset|v5|minus unveraendert; seit Heizregelung v5 eigene Basisrate heizregelung|v5 (Vergleichslage mit Dauerlauf), Herkunft mit Messung',
+          E.RULE.heizregelung.ver === 5 && E.RULE.raum_offset.ver === 9 && dcfg.rules.heizregelung.warmUeberK === 0.5 && dcfg.rules.raum_offset.bedTiefK === 0.5 && dcfg.rules.raum_offset.eigenNachMitte === 1 && dcfg.rules.raum_offset.kaltK === 0.2 &&
+          E.RULE.heizregelung.basis === 'heizregelung|v5' && E.RULE.raum_offset.basis === 'raum_offset|v3' && E.RULE.raum_offset.basisMinus === 'raum_offset|v5|minus' &&
           ['warmUeberK'].every(k => /MESSUNG/.test(E.RULE.heizregelung.schwellen.find(x => x.key === k).herkunft)) && ['bedTiefK', 'eigenNachMitte'].every(k => /MESSUNG/.test(E.RULE.raum_offset.schwellen.find(x => x.key === k).herkunft)) &&
           /v4 \(31\.10\.2026/.test(E.RULE.heizregelung.zweck) && /v7 \(31\.10\.2026/.test(E.RULE.raum_offset.zweck), E.RULES.map(R => R.id + ' v' + R.ver).join(', '));
     // ---- Heizregelung v4: Fall 31.10. 02:40 (Heizstab-Naehe bei 0 °C = Heater_On_Outdoor_Temp, Dauerlauf, Efficiency 17 Hz, Vorlauf 3,5 K unter Soll, Kinderzimmer unten +0,60 K ueber Maximum)
