@@ -3167,6 +3167,7 @@ if (!context.get('seeded')) {
 // Ohne Raumwerte pausieren, aber die Zeit weiterlaufen lassen (adaptive-curve integriert sonst die ganze Luecke mit dem alten Raumwert auf einmal)
 // Lernen nur ohne eigene Verschiebung (TOP27 = 0): sonst lernte die Kurve nur den Rest nach unserem +-1 K
 var sh = num(G('TOP27_Z1_Heat_Request_Temp')), lernt = dev.length && sh === 0;
+m1.lernt = lernt ? 1 : 0;                                                       // fuer den Verlauf (Diagramm): predictive-heating reicht die Nachricht durch
 out2.push({pauseAdaptation: !lernt});
 out2.push({topic: 'outdoor', payload: at, ohneRaum: !dev.length});
 if (dev.length) { out2.push({topic: 'room', payload: Math.round(dev.reduce(function (s, x) { return s + x; }, 0) / dev.length * 100) / 100}); }
@@ -3175,7 +3176,7 @@ return [m1, out2];
 """
 LAMBDA_OUT_JS = r"""
 // Ergebnisse von predictive-heating und adaptive-curve fuer die Entscheidungsmaschine ablegen (OPT_lambda, Speicher "file": die gelernte Verschiebung ueberlebt einen Neustart)
-var now = Date.now(), LB;
+var now = Date.now(), LB, out = null;
 try { LB = global.get('OPT_lambda', 'file'); } catch (e) { LB = undefined; }
 LB = (LB && typeof LB === 'object') ? LB : (global.get('OPT_lambda') || {});
 function num(v) { var n = parseFloat(v); return isFinite(n) ? n : null; }
@@ -3183,10 +3184,25 @@ if (msg.adaptiveCurve) {
     var a = msg.adaptiveCurve; LB.adapt = {shift: num(a.shift), err: msg.ohneRaum ? null : num(a.error), adapting: a.adapting ? 1 : 0, at: num(a.outdoor), ts: now};
 } else if (msg.payload && typeof msg.payload === 'object' && msg.payload.at_predictive !== undefined) {
     var p = msg.payload; LB.pred = {at: num(p.at_predictive), korr: num(p.correction), mode: String(p.mode || ''), at0: num(msg.at_current), ts: now};
+    out = verlauf(now, LB, msg.lernt);
 } else { return null; }
 LB.ts = now;
 try { global.set('OPT_lambda', LB, 'file'); } catch (e) { global.set('OPT_lambda', LB); }
-return null;
+return out;
+// Verlauf fuer das Diagramm (05.11.2026): je Takt ein Punkt [Zeit, Fuehler, Lambda, gelernt, Raeume zur Bandmitte, lernt], 7 Tage, eigener Schluessel
+// OPT_lambda_hist (Speicher "file"; die Maschine liest ihn nicht). Gelernt/Raeume stammen aus dem letzten adaptive-curve-Ergebnis (hoechstens 15 min alt).
+function verlauf(now, LB, lernt) {
+    var H; try { H = global.get('OPT_lambda_hist', 'file'); } catch (e) { H = undefined; }
+    H = Array.isArray(H) ? H : (global.get('OPT_lambda_hist') || []);
+    var A = LB.adapt && now - LB.adapt.ts <= 15 * 60000 ? LB.adapt : null;
+    H.push([now, LB.pred.at0, LB.pred.at, A ? A.shift : null, A && A.err !== null ? -A.err : null, lernt ? 1 : 0]);
+    H = H.filter(function (q) { return q[0] > now - 7 * 24 * 3600000; });
+    try { global.set('OPT_lambda_hist', H, 'file'); } catch (e) { global.set('OPT_lambda_hist', H); }
+    var pause = [], cur = null;                                                 // Zeitbaender "lernt nicht" (Luecken bis 15 min zusammen)
+    H.forEach(function (q) { if (q[5]) { cur = null; return; } if (cur && q[0] - cur[1] <= 15 * 60000) { cur[1] = q[0] + 5 * 60000; } else { cur = [q[0], q[0] + 5 * 60000]; pause.push(cur); } });
+    function col(i) { return H.map(function (q) { return q[i]; }); }
+    return {payload: {now: now, n: H.length, t: col(0), at0: col(1), at: col(2), shift: col(3), dev: col(4), pause: pause}};
+}
 """
 upsert(comment("opt_c_lambda", "Lambda-Eingang (05.11.2026): predictive-heating und adaptive-curve, nur Rechnung, als Eingang der Entscheidungsmaschine", 330, 4380))
 upsert(inject("opt_i_lambda", "alle 5 Minuten", 300, 40, ["opt_lambda_in"], 140, 4440))
@@ -3198,7 +3214,22 @@ upsert({"id": "opt_lambda_adapt", "type": "adaptive-curve", "z": TAB, "name": "K
         "roomSetpoint": "0", "heatingLimit": "15", "adaptationRate": "0.0002", "maxShift": "3", "deadband": "0.3",
         "topicRoom": "room", "topicOutdoor": "outdoor", "persistent": True, "decimals": "2",
         "x": 680, "y": 4460, "wires": [["opt_lambda_out"]]})
-upsert(fn("opt_lambda_out", "Lambda: Ergebnisse -> OPT_lambda", LAMBDA_OUT_JS, 1, [[]], 960, 4440))
+upsert(fn("opt_lambda_out", "Lambda: Ergebnisse -> OPT_lambda, Verlauf", LAMBDA_OUT_JS, 1, [["opt_t_ch_lambda"]], 960, 4440))
+# Diagramm (05.11.2026, Kevin "Diagramm bauen"): Seite "Optimierer", Karte nach "Entscheidungen"; Baukasten ui_chart.js wie Wetterkarte/Verlauf Raeume.
+# Farben mit dem dataviz-Validator geprueft (blau/lila/orange: Helligkeit, Buntheit, Farbfehlsicht, Kontrast bestanden); Fuehler grau wie in der Wetterkarte.
+CH_LAMBDA = (
+    "    var t = P.t, t0 = Math.max(P.now - 7 * 24 * H, Math.min(t[0], P.now - 6 * H));\n"
+    "    spec = {t0: t0, t1: P.now, panels: [\n"
+    "        {h: 140, unit: '°C', series: [\n"
+    "            {n: 'Außen (Fühler WP)', c: '#37474f', k: 'line', w: 1.4, dg: 1, u: '°C', d: pairs(t, P.at0)},\n"
+    "            {n: 'Lambda-Außentemp.', t: 'predictive-heating: Fühler und OWM-Tagesmittel heute/morgen, gewichtet 4/2/1; nur Vergleich, kein Befehl', c: '#1976d2', k: 'line', w: 2, dg: 1, u: '°C', d: pairs(t, P.at)}]},\n"
+    "        {h: 110, unit: 'K', zero: true, bands: [{a: -0.5, b: 0.5, c: 'rgba(46,125,50,.08)'}], tb: (P.pause || []).map(function (b) { return {a: b[0], b: b[1], c: 'rgba(84,110,122,.12)', n: 'lernt nicht'}; }), series: [\n"
+    "            {n: 'Kurve gelernt', t: 'adaptive-curve: gelernte Kurvenverschiebung; außerhalb des grünen Bands (±0,5 K) Hinweis „Heizkurve anheben/senken“ (von Hand)', c: '#8e24aa', k: 'line', w: 2, dg: 2, u: 'K', d: pairs(t, P.shift)},\n"
+    "            {n: 'Räume Ø zur Bandmitte', t: 'Mittel der aktiven Räume ohne eigene Nachheizung: geglätteter Wert minus Bandmitte (positiv = zu warm)', c: '#ef6c00', k: 'line', w: 1.4, dg: 1, u: 'K', d: pairs(t, P.dev)},\n"
+    "            {n: 'ohne Hinweis (±0,5 K)', t: 'solange die gelernte Verschiebung in diesem Band liegt, kein Hinweis in „Kurvenform“', c: '#a5d6a7', k: 'area', d: []},\n"
+    "            {n: 'lernt nicht', t: 'eigene Verschiebung aktiv (TOP27 ≠ 0) oder keine Raumwerte', c: '#90a4ae', k: 'area', d: []}]}]};\n")
+upsert({"id": "opt_g_eng_lambda", "type": "ui_group", "name": "Lambda-Eingang · Verlauf", "tab": ENG_TAB, "order": 5.3, "disp": True, "width": ENG_W, "collapse": False, "className": ""})
+upsert(chart_card("lambda", "opt_g_eng_lambda", "Verlauf Lambda-Eingang", 6, 4500, CH_LAMBDA))
 
 PLAN_TPL = """<div class="optp optfit">
 <div class="kpi" ng-if="msg.payload.kpi.length"><div class="tile" ng-repeat="t in msg.payload.kpi track by $index" title="{{t.t}}"><div class="k">{{t.k}}</div><div class="v">{{t.v}}</div><div class="s" title="{{t.s}}">{{t.s}}</div></div></div>
