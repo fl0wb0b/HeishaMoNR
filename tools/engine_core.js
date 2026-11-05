@@ -2930,7 +2930,9 @@ var ENGINE = (function () {
             }
             if (R.id === 'heizregelung') {                                               // Notfall in Efficiency (Heizstab-Naehe oder Raum >= notK unter Minimum), Efficiency traege mit Rueckstand, Quiet laesst zu: 20 min
                 var Hm = d.hcL || {};
-                cond = !!(d.fresh && d.hc === 1 && d.running && d.bedQ && d.bedQ.notfall && Hm.traege && Hm.capOk && Hm.rueck && d.runMin >= Hm.lm); need = 20;
+                var wrM = zuWarm(d), hsM = !!(d.bedQ && d.bedQ.heizstab && have(d.at) && have(d.htrOn) && d.at < d.htrOn);   // v5 (Kimi-Pruefung 05.11.): wie die Bedingung "kein Raum zu warm" der Regel
+                var warmM = !wrM || wrM.t - wrM.max <= c.warmUeberK + 1e-9 || hsM;
+                cond = !!(d.fresh && d.hc === 1 && d.running && d.bedQ && d.bedQ.notfall && Hm.traege && Hm.capOk && Hm.rueck && d.runMin >= Hm.lm && warmM); need = 20;
                 lead = d.bedQ && d.bedQ.raum ? d.bedQ.raum.name : (d.bedQ && d.bedQ.heizstab ? 'Heizstab-Nähe' : '');
             }
             function bookMiss(extra) {
