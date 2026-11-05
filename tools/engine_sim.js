@@ -2615,6 +2615,10 @@ if (flowsFile) {
       check('Huelle Lambda (1): predictive-heating bekommt TOP14 11 °C, Tagesmittel heute 5 / morgen 2 °C (uebermorgen ignoriert, Fehlendes = Aussentemperatur), UV 0 -> 8,0 °C, Korrektur -3,0, kaelter; adaptive-curve bekommt Haus -1,55 K zur Bandmitte (Kinderzimmer oben, ohne eigene Nachheizung)',
             r1[0].at_current === 11 && r1[0].avg_day0 === 5 && r1[0].avg_day1 === 2 && r1[0].avg_day2 === 11 && r1[0].uv_day0 === 0 && L1.pred.at === 8 && L1.pred.korr === -3 && L1.pred.mode === 'cooling' &&
             JSON.stringify(r1[1]) === '[{"pauseAdaptation":false},{"topic":"outdoor","payload":11,"ohneRaum":false},{"topic":"room","payload":-1.55}]' && L1.adapt.shift === 0 && L1.adapt.err === 1.55, JSON.stringify([r1[0], L1]));
+      const fpKeep = fp.slice(); fp.length = 0; [].push.apply(fp, mkFp(NOW + 5 * 60000)); const OW = gstore.OPT_weather; gstore.OPT_weather = {f_ts: NOW - 3 * 3600000, fpts: fp};
+      const rA = runN('opt_lambda_in', {payload: NOW}); runN('opt_lambda_out', pred(rA[0])); const LA = JSON.parse(JSON.stringify(gstore.OPT_lambda.pred)); gstore.OPT_weather = OW; fp.length = 0; [].push.apply(fp, fpKeep);
+      check('Huelle Lambda (1b, Kimi 05.11.): Vorhersage 3 h alt -> beide Tagesmittel = TOP14 (kein alter gespeicherter Wert im Modul), Ergebnis 11 °C, Korrektur 0, stabil',
+            rA[0].avg_day0 === 11 && rA[0].avg_day1 === 11 && LA.at === 11 && LA.korr === 0 && LA.mode === 'stable', JSON.stringify([rA[0], LA]));
       for (let i = 0; i < 576; i++) { takt(); }
       const L2 = JSON.parse(JSON.stringify(gstore.OPT_lambda)), soll2 = +(576 * 1.55 * +nA.adaptationRate * 5).toFixed(2);
       gstore.TOP27_Z1_Heat_Request_Temp = 1; for (let i = 0; i < 24; i++) { takt(); } const L3 = JSON.parse(JSON.stringify(gstore.OPT_lambda)); gstore.TOP27_Z1_Heat_Request_Temp = 0;

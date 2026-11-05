@@ -1285,7 +1285,6 @@ var ENGINE = (function () {
         });
         var LB = S.lambda;
         if (LB && have(LB.shift) && Math.abs(LB.shift) >= LAMBDA.hinweisK - 1e-9) {
-            o.lambda = LB.shift; o.dirL = LB.shift > 0 ? 1 : -1;
             h.push('adaptive-curve hat ' + sg(LB.shift, 1) + ' K gelernt (Räume Ø ' + (have(LB.err) ? sg(-LB.err, 1) + ' K' : '–') + ' zur Bandmitte): Heizkurve um ' + Math.max(1, Math.round(Math.abs(LB.shift))) + ' K ' + (LB.shift > 0 ? 'anheben' : 'senken') + ' (von Hand, SetCurves)');
         }
         o.hinweis = h.length ? h.join(' · ') : null;
