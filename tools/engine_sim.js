@@ -2298,8 +2298,8 @@ console.log('--- (l1) Lambda-Eingang');
           tA.some(x => x.k === 'Gewichtete Außentemp.' && x.v === '4,3 °C' && /Korrektur -0,7 K · kälter/.test(x.s)) && tA.some(x => x.k === 'Kurve gelernt' && x.v === '-0,80 K' && x.vc === 'warn'), KA.hinweis);
     const Rc = runSeq(3, i => inp(T0 + i * MIN, {lambda: {at: 9, shift: 0.4, err: 0.6}})), Rd = runSeq(3, i => inp(T0 + i * MIN, {lambda: {shift: 1.6, err: 1.2}}));
     const KD = E.kurvenform(Rd.S, cfg), tD = VW.raumKacheln(Rd.S, T0 + 2 * MIN, cfg), tB = VW.raumKacheln(Rb.S, T0 + 39 * MIN, cfg);
-    check('l1.4 +0,4 K: kein Hinweis; +1,6 K: "um 2 K anheben", Kachel "anheben?", ohne Aussentemperatur keine Lambda-Aussentemp.-Kachel; ohne Eingang keine Lambda-Kacheln (8 Kacheln wie bisher)',
-          E.kurvenform(Rc.S, cfg).hinweis === null && /Heizkurve um 2 K anheben/.test(KD.hinweis) && KD.dir === 1 && tD.find(x => x.k === 'Kurvenform').v === 'anheben?' && !tD.some(x => x.k === 'Gewichtete Außentemp.') && tD.some(x => x.k === 'Kurve gelernt') &&
+    check('l1.4 +0,4 K: kein Hinweis; +1,6 K: immer "um 1 K anheben" (danach lernt sie neu), Kachel "anheben?", ohne Aussentemperatur keine Lambda-Aussentemp.-Kachel; ohne Eingang keine Lambda-Kacheln (8 Kacheln wie bisher)',
+          E.kurvenform(Rc.S, cfg).hinweis === null && /Heizkurve um 1 K anheben \(von Hand, SetCurves; danach lernt sie neu\)/.test(KD.hinweis) && KD.dir === 1 && tD.find(x => x.k === 'Kurvenform').v === 'anheben?' && !tD.some(x => x.k === 'Gewichtete Außentemp.') && tD.some(x => x.k === 'Kurve gelernt') &&
           tB.length === 8 && !tB.some(x => /Gewichtete|gelernt/.test(x.k)), KD.hinweis + ' | ' + tB.length);
     let S5 = Ra.S; const t5 = T0 + 40 * MIN, alive = [];
     for (let i = 0; i < 61; i++) { S5 = E.step(S5, inp(t5 + i * MIN), cfg).S; alive.push(!!S5.lambda); }
@@ -2604,7 +2604,7 @@ if (flowsFile) {
       const pred = m => { const at = +m.at_current, p = (at * Wt[0] + m.avg_day0 * Wt[1] + m.avg_day1 * Wt[2] + m.avg_day2 * Wt[3]) / (Wt[0] + Wt[1] + Wt[2] + Wt[3]), f = Math.round(p * 10) / 10;
                           return Object.assign({}, m, {payload: {at_predictive: f, correction: Math.round((f - at) * 10) / 10, solar_offset: 0, mode: p - at > 0.5 ? 'warming' : (p - at < -0.5 ? 'cooling' : 'stable')}}); };
       let AC = {shift: 0, last: null, paused: false}, chartMsg = null; gstore.OPT_lambda_hist = [[NOW - 8 * 86400000, 1, 1, 0, 0, 1]]; const mx = +nA.maxShift, cl = v => Math.max(-mx, Math.min(mx, v));   // Verlauf: ein 8 Tage alter Punkt faellt heraus
-      const adapt = m => { if (m.shift !== undefined) { AC.shift = cl(+m.shift); return null; } if (m.pauseAdaptation !== undefined) { AC.paused = !!m.pauseAdaptation; return null; }
+      const adapt = m => { if (m.reset === true) { AC.shift = 0; return null; } if (m.shift !== undefined) { AC.shift = cl(+m.shift); return null; } if (m.pauseAdaptation !== undefined) { AC.paused = !!m.pauseAdaptation; return null; }
                            if (m.topic === 'room') { AC.room = +m.payload; } if (m.topic === 'outdoor') { AC.out = +m.payload; } if (AC.room === undefined || AC.out === undefined) { return null; }
                            let ad = false; const e = +nA.roomSetpoint - AC.room; if (!AC.paused && AC.out < +nA.heatingLimit && AC.last !== null && Math.abs(e) > +nA.deadband) { AC.shift = cl(AC.shift + e * +nA.adaptationRate * (NOW - AC.last) / 60000); ad = true; }
                            AC.last = NOW; return Object.assign({}, m, {payload: +AC.shift.toFixed(2), adaptiveCurve: {roomTemp: AC.room, outdoor: AC.out, error: +e.toFixed(2), shift: +AC.shift.toFixed(2), adapting: ad}}); };
@@ -2614,7 +2614,7 @@ if (flowsFile) {
       const r1 = takt(), L1 = JSON.parse(JSON.stringify(gstore.OPT_lambda));
       check('Huelle Lambda (1): predictive-heating bekommt TOP14 11 °C, Tagesmittel heute 5 / morgen 2 °C (uebermorgen ignoriert, Fehlendes = Aussentemperatur), UV 0 -> 8,0 °C, Korrektur -3,0, kaelter; adaptive-curve bekommt Haus -1,55 K zur Bandmitte (Kinderzimmer oben, ohne eigene Nachheizung)',
             r1[0].at_current === 11 && r1[0].avg_day0 === 5 && r1[0].avg_day1 === 2 && r1[0].avg_day2 === 11 && r1[0].uv_day0 === 0 && L1.pred.at === 8 && L1.pred.korr === -3 && L1.pred.mode === 'cooling' &&
-            JSON.stringify(r1[1]) === '[{"pauseAdaptation":false},{"topic":"outdoor","payload":11,"ohneRaum":false},{"topic":"room","payload":-1.55}]' && L1.adapt.shift === 0 && L1.adapt.err === 1.55, JSON.stringify([r1[0], L1]));
+            JSON.stringify(r1[1]) === '[{"pauseAdaptation":false},{"topic":"outdoor","payload":11,"ohneRaum":false,"sig":"-13/11/29/38"},{"topic":"room","payload":-1.55,"sig":"-13/11/29/38"}]' && L1.adapt.shift === 0 && L1.adapt.err === 1.55, JSON.stringify([r1[0], L1]));
       const fpKeep = fp.slice(); fp.length = 0; [].push.apply(fp, mkFp(NOW + 5 * 60000)); const OW = gstore.OPT_weather; gstore.OPT_weather = {f_ts: NOW - 3 * 3600000, fpts: fp};
       const rA = runN('opt_lambda_in', {payload: NOW}); runN('opt_lambda_out', pred(rA[0])); const LA = JSON.parse(JSON.stringify(gstore.OPT_lambda.pred)); gstore.OPT_weather = OW; fp.length = 0; [].push.apply(fp, fpKeep);
       check('Huelle Lambda (1b, Kimi 05.11.): Vorhersage 3 h alt -> beide Tagesmittel = TOP14 (kein alter gespeicherter Wert im Modul), Ergebnis 11 °C, Korrektur 0, stabil',
@@ -2639,6 +2639,17 @@ if (flowsFile) {
       NOW += 60000; const oE = runN('opt_engine', {topic: '', payload: NOW}), lE = JSON.parse(files[decFile].trim().split('\n').pop());
       gstore.OPT_lambda.pred.ts = gstore.OPT_lambda.adapt.ts = NOW - 31 * 60000; NOW += 60000; runN('opt_engine', {topic: '', payload: NOW}); const lF = JSON.parse(files[decFile].trim().split('\n').pop());
       const kartE = JSON.stringify(oE[5]);
+      { // Lueftungspause (Morgen-Analyse 05.11.): Sturz >= 0,6 K unter das 60-min-Maximum -> Raum zaehlt nicht, bis er 0,3 K an den Wert davor heran ist, hoechstens 6 h
+        const R = gstore.OPT_rooms, hatRaum = r => (r[1] || []).some(m => m.topic === 'room'), sig0 = gstore.OPT_lambda.adapt.sig;
+        R.ki_oben = {ema: 23.5, ts: NOW}; takt(); takt(); R.ki_oben.ema = 22.8; const a1 = takt(); R.ki_oben.ema = 23.1; const a2 = takt(); R.ki_oben.ema = 23.25; const a3 = takt();
+        R.ki_oben.ema = 22.5; const a4 = takt(); let k72 = null; for (let i = 0; i < 72; i++) { k72 = takt(); } const a5 = takt();   // k72: genau 360 min nach dem Sturz noch gesperrt, a5: 365 min frei
+        R.ki_oben.ema = 22.85; const a6 = takt();
+        check('Huelle Lambda (5, Lueftungspause): Sturz 23,5 -> 22,8 (0,7 K): Raum zaehlt nicht (ohne Raum keine Abweichung, lernt nicht); bei 23,1 noch nicht erholt, bei 23,25 (0,25 K unter dem Wert davor) wieder dabei; neuer Sturz auf 22,5 bleibt hoechstens 6 h gesperrt (72 Takte = 360 min noch, danach frei); langsamer Anstieg ohne Sturz zaehlt',
+              !hatRaum(a1) && a1[1].some(m => m.pauseAdaptation === true) && a1[0].lernt === 0 && !hatRaum(a2) && hatRaum(a3) && !hatRaum(a4) && !hatRaum(k72) && hatRaum(a5) && hatRaum(a6) && gstore.OPT_lambda.adapt.err !== null,
+              JSON.stringify([a1[1], a3[1].map(m => m.topic || Object.keys(m)[0])]));
+        gstore.Z1_Heat_Curve_Target_Low_Temp = 28; AC.shift = 0.7; gstore.OPT_lambda.adapt.shift = 0.7; const b1 = takt(), L6 = JSON.parse(JSON.stringify(gstore.OPT_lambda.adapt)), b2 = takt();
+        check('Huelle Lambda (6, Heizkurve von Hand geaendert): Kennung ' + sig0 + ' -> -13/11/28/38: genau ein Neustart (reset an adaptive-curve, gelernt 0), neue Kennung gespeichert, im naechsten Takt kein Neustart',
+              sig0 === '-13/11/29/38' && b1[1][0].reset === true && L6.shift === 0 && L6.sig === '-13/11/28/38' && !b2[1].some(m => m.reset), JSON.stringify([b1[1][0], L6.shift, L6.sig])); }
       gstore = keepG; fstores = keepF; cstores = keepC; files = keepFi; NOW = keepNow;
       check('Huelle Lambda (4): opt_engine nimmt OPT_lambda (hoechstens 30 min alt) in den Datensatz (in.lambda) und zeigt die Kacheln Lambda-Aussentemp. / Kurve gelernt; veraltet (31 min) kein in.lambda',
             JSON.stringify(lE.in.lambda) === JSON.stringify({at: 8, korr: -3, mode: 'cooling', shift: soll2, err: -0.75}) && /Gewichtete Außentemp\./.test(kartE) && /Kurve gelernt/.test(kartE) && lF.in.lambda === undefined, JSON.stringify([lE.in.lambda, lF.in.lambda]));

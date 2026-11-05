@@ -3152,12 +3152,21 @@ var W = G('OPT_weather') || {}, d0 = [], d1 = [], heute = new Date(now).toDateSt
 });
 // Fehlende Tage immer als Aussentemperatur schicken: sonst nimmt predictive-heating seinen alten gespeicherten Tageswert (beliebig alt)
 var m1 = {topic: 'lambda', at_current: at, avg_day0: d0.length ? avg(d0) : at, avg_day1: d1.length ? avg(d1) : at, avg_day2: at, uv_day0: 0, uv_day1: 0};
-var CF = G('OPT_cfg') || {}, RM = G('OPT_rooms') || {}, dev = [];
+// Lueftungspause je Raum (05.11.2026, Morgen-Analyse: Schlafzimmer werktags 06:26-07:37 lange gelueftet): faellt der geglaettete Wert um >= 0,6 K unter das
+// Maximum der letzten 60 min (Lueftungsverdacht wie die Bewertung, SCORE.lueftungEmaK), zaehlt der Raum nicht mit, bis er wieder bis 0,3 K an den Wert vor dem Sturz
+// heran ist, hoechstens 6 h. Verlauf im Knoten-Kontext (nach einem Neustart erst nach Werten ueber 60 min wieder erkennbar; ponytail: reicht fuer einen Hinweis).
+var CF = G('OPT_cfg') || {}, RM = G('OPT_rooms') || {}, dev = [], LH = context.get('lhist') || {}, LS = context.get('luft') || {}, luftN = [];
 (CF.rooms || []).forEach(function (rc) {
     if (!rc || !rc.active || eigenOf(rc) || num(rc.min) === null || num(rc.max) === null) { return; }
     var r = RM[rc.id] || {}, t = num(r.ema), ts = num(r.ts); if (t === null || ts === null || now - ts > 360 * MIN) { return; }
+    var h = (LH[rc.id] || []).filter(function (p) { return now - p[0] <= 60 * MIN; }); h.push([now, t]); LH[rc.id] = h;
+    var vor = Math.max.apply(null, h.map(function (p) { return p[1]; })), L = LS[rc.id];
+    if (!L && vor - t >= 0.6 - 1e-9) { L = LS[rc.id] = {seit: now, vor: vor}; }
+    if (L && (t >= L.vor - 0.3 - 1e-9 || now - L.seit > 360 * MIN)) { delete LS[rc.id]; L = null; }
+    if (L) { luftN.push(rc.name || rc.id); return; }
     dev.push(t - (num(rc.min) + num(rc.max)) / 2);
 });
+context.set('lhist', LH); context.set('luft', LS);
 var out2 = [];
 if (!context.get('seeded')) {
     context.set('seeded', true);
@@ -3168,10 +3177,16 @@ if (!context.get('seeded')) {
 // Lernen nur ohne eigene Verschiebung (TOP27 = 0): sonst lernte die Kurve nur den Rest nach unserem +-1 K
 var sh = num(G('TOP27_Z1_Heat_Request_Temp')), lernt = dev.length && sh === 0;
 m1.lernt = lernt ? 1 : 0;                                                       // fuer den Verlauf (Diagramm): predictive-heating reicht die Nachricht durch
+// Neustart des Lernens, wenn die Heizkurve Z1 von Hand geaendert wurde (Kennung wie die Kennzahl Kurvenform): adaptive-curve integriert nur, solange niemand
+// die Kurve verstellt; ohne Neustart liefe der Wert nach einer Korrektur weiter (Replay 07.10.-05.11.: ohne Rueckkopplung -0,5 K nach 4 Tagen, -3 K nach 24 Tagen)
+var sig = ['Z1_Heat_Curve_Outside_Low_Temp', 'Z1_Heat_Curve_Outside_High_Temp', 'Z1_Heat_Curve_Target_Low_Temp', 'Z1_Heat_Curve_Target_High_Temp'].map(function (k) { return num(G(k)); });
+sig = sig.every(function (x) { return x !== null; }) ? sig.join('/') : '';
+var sigAlt = ((G('OPT_lambda') || {}).adapt || {}).sig || '', neu = !!(sig && sigAlt && sig !== sigAlt);
+if (neu) { out2.push({reset: true}); }
 out2.push({pauseAdaptation: !lernt});
-out2.push({topic: 'outdoor', payload: at, ohneRaum: !dev.length});
-if (dev.length) { out2.push({topic: 'room', payload: Math.round(dev.reduce(function (s, x) { return s + x; }, 0) / dev.length * 100) / 100}); }
-node.status({fill: 'green', shape: 'dot', text: 'AT ' + at + ' °C · ' + d0.length + '/' + d1.length + ' Vorhersagen · ' + dev.length + ' Räume' + (lernt ? '' : ' · lernt nicht')});
+out2.push({topic: 'outdoor', payload: at, ohneRaum: !dev.length, sig: sig});
+if (dev.length) { out2.push({topic: 'room', payload: Math.round(dev.reduce(function (s, x) { return s + x; }, 0) / dev.length * 100) / 100, sig: sig}); }
+node.status({fill: neu ? 'blue' : 'green', shape: 'dot', text: 'AT ' + at + ' °C · ' + d0.length + '/' + d1.length + ' Vorhersagen · ' + dev.length + ' Räume' + (luftN.length ? ' · Lüften: ' + luftN.join(', ') : '') + (lernt ? '' : ' · lernt nicht') + (neu ? ' · Heizkurve geändert: neu lernen' : '')});
 return [m1, out2];
 """
 LAMBDA_OUT_JS = r"""
@@ -3181,7 +3196,7 @@ try { LB = global.get('OPT_lambda', 'file'); } catch (e) { LB = undefined; }
 LB = (LB && typeof LB === 'object') ? LB : (global.get('OPT_lambda') || {});
 function num(v) { var n = parseFloat(v); return isFinite(n) ? n : null; }
 if (msg.adaptiveCurve) {
-    var a = msg.adaptiveCurve; LB.adapt = {shift: num(a.shift), err: msg.ohneRaum ? null : num(a.error), adapting: a.adapting ? 1 : 0, at: num(a.outdoor), ts: now};
+    var a = msg.adaptiveCurve; LB.adapt = {shift: num(a.shift), err: msg.ohneRaum ? null : num(a.error), adapting: a.adapting ? 1 : 0, at: num(a.outdoor), sig: String(msg.sig || ''), ts: now};
 } else if (msg.payload && typeof msg.payload === 'object' && msg.payload.at_predictive !== undefined) {
     var p = msg.payload; LB.pred = {at: num(p.at_predictive), korr: num(p.correction), mode: String(p.mode || ''), at0: num(msg.at_current), ts: now};
     out = verlauf(now, LB, msg.lernt);

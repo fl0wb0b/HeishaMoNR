@@ -1285,7 +1285,7 @@ var ENGINE = (function () {
         });
         var LB = S.lambda;
         if (LB && have(LB.shift) && Math.abs(LB.shift) >= LAMBDA.hinweisK - 1e-9) {
-            h.push('adaptive-curve hat ' + sg(LB.shift, 1) + ' K gelernt (Räume Ø ' + (have(LB.err) ? sg(-LB.err, 1) + ' K' : '–') + ' zur Bandmitte): Heizkurve um ' + Math.max(1, Math.round(Math.abs(LB.shift))) + ' K ' + (LB.shift > 0 ? 'anheben' : 'senken') + ' (von Hand, SetCurves)');
+            h.push('adaptive-curve hat ' + sg(LB.shift, 1) + ' K gelernt (Räume Ø ' + (have(LB.err) ? sg(-LB.err, 1) + ' K' : '–') + ' zur Bandmitte): Heizkurve um 1 K ' + (LB.shift > 0 ? 'anheben' : 'senken') + ' (von Hand, SetCurves; danach lernt sie neu)');   // immer 1 K: ohne Rueckkopplung laeuft der gelernte Wert weiter (Replay 05.11.)
         }
         o.hinweis = h.length ? h.join(' · ') : null;
         o.dir = !o.hinweis ? 0 : (/anheben|zu niedrig/.test(o.hinweis) ? (/senken/.test(o.hinweis) ? 2 : 1) : -1);   // fuer die Kachel: -1 senken, 1 anheben, 2 beides
