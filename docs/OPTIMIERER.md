@@ -1763,3 +1763,22 @@ Bewertung nach dem mittleren Tagesfehler (Betrag) der 7 Tage, sonst nach dem Vor
 **Grenzen:**
 - Das Modell rechnet nur Heizstrom: Bedarf ÷ COP mit +80 W im Lauf, ohne Standby von 15–34 W und ohne Abtau-Abzug. Der Zähler misst alles.
 - Die evcc-Zeilen füllen sich erst ab dem ersten vollen Tag nach dem Einspielen.
+
+## 29. Lambda-Eingang: predictive-heating und adaptive-curve (05.11.2026, Branch `lambda-eingang`)
+
+Zwei Node-RED-Module aus der rpo-suite rechnen „wie Lambda“ mit. Sie sind nur ein **Eingang** der Entscheidungsmaschine: Datensatz, Kacheln und Kurvenform-Hinweis. Kein Befehl, keine Regel, keine Punkte. Voraussetzung: `node-red-contrib-predictive-heating` 1.0.6 und `node-red-contrib-adaptive-curve` 1.0.7 sind installiert (NAS, 05.11.2026).
+
+**Knoten (Optimierer-Tab, unten):** `opt_i_lambda` (alle 5 min) → `opt_lambda_in` → `opt_lambda_pred` / `opt_lambda_adapt` → `opt_lambda_out` → global `OPT_lambda` (Speicher „file“). `opt_engine` liest `OPT_lambda`, wenn es höchstens 30 min alt ist, und schreibt es als `in.lambda` in den Datensatz.
+
+| Modul | Eingang | Konfiguration | Ergebnis |
+|---|---|---|---|
+| predictive-heating | `at_current` = TOP14 (Fühler der WP); `avg_day0` / `avg_day1` = Mittel der OWM-Vorhersage (`OPT_weather.fpts`, höchstens 2 h alt) für den Rest von heute und für morgen; fehlt ein Tag, wird die Außentemperatur geschickt (sonst nähme das Modul seinen alten gespeicherten Wert); UV = 0 | Gewichte 4 / 2 / 1 / 0 (OWM liefert kein Übermorgen), Sonnenkorrektur 0 (die Sonne rechnet der Wärmefahrplan) | gewichtete Außentemperatur, Korrektur, wärmer/kälter/stabil; nur Vergleich zur Vorausschau v5 |
+| adaptive-curve | Haus-Abweichung = Mittel (geglätteter Wert − Bandmitte) der aktiven Räume ohne eigene Nachheizung (Werte bis 6 h alt) gegen Soll 0; Außentemperatur TOP14 | Totband 0,3 K, 0,0002 K je K Abweichung und Minute (1 K Abweichung ≈ 0,29 K je Tag), höchstens ±3 K, nur unter 15 °C außen | gelernte Kurvenverschiebung |
+
+**Lernen pausiert**, solange unsere eigene Verschiebung steht (TOP27 ≠ 0: sonst lernte die Kurve nur den Rest nach ±1 K) und solange kein Raumwert da ist (die Zeit läuft weiter, damit die Lücke nicht auf einmal nachgeholt wird; im Datensatz dann keine Abweichung). Nach einem Neustart gibt `opt_lambda_in` zuerst die gelernte Verschiebung aus `OPT_lambda` an das Modul zurück (sein Kontext liegt im Standardspeicher).
+
+**Anzeige:** Seite „Optimierer“, Messwerte & Lernen → Räume und Wächter: Kacheln „Lambda-Außentemp.“ und „Kurve gelernt“ (nur mit Werten). Ab ±0,5 K gelernter Verschiebung meldet der Wächter „Kurvenform“: „Heizkurve um N K anheben/senken (von Hand, SetCurves)“, N gerundet, mindestens 1. Die Kachel „Kurvenform“ zeigt jetzt die Richtung (anheben?/senken?/prüfen). Ohne neue Eingabe bleibt der Wert 59 min stehen und verschwindet danach.
+
+**Auswertung nach 2–3 Wochen:** `in.lambda.at` gegen die Vorausschau v5 (`in.vs`) und gegen die gemessenen Raumverläufe; `in.lambda.shift` gegen den Kurvenform-Befund je Außenband.
+
+**Tests:** `engine_sim` l1.1–l1.5 (kein Schalten, Datensatz und Nachspielen, Hinweis ±, Kacheln, Ablauf nach 60 min) und „Huelle Lambda (1)–(4)“ plus Strukturprüfung mit der Flow-Datei. Die Rechnung beider Module ist im Test nachgebildet; die Nachbildung wurde gegen den Modul-Code gerechnet (8,0 °C / −3,0 K / 0,89 K nach 2 Tagen gleich). Der Testaufbau hält seit diesem Paket den Knoten-Kontext bis zum Neustart.

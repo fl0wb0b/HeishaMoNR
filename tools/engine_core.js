@@ -1260,6 +1260,15 @@ var ENGINE = (function () {
         if (L.dir < 0 || (have(d.shift) && d.shift < 0)) { a[6] = (a[6] || 0) + 1; }                       // Ueberschuss ODER -1 K steht: dauerhafte Abweichung (RE-7)
         Object.keys(K.tage).sort().slice(0, -KF.tage).forEach(function (k) { delete K.tage[k]; });
     }
+    // Lambda-Eingang (05.11.2026, Kevin "Weg 1"): predictive-heating (gewichtete Aussentemperatur aus Fuehler + OWM-Tagesmitteln) und adaptive-curve
+    // (gelernte Kurvenverschiebung aus Haus-Abweichung zur Bandmitte, lernt nur ohne eigene Verschiebung) – nur Anzeige, Datensatz und Kurvenform-Hinweis, kein Befehl.
+    // Der Wert bleibt bis LAMBDA_MAX_MIN ohne neue Eingabe stehen (Luecken im Takt), danach verschwindet er.
+    var LAMBDA = {maxMin: 60, hinweisK: 0.5};
+    function lambdaStep(S, inp, now) {
+        var x = inp.lambda;
+        if (x && typeof x === 'object' && (have(num(x.at)) || have(num(x.shift)))) { S.lambda = {at: num(x.at), korr: num(x.korr), mode: x.mode || '', shift: num(x.shift), err: num(x.err), t: now}; }
+        else if (S.lambda && !(now - S.lambda.t < LAMBDA.maxMin * MIN)) { delete S.lambda; }
+    }
     function kurvenform(S, cfg) {
         var c = cfg.rules.raum_offset, K = S.kf || {tage: {}}, o = {baender: [], hinweis: null, sig: K.sig || '', seit: K.seit || 0};
         KF.baender.forEach(function (bd) {
@@ -1274,7 +1283,13 @@ var ENGINE = (function () {
             else if (x.abw >= c.kfAnteil) { o.info = (o.info ? o.info + ' · ' : '') + 'bei ' + x.band + ' °C in ' + de(x.ueber * 100, 0) + ' % der Zeit Überschuss; die Kurve liegt dort an der Untergrenze ' + c.minVlC + ' °C (nicht über die Kurve senkbar, RE-4)'; }
             if (x.bedarf >= 0.3) { h.push('bei ' + x.band + ' °C in ' + de(x.bedarf * 100, 0) + ' % der Zeit ein Raum unter Minimum: Kurve dort zu niedrig oder Verteilung prüfen'); }
         });
+        var LB = S.lambda;
+        if (LB && have(LB.shift) && Math.abs(LB.shift) >= LAMBDA.hinweisK - 1e-9) {
+            o.lambda = LB.shift; o.dirL = LB.shift > 0 ? 1 : -1;
+            h.push('adaptive-curve hat ' + sg(LB.shift, 1) + ' K gelernt (Räume Ø ' + (have(LB.err) ? sg(-LB.err, 1) + ' K' : '–') + ' zur Bandmitte): Heizkurve um ' + Math.max(1, Math.round(Math.abs(LB.shift))) + ' K ' + (LB.shift > 0 ? 'anheben' : 'senken') + ' (von Hand, SetCurves)');
+        }
         o.hinweis = h.length ? h.join(' · ') : null;
+        o.dir = !o.hinweis ? 0 : (/anheben|zu niedrig/.test(o.hinweis) ? (/senken/.test(o.hinweis) ? 2 : 1) : -1);   // fuer die Kachel: -1 senken, 1 anheben, 2 beides
         return o;
     }
     // Phase 2 nur noch als Vergleichskennzahl: je Tag Minuten, in denen die Richtung des Raumeinflusses v3 (Lage ohne Haltezeit) mit dem Raumvorschlag der Phase 2 uebereinstimmt
@@ -2295,6 +2310,7 @@ var ENGINE = (function () {
         SNAP_KEYS.forEach(function (k) { var v = inp[k]; if (v === undefined || v === null || v === '') { return; } o[k] = typeof v === 'number' ? r2(v) : v; });
         if (inp.rooms) { o.rooms = inp.rooms.map(function (r) { return [r.id, r2(num(r.t)), r2(num(r.age)), r.valid ? 1 : 0, r2(num(r.min)), r2(num(r.max)), r.active === false ? 0 : 1, r.name || r.id].concat(r.eigeneHeizung === true || r.sonnenfenster === true ? [r.eigeneHeizung === true ? 1 : 0] : []).concat(r.sonnenfenster === true ? [1] : []); }); }
         if (inp.korr) { o.korr = {v: num(inp.korr.v), code: inp.korr.code || '', distrib: inp.korr.distrib ? 1 : 0, lead: inp.korr.lead || ''}; }
+        if (inp.lambda && typeof inp.lambda === 'object') { o.lambda = {}; ['at', 'korr', 'mode', 'shift', 'err'].forEach(function (k) { var v = inp.lambda[k]; if (v !== null && v !== undefined && v !== '') { o.lambda[k] = typeof v === 'number' ? r2(v) : v; } }); }   // Lambda-Eingang seit 05.11.2026
         if (inp.vs && Array.isArray(inp.vs.at)) { o.vs = {}; Object.keys(inp.vs).forEach(function (k) { var v = inp.vs[k]; if (v !== null && v !== undefined && v !== '') { o.vs[k] = typeof v === 'number' ? r2(v) : v; } }); }
         return o;
     }
@@ -2304,6 +2320,7 @@ var ENGINE = (function () {
         inp.rooms = (o.rooms || []).map(function (a) { return {id: a[0], name: a[7] || a[0], t: a[1], age: a[2], valid: a[3] === 1, min: a[4], max: a[5], active: a[6] !== 0, eigeneHeizung: a[8] === 1, sonnenfenster: a[9] === 1}; });
         if (o.korr) { inp.korr = o.korr; }
         if (o.vs) { inp.vs = o.vs; }
+        if (o.lambda) { inp.lambda = o.lambda; }
         return inp;
     }
 
@@ -2382,6 +2399,7 @@ var ENGINE = (function () {
         hwStep(S, 'stoerung', !!d.err, d.err ? 'Fehlercode ' + d.err + (/H23/i.test(d.err) ? ' (H23: Kältemittelfühler Innengerät, L-spezifisch; Forum 189605: Platinentausch über Panasonic, 4130989, 4571850)' : '') + ': Vorschläge und Übernahme gesperrt, kein automatischer Reset' : '', 0, 0, now, ev, 'optimierer_alarm');
         var rohrBed = have(d.pipeIn) && d.pipeIn < HW.rohrWarnC;
         hwStep(S, 'rohr', rohrBed, rohrBed ? 'Leitungstemperatur Innengerät ' + de(d.pipeIn, 1) + ' °C (unter ' + HW.rohrWarnC + ' °C): mögliche Vorstufe zu H23 (Forum 189605: 4693147)' : '', 5, 30, now, ev);
+        lambdaStep(S, inp, now);
         var KFo = kurvenform(S, cfg);
         hwStep(S, 'kurvenform', !!KFo.hinweis, KFo.hinweis || '', 0, 0, now, ev);
         // Winterpaket 16.10.2026: Anlage hat Quiet selbst beendet (Fluester-Prioritaet "Leistung", Forum 3469566) – Ereignis und Hinweis fuer anlQSperreMin; die Quiet-Freigabe
@@ -3274,7 +3292,7 @@ var ENGINE = (function () {
             abtauKennzahl: abtauKennzahl, abtauWetter: abtauWetter, ABL: ABL, startGewollt: startGewollt, ABZ: ABZ, zielStufe: zielStufe,
             bedarfQ: bedarfQ, raumTrend: raumTrend, komfortSicher: komfortSicher, nutzenKurve: nutzenKurve, kindOf: kindOf, kaltQ: kaltQ, zielKalt: zielKalt, nachtMin: nachtMin, HL: HL, hochlaufSumme: hochlaufSumme,
             hhmm: hhmm, isoWeek: isoWeek, de: de, sg: sg,
-            raumLage: raumLage, raumVerlauf: raumVerlauf, raumEnde: raumEnde, kurvenform: kurvenform, KF: KF, p2Summe: p2Summe, startModell: startModell, START: START, MINHZ: MINHZ, minHzOf: minHzOf, minHzTab: minHzTab,
+            raumLage: raumLage, raumVerlauf: raumVerlauf, raumEnde: raumEnde, kurvenform: kurvenform, KF: KF, lambdaStep: lambdaStep, LAMBDA: LAMBDA, p2Summe: p2Summe, startModell: startModell, START: START, MINHZ: MINHZ, minHzOf: minHzOf, minHzTab: minHzTab,
             binKeyOf: binKeyOf, hzSchwelle: hzSchwelle, HW: HW, errCode: errCode, hinweisListe: hinweisListe, wirkzeit: wirkzeit, Q0_HZ: Q0_HZ,
             hcLage: hcLage, hcEnde: hcEnde, hcTxt: hcTxt,
             CZ: CZ, CZ_PARAM: CZ_PARAM, CZ_POSTEN: CZ_POSTEN, CZ_HERKUNFT: CZ_HERKUNFT, czParam: czParam, carnot: carnot, czFreq: czFreq, czAbtau: czAbtau, czSonne: czSonne, czBand: czBand, czNew: czNew,

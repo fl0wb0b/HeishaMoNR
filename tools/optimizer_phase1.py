@@ -3131,6 +3131,75 @@ upsert({"id": "opt_t_nas", "type": "ui_template", "z": TAB, "group": "opt_g_nas"
 upsert(fn("opt_nas", "Status NAS-Container (nur lesen)", NAS_JS, 1, [["opt_t_nas"]], 440, 580, FS))
 upsert(inject("opt_i_nas", "alle 5 Minuten", 300, 25, ["opt_nas"], 140, 580))
 
+# ---------------------------------------------------------------- Lambda-Eingang (05.11.2026, Kevin "Weg 1"): predictive-heating und adaptive-curve (rpo-suite)
+# Nur Rechnung, kein Befehl: die Ergebnisse gehen als Eingang in die Entscheidungsmaschine (Datensatz, Kacheln, Kurvenform-Hinweis).
+# Voraussetzung: Module node-red-contrib-predictive-heating und node-red-contrib-adaptive-curve installiert (05.11.2026 auf der NAS).
+LAMBDA_IN_JS = EIGEN_JS + r"""
+// Ausgang 1 -> predictive-heating: Aussenfuehler der WP (TOP14), Tagesmittel der OWM-Vorhersage (OPT_weather.fpts, f_ts hoechstens 2 h alt) fuer den Rest von heute und morgen
+//   (uebermorgen liefert OWM nicht: Gewicht 0; UV liefert OWM nicht: Sonnenkorrektur 0, die Sonne rechnet der Waermefahrplan).
+// Ausgang 2 -> adaptive-curve: Haus-Abweichung = Mittel (Wert - Bandmitte) der aktiven Raeume ohne eigene Nachheizung (Werte bis 6 h alt)
+//   gegen Sollwert 0, dazu die Aussentemperatur. Nach einem Neustart zuerst die zuletzt gelernte Verschiebung (OPT_lambda) zurueckgeben.
+var MIN = 60000, now = Date.now();
+var G = function (k) { var v; try { v = global.get(k, 'file'); } catch (e) { v = undefined; } return v !== undefined ? v : global.get(k); };
+function num(v) { var n = parseFloat(v); return isFinite(n) ? n : null; }
+function avg(a) { return a.length ? Math.round(a.reduce(function (s, x) { return s + x; }, 0) / a.length * 10) / 10 : undefined; }
+var at = num(G('TOP14_Outside_Temp'));
+if (at === null) { node.status({fill: 'grey', shape: 'ring', text: 'Außentemperatur fehlt'}); return null; }
+var W = G('OPT_weather') || {}, d0 = [], d1 = [], heute = new Date(now).toDateString(), morgen = new Date(now + 24 * 60 * MIN).toDateString();
+(Array.isArray(W.fpts) && num(W.f_ts) !== null && now - W.f_ts < 2 * 60 * MIN ? W.fpts : []).forEach(function (p) {
+    var t = num(p && p[0]), v = num(p && p[1]); if (t === null || v === null || t < now - 90 * MIN) { return; }
+    var ds = new Date(t).toDateString(); if (ds === heute) { d0.push(v); } else if (ds === morgen) { d1.push(v); }
+});
+// Fehlende Tage immer als Aussentemperatur schicken: sonst nimmt predictive-heating seinen alten gespeicherten Tageswert (beliebig alt)
+var m1 = {topic: 'lambda', at_current: at, avg_day0: d0.length ? avg(d0) : at, avg_day1: d1.length ? avg(d1) : at, avg_day2: at, uv_day0: 0, uv_day1: 0};
+var CF = G('OPT_cfg') || {}, RM = G('OPT_rooms') || {}, dev = [];
+(CF.rooms || []).forEach(function (rc) {
+    if (!rc || !rc.active || eigenOf(rc) || num(rc.min) === null || num(rc.max) === null) { return; }
+    var r = RM[rc.id] || {}, t = num(r.ema), ts = num(r.ts); if (t === null || ts === null || now - ts > 360 * MIN) { return; }
+    dev.push(t - (num(rc.min) + num(rc.max)) / 2);
+});
+var out2 = [];
+if (!context.get('seeded')) {
+    context.set('seeded', true);
+    var LB = G('OPT_lambda') || {};
+    if (LB.adapt && num(LB.adapt.shift) !== null) { out2.push({shift: num(LB.adapt.shift)}); }
+}
+// Ohne Raumwerte pausieren, aber die Zeit weiterlaufen lassen (adaptive-curve integriert sonst die ganze Luecke mit dem alten Raumwert auf einmal)
+// Lernen nur ohne eigene Verschiebung (TOP27 = 0): sonst lernte die Kurve nur den Rest nach unserem +-1 K
+var sh = num(G('TOP27_Z1_Heat_Request_Temp')), lernt = dev.length && sh === 0;
+out2.push({pauseAdaptation: !lernt});
+out2.push({topic: 'outdoor', payload: at, ohneRaum: !dev.length});
+if (dev.length) { out2.push({topic: 'room', payload: Math.round(dev.reduce(function (s, x) { return s + x; }, 0) / dev.length * 100) / 100}); }
+node.status({fill: 'green', shape: 'dot', text: 'AT ' + at + ' °C · ' + d0.length + '/' + d1.length + ' Vorhersagen · ' + dev.length + ' Räume' + (lernt ? '' : ' · lernt nicht')});
+return [m1, out2];
+"""
+LAMBDA_OUT_JS = r"""
+// Ergebnisse von predictive-heating und adaptive-curve fuer die Entscheidungsmaschine ablegen (OPT_lambda, Speicher "file": die gelernte Verschiebung ueberlebt einen Neustart)
+var now = Date.now(), LB;
+try { LB = global.get('OPT_lambda', 'file'); } catch (e) { LB = undefined; }
+LB = (LB && typeof LB === 'object') ? LB : (global.get('OPT_lambda') || {});
+function num(v) { var n = parseFloat(v); return isFinite(n) ? n : null; }
+if (msg.adaptiveCurve) {
+    var a = msg.adaptiveCurve; LB.adapt = {shift: num(a.shift), err: msg.ohneRaum ? null : num(a.error), adapting: a.adapting ? 1 : 0, at: num(a.outdoor), ts: now};
+} else if (msg.payload && typeof msg.payload === 'object' && msg.payload.at_predictive !== undefined) {
+    var p = msg.payload; LB.pred = {at: num(p.at_predictive), korr: num(p.correction), mode: String(p.mode || ''), at0: num(msg.at_current), ts: now};
+} else { return null; }
+LB.ts = now;
+try { global.set('OPT_lambda', LB, 'file'); } catch (e) { global.set('OPT_lambda', LB); }
+return null;
+"""
+upsert(comment("opt_c_lambda", "Lambda-Eingang (05.11.2026): predictive-heating und adaptive-curve, nur Rechnung, als Eingang der Entscheidungsmaschine", 330, 4380))
+upsert(inject("opt_i_lambda", "alle 5 Minuten", 300, 40, ["opt_lambda_in"], 140, 4440))
+upsert(fn("opt_lambda_in", "Lambda: Eingänge (Außen, Vorhersage, Haus)", LAMBDA_IN_JS, 2, [["opt_lambda_pred"], ["opt_lambda_adapt"]], 400, 4440))
+upsert({"id": "opt_lambda_pred", "type": "predictive-heating", "z": TAB, "name": "Lambda-Außentemperatur",
+        "weightCurrent": "4", "weightDay0": "2", "weightDay1": "1", "weightDay2": "0", "uvMaxOffset": "0",
+        "x": 680, "y": 4420, "wires": [["opt_lambda_out"]]})
+upsert({"id": "opt_lambda_adapt", "type": "adaptive-curve", "z": TAB, "name": "Kurve gelernt (Haus gegen Bandmitte)",
+        "roomSetpoint": "0", "heatingLimit": "15", "adaptationRate": "0.0002", "maxShift": "3", "deadband": "0.3",
+        "topicRoom": "room", "topicOutdoor": "outdoor", "persistent": True, "decimals": "2",
+        "x": 680, "y": 4460, "wires": [["opt_lambda_out"]]})
+upsert(fn("opt_lambda_out", "Lambda: Ergebnisse -> OPT_lambda", LAMBDA_OUT_JS, 1, [[]], 960, 4440))
+
 PLAN_TPL = """<div class="optp optfit">
 <div class="kpi" ng-if="msg.payload.kpi.length"><div class="tile" ng-repeat="t in msg.payload.kpi track by $index" title="{{t.t}}"><div class="k">{{t.k}}</div><div class="v">{{t.v}}</div><div class="s" title="{{t.s}}">{{t.s}}</div></div></div>
 <div class="sum" ng-if="msg.payload.evcc"><span class="k">{{msg.payload.evcc.k}}</span><span class="v" ng-class="msg.payload.evcc.c" title="{{msg.payload.evcc.t}}">{{msg.payload.evcc.v}}</span></div>
@@ -3596,6 +3665,9 @@ var inp = {t: now, hpAge: hpTs ? (now - hpTs) / MIN : null,
 var PIe = G('OPT_plan_in') || {}, WXe = G('OPT_weather') || {};
 if (PIe.ts && now - PIe.ts < 5 * MIN && num(PIe.pvNow) !== null) { inp.pv = num(PIe.pvNow); }
 if (WXe.ts && now - WXe.ts <= ((CF.weather && num(CF.weather.maxAgeMin)) || 60) * MIN && num(WXe.clouds) !== null) { inp.wolken = num(WXe.clouds); }
+// Lambda-Eingang (05.11.2026): predictive-heating / adaptive-curve aus OPT_lambda, hoechstens 30 min alt; nur Anzeige, Datensatz und Kurvenform-Hinweis
+var LBe = G('OPT_lambda') || {}, lbP = (LBe.pred && now - LBe.pred.ts <= 30 * MIN) ? LBe.pred : null, lbA = (LBe.adapt && now - LBe.adapt.ts <= 30 * MIN) ? LBe.adapt : null;
+if (lbP || lbA) { inp.lambda = {}; if (lbP) { inp.lambda.at = num(lbP.at); inp.lambda.korr = num(lbP.korr); inp.lambda.mode = String(lbP.mode || ''); } if (lbA) { inp.lambda.shift = num(lbA.shift); inp.lambda.err = num(lbA.err); } }
 // Winterpaket 16.10.2026: Abtauwetter (Sperre "abtausprung"): OWM-Feuchte (hoechstens weather.maxAgeMin alt) und Rohr aussen (Outside_Pipe_Temp, -128 = kein Fuehler)
 if (WXe.ts && now - WXe.ts <= ((CF.weather && num(CF.weather.maxAgeMin)) || 60) * MIN && num(WXe.rh) !== null) { inp.rh = num(WXe.rh); }
 var pipeO = hpSet('Outside_Pipe_Temp'); if (pipeO !== null && pipeO > -100) { inp.pipeOut = pipeO; }

@@ -2284,6 +2284,28 @@ function applyPathProblems(nodes, aktiv) {                                      
     if (!ap || /node\.send\s*\(/.test(ap.func)) { P.push('opt_apply nutzt node.send'); }
     return P;
 }
+// ================================================================== (l1) Lambda-Eingang (05.11.2026, Kevin "Weg 1"): predictive-heating / adaptive-curve nur als Eingang
+console.log('--- (l1) Lambda-Eingang');
+{
+    const VW = require('./engine_view.js'), LBa = {at: 4.3, korr: -0.7, mode: 'cooling', shift: -0.8, err: -0.9};
+    const Ra = runSeq(40, i => inp(T0 + i * MIN, {lambda: LBa})), Rb = runSeq(40, i => inp(T0 + i * MIN));
+    check('l1.1 kein Schalten: mit und ohne Lambda-Eingang dieselben Regel-Ergebnisse in allen 40 Minuten', Ra.outs.every((o, i) => JSON.stringify(o.rec.r) === JSON.stringify(Rb.outs[i].rec.r)), '');
+    const ri = Ra.outs[39].rec.in;
+    check('l1.2 Datensatz: in.lambda gerundet, unsnap gibt ihn zurueck; ohne Eingang kein Feld', JSON.stringify(ri.lambda) === JSON.stringify(LBa) && JSON.stringify(E.unsnap(T0, JSON.parse(JSON.stringify(ri))).lambda) === JSON.stringify(LBa) && !('lambda' in Rb.outs[39].rec.in), JSON.stringify(ri.lambda));
+    const KA = E.kurvenform(Ra.S, cfg), tA = VW.raumKacheln(Ra.S, T0 + 39 * MIN, cfg), kfA = tA.find(x => x.k === 'Kurvenform');
+    check('l1.3 gelernte Verschiebung -0,8 K: Hinweis "Kurvenform" (senken um 1 K, von Hand), Waechter an, Kachel "senken?"; Kacheln Lambda-Aussentemp. und Kurve gelernt',
+          /adaptive-curve hat -0,8 K gelernt \(Räume Ø \+0,9 K zur Bandmitte\): Heizkurve um 1 K senken/.test(KA.hinweis) && KA.dir === -1 && Ra.S.hw.kurvenform.an && kfA.v === 'senken?' &&
+          tA.some(x => x.k === 'Lambda-Außentemp.' && x.v === '4,3 °C' && /Korrektur -0,7 K · kälter/.test(x.s)) && tA.some(x => x.k === 'Kurve gelernt' && x.v === '-0,80 K' && x.vc === 'warn'), KA.hinweis);
+    const Rc = runSeq(3, i => inp(T0 + i * MIN, {lambda: {at: 9, shift: 0.4, err: 0.6}})), Rd = runSeq(3, i => inp(T0 + i * MIN, {lambda: {shift: 1.6, err: 1.2}}));
+    const KD = E.kurvenform(Rd.S, cfg), tD = VW.raumKacheln(Rd.S, T0 + 2 * MIN, cfg), tB = VW.raumKacheln(Rb.S, T0 + 39 * MIN, cfg);
+    check('l1.4 +0,4 K: kein Hinweis; +1,6 K: "um 2 K anheben", Kachel "anheben?", ohne Aussentemperatur keine Lambda-Aussentemp.-Kachel; ohne Eingang keine Lambda-Kacheln (8 Kacheln wie bisher)',
+          E.kurvenform(Rc.S, cfg).hinweis === null && /Heizkurve um 2 K anheben/.test(KD.hinweis) && KD.dir === 1 && tD.find(x => x.k === 'Kurvenform').v === 'anheben?' && !tD.some(x => x.k === 'Lambda-Außentemp.') && tD.some(x => x.k === 'Kurve gelernt') &&
+          tB.length === 8 && !tB.some(x => /Lambda|gelernt/.test(x.k)), KD.hinweis + ' | ' + tB.length);
+    let S5 = Ra.S; const t5 = T0 + 40 * MIN, alive = [];
+    for (let i = 0; i < 61; i++) { S5 = E.step(S5, inp(t5 + i * MIN), cfg).S; alive.push(!!S5.lambda); }
+    check('l1.5 ohne neue Eingabe bleibt der Wert 59 min stehen, ab 60 min weg (Hinweis endet)', alive[58] && !alive[59] && !alive[60] && !(E.kurvenform(S5, cfg).hinweis || '').includes('adaptive-curve'), alive.lastIndexOf(true));
+}
+
 if (flowsFile) {
     console.log('--- (c) Huellen und gesperrte Uebernahme mit der Flow-Datei ' + flowsFile);
     const vm = require('vm');
@@ -2307,7 +2329,7 @@ if (flowsFile) {
     // ---- vm-Harness (wie optimizer_sim.js): Fake-Uhr, Speicher, Dateien
     let NOW = new Date(2026, 9, 12, 8, 0, 0).getTime();
     class FD extends Date { constructor(...a) { if (a.length === 0) { super(NOW); } else { super(...a); } } static now() { return NOW; } }
-    let gstore = {}, fstores = {}, files = {}, warns = [];
+    let gstore = {}, fstores = {}, cstores = {}, files = {}, warns = [];
     const fds = {}; let fdN = 10;
     const fsm = {readFileSync: p => { if (!(p in files)) { const e = new Error('ENOENT ' + p); e.code = 'ENOENT'; throw e; } return files[p]; }, writeFileSync: (p, d) => { files[p] = String(d); }, mkdirSync: () => {}, chmodSync: () => {},
                  openSync: p => { if (!(p in files)) { const e = new Error('ENOENT ' + p); e.code = 'ENOENT'; throw e; } fds[++fdN] = p; return fdN; },
@@ -2319,12 +2341,13 @@ if (flowsFile) {
         if (!comp[id]) { comp[id] = vm.runInNewContext('(function(msg,global,flow,context,env,node,fs,Date,Buffer){' + FN[id] + '\n})', {}); }
         fstores[id] = fstores[id] || {};
         const nd = {send: () => { throw new Error('node.send benutzt'); }, warn: m => warns.push(String(m)), error: () => {}, status: () => {}};
-        const res = comp[id](msg, ctx(gstore), ctx(fstores[id]), ctx({}), {get: () => undefined}, nd, fsm, FD, Buffer);
+        cstores[id] = cstores[id] || {};                                            // Knoten-Kontext (seit Lambda-Eingang 05.11.2026: bleibt bis zum Neustart)
+        const res = comp[id](msg, ctx(gstore), ctx(fstores[id]), ctx(cstores[id]), {get: () => undefined}, nd, fsm, FD, Buffer);
         const fo = res && (id === 'opt_engine' ? res[4] : (id === 'opt_apply' ? res[2] : null));   // Datei-Knoten nachbilden (anhaengen)
         if (fo) { [].concat(fo).forEach(m => { if (m && m.filename) { files[m.filename] = (files[m.filename] || '') + m.payload; } }); }
         return res;
     }
-    const restart = () => { fstores = {}; };                                         // Node-RED-Neustart: Flow-Kontext weg, Dateien bleiben (Speicher "file" ist hier nur memory)
+    const restart = () => { fstores = {}; cstores = {}; };                                         // Node-RED-Neustart: Flow-Kontext weg, Dateien bleiben (Speicher "file" ist hier nur memory)
     const cfgRooms = [{id: 'ki_oben', name: 'Kinderzimmer oben', active: true, min: 22, max: 23.5, maxAgeMin: 90, eigeneHeizung: false}];   // Bedarfsraum der Szenarien: ausdruecklich ohne eigene Nachheizung
     function world(o) {                                                               // Anlagenwerte wie HeishaMoNR sie global ablegt (+ OPT_hp vom eigenen Abo)
         o = o || {};
@@ -2574,6 +2597,43 @@ if (flowsFile) {
       FN.opt_apply = keepF; delete comp.opt_apply; files['/data/optimizer/apply-state.json'] = JSON.stringify(E.newApply()); restart();
       check('Huelle opt_apply (Heizregelung): Heating_Control der Anlage steht als plant.hc im Kontext (Ruecklesen/Ist-Abgleich), SetHeatingControl = 0 geht durch die letzte Sicherung (Whitelist 0/1, retain aus)',
             hcP === 1 && oH[0] && oH[0].length === 1 && oH[0][0].topic === 'panasonic_heat_pump/commands/SetHeatingControl' && oH[0][0].payload === '0' && oH[0][0].retain === false, 'plant.hc ' + hcP + ' · ' + JSON.stringify(oH[0])); }
+    { // Lambda-Eingang (05.11.2026): opt_lambda_in -> predictive-heating / adaptive-curve (Rechnung der Module 1.0.6 / 1.0.7 nachgebildet, Konfiguration aus der Flow-Datei) -> opt_lambda_out -> OPT_lambda -> opt_engine
+      const keepG = JSON.parse(JSON.stringify(gstore)), keepF = JSON.parse(JSON.stringify(fstores)), keepC = JSON.parse(JSON.stringify(cstores)), keepFi = Object.assign({}, files), keepNow = NOW;
+      const d0 = new Date(NOW); NOW = new Date(d0.getFullYear(), d0.getMonth(), d0.getDate() + 1, 14, 0).getTime(); world();
+      const nP = NODES.find(n => n.id === 'opt_lambda_pred'), nA = NODES.find(n => n.id === 'opt_lambda_adapt'), Wt = [nP.weightCurrent, nP.weightDay0, nP.weightDay1, nP.weightDay2].map(Number);
+      const pred = m => { const at = +m.at_current, p = (at * Wt[0] + m.avg_day0 * Wt[1] + m.avg_day1 * Wt[2] + m.avg_day2 * Wt[3]) / (Wt[0] + Wt[1] + Wt[2] + Wt[3]), f = Math.round(p * 10) / 10;
+                          return Object.assign({}, m, {payload: {at_predictive: f, correction: Math.round((f - at) * 10) / 10, solar_offset: 0, mode: p - at > 0.5 ? 'warming' : (p - at < -0.5 ? 'cooling' : 'stable')}}); };
+      let AC = {shift: 0, last: null, paused: false}; const mx = +nA.maxShift, cl = v => Math.max(-mx, Math.min(mx, v));
+      const adapt = m => { if (m.shift !== undefined) { AC.shift = cl(+m.shift); return null; } if (m.pauseAdaptation !== undefined) { AC.paused = !!m.pauseAdaptation; return null; }
+                           if (m.topic === 'room') { AC.room = +m.payload; } if (m.topic === 'outdoor') { AC.out = +m.payload; } if (AC.room === undefined || AC.out === undefined) { return null; }
+                           let ad = false; const e = +nA.roomSetpoint - AC.room; if (!AC.paused && AC.out < +nA.heatingLimit && AC.last !== null && Math.abs(e) > +nA.deadband) { AC.shift = cl(AC.shift + e * +nA.adaptationRate * (NOW - AC.last) / 60000); ad = true; }
+                           AC.last = NOW; return Object.assign({}, m, {payload: +AC.shift.toFixed(2), adaptiveCurve: {roomTemp: AC.room, outdoor: AC.out, error: +e.toFixed(2), shift: +AC.shift.toFixed(2), adapting: ad}}); };
+      const mkFp = T => { const a = []; for (let h = 0; h < 13; h++) { const t = T - 60 * 60000 + h * 3 * 3600000, dd = new Date(t).getDate(); a.push([t, dd === new Date(T).getDate() ? 5 : (dd === new Date(T + 86400000).getDate() ? 2 : -9), 80, 50, 3]); } return a; }, fp = mkFp(NOW);
+      const takt = () => { NOW += 5 * 60000; gstore.OPT_weather = {f_ts: NOW - 20 * 60000, fpts: fp}; if (gstore.OPT_rooms.ki_oben) { gstore.OPT_rooms.ki_oben.ts = NOW - 10 * 60000; }
+                           const r = runN('opt_lambda_in', {payload: NOW}); if (r && r[0]) { runN('opt_lambda_out', pred(r[0])); } [].concat((r && r[1]) || []).forEach(m => { const o = adapt(m); if (o) { runN('opt_lambda_out', o); } }); return r; };
+      const r1 = takt(), L1 = JSON.parse(JSON.stringify(gstore.OPT_lambda));
+      check('Huelle Lambda (1): predictive-heating bekommt TOP14 11 °C, Tagesmittel heute 5 / morgen 2 °C (uebermorgen ignoriert, Fehlendes = Aussentemperatur), UV 0 -> 8,0 °C, Korrektur -3,0, kaelter; adaptive-curve bekommt Haus -1,55 K zur Bandmitte (Kinderzimmer oben, ohne eigene Nachheizung)',
+            r1[0].at_current === 11 && r1[0].avg_day0 === 5 && r1[0].avg_day1 === 2 && r1[0].avg_day2 === 11 && r1[0].uv_day0 === 0 && L1.pred.at === 8 && L1.pred.korr === -3 && L1.pred.mode === 'cooling' &&
+            JSON.stringify(r1[1]) === '[{"pauseAdaptation":false},{"topic":"outdoor","payload":11,"ohneRaum":false},{"topic":"room","payload":-1.55}]' && L1.adapt.shift === 0 && L1.adapt.err === 1.55, JSON.stringify([r1[0], L1]));
+      for (let i = 0; i < 576; i++) { takt(); }
+      const L2 = JSON.parse(JSON.stringify(gstore.OPT_lambda)), soll2 = +(576 * 1.55 * +nA.adaptationRate * 5).toFixed(2);
+      gstore.TOP27_Z1_Heat_Request_Temp = 1; for (let i = 0; i < 24; i++) { takt(); } const L3 = JSON.parse(JSON.stringify(gstore.OPT_lambda)); gstore.TOP27_Z1_Heat_Request_Temp = 0;
+      delete gstore.OPT_rooms.ki_oben; for (let i = 0; i < 24; i++) { takt(); } const L4 = JSON.parse(JSON.stringify(gstore.OPT_lambda));
+      check('Huelle Lambda (2): 2 Tage Haus -1,55 K -> gelernt +' + soll2 + ' K (0,0002 K je K und Minute); mit eigener Verschiebung (TOP27 = 1) und ohne Raumwerte pausiert (ohne Raumwerte keine Abweichung im Datensatz)',
+            L2.adapt.shift === soll2 && soll2 > 0.85 && L2.adapt.err === 1.55 && L3.adapt.shift === soll2 && L3.adapt.adapting === 0 && L4.adapt.shift === soll2 && L4.adapt.err === null, JSON.stringify([L2.adapt, L3.adapt, L4.adapt]));
+      gstore.OPT_rooms.ki_oben = {ema: 23.5, ts: NOW}; restart(); AC = {shift: 0, last: null, paused: false}; const r5 = takt(), L5 = gstore.OPT_lambda;
+      check('Huelle Lambda (3): nach einem Neustart (Kontext von adaptive-curve leer) gibt opt_lambda_in zuerst die gelernte Verschiebung aus OPT_lambda zurueck, danach weiter lernen',
+            r5[1][0].shift === soll2 && L5.adapt.shift === soll2 && AC.shift === soll2, JSON.stringify(r5[1]));
+      gstore.OPT_weather = {f_ts: NOW, fpts: mkFp(NOW)}; runN('opt_lambda_out', pred(runN('opt_lambda_in', {payload: NOW})[0]));   // frische Vorhersage (heute 5 / morgen 2 °C) nach 2 Tagen
+      NOW += 60000; const oE = runN('opt_engine', {topic: '', payload: NOW}), lE = JSON.parse(files[decFile].trim().split('\n').pop());
+      gstore.OPT_lambda.pred.ts = gstore.OPT_lambda.adapt.ts = NOW - 31 * 60000; NOW += 60000; runN('opt_engine', {topic: '', payload: NOW}); const lF = JSON.parse(files[decFile].trim().split('\n').pop());
+      const kartE = JSON.stringify(oE[5]);
+      gstore = keepG; fstores = keepF; cstores = keepC; files = keepFi; NOW = keepNow;
+      check('Huelle Lambda (4): opt_engine nimmt OPT_lambda (hoechstens 30 min alt) in den Datensatz (in.lambda) und zeigt die Kacheln Lambda-Aussentemp. / Kurve gelernt; veraltet (31 min) kein in.lambda',
+            JSON.stringify(lE.in.lambda) === JSON.stringify({at: 8, korr: -3, mode: 'cooling', shift: soll2, err: -0.75}) && /Lambda-Außentemp\./.test(kartE) && /Kurve gelernt/.test(kartE) && lF.in.lambda === undefined, JSON.stringify([lE.in.lambda, lF.in.lambda]));
+      check('Struktur Lambda: predictive-heating und adaptive-curve im Tab, nur opt_lambda_in speist sie, beide nur nach opt_lambda_out, das nichts weitergibt; kein Weg zum Sendeweg',
+            nP.z === 'opt_tab' && nA.z === 'opt_tab' && JSON.stringify(nP.wires) === '[["opt_lambda_out"]]' && JSON.stringify(nA.wires) === '[["opt_lambda_out"]]' && JSON.stringify(NODES.find(n => n.id === 'opt_lambda_out').wires) === '[[]]' &&
+            NODES.filter(n => (n.wires || []).some(w => w.indexOf('opt_lambda_pred') >= 0 || w.indexOf('opt_lambda_adapt') >= 0)).map(n => n.id).join() === 'opt_lambda_in' && NODES.find(n => n.id === 'opt_lambda_adapt').maxShift === '3', ''); }
     // Lange Fahrt mit Hauptschalter AN und ALLEN Regeln freigegeben, aber ohne Klick: nie ein Befehl
     files['/data/optimizer/apply.json'] = '{"enabled": true, "rules": ["quiet_freigabe", "quiet_strecken", "raum_offset"]}';
     files['/data/optimizer/apply-state.json'] = JSON.stringify(E.newApply()); restart(); NOW += 3600000; world();
