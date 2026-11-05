@@ -1530,7 +1530,7 @@ var ENGINE = (function () {
             if (AH.applied && AH.applied.w !== d.hc) { AH.last = {rule: AH.applied.rule, dir: sgnOf(AH.applied.w - AH.applied.von), w: AH.applied.w, von: AH.applied.von, start: AH.applied.ts, end: now}; AH.applied = null; }
             if (AH.owner && d.hc === AH.soll) { AH.applied = {rule: AH.owner, w: d.hc, von: d.hcFrom, ts: now}; d.hcBy = AH.owner; }
             else if (!rueckH) { S.hcHandT = now; S.hcHandW = d.hc; }
-            if (rueckH && !(d.hcBy && apH && d.hcBy !== apH.rule)) { d.hcRueck = true; }
+            if (rueckH && !d.hcBy) { d.hcRueck = true; }                                 // jede Uebernahme eines Vorschlags ist ein Hinweg (auch nach abgelaufener Frist, Kimi 05.11.)
         }
         if (have(d.soll)) { if (have(S.soll) && S.soll !== d.soll) { d.sollJump = d.soll - S.soll; if (!d.shiftChanged) { S.kurveChg = now; } } S.soll = d.soll; }   // natuerlicher Sollsprung (Kurve, AT ganzzahlig; RE-2)
         d.kurveChg = S.kurveChg || 0;

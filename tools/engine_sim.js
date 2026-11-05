@@ -1729,6 +1729,9 @@ console.log('--- (h) Heizregelung: Komfortbedarf, Abtau-Rueckstand, Heizstab-Nae
       check('h1v5.3 Dauerlauf, Efficiency regelt schon hoch (25 Hz): kein Comfort', propOf(Rc).length === 0 && /regelt schon hoch/.test(hrv(Rc).grund), hrv(Rc).grund); }
     { const Rw = runSeq(60, i => lauf(i, {rt: 300 + i, rooms: RH({schlaf: 19.6, ki_unten: 22.6})})), mw = [].concat(...Rw.outs.map(o => o.scores)).filter(x => /^verpasst/.test(x.typ) && x.regel === 'heizregelung');
       check('h1v5.4 Kimi-Pruefung 05.11.: Dauerlauf mit Raum-Notfall, aber Kinderzimmer unten 0,6 K ueber Maximum -> kein Comfort (zu warm) und auch kein "verpasst" der Heizregelung', propOf(Rw).length === 0 && /über Maximum/.test(hr(Rw.outs[59]).grund) && mw.length === 0, hr(Rw.outs[59]).grund + ' · ' + mw.map(x => x.typ + ' ' + x.punkte).join(',')); }
+    { const cH = JSON.parse(JSON.stringify(cfg)); cH.rules.heizregelung.haltMin = 9999;    // Gegenprobe zu h1v5.4: dieselbe Lage ohne warmen Raum, Vorschlag nur durch die (verlaengerte) Haltezeit verhindert
+      const Rv = runSeq(60, i => lauf(i, {rt: 300 + i}), null, cH), mv = [].concat(...Rv.outs.map(o => o.scores)).filter(x => x.typ === 'verpasst' && x.regel === 'heizregelung');
+      check('h1v5.5 Gegenprobe (Kimi-Kontrolle 05.11.): Dauerlauf, Raum-Notfall, Rueckstand, kein Raum zu warm, Vorschlag bleibt aus -> "verpasst" -20 wird weiter gebucht', propOf(Rv).length === 0 && mv.length === 1 && mv[0].punkte === -20, mv.map(x => x.typ + ' ' + x.punkte).join(',') || hr(Rv.outs[59]).grund); }
     { const R = runSeq(40, i => lauf(i, {q: 3})), P = propOf(R), qf = R.outs.map(o => r0(o, 'quiet_freigabe')).filter(r => r.neu);
       check('h1c ... unter Quiet 3 (Deckel 17 Hz bindet auch Comfort, 13.10. 21:00): zuerst die Quiet-Freigabe (Vorschlag Quiet 3 -> 0), die Heizregelung schlaegt nicht vor ("zuerst die Quiet-Freigabe")',
             !P.length && qf.length === 1 && /zuerst die Quiet-Freigabe/.test(hr(R.outs[39]).grund), hr(R.outs[39]).grund); }
@@ -2054,6 +2057,12 @@ console.log('--- (b7) Bewertung v7');
     // Schaden der Vorausschau nur ueber die Frist (6 h), nicht ueber die 24-h-Horizonte
     const cR5 = E.defaults().rules.vorausschau;
     check('vs5.8 Bewertung v7: Schaeden eines Vorausschau-Falls nur bis zur Frist der Massnahme (maxDauerMin 360 min), die Horizonte reichen bis 1440 min', cR5.maxDauerMin === 360 && E.RULE.vorausschau.prognose.h.slice(-1)[0] === 1440, '');
+    // vs5.9 Verhalten (Kimi-Kontrolle 05.11.): Heizstab 370-400 min nach dem Vorschlag (Minute 400-430) zaehlt nicht mehr fuer den Fall, 70-100 min danach (Minute 100-130) schon
+    const v5h = (a, b) => i => Object.assign(v5in('fahrplan')(i), {heaterI: i >= a && i < b ? 1 : 0});
+    const dmgV = R => allScores(R).filter(s0 => s0.typ === 'schaden' && s0.regel === 'vorausschau');
+    const Hs = runD(1500, v5h(400, 430), undefined, d5), Hf = runD(1500, v5h(100, 130), undefined, d5);
+    check('vs5.9 Schaden "Heizstab" der Vorausschau: 370-400 min nach dem Vorschlag kein Schaden (Frist 6 h), 70-100 min danach wird er gezaehlt',
+          shiftProps(Hs).some(x => x.rule === 'vorausschau' && x.i === 30) && !dmgV(Hs).some(x => x.arten.includes('heizstab')) && dmgV(Hf).some(x => x.arten.includes('heizstab')), JSON.stringify({spaet: dmgV(Hs).map(x => x.arten), frueh: dmgV(Hf).map(x => x.arten)}));
 }
 
 // ================================================================== (y) wertung-lueften (22.10.2026): Bewertung v6, Gegenprobe der Raum-Prognosen mit Fremdursachen, Naturexperimente getrennt
