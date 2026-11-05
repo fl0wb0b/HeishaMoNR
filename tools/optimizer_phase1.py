@@ -3204,17 +3204,17 @@ function verlauf(now, LB, lernt) {
     return {payload: {now: now, n: H.length, t: col(0), at0: col(1), at: col(2), shift: col(3), dev: col(4), pause: pause}};
 }
 """
-upsert(comment("opt_c_lambda", "Lambda-Eingang (05.11.2026): predictive-heating und adaptive-curve, nur Rechnung, als Eingang der Entscheidungsmaschine", 330, 4380))
+upsert(comment("opt_c_lambda", "Lernende Heizkurve und gewichtete Außentemperatur (05.11.2026, Vorbild Lambda-Wärmepumpen): predictive-heating und adaptive-curve, nur Rechnung, Eingang der Entscheidungsmaschine", 330, 4380))
 upsert(inject("opt_i_lambda", "alle 5 Minuten", 300, 40, ["opt_lambda_in"], 140, 4440))
-upsert(fn("opt_lambda_in", "Lambda: Eingänge (Außen, Vorhersage, Haus)", LAMBDA_IN_JS, 2, [["opt_lambda_pred"], ["opt_lambda_adapt"]], 400, 4440))
-upsert({"id": "opt_lambda_pred", "type": "predictive-heating", "z": TAB, "name": "Lambda-Außentemperatur",
+upsert(fn("opt_lambda_in", "Heizkurve lernen: Eingänge (Außen, Vorhersage, Haus)", LAMBDA_IN_JS, 2, [["opt_lambda_pred"], ["opt_lambda_adapt"]], 400, 4440))
+upsert({"id": "opt_lambda_pred", "type": "predictive-heating", "z": TAB, "name": "Gewichtete Außentemperatur",
         "weightCurrent": "4", "weightDay0": "2", "weightDay1": "1", "weightDay2": "0", "uvMaxOffset": "0",
         "x": 680, "y": 4420, "wires": [["opt_lambda_out"]]})
 upsert({"id": "opt_lambda_adapt", "type": "adaptive-curve", "z": TAB, "name": "Kurve gelernt (Haus gegen Bandmitte)",
         "roomSetpoint": "0", "heatingLimit": "15", "adaptationRate": "0.0002", "maxShift": "3", "deadband": "0.3",
         "topicRoom": "room", "topicOutdoor": "outdoor", "persistent": True, "decimals": "2",
         "x": 680, "y": 4460, "wires": [["opt_lambda_out"]]})
-upsert(fn("opt_lambda_out", "Lambda: Ergebnisse -> OPT_lambda, Verlauf", LAMBDA_OUT_JS, 1, [["opt_t_ch_lambda"]], 960, 4440))
+upsert(fn("opt_lambda_out", "Heizkurve lernen: Ergebnisse -> OPT_lambda, Verlauf", LAMBDA_OUT_JS, 1, [["opt_t_ch_lambda"]], 960, 4440))
 # Diagramm (05.11.2026, Kevin "Diagramm bauen"): Seite "Optimierer", Karte nach "Entscheidungen"; Baukasten ui_chart.js wie Wetterkarte/Verlauf Raeume.
 # Farben mit dem dataviz-Validator geprueft (blau/lila/orange: Helligkeit, Buntheit, Farbfehlsicht, Kontrast bestanden); Fuehler grau wie in der Wetterkarte.
 CH_LAMBDA = (
@@ -3222,14 +3222,14 @@ CH_LAMBDA = (
     "    spec = {t0: t0, t1: P.now, panels: [\n"
     "        {h: 140, unit: '°C', series: [\n"
     "            {n: 'Außen (Fühler WP)', c: '#37474f', k: 'line', w: 1.4, dg: 1, u: '°C', d: pairs(t, P.at0)},\n"
-    "            {n: 'Lambda-Außentemp.', t: 'predictive-heating: Fühler und OWM-Tagesmittel heute/morgen, gewichtet 4/2/1; nur Vergleich, kein Befehl', c: '#1976d2', k: 'line', w: 2, dg: 1, u: '°C', d: pairs(t, P.at)}]},\n"
+    "            {n: 'Gewichtete Außentemp.', t: 'predictive-heating: Fühler und OWM-Tagesmittel heute/morgen, gewichtet 4/2/1 (Vorbild: Lambda-Wärmepumpen); nur Vergleich, kein Befehl', c: '#1976d2', k: 'line', w: 2, dg: 1, u: '°C', d: pairs(t, P.at)}]},\n"
     "        {h: 110, unit: 'K', zero: true, bands: [{a: -0.5, b: 0.5, c: 'rgba(46,125,50,.08)'}], tb: (P.pause || []).map(function (b) { return {a: b[0], b: b[1], c: 'rgba(84,110,122,.12)', n: 'lernt nicht'}; }), series: [\n"
     "            {n: 'Kurve gelernt', t: 'adaptive-curve: gelernte Kurvenverschiebung; außerhalb des grünen Bands (±0,5 K) Hinweis „Heizkurve anheben/senken“ (von Hand)', c: '#8e24aa', k: 'line', w: 2, dg: 2, u: 'K', d: pairs(t, P.shift)},\n"
     "            {n: 'Räume Ø zur Bandmitte', t: 'Mittel der aktiven Räume ohne eigene Nachheizung: geglätteter Wert minus Bandmitte (positiv = zu warm)', c: '#ef6c00', k: 'line', w: 1.4, dg: 1, u: 'K', d: pairs(t, P.dev)},\n"
     "            {n: 'ohne Hinweis (±0,5 K)', t: 'solange die gelernte Verschiebung in diesem Band liegt, kein Hinweis in „Kurvenform“', c: '#a5d6a7', k: 'area', d: []},\n"
     "            {n: 'lernt nicht', t: 'eigene Verschiebung aktiv (TOP27 ≠ 0) oder keine Raumwerte', c: '#90a4ae', k: 'area', d: []}]}]};\n")
-upsert({"id": "opt_g_eng_lambda", "type": "ui_group", "name": "Lambda-Eingang · Verlauf", "tab": ENG_TAB, "order": 5.3, "disp": True, "width": ENG_W, "collapse": False, "className": ""})
-upsert(chart_card("lambda", "opt_g_eng_lambda", "Verlauf Lambda-Eingang", 6, 4500, CH_LAMBDA))
+upsert({"id": "opt_g_eng_lambda", "type": "ui_group", "name": "Lernende Heizkurve · Verlauf", "tab": ENG_TAB, "order": 5.3, "disp": True, "width": ENG_W, "collapse": False, "className": ""})
+upsert(chart_card("lambda", "opt_g_eng_lambda", "Verlauf lernende Heizkurve", 6, 4500, CH_LAMBDA))
 
 PLAN_TPL = """<div class="optp optfit">
 <div class="kpi" ng-if="msg.payload.kpi.length"><div class="tile" ng-repeat="t in msg.payload.kpi track by $index" title="{{t.t}}"><div class="k">{{t.k}}</div><div class="v">{{t.v}}</div><div class="s" title="{{t.s}}">{{t.s}}</div></div></div>

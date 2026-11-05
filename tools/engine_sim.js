@@ -2295,12 +2295,12 @@ console.log('--- (l1) Lambda-Eingang');
     const KA = E.kurvenform(Ra.S, cfg), tA = VW.raumKacheln(Ra.S, T0 + 39 * MIN, cfg), kfA = tA.find(x => x.k === 'Kurvenform');
     check('l1.3 gelernte Verschiebung -0,8 K: Hinweis "Kurvenform" (senken um 1 K, von Hand), Waechter an, Kachel "senken?"; Kacheln Lambda-Aussentemp. und Kurve gelernt',
           /adaptive-curve hat -0,8 K gelernt \(Räume Ø \+0,9 K zur Bandmitte\): Heizkurve um 1 K senken/.test(KA.hinweis) && KA.dir === -1 && Ra.S.hw.kurvenform.an && kfA.v === 'senken?' &&
-          tA.some(x => x.k === 'Lambda-Außentemp.' && x.v === '4,3 °C' && /Korrektur -0,7 K · kälter/.test(x.s)) && tA.some(x => x.k === 'Kurve gelernt' && x.v === '-0,80 K' && x.vc === 'warn'), KA.hinweis);
+          tA.some(x => x.k === 'Gewichtete Außentemp.' && x.v === '4,3 °C' && /Korrektur -0,7 K · kälter/.test(x.s)) && tA.some(x => x.k === 'Kurve gelernt' && x.v === '-0,80 K' && x.vc === 'warn'), KA.hinweis);
     const Rc = runSeq(3, i => inp(T0 + i * MIN, {lambda: {at: 9, shift: 0.4, err: 0.6}})), Rd = runSeq(3, i => inp(T0 + i * MIN, {lambda: {shift: 1.6, err: 1.2}}));
     const KD = E.kurvenform(Rd.S, cfg), tD = VW.raumKacheln(Rd.S, T0 + 2 * MIN, cfg), tB = VW.raumKacheln(Rb.S, T0 + 39 * MIN, cfg);
     check('l1.4 +0,4 K: kein Hinweis; +1,6 K: "um 2 K anheben", Kachel "anheben?", ohne Aussentemperatur keine Lambda-Aussentemp.-Kachel; ohne Eingang keine Lambda-Kacheln (8 Kacheln wie bisher)',
-          E.kurvenform(Rc.S, cfg).hinweis === null && /Heizkurve um 2 K anheben/.test(KD.hinweis) && KD.dir === 1 && tD.find(x => x.k === 'Kurvenform').v === 'anheben?' && !tD.some(x => x.k === 'Lambda-Außentemp.') && tD.some(x => x.k === 'Kurve gelernt') &&
-          tB.length === 8 && !tB.some(x => /Lambda|gelernt/.test(x.k)), KD.hinweis + ' | ' + tB.length);
+          E.kurvenform(Rc.S, cfg).hinweis === null && /Heizkurve um 2 K anheben/.test(KD.hinweis) && KD.dir === 1 && tD.find(x => x.k === 'Kurvenform').v === 'anheben?' && !tD.some(x => x.k === 'Gewichtete Außentemp.') && tD.some(x => x.k === 'Kurve gelernt') &&
+          tB.length === 8 && !tB.some(x => /Gewichtete|gelernt/.test(x.k)), KD.hinweis + ' | ' + tB.length);
     let S5 = Ra.S; const t5 = T0 + 40 * MIN, alive = [];
     for (let i = 0; i < 61; i++) { S5 = E.step(S5, inp(t5 + i * MIN), cfg).S; alive.push(!!S5.lambda); }
     check('l1.5 ohne neue Eingabe bleibt der Wert 59 min stehen, ab 60 min weg (Hinweis endet)', alive[58] && !alive[59] && !alive[60] && !(E.kurvenform(S5, cfg).hinweis || '').includes('adaptive-curve'), alive.lastIndexOf(true));
@@ -2641,7 +2641,7 @@ if (flowsFile) {
       const kartE = JSON.stringify(oE[5]);
       gstore = keepG; fstores = keepF; cstores = keepC; files = keepFi; NOW = keepNow;
       check('Huelle Lambda (4): opt_engine nimmt OPT_lambda (hoechstens 30 min alt) in den Datensatz (in.lambda) und zeigt die Kacheln Lambda-Aussentemp. / Kurve gelernt; veraltet (31 min) kein in.lambda',
-            JSON.stringify(lE.in.lambda) === JSON.stringify({at: 8, korr: -3, mode: 'cooling', shift: soll2, err: -0.75}) && /Lambda-Außentemp\./.test(kartE) && /Kurve gelernt/.test(kartE) && lF.in.lambda === undefined, JSON.stringify([lE.in.lambda, lF.in.lambda]));
+            JSON.stringify(lE.in.lambda) === JSON.stringify({at: 8, korr: -3, mode: 'cooling', shift: soll2, err: -0.75}) && /Gewichtete Außentemp\./.test(kartE) && /Kurve gelernt/.test(kartE) && lF.in.lambda === undefined, JSON.stringify([lE.in.lambda, lF.in.lambda]));
       check('Struktur Lambda: predictive-heating und adaptive-curve im Tab, nur opt_lambda_in speist sie, beide nur nach opt_lambda_out, das nur die Diagrammkarte beliefert (die gibt nichts weiter); kein Weg zum Sendeweg',
             nP.z === 'opt_tab' && nA.z === 'opt_tab' && JSON.stringify(nP.wires) === '[["opt_lambda_out"]]' && JSON.stringify(nA.wires) === '[["opt_lambda_out"]]' && JSON.stringify(NODES.find(n => n.id === 'opt_lambda_out').wires) === '[["opt_t_ch_lambda"]]' && NODES.find(n => n.id === 'opt_t_ch_lambda').type === 'ui_template' && JSON.stringify(NODES.find(n => n.id === 'opt_t_ch_lambda').wires) === '[[]]' &&
             NODES.filter(n => (n.wires || []).some(w => w.indexOf('opt_lambda_pred') >= 0 || w.indexOf('opt_lambda_adapt') >= 0)).map(n => n.id).join() === 'opt_lambda_in' && NODES.find(n => n.id === 'opt_lambda_adapt').maxShift === '3', ''); }
