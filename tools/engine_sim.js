@@ -2039,6 +2039,21 @@ console.log('--- (b7) Bewertung v7');
     const W7 = wirk(runD(260, rw)), W6 = wirk(runD(260, rw, undefined, E.mergeCfg({sv: 6, rules: {vorausschau: VS3}})));   // runD: mit Tagesgang (Vorschlag in Minute 30, Uebernahme 35)
     check('b7.1 Bewertung v7: der Rueckweg der uebernommenen −1 K (−1 → 0) ist kein Naturexperiment und keine eigene Wirkung; v6 buchte ihn als Naturexperiment',
           E.SCORE_VER === 7 && W7.length === 1 && /0 → −1|0 → -1/.test(W7[0].text) && W6.length === 2 && W6.some(x => x.naturexperiment === 1), JSON.stringify({v7: W7.map(x => x.text.slice(0, 40)), v6: W6.map(x => [x.text.slice(0, 40), x.naturexperiment])}));
+    // b7.2 Quiet: Freigabe 3 -> 0 uebernommen, spaeter zurueck auf 3 (Rueckweg): in v7 keine Deckel-Wirkung/kein Naturexperiment fuer Deckel/Laufzeit
+    const qb = i => inp(T0 + i * MIN, {rt: 30 + i, soll: 38, vl: 30, rl: 28.25, rooms: rooms({ki_oben: 21.2}), q: i >= 14 && i < 40 ? 0 : 3, hz: i >= 14 && i < 40 ? 30 : 16});
+    const wq = R => [].concat(...R.outs.map(o => o.scores)).filter(x => x.typ === 'wirkung' && x.regel === 'quiet_strecken');
+    const Q7 = runSeq(60, qb), Q6 = runSeq(60, qb, null, E.mergeCfg({sv: 6})), fq = Q7.outs.findIndex(o => r0(o, 'quiet_freigabe').neu);
+    check('b7.2 Bewertung v7: Rueckweg der uebernommenen Quiet-Freigabe (0 -> 3) ist keine Deckel-Wirkung und kein Naturexperiment fuer Deckel/Laufzeit; v6 buchte ihn so',
+          fq >= 0 && fq < 14 && wq(Q7).length === 0 && wq(Q6).length === 1 && wq(Q6)[0].naturexperiment === 1, 'Vorschlag Minute ' + fq + ' · v7 ' + wq(Q7).length + ' · v6 ' + JSON.stringify(wq(Q6).map(x => [x.text.slice(0, 30), x.naturexperiment])));
+    // vs5.6/7 Maschinenlauf mit v5-Standardwerten (Fenster +6...+24 h, 1,5 K, Reserve 0,5 K, nur Fahrplan-Reihe): Fahrplan -> Vorschlag trotz Gate zu; OWM -> nichts, auch kein "verpasst"
+    const at25 = new Array(25).fill(0).map((_, h) => h >= 6 ? 4 : 0), d5 = E.defaults();
+    const v5in = q => i => inp(T0 + i * MIN, {vs: vsx(at25, {gate: 0, n: 25, quelle: q}), rooms: rooms({ki_oben: 22.6, ki_unten: 21, schlaf: 21})});
+    const F5 = runD(60, v5in('fahrplan'), undefined, d5), O5 = runD(300, v5in('owm'), undefined, d5);
+    check('vs5.6 Maschine mit v5-Standardwerten: Reihe aus dem Fahrplan +4 K milder ab +6 h, Gate zu -> Vorschlag −1 K nach 30 min Haltezeit', shiftProps(F5).filter(x => x.rule === 'vorausschau').length === 1 && shiftProps(F5).find(x => x.rule === 'vorausschau').i === 30, JSON.stringify(shiftProps(F5).map(x => [x.i, x.rule])) + ' ' + stAt(F5, 59, 'vorausschau').grund);
+    check('vs5.7 ... dieselbe Lage nur mit OWM-Reihe: kein Vorschlag, kein "verpasst" der Vorausschau (300 min)', shiftProps(O5).filter(x => x.rule === 'vorausschau').length === 0 && !allScores(O5).some(s0 => s0.regel === 'vorausschau' && /^verpasst/.test(s0.typ)) && /nur aus OWM/.test(stAt(O5, 59, 'vorausschau').grund), stAt(O5, 59, 'vorausschau').grund);
+    // Schaden der Vorausschau nur ueber die Frist (6 h), nicht ueber die 24-h-Horizonte
+    const cR5 = E.defaults().rules.vorausschau;
+    check('vs5.8 Bewertung v7: Schaeden eines Vorausschau-Falls nur bis zur Frist der Massnahme (maxDauerMin 360 min), die Horizonte reichen bis 1440 min', cR5.maxDauerMin === 360 && E.RULE.vorausschau.prognose.h.slice(-1)[0] === 1440, '');
 }
 
 // ================================================================== (y) wertung-lueften (22.10.2026): Bewertung v6, Gegenprobe der Raum-Prognosen mit Fremdursachen, Naturexperimente getrennt

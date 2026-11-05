@@ -757,7 +757,7 @@ var ENGINE = (function () {
                 {key: 'abtauAtC', std: 3, einheit: '°C', herkunft: 'wie Raumeinfluss (RE-6): unter 3 °C −1 K nur mit Rücklauf ≥ rlMinC'},
                 {key: 'rlMinC', std: 28, einheit: '°C', herkunft: 'wie Raumeinfluss (RE-6); ANNAHME'},
                 {key: 'proTag', std: 2, einheit: 'Vorschläge', herkunft: 'Schreibbudget gemeinsam mit dem Raumeinfluss (Opus: höchstens 6 Schreibbefehle/Tag); ANNAHME'},
-                {key: 'gueltigMin', std: 180, einheit: 'min', herkunft: 'v3: Fensterende 5 h minus Fensterbeginn 2 h; v4 unverändert (Entwurf 02.11.2026); ANNAHME'},
+                {key: 'gueltigMin', std: 180, einheit: 'min', herkunft: 'v3: Fensterende 5 h minus Fensterbeginn 2 h; seit v5 (Fenster +6…+24 h) bewusst unverändert: der Vorschlag bleibt 3 h klickbar, der Fall läuft 24 h weiter, und eine anhaltende Lage schlägt nach pauseMin erneut vor; ANNAHME'},
                 {key: 'pauseMin', std: 180, einheit: 'min', herkunft: 'ANNAHME'},
                 {key: 'maxDauerMin', std: 360, einheit: 'min', herkunft: 'Rückweg spätestens nach 6 h (wie Raumeinfluss, ANNAHME)'}
             ],
@@ -1494,6 +1494,7 @@ var ENGINE = (function () {
             var A = S.arb;
             if (A.applied && A.applied.w !== d.shift) { A.last = {rule: A.applied.rule, dir: sgnOf(A.applied.w - A.applied.von), w: A.applied.w, von: A.applied.von, start: A.applied.ts, end: now}; A.applied = null; if (d.shift === A.last.von) { d.shiftRueck = A.last.rule; } }   // Rueckweg (auch von Hand) der uebernommenen Verschiebung
             if (A.owner && d.shift === A.soll && d.shift !== 0) { A.applied = {rule: A.owner, w: d.shift, von: d.shiftFrom, ts: now}; d.shiftBy = A.owner; }
+            if (d.shiftBy && d.shiftRueck && d.shiftBy !== d.shiftRueck) { d.shiftRueck = null; }   // Hinweg einer anderen Regel, kein Rueckweg
         }
         // ebenso fuer die Quiet-Stufe (Quiet-Freigabe nach unten, Deckel/Laufzeit nach oben): uebernommene Stufe gehoert der Regel, bis sie sich wieder aendert
         if (d.qChanged) {
@@ -1505,6 +1506,7 @@ var ENGINE = (function () {
                 // Fortsetzung (Regel-Review B1): dieselbe Regel stellt in derselben Richtung weiter -> die Ausgangsstufe bleibt fuer Rueckweg und Kaelte-Vorsorge
                 if (ap0 && ap0.rule === AQ.owner && ap0.w === d.qFrom && sgnOf(d.q - d.qFrom) === sgnOf(ap0.w - ap0.von)) { AQ.applied.von0 = have(ap0.von0) ? ap0.von0 : ap0.von; AQ.applied.ts0 = ap0.ts0 || ap0.ts; }
             }
+            if (d.qBy && d.qRueck && d.qBy !== d.qRueck) { d.qRueck = null; }                   // Hinweg einer anderen Regel (z. B. Freigabe auf den Ausgangswert von Deckel/Laufzeit), kein Rueckweg
         }
         // Winterpaket 16.10.2026: jede Quiet-Senkung (Stufenabstand der Freigabe bei Abtauwetter) und "Anlage hat Quiet beendet" (Fluester-Prioritaet "Leistung":
         // die Anlage beendet Quiet selbst, wenn das Wasser 30 min 5 K unter Soll liegt, Forum 3469566): Quiet sinkt ohne Vorschlag einer Regel, waehrend Vor- oder
@@ -1528,7 +1530,7 @@ var ENGINE = (function () {
             if (AH.applied && AH.applied.w !== d.hc) { AH.last = {rule: AH.applied.rule, dir: sgnOf(AH.applied.w - AH.applied.von), w: AH.applied.w, von: AH.applied.von, start: AH.applied.ts, end: now}; AH.applied = null; }
             if (AH.owner && d.hc === AH.soll) { AH.applied = {rule: AH.owner, w: d.hc, von: d.hcFrom, ts: now}; d.hcBy = AH.owner; }
             else if (!rueckH) { S.hcHandT = now; S.hcHandW = d.hc; }
-            if (rueckH) { d.hcRueck = true; }
+            if (rueckH && !(d.hcBy && apH && d.hcBy !== apH.rule)) { d.hcRueck = true; }
         }
         if (have(d.soll)) { if (have(S.soll) && S.soll !== d.soll) { d.sollJump = d.soll - S.soll; if (!d.shiftChanged) { S.kurveChg = now; } } S.soll = d.soll; }   // natuerlicher Sollsprung (Kurve, AT ganzzahlig; RE-2)
         d.kurveChg = S.kurveChg || 0;
@@ -2730,7 +2732,8 @@ var ENGINE = (function () {
         return recs;
     }
     function damageUpdate(C, d, cfg) {
-        var now = d.now, H = Math.max.apply(null, C.h) * MIN, R = RULE[C.rule];
+        var now = d.now, R = RULE[C.rule], cR = cfg && cfg.rules ? cfg.rules[C.rule] : null;
+        var H = Math.min(Math.max.apply(null, C.h), cR && have(cR.maxDauerMin) ? cR.maxDauerMin : Infinity) * MIN;   // Bewertung v7 (Kimi-Pruefung 05.11.): Schaeden hoechstens ueber die Frist der Massnahme (Vorausschau: 6 h, nicht 24 h)
         if (now - C.t0 > H || C.tr.cut || !d.fresh) { return; }
         function hit(k) { if (C.dmg.indexOf(k) < 0) { C.dmg.push(k); } }
         if (d.heaterOn) { hit('heizstab'); }
