@@ -2644,10 +2644,18 @@ if (flowsFile) {
         R.ki_oben = {ema: 23.5, ts: NOW}; takt(); takt(); R.ki_oben.ema = 22.8; const a1 = takt(); R.ki_oben.ema = 23.1; const a2 = takt(); R.ki_oben.ema = 23.25; const a3 = takt();
         R.ki_oben.ema = 22.5; const a4 = takt(); let k72 = null; for (let i = 0; i < 72; i++) { k72 = takt(); } const a5 = takt();   // k72: genau 360 min nach dem Sturz noch gesperrt, a5: 365 min frei
         R.ki_oben.ema = 22.85; const a6 = takt();
+        R.ki_oben.ema = 22.2; const c1 = takt(); for (let i = 0; i < 24; i++) { takt(); } R.ki_oben.ema = 21.5; takt(); let cX = null; for (let i = 0; i < 60; i++) { cX = takt(); } let cY = null; for (let i = 0; i < 13; i++) { cY = takt(); }
+        check('Huelle Lambda (5b, zweites Lueften, Kimi 05.11.): Sturz 22,85 -> 22,2, nach 2 h nochmals auf 21,5 (0,7 K unter dem Tiefstwert): die 6 h beginnen neu (7 h nach dem ersten Sturz noch gesperrt, 6 h 5 min nach dem zweiten frei); in der ersten Stunde nach einem Sturz keine Verlaengerung (a4 -> 73. Takt frei)',
+              !hatRaum(c1) && !hatRaum(cX) && hatRaum(cY), JSON.stringify([c1[1].length, cX[1].length, cY[1].length]));
         check('Huelle Lambda (5, Lueftungspause): Sturz 23,5 -> 22,8 (0,7 K): Raum zaehlt nicht (ohne Raum keine Abweichung, lernt nicht); bei 23,1 noch nicht erholt, bei 23,25 (0,25 K unter dem Wert davor) wieder dabei; neuer Sturz auf 22,5 bleibt hoechstens 6 h gesperrt (72 Takte = 360 min noch, danach frei); langsamer Anstieg ohne Sturz zaehlt',
               !hatRaum(a1) && a1[1].some(m => m.pauseAdaptation === true) && a1[0].lernt === 0 && !hatRaum(a2) && hatRaum(a3) && !hatRaum(a4) && !hatRaum(k72) && hatRaum(a5) && hatRaum(a6) && gstore.OPT_lambda.adapt.err !== null,
               JSON.stringify([a1[1], a3[1].map(m => m.topic || Object.keys(m)[0])]));
         gstore.Z1_Heat_Curve_Target_Low_Temp = 28; AC.shift = 0.7; gstore.OPT_lambda.adapt.shift = 0.7; const b1 = takt(), L6 = JSON.parse(JSON.stringify(gstore.OPT_lambda.adapt)), b2 = takt();
+        gstore.Z1_Heat_Curve_Target_Low_Temp = 27; const n1 = runN('opt_lambda_in', {payload: NOW}); NOW += 5 * 60000; const n2 = runN('opt_lambda_in', {payload: NOW});   // adaptive-curve antwortet nicht: OPT_lambda.adapt.sig bleibt alt
+        gstore.Z1_Heat_Curve_Target_Low_Temp = null; NOW += 5 * 60000; const n3 = runN('opt_lambda_in', {payload: NOW});
+        check('Huelle Lambda (6b, Kimi 05.11.): antwortet adaptive-curve nach einer Kurvenaenderung nicht, kommt der reset trotzdem nur einmal; fehlen Kurvenwerte, kein reset',
+              n1[1].some(m => m.reset) && !n2[1].some(m => m.reset) && !n3[1].some(m => m.reset) && n3[1].find(m => m.topic === 'outdoor').sig === '', JSON.stringify([n1[1][0], n2[1][0], n3[1][0]]));
+        gstore.Z1_Heat_Curve_Target_Low_Temp = 28;
         check('Huelle Lambda (6, Heizkurve von Hand geaendert): Kennung ' + sig0 + ' -> -13/11/28/38: genau ein Neustart (reset an adaptive-curve, gelernt 0), neue Kennung gespeichert, im naechsten Takt kein Neustart',
               sig0 === '-13/11/29/38' && b1[1][0].reset === true && L6.shift === 0 && L6.sig === '-13/11/28/38' && !b2[1].some(m => m.reset), JSON.stringify([b1[1][0], L6.shift, L6.sig])); }
       gstore = keepG; fstores = keepF; cstores = keepC; files = keepFi; NOW = keepNow;

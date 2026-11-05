@@ -3154,14 +3154,16 @@ var W = G('OPT_weather') || {}, d0 = [], d1 = [], heute = new Date(now).toDateSt
 var m1 = {topic: 'lambda', at_current: at, avg_day0: d0.length ? avg(d0) : at, avg_day1: d1.length ? avg(d1) : at, avg_day2: at, uv_day0: 0, uv_day1: 0};
 // Lueftungspause je Raum (05.11.2026, Morgen-Analyse: Schlafzimmer werktags 06:26-07:37 lange gelueftet): faellt der geglaettete Wert um >= 0,6 K unter das
 // Maximum der letzten 60 min (Lueftungsverdacht wie die Bewertung, SCORE.lueftungEmaK), zaehlt der Raum nicht mit, bis er wieder bis 0,3 K an den Wert vor dem Sturz
-// heran ist, hoechstens 6 h. Verlauf im Knoten-Kontext (nach einem Neustart erst nach Werten ueber 60 min wieder erkennbar; ponytail: reicht fuer einen Hinweis).
+// heran ist, hoechstens 6 h; sackt er waehrend der Pause nochmals um 0,6 K unter ihren Tiefstwert, beginnen die 6 h neu (zweites Lueften, Kimi 05.11.). Verlauf im Knoten-Kontext (nach einem Neustart
+// erst nach Werten ueber 60 min wieder erkennbar; Vereinfachung, reicht fuer einen Hinweis). Kuehlt ein Raum dauerhaft schneller als 0,6 K/h (Heizungsausfall), bleibt er draussen.
 var CF = G('OPT_cfg') || {}, RM = G('OPT_rooms') || {}, dev = [], LH = context.get('lhist') || {}, LS = context.get('luft') || {}, luftN = [];
 (CF.rooms || []).forEach(function (rc) {
     if (!rc || !rc.active || eigenOf(rc) || num(rc.min) === null || num(rc.max) === null) { return; }
     var r = RM[rc.id] || {}, t = num(r.ema), ts = num(r.ts); if (t === null || ts === null || now - ts > 360 * MIN) { return; }
     var h = (LH[rc.id] || []).filter(function (p) { return now - p[0] <= 60 * MIN; }); h.push([now, t]); LH[rc.id] = h;
     var vor = Math.max.apply(null, h.map(function (p) { return p[1]; })), L = LS[rc.id];
-    if (!L && vor - t >= 0.6 - 1e-9) { L = LS[rc.id] = {seit: now, vor: vor}; }
+    if (L) { if (t <= L.tief - 0.6 + 1e-9) { L.seit = now; } L.tief = Math.min(L.tief === undefined ? t : L.tief, t); }   // zweites Absacken: 0,6 K unter den Tiefstwert der Pause
+    else if (vor - t >= 0.6 - 1e-9) { L = LS[rc.id] = {seit: now, vor: vor, tief: t}; }                                       // vor = Wert vor dem Sturz (Ende der Pause)
     if (L && (t >= L.vor - 0.3 - 1e-9 || now - L.seit > 360 * MIN)) { delete LS[rc.id]; L = null; }
     if (L) { luftN.push(rc.name || rc.id); return; }
     dev.push(t - (num(rc.min) + num(rc.max)) / 2);
@@ -3181,8 +3183,9 @@ m1.lernt = lernt ? 1 : 0;                                                       
 // die Kurve verstellt; ohne Neustart liefe der Wert nach einer Korrektur weiter (Replay 07.10.-05.11.: ohne Rueckkopplung -0,5 K nach 4 Tagen, -3 K nach 24 Tagen)
 var sig = ['Z1_Heat_Curve_Outside_Low_Temp', 'Z1_Heat_Curve_Outside_High_Temp', 'Z1_Heat_Curve_Target_Low_Temp', 'Z1_Heat_Curve_Target_High_Temp'].map(function (k) { return num(G(k)); });
 sig = sig.every(function (x) { return x !== null; }) ? sig.join('/') : '';
-var sigAlt = ((G('OPT_lambda') || {}).adapt || {}).sig || '', neu = !!(sig && sigAlt && sig !== sigAlt);
-if (neu) { out2.push({reset: true}); }
+// einmal je neuer Kennung: antwortet adaptive-curve nicht (z. B. kein Raumwert), bleibt OPT_lambda.adapt.sig alt; ohne Merker kaeme jeden Takt ein reset (Kimi 05.11.)
+var sigAlt = ((G('OPT_lambda') || {}).adapt || {}).sig || '', neu = !!(sig && sigAlt && sig !== sigAlt && sig !== context.get('sigReset'));
+if (neu) { out2.push({reset: true}); context.set('sigReset', sig); }
 out2.push({pauseAdaptation: !lernt});
 out2.push({topic: 'outdoor', payload: at, ohneRaum: !dev.length, sig: sig});
 if (dev.length) { out2.push({topic: 'room', payload: Math.round(dev.reduce(function (s, x) { return s + x; }, 0) / dev.length * 100) / 100, sig: sig}); }
