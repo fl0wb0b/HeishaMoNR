@@ -3198,8 +3198,8 @@ function verlauf(now, LB, lernt) {
     H.push([now, LB.pred.at0, LB.pred.at, A ? A.shift : null, A && A.err !== null ? -A.err : null, lernt ? 1 : 0]);
     H = H.filter(function (q) { return q[0] > now - 7 * 24 * 3600000; });
     try { global.set('OPT_lambda_hist', H, 'file'); } catch (e) { global.set('OPT_lambda_hist', H); }
-    var pause = [], cur = null;                                                 // Zeitbaender "lernt nicht" (Luecken bis 15 min zusammen)
-    H.forEach(function (q) { if (q[5]) { cur = null; return; } if (cur && q[0] - cur[1] <= 15 * 60000) { cur[1] = q[0] + 5 * 60000; } else { cur = [q[0], q[0] + 5 * 60000]; pause.push(cur); } });
+    var pause = [], cur = null;                                                 // Zeitbaender "lernt nicht": nur aufeinanderfolgende Takte (1 min Spiel), ein Lernpunkt trennt (Kimi 05.11.)
+    H.forEach(function (q) { if (q[5]) { cur = null; return; } if (cur && q[0] - cur[1] <= 60000) { cur[1] = q[0] + 5 * 60000; } else { cur = [q[0], q[0] + 5 * 60000]; pause.push(cur); } });
     function col(i) { return H.map(function (q) { return q[i]; }); }
     return {payload: {now: now, n: H.length, t: col(0), at0: col(1), at: col(2), shift: col(3), dev: col(4), pause: pause}};
 }
