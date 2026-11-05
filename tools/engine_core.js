@@ -9,7 +9,7 @@
 //   ENGINE.applyTick(A, ctx)            -> {A, send, toast, log}                         Ruecklesen, begrenzte Wiederholung, Rueckweg (alle 15 s)
 var ENGINE = (function () {
     var VER = 1;                 // Format der Entscheidungsdatensaetze
-    var SCORE_VER = 6;           // Bewertungsregeln (vorab festgelegt; jede Aenderung erhoeht die Version, alte Punkte bleiben getrennt)
+    var SCORE_VER = 7;           // Bewertungsregeln (vorab festgelegt; jede Aenderung erhoeht die Version, alte Punkte bleiben getrennt)
                                  // v2 (10.10.2026): "verpasst" waehrend einer EIGENEN Sperre/Wartezeit (Standardwerte, ohne Schaden) zaehlt neutral und
                                  // getrennt ("waehrend Sperre"). v1 bleibt nachrechenbar: cfg.sv = 1 (Replay alter Datensaetze).
                                  // v3 (11.10.2026): Verschiebungs-Arbitrierung. Sperren durch eine Gegenregel ("vorrang", "gegenrichtung") entschuldigen
@@ -739,17 +739,18 @@ var ENGINE = (function () {
             }
         },
         {
-            id: 'vorausschau', ver: 4, kachel: 'Vorausschau', kurz: 'Vorausschau −1 K', name: 'Vorausschau (Heizkurve −1 K)', art: 'befehl', groesse: 'shift', richtung: 'soll_runter', prio: 5, basis: 'vorausschau|v4',
-            zweck: 'Senkt die Heizkurve um 1 K, bevor der Wärmebedarf WETTERBEDINGT sinkt (Milderung; Sonne und Wind nur mit freigegebenem Modell, coefActivate; der gewöhnliche Tagesgang ist herausgerechnet, die Uhrzeit allein löst nichts aus), solange alle Räume im Band liegen und der kälteste Raum Luft über seinem Minimum hat. Läuft erst mit offenem Gate des Gebäudemodells, nie gegen den aktuellen Raumzustand und nie gegen eine Verschiebung einer anderen Regel (Arbitrierung). Seit v2 (Review-Paket 13.10.2026) ohne den Zweig +1 K vor erwartetem Mehrbedarf: Die Anlage führt die Heizkurve selbst alle 5 min mit der Fühler-Außentemperatur nach (0,375 K Vorlauf je K, Verzug ≤ 5 min), die Heizkörper haben wenig Speichermasse, und bei Kälte lagen die Räume ohnehin 0,4–1,6 K über ihrer Bandmitte (unter 4 °C Kinderzimmer unten 90 % der Zeit über Maximum); +1 K hätte überheizte Räume weiter geheizt. Unter Quiet 0 löst +1 K bei Vorlauf unter Soll außerdem einen Hochlauf aus (11.10. 03:10: +48 % Strom), die Kosten waren unterschätzt. Nur −1 K zeigt in die Energie-Richtung. v3 (15.10.2026, Entscheidung 2): Bedarfsänderung aus dem Gebäudemodell v3 des Wärmefahrplans, UA · (T_innen − T_außen) − Gewinne (gelernt; bis v2 UA · max(0, 15 °C − T_außen)): zwischen 15 °C und dem Bilanzpunkt (~19–20 °C) zählt eine Milderung jetzt mit; Regel und Schwellen unverändert, eigene Basisrate „vorausschau|v3“.',
-            eingaenge: ['Außentemperatur des Wärmefahrplans (+1 … +24 h, mit Restkorrektur; Rückfall: Wettervorhersage OWM an den Außenfühler angeglichen, wenn der Plan älter als 20 min oder nicht ok ist; Quelle steht im Text)', 'gewöhnlicher Tagesgang (gemessene Außentemperatur bis 7 Vortage)', 'Gebäudemodell v3 des Wärmefahrplans (UA, Bilanzpunkt T_innen − Gewinne/UA, Gate, coefActivate)', 'Sonne (PV-Prognose) und Wind nur mit coefActivate', 'Räume (alle gültig, eigenes Band)', 'Verschiebung der Anlage (TOP27) und Eigentümer der Verschiebung', 'Soll-Vorlauf'],
-            sperren: ['anlauf', 'daten', 'stoerung', 'modell', 'mqtt_sperre', 'abtauen', 'warmwasser', 'sanftanlauf', 'laufbeginn', 'heizgrenze_aus', 'regler', 'vorrang', 'gegenrichtung', 'abstand', 'tageslimit', 'abkuehlzeit', 'takt', 'heizstab'],
+            id: 'vorausschau', ver: 5, kachel: 'Vorausschau', kurz: 'Vorausschau −1 K', name: 'Vorausschau (Heizkurve −1 K)', art: 'befehl', groesse: 'shift', richtung: 'soll_runter', prio: 5, basis: 'vorausschau|v4',
+            zweck: 'Senkt die Heizkurve um 1 K, bevor der Wärmebedarf WETTERBEDINGT sinkt (Milderung; Sonne und Wind nur mit freigegebenem Modell, coefActivate; der gewöhnliche Tagesgang ist herausgerechnet, die Uhrzeit allein löst nichts aus), solange alle Räume im Band liegen und der kälteste Raum Luft über seinem Minimum hat. Seit v5 (05.11.2026, Entwurf „Vorausschau vom Modell-Gate lösen“, Kevin „Ja, mit 0,5 K Reserve“) ohne das Gate des Gebäudemodells: das Gate prüft, ob Sonne/Wind den Tagesbedarf um 10 % besser vorhersagen, die Regel löst aber über die Temperaturänderung der Fahrplan-Reihe aus (Backtest 10.10.–03.11. mit allen Bedingungen: 6 Vorschläge, 5 Treffer, 0 Fehlalarme bei 0,5 K Reserve; mit Gate 2 Vorschläge); dafür nur mit der Reihe aus dem Wärmefahrplan (nurFahrplan), nie gegen den aktuellen Raumzustand und nie gegen eine Verschiebung einer anderen Regel (Arbitrierung). Seit v2 (Review-Paket 13.10.2026) ohne den Zweig +1 K vor erwartetem Mehrbedarf: Die Anlage führt die Heizkurve selbst alle 5 min mit der Fühler-Außentemperatur nach (0,375 K Vorlauf je K, Verzug ≤ 5 min), die Heizkörper haben wenig Speichermasse, und bei Kälte lagen die Räume ohnehin 0,4–1,6 K über ihrer Bandmitte (unter 4 °C Kinderzimmer unten 90 % der Zeit über Maximum); +1 K hätte überheizte Räume weiter geheizt. Unter Quiet 0 löst +1 K bei Vorlauf unter Soll außerdem einen Hochlauf aus (11.10. 03:10: +48 % Strom), die Kosten waren unterschätzt. Nur −1 K zeigt in die Energie-Richtung. v3 (15.10.2026, Entscheidung 2): Bedarfsänderung aus dem Gebäudemodell v3 des Wärmefahrplans, UA · (T_innen − T_außen) − Gewinne (gelernt; bis v2 UA · max(0, 15 °C − T_außen)): zwischen 15 °C und dem Bilanzpunkt (~19–20 °C) zählt eine Milderung jetzt mit; Regel und Schwellen unverändert, eigene Basisrate „vorausschau|v3“.',
+            eingaenge: ['Außentemperatur des Wärmefahrplans (+1 … +24 h, mit Restkorrektur; Rückfall: Wettervorhersage OWM an den Außenfühler angeglichen, wenn der Plan älter als 20 min oder nicht ok ist; Quelle steht im Text)', 'gewöhnlicher Tagesgang (gemessene Außentemperatur bis 7 Vortage)', 'Gebäudemodell v3 des Wärmefahrplans (UA, Bilanzpunkt T_innen − Gewinne/UA; Sonne/Wind nur mit coefActivate; das Gate gilt seit v5 nicht mehr für die Regel)', 'Sonne (PV-Prognose) und Wind nur mit coefActivate', 'Räume (alle gültig, eigenes Band)', 'Verschiebung der Anlage (TOP27) und Eigentümer der Verschiebung', 'Soll-Vorlauf'],
+            sperren: ['anlauf', 'daten', 'stoerung', 'mqtt_sperre', 'abtauen', 'warmwasser', 'sanftanlauf', 'laufbeginn', 'heizgrenze_aus', 'regler', 'vorrang', 'gegenrichtung', 'abstand', 'tageslimit', 'abkuehlzeit', 'takt', 'heizstab'],
             befehl: {name: 'SetZ1HeatRequestTemperature', topic: 'panasonic_heat_pump/commands/SetZ1HeatRequestTemperature'},
             schwellen: [
                 {key: 'deltaK', std: 1.5, einheit: 'K', herkunft: 'v4 M: Backtest Oktober 2026 (Fahrplan-Reihe, Fenster +6…+24 h, echt = Fühler ≥ 1 K milder, Tagesgang-bereinigt): 1,5 K → 30 von 38 Auslösungen echt (79 %, beide Monatshälften ≥ 76 %; 2 K 81 %, 1 K 76 %); gewählt von Kevin 02.11.2026. 1,5 K Außentemperatur = halber Soll-Schritt der Heizkurve (8 K auf 24 K, 1 K Soll je 3 K); Bedarfsänderung aus dem Wetter als Außentemperatur-Äquivalent (Mittel des Fensters gegen jetzt, beide um den gewöhnlichen Tagesgang bereinigt); OWM weicht vom Fühler 1,5–1,9 K ab (08.–10.10.), darunter ist die Vorhersage kein Signal; ANNAHME'},
                 {key: 'tagesgangTage', std: 3, einheit: 'Vortage', herkunft: 'Der gewöhnliche Tagesgang wird aus den Vortagen gelernt (Abweichung jeder Uhrzeit vom 24-h-Mittel); mit nur einem Vortag steckt dessen Wetter darin (Replay: Kaltfront 08.10. abends erschien am 09.10. als −5 K); ANNAHME'},
                 {key: 'vonH', std: 6, einheit: 'h', herkunft: 'v4 M: Backtest Oktober 2026: ab +6 h 69–81 % echte Milderungen, +2…+5 h nur 32–35 %, +3…+12 h 52–63 %; −1 K wirkt über Lauf und Pause erst nach 1–3 h im Raum (Speichermasse 7–10 kWh/K)'},
                 {key: 'bisH', std: 24, einheit: 'h', herkunft: 'v4 M: Backtest Oktober 2026: +6…+24 h als einziges Fenster in beiden Monatshälften über 70 % (+6…+12 h: 52–55 % in der ersten Hälfte); Lambda nutzt 24 h; Reihe aus dem Wärmefahrplan (26 h, Restkorrektur je Vorlauf)'},
-                {key: 'reserveK', std: 0.3, einheit: 'K', herkunft: 'Luft im Band: der kälteste Raum liegt mindestens 0,3 K über seinem Minimum (wie guardK des früheren Fahrplans); ANNAHME'},
+                {key: 'reserveK', std: 0.5, einheit: 'K', herkunft: 'Luft im Band: der kälteste Raum liegt mindestens 0,5 K über seinem Minimum. v5 (Kevin 05.11.2026): Backtest 10.10.–03.11. mit 0,5 K 6 Vorschläge, 5 Treffer, 0 Fehlalarme, 1 Raum binnen 6 h unter Minimum; mit 0,3 K (bis v4, wie guardK des früheren Fahrplans) 9 Vorschläge, 7 Treffer, 1 Fehlalarm, 3 Räume unter Minimum'},
+                {key: 'nurFahrplan', std: 1, einheit: 'ja/nein', herkunft: 'v5: ohne Modell-Gate nur mit der Reihe aus dem Wärmefahrplan (Restkorrektur); die OWM-Ersatzreihe ist für +6…+24 h nicht geprüft (Backtest nur mit der Fahrplan-Reihe)'},
                 {key: 'prognoseMaxMin', std: 120, einheit: 'min', herkunft: 'Fahrplan: Vorhersage gilt bis 2 h nach dem Abruf'},
                 {key: 'haltMin', std: 30, einheit: 'min', herkunft: 'Vorhersage muss mindestens einen weiteren Abruf überstehen; ANNAHME'},
                 {key: 'minVlC', std: 29, einheit: '°C', herkunft: 'Nutzervorgabe 08.10.: Soll-Vorlauf nie unter 29 °C (Heizkörper)'},
@@ -762,7 +763,7 @@ var ENGINE = (function () {
             ],
             erwartung: 'Soll-Vorlauf −1 K binnen 6 min (5-min-Raster), weniger Wärme vor dem erwarteten Wärmegewinn (Strom −2,5–3 %, 8,5 W/K); die Räume bleiben im Band, obwohl der Bedarf sinkt. Raumwirkung NICHT gemessen.',
             rueckweg: 'Automatisch zurück auf 0 K, sobald die Vorhersage die Milderung 15 min am Stück nicht mehr zeigt (halbe Schwelle), sofort, wenn ein Raum unter sein Minimum fällt, spätestens nach 6 h; nicht, solange der Raumeinfluss dieselbe Verschiebung verlangt.',
-            prognose: {p: 0.6, h: [120, 240, 360], text: 'Ohne −1 K gerät der wärmste Raum an den oberen Bandrand (höchstens Reserve unter Maximum)'},
+            prognose: {p: 0.6, h: [360, 720, 1440], text: 'Ohne −1 K gerät der wärmste Raum binnen 24 h an den oberen Bandrand (höchstens Reserve unter Maximum)'},
             kalibriert: [],
             eval: function (d, c, rs) {
                 var v = d.vs;
@@ -772,10 +773,10 @@ var ENGINE = (function () {
                 if (ap && ap.rule === 'vorausschau' && d.shift === ap.w) { return {inaktiv: 'Verschiebung ' + sg(d.shift, 0) + ' K (Vorausschau) steht'}; }
                 if (d.shift !== 0) { return {inaktiv: 'Verschiebung steht auf ' + sg(d.shift, 0) + ' K (Vorausschau nur von 0 K aus)'}; }
                 if (!have(v.age) || v.age > c.prognoseMaxMin) { return {inaktiv: 'Wettervorhersage ' + (have(v.age) ? de(v.age, 0) + ' min alt' : 'ohne Zeitstempel')}; }
-                var dk = d.vsDk, gv = !v.gate ? {id: 'modell', text: LOCK_TEXT.modell + ' (' + (v.n || 0) + ' von ' + (v.minDays || 10) + ' Tagen)', ist: v.n || 0, s: v.minDays || 10, u: 'Tage'} : null;
+                if (c.nurFahrplan === 1 && v.quelle !== 'fahrplan') { return {inaktiv: 'Vorhersage nur aus OWM (Wärmefahrplan fehlt oder ist älter als 20 min): +' + c.vonH + '…+' + c.bisH + ' h nicht belegt'}; }   // v5: ohne Gate nur mit der Fahrplan-Reihe
+                var dk = d.vsDk;
                 if (dk === null) {
                     var tgw = vsFenster(v, c) === null ? 'Wettervorhersage reicht nicht bis +' + c.bisH + ' h' : (d.vsBase && d.vsBase.n > 0 ? 'Tagesgang noch nicht sicher (' + d.vsBase.n + ' von ' + c.tagesgangTage + ' Vortagen)' : 'Tagesgang noch nicht bekannt (' + (d.vsBase ? d.vsBase.h : 0) + ' h gemessen, mindestens 36 h)');
-                    if (gv) { return {cond: [{k: 'bedarf', kz: 'Bedarfsänderung', t: 'Vorhersage und Tagesgang vorhanden', tn: tgw, ok: false}], halt: 0, vorab: gv}; }
                     return {inaktiv: tgw};
                 }
                 // v2 (Review-Paket 13.10.2026): nur noch -1 K vor einer Milderung; ein erwarteter Mehrbedarf ist kein Ausloeser mehr (die Anlage fuehrt die Kurve selbst nach)
@@ -798,7 +799,6 @@ var ENGINE = (function () {
                 var e = {cond: cond, halt: c.haltMin, wert: -1, von: d.shift, dir: 'soll_runter', lead: lead ? lead.name : '',
                          was: 'Heizkurve 0 → −1 K (Soll-Vorlauf ' + de(d.soll, 0) + ' → ' + de(sollNeu, 0) + ' °C)',
                          warum: 'Vorhersage (' + vq + ') +' + c.vonH + '…+' + c.bisH + ' h Ø ' + de(f.at, 1) + ' °C statt ' + de(v.at[0], 1) + ' °C jetzt, gewöhnlicher Tagesgang ' + sg(tg - d.vsBase.at[0], 1) + ' K: Bedarf ' + sg(dk, 1) + ' K aus dem Wetter' + (v.aktiv ? ' (mit Sonne/Wind)' : '') + '; ' + (lead ? lead.name + ' ' + de(lead.max - lead.t, 1) + ' K unter Maximum' : '')};
-                if (gv) { e.vorab = gv; }
                 return e;
             }
         },
@@ -1313,7 +1313,7 @@ var ENGINE = (function () {
             if (over.cop) { c.cop.pelKorrW = copKw(over); }                                                 // COP-Korrektur (ausserhalb 0..200 W: Standard)
             if (over.zaehler && over.zaehler.quelle === 'zaehler') { c.zaehler.quelle = 'zaehler'; }        // Strom vom Zaehler (Shelly) statt TOP16 + Korrektur (cop-ziel 17.10.2026, Standard heishamon)
             if (over.copZiel && typeof over.copZiel === 'object') { c.copZiel = over.copZiel; }              // Gütegrad/dT_verd/Frequenz/Abtau aus cop_eta.json (Container, nur lesen; czParam prueft die Werte)
-            if ([1, 2, 3, 4, 5].indexOf(num(over.sv)) >= 0) { c.sv = num(over.sv); }                      // Bewertungsregeln v1 ... v5 nachrechnen (nur Replay/Tests)
+            if ([1, 2, 3, 4, 5, 6].indexOf(num(over.sv)) >= 0) { c.sv = num(over.sv); }                   // Bewertungsregeln v1 ... v6 nachrechnen (nur Replay/Tests)
         }
         return c;
     }
@@ -1493,14 +1493,14 @@ var ENGINE = (function () {
         // sich wieder aendert; jede andere Aenderung (Hand, HeishaMoNR, Rueckweg) loest die Zuordnung
         if (d.shiftChanged) {
             var A = S.arb;
-            if (A.applied && A.applied.w !== d.shift) { A.last = {rule: A.applied.rule, dir: sgnOf(A.applied.w - A.applied.von), w: A.applied.w, von: A.applied.von, start: A.applied.ts, end: now}; A.applied = null; }
+            if (A.applied && A.applied.w !== d.shift) { A.last = {rule: A.applied.rule, dir: sgnOf(A.applied.w - A.applied.von), w: A.applied.w, von: A.applied.von, start: A.applied.ts, end: now}; A.applied = null; if (d.shift === A.last.von) { d.shiftRueck = A.last.rule; } }   // Rueckweg (auch von Hand) der uebernommenen Verschiebung
             if (A.owner && d.shift === A.soll && d.shift !== 0) { A.applied = {rule: A.owner, w: d.shift, von: d.shiftFrom, ts: now}; d.shiftBy = A.owner; }
         }
         // ebenso fuer die Quiet-Stufe (Quiet-Freigabe nach unten, Deckel/Laufzeit nach oben): uebernommene Stufe gehoert der Regel, bis sie sich wieder aendert
         if (d.qChanged) {
             var AQ = S.arbQ;
             var ap0 = AQ.applied;
-            if (AQ.applied && AQ.applied.w !== d.q) { AQ.last = {rule: AQ.applied.rule, dir: sgnOf(AQ.applied.w - AQ.applied.von), w: AQ.applied.w, von: AQ.applied.von, start: AQ.applied.ts, end: now}; AQ.applied = null; }
+            if (AQ.applied && AQ.applied.w !== d.q) { var qv0 = have(AQ.applied.von0) ? AQ.applied.von0 : AQ.applied.von; AQ.last = {rule: AQ.applied.rule, dir: sgnOf(AQ.applied.w - AQ.applied.von), w: AQ.applied.w, von: AQ.applied.von, start: AQ.applied.ts, end: now}; AQ.applied = null; if (d.q === qv0 || d.q === AQ.last.von) { d.qRueck = AQ.last.rule; } }   // Rueckweg der uebernommenen Stufe
             if (AQ.owner && d.q === AQ.soll) {
                 AQ.applied = {rule: AQ.owner, w: d.q, von: d.qFrom, ts: now}; d.qBy = AQ.owner;
                 // Fortsetzung (Regel-Review B1): dieselbe Regel stellt in derselben Richtung weiter -> die Ausgangsstufe bleibt fuer Rueckweg und Kaelte-Vorsorge
@@ -1529,6 +1529,7 @@ var ENGINE = (function () {
             if (AH.applied && AH.applied.w !== d.hc) { AH.last = {rule: AH.applied.rule, dir: sgnOf(AH.applied.w - AH.applied.von), w: AH.applied.w, von: AH.applied.von, start: AH.applied.ts, end: now}; AH.applied = null; }
             if (AH.owner && d.hc === AH.soll) { AH.applied = {rule: AH.owner, w: d.hc, von: d.hcFrom, ts: now}; d.hcBy = AH.owner; }
             else if (!rueckH) { S.hcHandT = now; S.hcHandW = d.hc; }
+            if (rueckH) { d.hcRueck = true; }
         }
         if (have(d.soll)) { if (have(S.soll) && S.soll !== d.soll) { d.sollJump = d.soll - S.soll; if (!d.shiftChanged) { S.kurveChg = now; } } S.soll = d.soll; }   // natuerlicher Sollsprung (Kurve, AT ganzzahlig; RE-2)
         d.kurveChg = S.kurveChg || 0;
@@ -2421,7 +2422,7 @@ var ENGINE = (function () {
         // Uebergabe statt Hin und Her: verlangt die andere Verschiebungs-Regel genau die stehende Verschiebung, gibt es keinen Rueckweg (Ablauf und Grund ruhen)
         var rdir = d.raum && !d.raum.keine ? d.raum.dir : 0, rV = res.filter(function (x) { return x.id === 'vorausschau'; })[0];
         if (sh !== 0 && rdir === sh) { halten.vorausschau = 'Raumeinfluss verlangt dieselbe Verschiebung (' + sg(d.shift, 0) + ' K)'; halten['quiet_strecken|shift'] = halten.vorausschau; }
-        if (sh !== 0 && d.vs && d.vs.gate && dkv !== null && sh * dkv >= cv.deltaK && rV && rV.locks.indexOf('modell') < 0 && !(sh > 0 ? d.roomAbove.length : d.roomBelow.length)) { halten.raum_offset = 'Vorausschau verlangt dieselbe Verschiebung (' + sg(d.shift, 0) + ' K)'; }
+        if (sh !== 0 && d.vs && (cv.nurFahrplan !== 1 || d.vs.quelle === 'fahrplan') && dkv !== null && sh * dkv >= cv.deltaK && rV && !(sh > 0 ? d.roomAbove.length : d.roomBelow.length)) { halten.raum_offset = 'Vorausschau verlangt dieselbe Verschiebung (' + sg(d.shift, 0) + ' K)'; }
         Object.keys(halten).forEach(function (k) { delete ende[k]; });
         S.last = now;
         var rec = {t: iso(now), mv: VER, sv: svOf(cfg), in: snapshot(inp),
@@ -2611,7 +2612,7 @@ var ENGINE = (function () {
         }
         return null;
     }
-    function svOf(cfg) { return cfg && [1, 2, 3, 4, 5].indexOf(cfg.sv) >= 0 ? cfg.sv : SCORE_VER; }
+    function svOf(cfg) { return cfg && [1, 2, 3, 4, 5, 6].indexOf(cfg.sv) >= 0 ? cfg.sv : SCORE_VER; }
     function ohnePunkte(rule, sv) { return (sv || 1) >= 4 && !!RULE[rule] && RULE[rule].art === 'hinweis'; }   // v4: Hinweise werden gezaehlt, nicht gepunktet
     // Summen je Regel, Regelversion und Bewertungsversion (v1 behaelt den alten Schluessel "regel|vN", damit alte Punkte unveraendert getrennt bleiben)
     function tot(sc, rule, ver, sv) { var k = rule + '|v' + ver + (sv > 1 ? '|s' + sv : ''); return sc.tot[k] = sc.tot[k] || {rule: rule, ver: ver, sv: sv, since: 0, punkte: 0, faelle: 0, bewertet: 0, treffer: 0, fehlalarm: 0, neutral: 0, bs: 0, bsRef: 0, schaden: 0, verpasst: 0, verpasstSperre: 0, wirkN: 0, wirkP: 0, kalib: 0, trefferNeutral: 0, skillN: 0}; }
@@ -2750,8 +2751,8 @@ var ENGINE = (function () {
         return RULE[rule].kalibriert.some(function (k) { var m = /^(\d{4})-(\d\d)-(\d\d) (\d\d):(\d\d)/.exec(k); if (!m) { return false; } var t = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]).getTime(); return Math.abs(now - t) <= 3 * MIN; });
     }
     function effectStart(sc, d, S, cfg) {
-        var now = d.now;
-        if (d.qChanged && have(d.qFrom) && d.fresh) {
+        var now = d.now, rk7 = (sc.sv || SCORE_VER) >= 7;                      // Bewertung v7 (05.11.2026, Kimi-Pruefung): ein Rueckweg ist keine neue Wirkung und kein Naturexperiment
+        if (d.qChanged && have(d.qFrom) && d.fresh && !(rk7 && d.qRueck)) {
             if (d.q < d.qFrom && d.running) {                                       // Quiet-Freigabe v2: jede Senkung (Ziel 0, 1 oder 2), v1 nur auf 0
                 if (have(d.rlRueck) && d.rlRueck >= cfg.rules.quiet_freigabe.rlRueckK) {
                     sc.eff.push({rule: 'quiet_freigabe', t0: now, art: 'freigabe', ziel: d.q, capAlt: deckelOf(d, d.qFrom).hz, pel0: S._pelPrev, vl0: S._vlPrev, kal: isKal('quiet_freigabe', now), natur: d.qBy !== 'quiet_freigabe', m: {}, text: 'Quiet ' + d.qFrom + ' → ' + d.q + ' bei Rücklauf ' + de(d.rlRueck, 1) + ' K unter Soll'});
@@ -2764,11 +2765,11 @@ var ENGINE = (function () {
                 sc.eff.push({rule: 'quiet_strecken', t0: now, art: 'deckel', pel0: S._pelPrev, kal: isKal('quiet_strecken', now), natur: d.qBy !== 'quiet_strecken', mess: qMess ? 1 : 0, m: {}, text: 'Quiet ' + d.qFrom + ' → ' + d.q + ' bei ' + de(S._hzPrev, 0) + ' Hz' + (qMess ? ' (Messvorschlag)' : '')});
             }
         }
-        if (d.shiftChanged && have(d.shiftFrom) && Math.abs(d.shift - d.shiftFrom) === 1 && d.fresh && !(d.ssFremd && !d.shiftBy)) {   // wertung-wirkung: Bewegungen des Sanftanlaufs zaehlen nicht als Regel-Wirkung
+        if (d.shiftChanged && have(d.shiftFrom) && Math.abs(d.shift - d.shiftFrom) === 1 && d.fresh && !(d.ssFremd && !d.shiftBy) && !(rk7 && d.shiftRueck)) {   // wertung-wirkung: Bewegungen des Sanftanlaufs zaehlen nicht als Regel-Wirkung
             var er = d.shiftBy && (sc.sv || SCORE_VER) >= 3 ? d.shiftBy : 'raum_offset';                // v3: die Regel, deren Vorschlag uebernommen wurde (sonst wie bisher Raumeinfluss)
             sc.eff.push({rule: er, t0: now, art: 'verschiebung', soll0: S._sollPrev, dshift: d.shift - d.shiftFrom, kal: isKal(er, now), natur: !d.shiftBy, m: {}, text: 'Verschiebung ' + sg(d.shiftFrom, 0) + ' → ' + sg(d.shift, 0) + ' K'});
         }
-        if (d.hcChanged && have(d.hcFrom) && d.fresh && RULE.heizregelung) {                           // Heizregelung (14.10.2026): jede Aenderung, von wem auch immer (Zuordnung wie Verschiebung)
+        if (d.hcChanged && have(d.hcFrom) && d.fresh && RULE.heizregelung && !(rk7 && d.hcRueck)) {                           // Heizregelung (14.10.2026): jede Aenderung, von wem auch immer (Zuordnung wie Verschiebung)
             var rh = d.hcBy || 'heizregelung', ch = cfg.rules.heizregelung;
             if (d.hc === 0 && d.hcFrom === 1 && d.running && have(d.vlRueck) && d.vlRueck >= ch.vlRueckK) {
                 sc.eff.push({rule: rh, t0: now, art: 'comfort', hz0: have(S._hzPrev) ? S._hzPrev : d.hz, pel0: S._pelPrev, kal: isKal(rh, now), natur: !d.hcBy, m: {}, text: 'Efficiency → Comfort bei ' + de(have(S._hzPrev) ? S._hzPrev : d.hz, 0) + ' Hz, Vorlauf ' + de(d.vlRueck, 1) + ' K unter Soll'});
@@ -2991,7 +2992,7 @@ var ENGINE = (function () {
     function missedVs(R, S, sc, d, cfg, res, recs, sv) {
         var now = d.now, c = cfg.rules[R.id], G = sc.gt[R.id] = sc.gt[R.id] || {since: 0, pend: []}, r = res.filter(function (x) { return x.id === R.id; })[0];
         G.pend = G.pend || [];
-        var cond = !!(d.fresh && d.vs && d.vs.gate && have(d.vsDk) && d.vsDk <= -c.deltaK && r && !r.dauer && (r.st === 'wartet' || r.st === 'vorschlag' || r.st === 'abgelaufen' || (r.st === 'gesperrt' && r.locks.indexOf('modell') < 0)));   // v2: nur die Milderung (-1 K)
+        var cond = !!(d.fresh && d.vs && ((sv || SCORE_VER) >= 7 ? (c.nurFahrplan !== 1 || d.vs.quelle === 'fahrplan') : d.vs.gate) && have(d.vsDk) && d.vsDk <= -c.deltaK && r && !r.dauer && (r.st === 'wartet' || r.st === 'vorschlag' || r.st === 'abgelaufen' || (r.st === 'gesperrt' && r.locks.indexOf('modell') < 0)));   // v2: nur die Milderung (-1 K)
         if (cond) {
             var dir = d.vsDk > 0 ? 1 : -1;
             if (!G.since || G.dir !== dir) { G.since = now; G.dir = dir; G.prop = false; G.excused = false; G.booked = false; G.last = now; G.frei = 0; G.gesperrt = 0; G.ids = []; G.ext = []; }
