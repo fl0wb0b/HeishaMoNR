@@ -148,39 +148,52 @@ AT_JS = r"""// Heizregelung nach Aussentemperatur (07.11.2026, Kevin): faellt di
 // steigt sie auf 4 °C oder hoeher, einmal Efficiency und Quiet 3 (eigene Daten 09.10.-07.11.: ueber 3 °C Quiet 3 am besten, unter 3 °C aendert Quiet bei Comfort
 // die Frequenz nicht). Bei 3 °C nichts (Hysterese). Geschaltet wird nur beim Wechsel der Lage und erst, wenn sie 30 min am Stueck ansteht; danach wird nichts
 // erzwungen (Handschalter und Klick-Uebernahmen des Optimierers bleiben). Heizregelung ueber "Heizregelung Befehl" (alle Schutzregeln, Protokoll), Quiet 3 ueber den
-// gemeinsamen Befehlsweg. Ausgaenge: [Heizregelung Befehl, gemeinsamer Weg (Quiet), Protokoll, Schalter, Textzeile]
-var now = Date.now(), MIN = 60000, HALTEN = 30, WER = 'Heizregelung nach Außentemperatur';
+// gemeinsamen Befehlsweg. Erledigt ist eine Lage erst, wenn HeishaMon den Modus meldet; lehnt "Heizregelung Befehl" ab (Abstand, laufender Befehl, Sperre),
+// fordert die Automatik nach 10 min erneut an, hoechstens 3 Versuche (Kimi 07.11.). Waehrend des Abtauens zaehlt der Fuehlerwert nicht (kurze Spruenge).
+// Ausgaenge: [Heizregelung Befehl, gemeinsamer Weg (Quiet), Protokoll, Schalter, Textzeile]
+var now = Date.now(), MIN = 60000, HALTEN = 30, WIEDER = 10, VERSUCHE = 3, WER = 'Heizregelung nach Außentemperatur';
 var A = global.get('HC_AT', 'file') || {on: false};
 function hm(t) { return new Date(t).toLocaleTimeString('de-DE', {hour: '2-digit', minute: '2-digit'}); }
 function lage(z) { return z === 'kalt' ? 'kalt (≤ 2 °C)' : 'warm (≥ 4 °C)'; }
 function txt() {
     if (!A.on) { return 'aus'; }
     if (!A.cand) { return 'an · wartet auf ≤ 2 °C oder ≥ 4 °C'; }
-    return 'an · ' + lage(A.cand) + ' seit ' + hm(A.seit) + (A.erledigt === A.cand ? ' · geschaltet ' + hm(A.erledigtTs) : ' · schaltet ab ' + hm(A.seit + HALTEN * MIN));
+    var v = A.versuch && A.versuch.lage === A.cand ? A.versuch : null;
+    return 'an · ' + lage(A.cand) + ' seit ' + hm(A.seit) + (A.erledigt === A.cand ? ' · geschaltet ' + hm(A.erledigtTs)
+        : (v ? ' · angefordert ' + hm(v.ts) + (v.n > 1 ? ' (Versuch ' + v.n + ')' : '') : ' · schaltet ab ' + hm(A.seit + HALTEN * MIN)));
+}
+function anfordern(kalt, at) {                                                       // Heizregelung an den Schalter-Befehl, bei warm dazu Quiet 3; liefert die Protokollzeile
+    out[0] = {payload: kalt ? '0' : '1', source: 'Außentemperatur', topic: WER};
+    var zeile = (kalt ? 'Comfort' : 'Efficiency') + ' angefordert';
+    if (!kalt) {
+        var q = Number(global.get('TOP18_Quiet_Mode_Level')), MQ = global.get('MQTT', 'file') || {};
+        if (q === 3) { zeile += '; Quiet steht schon auf 3, nichts gesendet'; }
+        else if (MQ.block_active === 1) { zeile += '; Quiet 3 nicht gesendet: alle MQTT-Befehle sind gesperrt'; }
+        else if (MQ.message_limit !== undefined && MQ.messages_today >= MQ.message_limit) { zeile += '; Quiet 3 nicht gesendet: Tagesbudget für MQTT-Befehle aufgebraucht'; }
+        else { out[1] = {topic: 'panasonic_heat_pump/commands/SetQuietMode', payload: '3', source: 'Außentemperatur'}; zeile += '; Quiet 3 gesendet'; }
+    }
+    return zeile;
 }
 var out = [null, null, null, null, null];
 if (msg.topic === 'schalter') {
     var on = msg.payload === true || msg.payload === 'true' || msg.payload === 1;
     if (on !== !!A.on) {
-        A = {on: on, cand: null, seit: now, erledigt: null};
+        A = {on: on, cand: null, seit: now, erledigt: null, versuch: null};
         out[2] = {topic: WER, payload: 'Automatik ' + (on ? 'eingeschaltet' : 'ausgeschaltet')};
     }
 } else {
     if (context.get('neu') !== false) { context.set('neu', false); out[3] = {payload: !!A.on}; }   // nach Neustart/Einspielen: Schalter zeigt den gemerkten Stand
-    var at = Number(global.get('TOP14_Outside_Temp')), z = (A.on && isFinite(at) && global.get('TOP14_Outside_Temp') !== undefined) ? (at <= 2 ? 'kalt' : (at >= 4 ? 'warm' : null)) : null;
+    var raw = global.get('TOP14_Outside_Temp'), at = (raw === null || raw === undefined || raw === '') ? NaN : Number(raw);
+    var z = (A.on && isFinite(at) && global.get('TOP26_Defrosting_State') !== 1) ? (at <= 2 ? 'kalt' : (at >= 4 ? 'warm' : null)) : null;
+    if (A.versuch && global.get('HEATING_CONTROL') === (A.versuch.lage === 'kalt' ? 0 : 1)) { A.erledigt = A.versuch.lage; A.erledigtTs = now; A.versuch = null; }   // von HeishaMon gemeldet: Lage erledigt (auch wenn die Temperatur inzwischen wieder wechselt)
     if (z && z !== A.cand) { A.cand = z; A.seit = now; }
     if (A.on && A.cand && A.cand !== A.erledigt && now - A.seit >= HALTEN * MIN) {
-        A.erledigt = A.cand; A.erledigtTs = now;
-        var kalt = A.cand === 'kalt', zeile = 'Außen ' + at + ' °C seit ' + HALTEN + ' min: ' + (kalt ? 'Comfort' : 'Efficiency') + ' angefordert';
-        out[0] = {payload: kalt ? '0' : '1', source: 'Außentemperatur', topic: WER};
-        if (!kalt) {
-            var q = Number(global.get('TOP18_Quiet_Mode_Level')), MQ = global.get('MQTT', 'file') || {};
-            if (q === 3) { zeile += '; Quiet steht schon auf 3, nichts gesendet'; }
-            else if (MQ.block_active === 1) { zeile += '; Quiet 3 nicht gesendet: alle MQTT-Befehle sind gesperrt'; }
-            else if (MQ.message_limit !== undefined && MQ.messages_today >= MQ.message_limit) { zeile += '; Quiet 3 nicht gesendet: Tagesbudget für MQTT-Befehle aufgebraucht'; }
-            else { out[1] = {topic: 'panasonic_heat_pump/commands/SetQuietMode', payload: '3', source: 'Außentemperatur'}; zeile += '; Quiet 3 gesendet'; }
+        var kalt = A.cand === 'kalt', v = A.versuch && A.versuch.lage === A.cand ? A.versuch : null;
+        if (!v) { A.versuch = {lage: A.cand, ts: now, n: 1}; out[2] = {topic: WER, payload: 'Außen ' + at + ' °C seit ' + HALTEN + ' min: ' + anfordern(kalt, at)}; }
+        else if (now - v.ts >= WIEDER * MIN) {
+            if (v.n >= VERSUCHE) { A.erledigt = A.cand; A.erledigtTs = now; A.versuch = null; out[2] = {topic: WER, payload: (kalt ? 'Comfort' : 'Efficiency') + ' nach ' + VERSUCHE + ' Versuchen nicht gemeldet, Automatik wartet auf den nächsten Wechsel'}; }
+            else { v.n++; v.ts = now; out[2] = {topic: WER, payload: 'Versuch ' + v.n + ': ' + anfordern(kalt, at)}; }
         }
-        out[2] = {topic: WER, payload: zeile};
     }
 }
 global.set('HC_AT', A, 'file');

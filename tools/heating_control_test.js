@@ -133,7 +133,8 @@ const fAt = vm.runInNewContext('(function(msg,global,flow,context,node,Date){' +
 let cx;
 const atReset = (over) => { reset(Object.assign({TOP14_Outside_Temp: 5, TOP18_Quiet_Mode_Level: 0, HEATING_CONTROL: 0}, over || {})); cx = {}; };
 const at = (topic, payload) => fAt({topic: topic || 'tick', payload}, ctx(g), ctx(fl), ctx(cx), {}, FakeDate);
-const run = (min, t) => { const o = []; for (let i = 0; i < min; i++) { g.TOP14_Outside_Temp = t; NOW += 60000; o.push(at() || []); } return o; };
+const run = (min, t, best) => { const o = []; for (let i = 0; i < min; i++) { g.TOP14_Outside_Temp = t; NOW += 60000; const r0 = at() || []; o.push(r0);
+    if (best !== false) { if (r0[0]) { g.HEATING_CONTROL = Number(r0[0].payload); } if (r0[1]) { g.TOP18_Quiet_Mode_Level = 3; } } } return o; };   // best: HeishaMon meldet den neuen Stand
 const out = (o, k) => o.map(r => r[k]).filter(Boolean);
 const QTOPIC = 'panasonic_heat_pump/commands/SetQuietMode';
 atReset(); let o = run(120, 1);
@@ -170,11 +171,24 @@ atReset(); at('schalter', true); run(20, 1); rs = at('schalter', false); o = run
 ck('Ausschalten: Protokoll "ausgeschaltet", danach nichts mehr', /ausgeschaltet/.test(rs[2].payload) && g.HC_AT.on === false && out(o, 0).length === 0, '');
 atReset(); g.HC_AT = {on: true}; cx.neu = true; rs = at();
 ck('Nach Neustart oder Einspielen: erster Takt stellt den Schalter auf den gemerkten Stand (an)', rs[3] && rs[3].payload === true && cx.neu === false, JSON.stringify(rs[3]));
-atReset(); at('schalter', true); o = run(31, 1); r = fCmd(out(o, 0)[0], ctx(g), ctx(fl), {}, FakeDate);
 ck('Kette Automatik -> Schalter: Comfort wird von Efficiency aus gesendet (SetHeatingControl "0", Quelle Aussentemperatur), Protokoll vom Schalter mit derselben Zeile',
-   (() => { atReset({HEATING_CONTROL: 1}); at('schalter', true); const oo = run(31, 1), rr = fCmd(out(oo, 0)[0], ctx(g), ctx(fl), {}, FakeDate); return sent(rr) && sent(rr).payload === '0' && sent(rr).source === 'Außentemperatur' && rr[3] && rr[3].topic === 'Heizregelung nach Außentemperatur' && /Comfort gesendet/.test(rr[3].payload); })(), '');
+   (() => { atReset({HEATING_CONTROL: 1}); at('schalter', true); const oo = run(31, 1, false), rr = fCmd(out(oo, 0)[0], ctx(g), ctx(fl), {}, FakeDate); return sent(rr) && sent(rr).payload === '0' && sent(rr).source === 'Außentemperatur' && rr[3] && rr[3].topic === 'Heizregelung nach Außentemperatur' && /Comfort gesendet/.test(rr[3].payload); })(), '');
 atReset(); at('schalter', true); o = run(10, 1); const tx = (out(o, 4).pop() || {}).payload || '';
 ck('Textzeile zeigt Lage und wann geschaltet wird (nur bei Aenderung gesendet)', /^an · kalt \(≤ 2 °C\) seit \d\d:\d\d · schaltet ab \d\d:\d\d/.test(tx) && out(o, 4).length < 10, tx);
+atReset({HEATING_CONTROL: 1}); at('schalter', true); o = run(31, 1, false);
+ck('Schalter lehnt ab / Stand kommt nicht: erste Anforderung', out(o, 0).length === 1, '');
+o = run(9, 1, false);
+ck('... in den naechsten 9 min keine weitere', out(o, 0).length === 0, '');
+o = run(1, 1, false);
+ck('... nach 10 min Versuch 2 (Protokoll "Versuch 2")', out(o, 0).length === 1 && /Versuch 2/.test(out(o, 2)[0].payload), JSON.stringify(out(o, 2)));
+o = run(10, 1, false).concat(run(10, 1, false), run(60, 1, false));
+ck('... Versuch 3, danach Schluss mit Protokoll "nach 3 Versuchen", keine 4. Anforderung', out(o, 0).length === 1 && out(o, 2).some(m => /nach 3 Versuchen/.test(m.payload)), JSON.stringify(out(o, 2)));
+atReset({HEATING_CONTROL: 1}); at('schalter', true); o = run(31, 1, false); g.HEATING_CONTROL = 0; o = run(1, 1, false); const tx2 = (out(o, 4).pop() || {}).payload || '';
+ck('Meldet HeishaMon den Modus (z. B. nach Handschaltung), ist die Lage erledigt: keine weitere Anforderung, Text "geschaltet"', out(o, 0).length === 0 && /geschaltet/.test(tx2) && run(30, 1, false).every(r => !r[0]), tx2);
+atReset(); at('schalter', true); o = run(60, null);
+ck('Fuehlerwert null (nicht 0 °C): nichts', out(o, 0).length === 0, '');
+atReset(); at('schalter', true); o = run(20, 1); g.TOP26_Defrosting_State = 1; o = o.concat(run(15, 5)); g.TOP26_Defrosting_State = 0;
+ck('Abtauen: Fuehlersprung auf 5 °C waehrend des Abtauens zaehlt nicht, die kalte Lage laeuft weiter (Comfort nach 30 min), kein Efficiency', out(o, 0).length === 1 && out(o, 0)[0].payload === '0', JSON.stringify(out(o, 0)));
 ck('Verdrahtung Automatik: Takt jede Minute, Ausgaenge Schalter-Befehl / gemeinsamer Weg (Quiet) / Protokoll / Schalter / Textzeile; Schalter und Text in der Gruppe HEIZREGELUNG; kein eigener mqtt out',
    by.hc_at_tick.type === 'inject' && String(by.hc_at_tick.repeat) === '60' && by.hc_at_tick.wires.join() === 'hc_at' && by.hc_at.outputs === 5
    && JSON.stringify(by.hc_at.wires) === JSON.stringify([['hc_cmd'], ['hc_out'], ['hc_log'], ['hc_at_sw'], ['hc_at_txt']]) && /neu/.test(by.hc_at.initialize)
