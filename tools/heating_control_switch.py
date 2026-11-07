@@ -92,7 +92,10 @@ def is_sep(o):
 def action_options(opts):
     """Auswahl ohne Warmwasser/Kuehlen, Heizregelung nach Leisemodus 3, keine zwei Trenner hintereinander und keiner am Ende."""
     keep = [o for o in opts if o.get("value") not in ACTION_DROP and o.get("value") not in {"hc_sep", "HC_0", "HC_1"}]
-    pos = next(i for i, o in enumerate(keep) if o.get("value") == "QM_3") + 1
+    pos = next((i for i, o in enumerate(keep) if o.get("value") == "QM_3"), None)
+    if pos is None:
+        raise SystemExit("Aktion-Auswahl ohne 'Leisemodus 3' (QM_3), nichts geaendert")
+    pos += 1
     keep[pos:pos] = [dict(o) for o in ACTION_HC]
     out = []
     for o in keep:
@@ -170,7 +173,9 @@ def patch_schedule(fn):
     """Block "Heizregelung" in "Function schedule" (ersetzt einen vorhandenen), 10. Ausgang auf hc_sched_out. Gibt den neuen Knoten zurueck."""
     func = fn["func"]
     a, b = func.find(SCHED_BEGIN), func.find(SCHED_END)
-    if a >= 0 and b > a:
+    if (a >= 0) != (b > a):
+        raise SystemExit("'Function schedule': Heizregelung-Block nur halb vorhanden (Marker von Hand geaendert?), nichts geaendert")
+    if a >= 0:
         func = func[:a] + func[b + len(SCHED_END):]
     if func.count(SCHED_ANCHOR) != 1:
         raise SystemExit("'Function schedule': Ansatzpunkt %r nicht genau einmal gefunden, nichts geaendert" % SCHED_ANCHOR)
