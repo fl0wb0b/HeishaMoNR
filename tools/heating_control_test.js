@@ -199,6 +199,12 @@ atReset(); at('schalter', true); o = run(60, null);
 ck('Fuehlerwert null (nicht 0 °C): nichts', out(o, 0).length === 0, '');
 atReset(); at('schalter', true); o = run(20, 1); g.TOP26_Defrosting_State = 1; o = o.concat(run(15, 5)); g.TOP26_Defrosting_State = 0;
 ck('Abtauen: Fuehlersprung auf 5 °C waehrend des Abtauens zaehlt nicht, die kalte Lage laeuft weiter (Comfort nach 30 min), kein Efficiency', out(o, 0).length === 1 && out(o, 0)[0].payload === '0', JSON.stringify(out(o, 0)));
+atReset(); at('schalter', true); o = run(31, 1); at('schalter', false); at('schalter', true); o = run(60, 1);
+ck('Aus- und wieder Einschalten loescht den 2-h-Abstand nicht: 1 h nach dem Wechsel keine neue Anforderung (Kimi 07.11.)', out(o, 0).length === 0, JSON.stringify(out(o, 0)));
+o = run(60, 1);
+ck('... genau 2 h nach dem Wechsel darf die Automatik die Lage wieder anfordern (nach Aus/Ein ist nichts erledigt)', out(o, 0).length === 1 && out(o, 0)[0].payload === '0', '');
+atReset({HEATING_CONTROL: 1}); at('schalter', true); o = run(31, 1, false).concat(run(5, 3, false), run(5, 1, false));
+ck('3 °C waehrend einer laufenden Anforderung bricht sie nicht ab: Versuch 2 nach 10 min', out(o, 0).length === 2 && /Versuch 2/.test(out(o, 2).pop().payload), JSON.stringify(out(o, 2)));
 ck('Verdrahtung Automatik: Takt jede Minute, Ausgaenge Schalter-Befehl / gemeinsamer Weg (Quiet) / Protokoll / Schalter / Textzeile; Schalter und Text in der Gruppe HEIZREGELUNG; kein eigener mqtt out',
    by.hc_at_tick.type === 'inject' && String(by.hc_at_tick.repeat) === '60' && by.hc_at_tick.wires.join() === 'hc_at' && by.hc_at.outputs === 5
    && JSON.stringify(by.hc_at.wires) === JSON.stringify([['hc_cmd'], ['hc_out'], ['hc_log'], ['hc_at_sw'], ['hc_at_txt']]) && /neu/.test(by.hc_at.initialize)

@@ -185,7 +185,7 @@ var out = [null, null, null, null, null];
 if (msg.topic === 'schalter') {
     var on = msg.payload === true || msg.payload === 'true' || msg.payload === 1;
     if (on !== !!A.on) {
-        A = {on: on, cand: null, seit: now, erledigt: null, versuch: null};
+        A = {on: on, cand: null, seit: now, erledigt: null, versuch: null, letzteTs: A.letzteTs || null};   // 2-h-Abstand gilt auch ueber Aus/Ein (Kimi 07.11.)
         out[2] = {topic: WER, payload: 'Automatik ' + (on ? 'eingeschaltet' : 'ausgeschaltet')};
     }
 } else {
