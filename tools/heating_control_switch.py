@@ -8,6 +8,8 @@
   last change is less than 5 minutes ago. Warns (does not forbid) for Efficiency in unfavourable conditions.
 * The selection always shows the state reported by HeishaMon (main/Heating_Control); a command is confirmed or reported as unconfirmed after 90 s.
 * Shows the optimizer's recommendation (display only, global OPT_hc_reco) in the group and raises one notice when a new warning appears.
+* Automatic by outdoor temperature (07.11.2026): a switch in the group; <= 2 °C once Comfort, >= 4 °C once Efficiency + Quiet 3, only on a change of the
+  condition and after it held for 30 min; nothing is enforced afterwards (log entry per trigger).
 * Schedule (07.11.2026): the page "Zeitplan" gets the actions "Heizregelung - Comfort/Efficiency". "Function schedule" (WP Scheduler) sends the
   request through a new 10th output to the same command function, so every rule above applies; the result goes to the log ("Input LOGS").
   The optimizer treats a scheduled change like one by hand (no switching back for 2 h). The actions for DHW, sterilization and cooling are
@@ -27,11 +29,12 @@ SCHED_TAB = "35d210f042827344"      # WP Scheduler
 SCHED_FN = "e168945122de5aa2"       # "Function schedule" (WP Scheduler)
 LOG_IN = "031e62b0bf3df7d7"         # "Input LOGS": Protokoll
 
-CMD_JS = r"""// Heizregelung (Comfort / Efficiency) umschalten: von Hand (Auswahl auf der Uebersicht) oder aus dem Zeitplan (Aktion "Heizregelung - Comfort/Efficiency",
-// msg.source 'Zeitplan', msg.topic = Zeile). KEIN automatischer Eingriff: ein einzelner Befehl ueber den gemeinsamen Befehlsweg (Sperre, Befehlsbudget,
-// Quellen-Markierung). Der Zustand wird zurueckgelesen und bestaetigt (Funktion "Heizregelung Zustand"). Aus dem Zeitplan steht das Ergebnis im Protokoll (Ausgang 4).
+CMD_JS = r"""// Heizregelung (Comfort / Efficiency) umschalten: von Hand (Auswahl auf der Uebersicht, ohne msg.source), aus dem Zeitplan (Aktion "Heizregelung - Comfort/Efficiency",
+// msg.source 'Zeitplan', msg.topic = Zeile) oder von der Automatik nach Aussentemperatur (msg.source 'Außentemperatur'). Ein einzelner Befehl ueber den gemeinsamen
+// Befehlsweg (Sperre, Befehlsbudget, Quellen-Markierung). Der Zustand wird zurueckgelesen und bestaetigt (Funktion "Heizregelung Zustand"). Mit Quelle steht das
+// Ergebnis im Protokoll (Ausgang 4).
 var now = Date.now(), NAMES = ['Comfort', 'Efficiency'];
-var plan = msg.source === 'Zeitplan', wer = plan ? String(msg.topic || 'Zeitplan') : '';
+var plan = !!msg.source, wer = plan ? String(msg.topic || msg.source) : '';
 var want = String(msg.payload) === '1' ? 1 : (String(msg.payload) === '0' ? 0 : null);
 if (want === null) { return [null, null, null, null]; }
 function toast(text, color) { return {topic: 'Heizregelung', payload: (plan ? wer + ': ' : '') + text, highlight: color || ''}; }
@@ -58,7 +61,7 @@ if (want === 1) {
     if (Number(global.get('compressor_frequency')) > 0 && isFinite(sol) && isFinite(vl) && sol - vl > 2) { hints.push('Vorlauf liegt ' + (sol - vl).toFixed(1).replace('.', ',') + ' K unter Soll'); }
 }
 flow.set('hcPending', {want: want, ts: now, from: cur}); flow.set('hcLast', now);
-var out = {topic: 'panasonic_heat_pump/commands/SetHeatingControl', payload: String(want), source: plan ? 'Zeitplan' : 'Heizregelung-Schalter'};
+var out = {topic: 'panasonic_heat_pump/commands/SetHeatingControl', payload: String(want), source: plan ? String(msg.source) : 'Heizregelung-Schalter'};
 var hinw = hints.length ? '. Hinweis: ' + hints.join('; ') : '';
 return [out, toast('Heizregelung → ' + NAMES[want] + ' gesendet' + hinw + '. Warte auf die Bestätigung …', hints.length ? 'orange' : ''), null, prot(NAMES[want] + ' gesendet' + hinw)];
 """
@@ -141,6 +144,52 @@ return out;
 """
 
 
+AT_JS = r"""// Heizregelung nach Aussentemperatur (07.11.2026, Kevin): faellt die Aussentemperatur (Fuehler der WP, ganze Grad) auf 2 °C oder tiefer, einmal Comfort;
+// steigt sie auf 4 °C oder hoeher, einmal Efficiency und Quiet 3 (eigene Daten 09.10.-07.11.: ueber 3 °C Quiet 3 am besten, unter 3 °C aendert Quiet bei Comfort
+// die Frequenz nicht). Bei 3 °C nichts (Hysterese). Geschaltet wird nur beim Wechsel der Lage und erst, wenn sie 30 min am Stueck ansteht; danach wird nichts
+// erzwungen (Handschalter und Klick-Uebernahmen des Optimierers bleiben). Heizregelung ueber "Heizregelung Befehl" (alle Schutzregeln, Protokoll), Quiet 3 ueber den
+// gemeinsamen Befehlsweg. Ausgaenge: [Heizregelung Befehl, gemeinsamer Weg (Quiet), Protokoll, Schalter, Textzeile]
+var now = Date.now(), MIN = 60000, HALTEN = 30, WER = 'Heizregelung nach Außentemperatur';
+var A = global.get('HC_AT', 'file') || {on: false};
+function hm(t) { return new Date(t).toLocaleTimeString('de-DE', {hour: '2-digit', minute: '2-digit'}); }
+function lage(z) { return z === 'kalt' ? 'kalt (≤ 2 °C)' : 'warm (≥ 4 °C)'; }
+function txt() {
+    if (!A.on) { return 'aus'; }
+    if (!A.cand) { return 'an · wartet auf ≤ 2 °C oder ≥ 4 °C'; }
+    return 'an · ' + lage(A.cand) + ' seit ' + hm(A.seit) + (A.erledigt === A.cand ? ' · geschaltet ' + hm(A.erledigtTs) : ' · schaltet ab ' + hm(A.seit + HALTEN * MIN));
+}
+var out = [null, null, null, null, null];
+if (msg.topic === 'schalter') {
+    var on = msg.payload === true || msg.payload === 'true' || msg.payload === 1;
+    if (on !== !!A.on) {
+        A = {on: on, cand: null, seit: now, erledigt: null};
+        out[2] = {topic: WER, payload: 'Automatik ' + (on ? 'eingeschaltet' : 'ausgeschaltet')};
+    }
+} else {
+    if (context.get('neu') !== false) { context.set('neu', false); out[3] = {payload: !!A.on}; }   // nach Neustart/Einspielen: Schalter zeigt den gemerkten Stand
+    var at = Number(global.get('TOP14_Outside_Temp')), z = (A.on && isFinite(at) && global.get('TOP14_Outside_Temp') !== undefined) ? (at <= 2 ? 'kalt' : (at >= 4 ? 'warm' : null)) : null;
+    if (z && z !== A.cand) { A.cand = z; A.seit = now; }
+    if (A.on && A.cand && A.cand !== A.erledigt && now - A.seit >= HALTEN * MIN) {
+        A.erledigt = A.cand; A.erledigtTs = now;
+        var kalt = A.cand === 'kalt', zeile = 'Außen ' + at + ' °C seit ' + HALTEN + ' min: ' + (kalt ? 'Comfort' : 'Efficiency') + ' angefordert';
+        out[0] = {payload: kalt ? '0' : '1', source: 'Außentemperatur', topic: WER};
+        if (!kalt) {
+            var q = Number(global.get('TOP18_Quiet_Mode_Level')), MQ = global.get('MQTT', 'file') || {};
+            if (q === 3) { zeile += '; Quiet steht schon auf 3, nichts gesendet'; }
+            else if (MQ.block_active === 1) { zeile += '; Quiet 3 nicht gesendet: alle MQTT-Befehle sind gesperrt'; }
+            else if (MQ.message_limit !== undefined && MQ.messages_today >= MQ.message_limit) { zeile += '; Quiet 3 nicht gesendet: Tagesbudget für MQTT-Befehle aufgebraucht'; }
+            else { out[1] = {topic: 'panasonic_heat_pump/commands/SetQuietMode', payload: '3', source: 'Außentemperatur'}; zeile += '; Quiet 3 gesendet'; }
+        }
+        out[2] = {topic: WER, payload: zeile};
+    }
+}
+global.set('HC_AT', A, 'file');
+var t = txt();
+if (context.get('txt') !== t) { context.set('txt', t); out[4] = {payload: t}; }
+return out;
+"""
+
+
 def nodes():
     y0 = 4500
     return [
@@ -152,7 +201,19 @@ def nodes():
         {"id": "hc_cmd", "type": "function", "z": TAB, "name": "Heizregelung Befehl", "func": CMD_JS, "outputs": 4, "timeout": 0, "noerr": 0, "initialize": "", "finalize": "", "libs": [],
          "x": 430, "y": y0, "wires": [["hc_out"], ["hc_toast"], ["hc_sel"], ["hc_log"]]},
         {"id": "hc_sched_in", "type": "link in", "z": TAB, "name": "Heizregelung aus dem Zeitplan", "links": ["hc_sched_out"], "x": 190, "y": y0 + 40, "wires": [["hc_cmd"]]},
-        {"id": "hc_log", "type": "link out", "z": TAB, "name": "Heizregelung (Zeitplan) → Protokoll", "mode": "link", "links": [LOG_IN], "x": 670, "y": y0 + 165, "wires": []},
+        {"id": "hc_log", "type": "link out", "z": TAB, "name": "Heizregelung (Zeitplan, Automatik) → Protokoll", "mode": "link", "links": [LOG_IN], "x": 670, "y": y0 + 165, "wires": []},
+        {"id": "hc_at_tick", "type": "inject", "z": TAB, "name": "jede Minute", "props": [{"p": "payload"}, {"p": "topic", "vt": "str"}], "repeat": "60", "crontab": "", "once": True,
+         "onceDelay": "20", "topic": "tick", "payload": "", "payloadType": "date", "x": 190, "y": y0 + 220, "wires": [["hc_at"]]},
+        {"id": "hc_at", "type": "function", "z": TAB, "name": "Heizregelung nach Außentemperatur", "func": AT_JS, "outputs": 5, "timeout": 0, "noerr": 0,
+         "initialize": "context.set('neu', true);  // erster Takt stellt den Schalter auf den gemerkten Stand\n", "finalize": "", "libs": [],
+         "x": 430, "y": y0 + 240, "wires": [["hc_cmd"], ["hc_out"], ["hc_log"], ["hc_at_sw"], ["hc_at_txt"]]},
+        {"id": "hc_at_sw", "type": "ui_switch", "z": TAB, "name": "", "label": "Automatisch nach Außentemperatur",
+         "tooltip": "≤ 2 °C: Comfort · ≥ 4 °C: Efficiency + Quiet 3 · schaltet nur beim Wechsel, wenn die Lage 30 min ansteht", "group": GROUP, "order": 4,
+         "width": 0, "height": 0, "passthru": False, "decouple": "false", "topic": "schalter", "topicType": "str", "style": "", "onvalue": "true", "onvalueType": "bool",
+         "onicon": "", "oncolor": "", "offvalue": "false", "offvalueType": "bool", "officon": "", "offcolor": "", "animate": False, "className": "",
+         "x": 190, "y": y0 + 260, "wires": [["hc_at"]]},
+        {"id": "hc_at_txt", "type": "ui_text", "z": TAB, "group": GROUP, "order": 5, "width": 0, "height": 0, "name": "", "label": "Automatik", "format": "{{msg.payload}}",
+         "layout": "col-center", "className": "", "x": 670, "y": y0 + 260, "wires": []},
         {"id": "hc_out", "type": "link out", "z": TAB, "name": "Heizregelung → MQTT OUT", "mode": "link", "links": [LINK_IN], "x": 670, "y": y0 - 30, "wires": []},
         {"id": "hc_in", "type": "mqtt in", "z": TAB, "name": "Status Heizregelung", "topic": "panasonic_heat_pump/main/Heating_Control", "qos": "0", "datatype": "auto-detect",
          "broker": BROKER, "nl": False, "rap": True, "rh": 0, "inputs": 0, "x": 200, "y": y0 + 80, "wires": [["hc_state"]]},
