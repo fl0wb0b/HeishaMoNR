@@ -3102,7 +3102,7 @@ var ENGINE = (function () {
     var WHITELIST = {                                                                // erlaubte Befehle, Wertebereiche, Ruecklese-Wert; alles andere wird abgelehnt
         SetQuietMode: {topic: 'panasonic_heat_pump/commands/SetQuietMode', werte: [0, 1, 2, 3], ruecklese: 'q', text: 'Quiet-Stufe'},
         SetZ1HeatRequestTemperature: {topic: 'panasonic_heat_pump/commands/SetZ1HeatRequestTemperature', werte: [-1, 0, 1], ruecklese: 'shift', text: 'Heizkurven-Verschiebung', heizkurve: true},
-        SetHeatingControl: {topic: 'panasonic_heat_pump/commands/SetHeatingControl', werte: [0, 1], ruecklese: 'hc', text: 'Heizregelung (0 Comfort, 1 Efficiency)'}   // seit 14.10.2026 (Regel "Heizregelung")
+        SetHeatingControl: {topic: 'panasonic_heat_pump/commands/SetHeatingControl', werte: [0, 1], ruecklese: 'hc', text: 'Heizregelung', namen: ['Comfort', 'Efficiency']}   // seit 14.10.2026 (Regel "Heizregelung")
     };
     // engMaxAlterMin/engAbbruchMin (Regel-Review B7): Rueckweg-Gruende und "halten" der Maschine gelten nur, wenn sie hoechstens 5 min alt sind (sonst gilt die Frist);
     // rechnet die Maschine 30 min nicht, geht jede bestaetigte Uebernahme auf ihren Ausgangswert zurueck (sicherer Abbruch: der Wert des Nutzers vor dem Klick)
@@ -3128,6 +3128,9 @@ var ENGINE = (function () {
         return a.rule === p.rule && a.name === p.cmd.name && a.bestaetigt === true && !a.rueckFehl && !a.zurueck && num(p.von) === a.value && dv !== 0 && dv === sgnOf(a.value - a.von);
     }
     function cmdOk(name, value) { var W = WHITELIST[name]; if (!W) { return 'Befehl ' + name + ' steht nicht auf der Whitelist'; } if (W.werte.indexOf(value) < 0) { return 'Wert ' + value + ' für ' + name + ' nicht erlaubt (' + W.werte.join(', ') + ')'; } return null; }
+    // Fremde Aenderung (Automatik, Zeitplan, HeishaMon, von Hand): normaler Betrieb, kein Fehler -> Stufe info (Seite grau, nach 12 h ausgeblendet)
+    function fremd(W, ist, soll, now) { return {ts: now, stufe: 'info', text: W.text + ' um ' + hhmm(now) + ' von außen auf ' + wTxt(W, ist) + ' gestellt. Übernahme (' + wTxt(W, soll) + ') beendet, der Optimierer stellt nicht zurück.'}; }
+    function wTxt(W, v) { return W.namen && W.namen[v] !== undefined ? W.namen[v] : String(v); }   // Wert fuer Meldungen: Heizregelung als Wort statt 0/1
     function cmdMsg(name, value, source) { return {topic: WHITELIST[name].topic, payload: String(value), source: source}; }
     function fresh(plant) { return have(num(plant.hpAge)) && num(plant.hpAge) <= APPLY.hpMaxAgeMin; }
     // ctx: {now, enabled (Hauptschalter), knoten (false = Sendeknoten opt_apply_mqtt deaktiviert erzeugt), rules (freigegebene Regel-IDs), eng (OPT_engine: {ts, prop, locks}),
@@ -3207,7 +3210,7 @@ var ENGINE = (function () {
         A.pending = {name: a.name, value: a.von, ts: now, versuche: 1, art: 'rueckweg', id: a.id, g: g};
         A.lastSend = now;
         out.send.push(cmdMsg(a.name, a.von, 'Optimierer (Rückweg)'));
-        out.toast = {text: why + ': ' + WHITELIST[a.name].text + ' zurück auf ' + a.von + ' gesendet.', color: ''};
+        out.toast = {text: why + ': ' + WHITELIST[a.name].text + ' zurück auf ' + wTxt(WHITELIST[a.name], a.von) + ' gesendet.', color: ''};
         out.log.push({t: iso(now), aktion: 'rueckweg', ergebnis: 'gesendet', grund: why, id: a.id, befehl: a.name, wert: a.von});
         return out;
     }
@@ -3223,9 +3226,9 @@ var ENGINE = (function () {
             var gP = P.g || gOfCmd(P.name), aP = A.ak[gP], W = WHITELIST[P.name], ist = num(plant[W.ruecklese]);
             if (ist === P.value && fresh(plant)) {
                 A.pending = null;
-                if (P.art === 'uebernahme' && aP && aP.einmal) { delete A.ak[gP]; out.toast = {text: W.text + ' steht jetzt auf ' + P.value + ' (von der Anlage bestätigt; Normalzustand, kein Rückweg).', color: 'green'}; }
-                else if (P.art === 'uebernahme' && aP) { aP.bestaetigt = true; aP.bestTs = now; delete aP.unbestaetigt; out.toast = {text: W.text + ' steht jetzt auf ' + P.value + ' (von der Anlage bestätigt).', color: 'green'}; }
-                if (P.art === 'rueckweg') { out.toast = {text: W.text + ' wieder auf ' + P.value + ' (bestätigt). Übernahme beendet.', color: 'green'}; delete A.ak[gP]; }
+                if (P.art === 'uebernahme' && aP && aP.einmal) { delete A.ak[gP]; out.toast = {text: W.text + ' steht jetzt auf ' + wTxt(W, P.value) + ' (von der Anlage bestätigt; Normalzustand, kein Rückweg).', color: 'green'}; }
+                else if (P.art === 'uebernahme' && aP) { aP.bestaetigt = true; aP.bestTs = now; delete aP.unbestaetigt; out.toast = {text: W.text + ' steht jetzt auf ' + wTxt(W, P.value) + ' (von der Anlage bestätigt).', color: 'green'}; }
+                if (P.art === 'rueckweg') { out.toast = {text: W.text + ' wieder auf ' + wTxt(W, P.value) + ' (bestätigt). Übernahme beendet.', color: 'green'}; delete A.ak[gP]; }
                 out.log.push({t: iso(now), aktion: 'bestaetigt', art: P.art, befehl: P.name, wert: P.value, nach_s: Math.round((now - P.ts) / 1000)});
             } else if (now - P.ts >= APPLY.rueckleseS * 1000 && !blocked) {
                 var maxV = P.art === 'rueckweg' ? APPLY.rueckwegVersuche : 1 + APPLY.wiederholungen;
@@ -3235,7 +3238,7 @@ var ENGINE = (function () {
                     out.log.push({t: iso(now), aktion: 'wiederholung', art: P.art, befehl: P.name, wert: P.value, versuch: P.versuche, ist: ist});
                 } else {
                     A.pending = null;
-                    A.alarm = {ts: now, text: 'Keine Bestätigung: ' + W.text + ' sollte ' + P.value + ' sein, die Anlage meldet ' + (ist === null ? 'nichts' : ist) + ' (' + P.versuche + ' Versuche). Bitte prüfen.'};
+                    A.alarm = {ts: now, text: 'Keine Bestätigung: ' + W.text + ' sollte ' + wTxt(W, P.value) + ' sein, die Anlage meldet ' + (ist === null ? 'nichts' : wTxt(W, ist)) + ' (' + P.versuche + ' Versuche). Bitte prüfen.'};
                     out.toast = {text: A.alarm.text, color: 'red'};
                     out.log.push({t: iso(now), aktion: 'ruecklese_timeout', art: P.art, befehl: P.name, wert: P.value, ist: ist, versuche: P.versuche});
                     // Anlage steht nachweislich noch auf dem Wert vor dem Befehl: es gibt nichts zurueckzusetzen, die Uebernahme endet (eine Fortsetzung faellt auf die vorige
@@ -3258,17 +3261,17 @@ var ENGINE = (function () {
             var a = L[i], g = gOfCmd(a.name), W2 = WHITELIST[a.name], ist2 = num(plant[W2.ruecklese]);
             if (a.rueckFehl) {                                                               // Rueckweg abgebrochen: nichts mehr automatisch senden, nur den Ist-Wert beobachten
                 if (have(ist2) && fresh(plant) && ist2 === a.von) {
-                    delete A.ak[g]; out.toast = {text: W2.text + ' steht wieder auf ' + a.von + ' (nachträglich bestätigt). Übernahme beendet.', color: 'green'};
+                    delete A.ak[g]; out.toast = {text: W2.text + ' steht wieder auf ' + wTxt(W2, a.von) + ' (nachträglich bestätigt). Übernahme beendet.', color: 'green'};
                     out.log.push({t: iso(now), aktion: 'bestaetigt', art: 'rueckweg', befehl: a.name, wert: a.von, nachtraeglich: true});
                 } else if (have(ist2) && fresh(plant) && ist2 !== a.value) {
-                    A.alarm = {ts: now, text: W2.text + ' wurde von außen auf ' + ist2 + ' geändert (Übernahme ' + a.value + '). Kein automatischer Rückweg.'};
+                    A.alarm = fremd(W2, ist2, a.value, now);
                     out.toast = {text: A.alarm.text, color: 'orange'}; out.log.push({t: iso(now), aktion: 'fremde_aenderung', befehl: a.name, soll: a.value, ist: ist2}); delete A.ak[g];
                 }
                 continue;
             }
             if ((a.bestaetigt || (a.unbestaetigt && ist2 !== a.von)) && have(ist2) && ist2 !== a.value && fresh(plant)) {   // fremde Aenderung (auch nach unbestaetigter Uebernahme ein dritter Wert): nicht zuruecksetzen, nur warnen und die Uebernahme beenden
                 if (a.zurueck && ist2 === a.von) { delete A.ak[g]; continue; }                // (Zuruecksetzen schon erledigt)
-                A.alarm = {ts: now, text: W2.text + ' wurde von außen auf ' + ist2 + ' geändert (Übernahme ' + a.value + '). Kein automatischer Rückweg.'};
+                A.alarm = fremd(W2, ist2, a.value, now);
                 out.toast = {text: A.alarm.text, color: 'orange'}; out.log.push({t: iso(now), aktion: 'fremde_aenderung', befehl: a.name, soll: a.value, ist: ist2}); delete A.ak[g]; continue;
             }
             if (blocked) { continue; }                                                       // Notbremse: warten, nicht zaehlen

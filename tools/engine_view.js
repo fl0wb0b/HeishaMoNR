@@ -309,7 +309,8 @@ var ENGVIEW = (function (E) {
         if (!en) { st.push({t: 'Übernahme gesperrt', c: 'lock'}); }
         else if (!knoten) { st.push({t: 'Übernahme gesperrt: Sendeknoten deaktiviert', c: 'lock'}); }
         else { st.push({t: rel.length ? 'Übernahme frei: ' + rel.map(function (x) { return (E.RULE[x] && E.RULE[x].kachel) || x; }).join(', ') + ' · heute ' + heute + '/' + E.APPLY.proTag : 'Übernahme frei: keine Regel', c: rel.length ? 'ok' : 'mute'}); }
-        if (AP.alarm) { st.push({t: AP.alarm.text, c: 'bad'}); }
+        var alInfo = AP.alarm && (AP.alarm.stufe === 'info' || / wurde von außen auf /.test(AP.alarm.text));   // fremde Aenderung = Betrieb, kein Fehler (alter Zustand ohne stufe: am Text erkannt)
+        if (AP.alarm && !(alInfo && now - AP.alarm.ts > 12 * 60 * MIN)) { st.push({t: AP.alarm.text, c: alInfo ? 'mute' : 'bad'}); }
         if (verw) { st.push({t: 'verworfen: ' + p.was, c: 'mute'}); }
         var card = {status: st, prop: null, knopf: {ok: false, text: 'Übernehmen', grund: 'kein Vorschlag'}, reset: Object.keys(akL).length > 0, enabled: en, verworfen: verw ? p.id : null, leer: null};
         if (p && !verw) {

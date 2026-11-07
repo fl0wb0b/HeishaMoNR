@@ -664,6 +664,18 @@ console.log('--- Nachpruefung: Ruecklese-Timeout, Flackern des Raumvorschlags');
     const t2b = E.applyTick(JSON.parse(JSON.stringify(t2.A)), {now: NOWx + 60000, plant: {q: 2, hpAge: 0.3, block: 0}});
     check('Kimi-Pruefung 04.11.: unbestaetigte Uebernahme, die Anlage bleibt auf dem dritten Wert (Handeingriff) -> wie eine fremde Aenderung: Warnung, Uebernahme beendet, kein Befehl, also auch nach der Frist kein Rueckweg, der den Handwert ueberschreibt',
           t2b.send.length === 0 && !t2b.A.aktiv && !Object.keys(t2b.A.ak || {}).length && /von außen auf 2/.test((t2b.A.alarm || {}).text || ''), JSON.stringify({aktiv: t2b.A.aktiv, ak: t2b.A.ak, alarm: t2b.A.alarm && t2b.A.alarm.text}));
+    { // 07.11.2026 (Kevin, Design-Kritik): fremde Aenderung der Heizregelung (z. B. Automatik nach Aussentemperatur) ist Betrieb, kein Fehler -> Klartext mit Uhrzeit, Stufe info, Seite grau, nach 12 h ausgeblendet
+      const hcA = {id: 'h', rule: 'heizregelung', groesse: 'hc', name: 'SetHeatingControl', value: 0, von: 1, ts: NOWx - 3600000, bis: null, bestaetigt: true};
+      const Ah = E.newApply(); Ah.ak = {hc: hcA}; Ah.aktiv = hcA;
+      const th = E.applyTick(JSON.parse(JSON.stringify(Ah)), {now: NOWx, plant: {hc: 1, hpAge: 0.3, block: 0}}), al = th.A.alarm || {}, VWa = require('./engine_view.js');
+      const stOf = (t, AP) => VWa.build({now: t, last: {t: t, res: [], anl: {}}, S: {born: T0, rules: {}, sc: E.newState(T0).sc}, V: {}, AP: AP}).card.status;
+      const s1 = stOf(NOWx + MIN, th.A), s2 = stOf(NOWx + 13 * 60 * MIN, th.A);
+      const alt = {ts: NOWx, text: 'Heizregelung (0 Comfort, 1 Efficiency) wurde von außen auf 1 geändert (Übernahme 0). Kein automatischer Rückweg.'}, s3 = stOf(NOWx + MIN, {alarm: alt});
+      const rot = {ts: NOWx, text: 'Keine Bestätigung: x'}, s4 = stOf(NOWx + 13 * 60 * MIN, {alarm: rot});
+      check('Fremde Aenderung Heizregelung: "Heizregelung um hh:mm von außen auf Efficiency gestellt. Übernahme (Comfort) beendet, ...", Stufe info, grau statt rot, nach 12 h weg; alter Zustand ohne Stufe ebenfalls grau; "Keine Bestätigung" bleibt rot und stehen',
+            th.send.length === 0 && !Object.keys(th.A.ak || {}).length && al.stufe === 'info' && /^Heizregelung um \d\d:\d\d von außen auf Efficiency gestellt\. Übernahme \(Comfort\) beendet, der Optimierer stellt nicht zurück\.$/.test(al.text) &&
+            s1.some(x => x.t === al.text && x.c === 'mute') && !s2.some(x => x.t === al.text) && s3.some(x => x.t === alt.text && x.c === 'mute') && s4.some(x => x.t === rot.text && x.c === 'bad'),
+            JSON.stringify({al: al, s1: s1.map(x => x.c + ':' + x.t)})); }
     const pq = {id: 'quiet_freigabe@x', rule: 'quiet_freigabe', ver: 1, art: 'befehl', ts: NOWx, bis: NOWx + 60 * MIN, cmd: {name: 'SetQuietMode', topic: 'panasonic_heat_pump/commands/SetQuietMode', value: 0}, von: 3, was: 'x'}; pq.sum = E.checksum(pq);
     const c3 = E.applyRequest(t1.A, {topic: 'uebernehmen', payload: {id: pq.id, sum: pq.sum}}, {now: NOWx + 11 * MIN, enabled: true, rules: ['quiet_freigabe'], eng: {ts: NOWx + 11 * MIN, prop: pq, locks: {}}, plant: {q: 3, hpAge: 0.3, block: 0}});
     check('... danach ist ein neuer Klick fuer Quiet wieder moeglich (nicht "schon eine Übernahme aktiv")', c3.send.length === 1, c3.toast && c3.toast.text);

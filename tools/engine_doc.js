@@ -31,7 +31,7 @@ function tabellen() {
     E.LOCKS.forEach(l => L.push('| `' + l.id + '` | ' + esc(l.text) + ' | ' + esc(l.herkunft) + ' |'));
     L.push('', '*Sperr-Parameter (Standard):* ' + Object.keys(E.LOCK_CFG).map(k => '`' + k + '` ' + String(E.LOCK_CFG[k]).replace('.', ',')).join(' · '));
     L.push('', '### Whitelist der Übernahme', '', '| Befehl | Topic | erlaubte Werte | Rücklesen |', '|---|---|---|---|');
-    Object.keys(E.WHITELIST).forEach(k => { const W = E.WHITELIST[k]; L.push('| `' + k + '` | `' + W.topic + '` | ' + W.werte.join(', ') + ' | ' + W.text + (W.heizkurve ? ' (nur Heizkurvenmodus TOP76 = 0, Wasserfühler TOP111 = 0)' : '') + ' |'); });
+    Object.keys(E.WHITELIST).forEach(k => { const W = E.WHITELIST[k]; L.push('| `' + k + '` | `' + W.topic + '` | ' + W.werte.join(', ') + ' | ' + W.text + (W.namen ? ' (' + W.werte.map(v => v + ' ' + W.namen[v]).join(', ') + ')' : '') + (W.heizkurve ? ' (nur Heizkurvenmodus TOP76 = 0, Wasserfühler TOP111 = 0)' : '') + ' |'); });
     L.push('', '*Übernahme-Grenzen:* ' + Object.keys(E.APPLY).map(k => '`' + k + '` ' + String(E.APPLY[k]).replace('.', ',')).join(' · '));
     L.push('', '### Bewertungsregeln (Version ' + E.SCORE_VER + ')', '');
     const S = E.SCORE;
