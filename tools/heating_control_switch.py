@@ -158,16 +158,15 @@ var now = Date.now(), MIN = 60000, HALTEN = 30, WIEDER = 10, VERSUCHE = 3, ABSTA
 var A = global.get('HC_AT', 'file') || {on: false};
 function hm(t) { return new Date(t).toLocaleTimeString('de-DE', {hour: '2-digit', minute: '2-digit'}); }
 function lage(z) { return z === 'kalt' ? 'kalt (≤ 2 °C)' : 'warm (≥ 4 °C)'; }
-function txt() {
+function ziel(z) { return z === 'kalt' ? 'Comfort' : 'Efficiency + Quiet 3'; }
+function txt() {                                                                     // Textzeile: Lage, seit wann, und was wann passiert (Kevin 07.11.: "schaltet ab" war missverstaendlich)
     if (!A.on) { return 'aus'; }
-    if (!A.cand) { return 'an · wartet auf ≤ 2 °C oder ≥ 4 °C'; }
-    var v = A.versuch && A.versuch.lage === A.cand ? A.versuch : null;
-    return 'an · ' + lage(A.cand) + ' seit ' + hm(A.seit) + (A.erledigt === A.cand ? (A.abbruch ? ' · keine Bestätigung nach ' + VERSUCHE + ' Versuchen' : ' · geschaltet ' + hm(A.erledigtTs))
-        : (v ? ' · angefordert ' + hm(v.ts) + (v.n > 1 ? ' (Versuch ' + v.n + ')' : '') : frei()));
-}
-function frei() {                                                                    // wann die naechste Anforderung fruehestens kommt: 30 min am Stueck und 2 h Abstand
-    var a = A.seit + HALTEN * MIN, b = A.letzteTs ? A.letzteTs + ABSTAND * MIN : 0;
-    return b > a ? ' · wartet bis ' + hm(b) + ' (2 h Abstand)' : ' · schaltet ab ' + hm(a);
+    if (!A.cand) { return 'an · wartet auf ≤ 2 °C (Comfort) oder ≥ 4 °C (Efficiency + Quiet 3)'; }
+    var v = A.versuch && A.versuch.lage === A.cand ? A.versuch : null, s = 'an · ' + lage(A.cand) + ' seit ' + hm(A.seit) + ' · ';
+    if (A.erledigt === A.cand) { return s + (A.abbruch ? ziel(A.cand) + ' nicht bestätigt (' + VERSUCHE + ' Versuche)' : 'auf ' + ziel(A.cand) + ' gestellt ' + hm(A.erledigtTs)); }
+    if (v) { return s + ziel(A.cand) + ' angefordert ' + hm(v.ts) + (v.n > 1 ? ' (Versuch ' + v.n + ')' : ''); }
+    var a = A.seit + HALTEN * MIN, b = A.letzteTs ? A.letzteTs + ABSTAND * MIN : 0;   // fruehestens: 30 min am Stueck und 2 h Abstand
+    return s + (b > a ? 'stellt frühestens ' + hm(b) + ' auf ' + ziel(A.cand) + ' (2 h Abstand)' : 'stellt um ' + hm(a) + ' auf ' + ziel(A.cand));
 }
 function anfordern(kalt, at) {                                                       // Heizregelung an den Schalter-Befehl, bei warm dazu Quiet 3; liefert die Protokollzeile
     out[0] = {payload: kalt ? '0' : '1', source: 'Außentemperatur', topic: WER};
