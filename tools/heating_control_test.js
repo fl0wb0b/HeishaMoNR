@@ -157,8 +157,18 @@ ck('4 °C seit 30 min: Efficiency ("1") an den Schalter und Quiet 3 auf dem geme
    out(o, 0).length === 1 && out(o, 0)[0].payload === '1' && out(o, 1).length === 1 && out(o, 1)[0].topic === QTOPIC && out(o, 1)[0].payload === '3' && /Efficiency/.test(out(o, 2)[0].payload) && /Quiet 3 gesendet/.test(out(o, 2)[0].payload), JSON.stringify(o));
 o = run(20, 2).concat(run(5, 4), run(30, 2));
 ck('Kein Schalten bei Wechsel hin und her: 20 min 2 °C, 5 min 4 °C, 30 Takte 2 °C -> nichts (die 30 min beginnen bei jedem Lagewechsel neu)', out(o, 0).length === 0 && out(o, 1).length === 0, '');
+o = run(1, 2); const txw = cx.txt || '';   // aktuelle Textzeile (gesendet wird sie nur bei Aenderung)
+ck('... nach 30 min am Stueck bei 2 °C, aber erst 56 min nach dem letzten Wechsel: noch nichts, Text "wartet bis" (2 h Mindestabstand, Kevin 07.11.)', out(o, 0).length === 0 && /wartet bis \d\d:\d\d \(2 h Abstand\)/.test(txw), txw);
+o = run(63, 2);
+ck('... 119 min nach dem letzten Wechsel: noch nichts', out(o, 0).length === 0, '');
 o = run(1, 2);
-ck('... nach 30 min am Stueck bei 2 °C: Comfort', out(o, 0).length === 1 && out(o, 0)[0].payload === '0', '');
+ck('... 2 h nach dem letzten Wechsel: Comfort', out(o, 0).length === 1 && out(o, 0)[0].payload === '0', '');
+atReset(); at('schalter', true); run(31, 1); run(150, 1); o = run(20, 4).concat(run(1, 3), run(29, 4));
+ck('Strenge Zaehlung: 20 min 4 °C, 1 Wert 3 °C, 29 min 4 °C -> nichts (3 °C startet die 30 min neu, Replay 03.11. 05:06/06:06)', out(o, 0).length === 0, JSON.stringify(out(o, 0)));
+o = run(1, 4);
+ck('... nach 30 min durchgehend 4 °C: Efficiency', out(o, 0).length === 1 && out(o, 0)[0].payload === '1', '');
+atReset(); at('schalter', true); run(20, 1); g.TOP26_Defrosting_State = 1; o = run(5, 3); g.TOP26_Defrosting_State = 0; o = o.concat(run(6, 1));
+ck('3 °C waehrend des Abtauens startet die Zeit nicht neu (Abtauwert zaehlt nicht): Comfort nach 31 Takten', out(o, 0).length === 1 && out(o, 0)[0].payload === '0', JSON.stringify(out(o, 0)));
 atReset({TOP18_Quiet_Mode_Level: 3}); at('schalter', true); o = run(31, 6);
 ck('Quiet steht schon auf 3: Efficiency angefordert, kein Quiet-Befehl, Protokoll sagt warum', out(o, 0).length === 1 && out(o, 1).length === 0 && /Quiet steht schon auf 3/.test(out(o, 2)[0].payload), JSON.stringify(out(o, 2)));
 atReset({MQTT: {block_active: 1, block_mode: 1, messages_today: 0, message_limit: 500}}); at('schalter', true); o = run(31, 6);
