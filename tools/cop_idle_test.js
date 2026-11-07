@@ -1,7 +1,7 @@
 // Pruefung der Korrektur "COP 0 bei Stillstand" (tools/cop_idle_fix.py): Betrieb unveraendert, Stillstand meldet 0.
 // Usage: python3 tools/cop_idle_fix.py <kopie.json> && node tools/cop_idle_test.js <kopie.json>   (ohne Argument: die Repo-Flowdatei, vorher gepatcht)
 const fs = require('fs'), vm = require('vm');
-const file = process.argv[2] || 'flows (26.5.1 stable).json';
+const file = process.argv[2] || (console.error('Aufruf: node tools/cop_idle_test.js <flows.json> – Flow-Datei angeben (Liste der Knoten): frische Generator-Ausgabe oder Live-Export, nicht den Snapshot vom 12.10.'), process.exit(2));
 const flows = JSON.parse(fs.readFileSync(file, 'utf8')), node0 = flows.find(n => n.id === 'f4e55b938e645737');
 const orig = fs.readFileSync(require('path').join(__dirname, 'fixtures', 'cop_calculated_original.js'), 'utf8');      // unveraenderte Originalfunktion (vor dem Patch), fest im Repo
 const compile = f => vm.runInNewContext('(function(msg,global,node){' + f + '\n})', {Number, isFinite, parseFloat, isNaN});

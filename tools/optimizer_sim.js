@@ -3,8 +3,8 @@ process.env.TZ = process.env.TZ_SIM || 'Europe/Berlin';       // Ortszeit der An
 const vm = require('vm');
 const path = require('path');
 const fs = require('fs');
-// Usage: node tools/optimizer_sim.js "flows (26.5.1 stable).json"
-const flowsFile = process.argv[2] || 'flows (26.5.1 stable).json';
+// Usage: node tools/optimizer_sim.js <flows.json>  (frische Ausgabe von tools/optimizer_phase1.py; ohne Schalter --uebernahme-knoten-aktiv, sonst schlaegt der Sicherheitstest erwartungsgemaess fehl)
+const flowsFile = process.argv[2] || (console.error('Aufruf: node tools/optimizer_sim.js <flows.json> – Flow-Datei angeben (Liste der Knoten): frische Generator-Ausgabe oder Live-Export, nicht den Snapshot vom 12.10.'), process.exit(2));
 const F = {}, ALLNODES = JSON.parse(fs.readFileSync(flowsFile, 'utf8'));
 ALLNODES.forEach(n => { if (n.type === 'function' && n.id.startsWith('opt_')) { F[n.id] = n.func; } });
 let NOW = Date.UTC(2026, 9, 7, 6, 0, 0);       // simulierte Uhr

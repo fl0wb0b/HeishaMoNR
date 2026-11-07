@@ -16,7 +16,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const cp = require('child_process');
-const flowsFile = process.argv[2] || 'flows (26.5.1 stable).json';
+const flowsFile = process.argv[2] || (console.error('Aufruf: node tools/kern_chain_sim.js <flows.json> – Flow-Datei angeben (Liste der Knoten): frische Generator-Ausgabe oder Live-Export, nicht den Snapshot vom 12.10.'), process.exit(2));
 const FAST = process.argv.includes('--schnell');
 const ALL0 = JSON.parse(fs.readFileSync(flowsFile, 'utf8'));
 function patched(flows, extra) {

@@ -1,7 +1,7 @@
 // Pruefung des Schalters "Heizregelung" (tools/heating_control_switch.py): alle Faelle der Funktionen "Heizregelung Befehl" und "Heizregelung Zustand".
 // Usage: python3 tools/heating_control_switch.py <kopie.json> && node tools/heating_control_test.js <kopie.json>
 const fs = require('fs'), vm = require('vm');
-const file = process.argv[2] || 'flows (26.5.1 stable).json';
+const file = process.argv[2] || (console.error('Aufruf: node tools/heating_control_test.js <flows.json> – Flow-Datei angeben (Liste der Knoten): frische Generator-Ausgabe oder Live-Export, nicht den Snapshot vom 12.10.'), process.exit(2));
 const flows = JSON.parse(fs.readFileSync(file, 'utf8')), by = Object.fromEntries(flows.map(n => [n.id, n]));
 const REAL = Date;
 let NOW = Date.UTC(2026, 9, 8, 8, 0, 0);
