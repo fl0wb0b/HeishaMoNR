@@ -3064,18 +3064,20 @@ if (L) {
     rows.push(['Letzter Lauf', dmhm(L.ende || L.beginn) + ' · ' + dauer(L.dauer_s), L.ok === false ? 'Fehler' : (alt ? 'veraltet' : 'ok'), L.ok === false ? 'fehler' : (alt ? 'warn' : 'ok'),
                'Art ' + (L.art || '–') + ' · ' + schT.join(' · ') + (st.dienst && st.dienst.naechster_lauf ? ' · nächster Lauf ' + dmhm(st.dienst.naechster_lauf) : '') + (st.version ? ' · Stand ' + st.version : '')]);
 } else { rows.push(['Letzter Lauf', 'kein Lauf', 'kein Lauf', 'warn', 'status.json ohne letzten Lauf (Dienst gestartet ' + dmhm(st.dienst && st.dienst.gestartet) + ')']); }
-// Training: Ampel und Drift
+// Training: technischen Lauf und fachlichen Befund getrennt ausweisen
 var T = st.training || null;
 if (T) {
-    var amp = String(T.ampel || ''), ampT = {gruen: 'grün', gelb: 'gelb', rot: 'rot'}[amp] || '–', dr = T.drift || {}, nDr = ok(dr.auffaellig) ? dr.auffaellig : null, G = T.guete_test || {};
+    var amp = String(T.ampel || ''), dr = T.drift || {}, nDr = ok(dr.auffaellig) ? dr.auffaellig : null, G = T.guete_test || {};
     var ent = T.entscheidung && T.entscheidung.ergebnis ? String(T.entscheidung.ergebnis) : '';                        // training-v2: Gate uebernommen/abgelehnt
+    var laufFehler = T.ok === false || amp === 'rot', pruefen = ent === 'abgelehnt' || amp === 'gelb' || nDr > 0;
     var drT = Array.isArray(dr.liste) ? dr.liste.map(function (e) {                                                  // Drift-Eintraege {name, vorher, heute, rel} lesbar (vorher "[object Object]")
         if (!e || typeof e !== 'object') { return String(e); }
         var rr = (ok(e.vorher) && ok(e.heute) && e.vorher !== 0) ? (e.heute - e.vorher) / Math.abs(e.vorher) : (ok(e.rel) ? e.rel : null);   // Prozent aus den gezeigten Zahlen (training-v2: e.rel bezieht sich auf den roh gelernten Wert)
         var rel = rr !== null ? ' (' + (rr >= 0 ? '+' : '') + f(100 * rr, 0) + ' %)' : '';
         return e.name + ' ' + (ok(e.vorher) ? f(e.vorher, Math.abs(e.vorher) < 10 ? 2 : 0) : '–') + ' → ' + (ok(e.heute) ? f(e.heute, Math.abs(e.heute) < 10 ? 2 : 0) : '–') + rel;
     }) : [];
-    rows.push(['Training', dm(T.tag) + ' · Drift ' + (nDr === null ? '–' : nDr + ' auffällig') + (dr.gegen ? '' : ' (erster Lauf)') + (ent ? ' · ' + ent : ''), T.ok === false ? 'Fehler' : ampT, T.ok === false || amp === 'rot' ? 'fehler' : (amp === 'gelb' || nDr > 0 ? 'warn' : (amp === 'gruen' ? 'ok' : '')),
+    rows.push(['Training', (laufFehler ? 'Lauf Fehler' : 'Lauf ok') + ' · ' + dm(T.tag) + ' · Drift ' + (nDr === null ? '–' : nDr + ' auffällig') + (dr.gegen ? '' : ' (erster Lauf)') + (ent ? ' · Modell ' + ent : ''),
+               laufFehler ? 'Fehler' : (pruefen ? 'prüfen' : 'ok'), laufFehler ? 'fehler' : (pruefen ? 'warn' : 'ok'),
                Object.keys(G).filter(function (k) { return ok(G[k]); }).map(function (k) { return k + ' ' + f(G[k], G[k] < 10 ? 2 : 0); }).join(' · ') + (drT.length ? ' · Drift: ' + drT.join(', ') : '') + (T.entscheidung && T.entscheidung.grund ? ' · Gate: ' + T.entscheidung.grund : '') + (T.fehler ? ' · ' + T.fehler : '')]);
 } else { rows.push(['Training', 'noch keins', '–', '', '']); }
 // Replay-Güte
@@ -3108,8 +3110,8 @@ if (MP || FR) {
 }
 if (RF && RF.raeume) {
     var RR = Object.keys(RF.raeume).map(function (k) { var x = RF.raeume[k] || {}; return {n: x.name || k, u: ok(x.ungueltig_min) ? x.ungueltig_min : 0, l: ok(x.laengste_min) ? x.laengste_min : 0}; });
-    var lang = RR.filter(function (x) { return x.l > 120; }).sort(function (a, b) { return b.u - a.u; }), summe = RR.reduce(function (a, x) { return a + x.u; }, 0);
-    rows.push(['Raumfühler', dm(RF.tag) + ' · ' + (lang.length ? lang.map(function (x) { return x.n + ' ' + x.u + ' min'; }).join(', ') : (summe ? summe + ' min ungültig' : 'alle gültig')), lang.length ? 'Lücke' : 'ok', lang.length ? 'warn' : 'ok',
+    var lang = RR.filter(function (x) { return x.l > 120; }).sort(function (a, b) { return b.l - a.l; }), summe = RR.reduce(function (a, x) { return a + x.u; }, 0);
+    rows.push(['Raumfühler', dm(RF.tag) + ' · ' + (lang.length ? lang.map(function (x) { return x.n + ' Lücke ' + x.l + ' min'; }).join(', ') : 'keine langen Lücken · ' + (summe ? summe + ' min ungültig' : 'alle gültig')), lang.length ? 'Lücke' : 'ok', lang.length ? 'warn' : 'ok',
                'ungültige Minuten (längste Lücke): ' + RR.map(function (x) { return x.n + ' ' + x.u + ' (' + x.l + ')'; }).join(' · ')]);
 }
 // Sicherung
