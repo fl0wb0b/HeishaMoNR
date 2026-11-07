@@ -3130,7 +3130,7 @@ var ENGINE = (function () {
     function cmdOk(name, value) { var W = WHITELIST[name]; if (!W) { return 'Befehl ' + name + ' steht nicht auf der Whitelist'; } if (W.werte.indexOf(value) < 0) { return 'Wert ' + value + ' für ' + name + ' nicht erlaubt (' + W.werte.join(', ') + ')'; } return null; }
     // Fremde Aenderung (Automatik, Zeitplan, HeishaMon, von Hand): normaler Betrieb, kein Fehler -> Stufe info (Seite grau, nach 12 h ausgeblendet)
     function fremd(W, ist, soll, now) { return {ts: now, stufe: 'info', text: W.text + ' um ' + hhmm(now) + ' von außen auf ' + wTxt(W, ist) + ' gestellt. Übernahme (' + wTxt(W, soll) + ') beendet, der Optimierer stellt nicht zurück.'}; }
-    function wTxt(W, v) { return W.namen && W.namen[v] !== undefined ? W.namen[v] : String(v); }   // Wert fuer Meldungen: Heizregelung als Wort statt 0/1
+    function wTxt(W, v) { return W && W.namen && W.namen[v] !== undefined ? W.namen[v] : String(v); }   // Wert fuer Meldungen: Heizregelung als Wort statt 0/1
     function cmdMsg(name, value, source) { return {topic: WHITELIST[name].topic, payload: String(value), source: source}; }
     function fresh(plant) { return have(num(plant.hpAge)) && num(plant.hpAge) <= APPLY.hpMaxAgeMin; }
     // ctx: {now, enabled (Hauptschalter), knoten (false = Sendeknoten opt_apply_mqtt deaktiviert erzeugt), rules (freigegebene Regel-IDs), eng (OPT_engine: {ts, prop, locks}),
@@ -3179,12 +3179,12 @@ var ENGINE = (function () {
         if (!fresh(plant)) { return deny('Anlagendaten sind veraltet. Nichts gesendet.'); }
         if (eng.locks && eng.locks[p.rule] && eng.locks[p.rule].length) { return deny('Gesperrt: ' + eng.locks[p.rule].join(', ') + '. Nichts gesendet.'); }
         var ist = num(plant[W.ruecklese]);
-        if (ist !== p.von) { return deny('Die Anlage steht nicht mehr auf ' + p.von + ' (jetzt ' + (ist === null ? 'unbekannt' : ist) + '). Nichts gesendet.'); }
+        if (ist !== p.von) { return deny('Die Anlage steht nicht mehr auf ' + wTxt(WHITELIST[p.cmd.name], p.von) + ' (jetzt ' + (ist === null ? 'unbekannt' : wTxt(WHITELIST[p.cmd.name], ist)) + '). Nichts gesendet.'); }
         if (W.heizkurve && (num(plant.heatMode) !== 0 || num(plant.z1Sensor) !== 0)) { return deny('Verschiebung nur im Heizkurvenmodus mit Wasserfühler. Nichts gesendet.'); }
         if (A.pending) { return deny('Ein Befehl wartet noch auf die Bestätigung der Anlage. Nichts gesendet.', 'orange'); }
         // je Groesse eine Uebernahme (jede hat ihren Rueckweg); dieselbe Regel darf sie in derselben Richtung fortsetzen (Regel-Review B1, R6)
         var g = gOfCmd(p.cmd.name), a0 = A.ak[g], fort = fortsetzung(a0, p);
-        if (a0 && !fort) { return deny('Für ' + (g === 'quiet' ? 'die Quiet-Stufe' : (g === 'hc' ? 'die Heizregelung' : 'die Verschiebung')) + ' läuft schon eine Übernahme (' + (RULE[a0.rule] ? RULE[a0.rule].kurz : a0.rule) + ', ' + a0.von + ' → ' + a0.value + '); erst zurücksetzen oder den Rückweg abwarten. Nichts gesendet.', 'orange'); }
+        if (a0 && !fort) { return deny('Für ' + (g === 'quiet' ? 'die Quiet-Stufe' : (g === 'hc' ? 'die Heizregelung' : 'die Verschiebung')) + ' läuft schon eine Übernahme (' + (RULE[a0.rule] ? RULE[a0.rule].kurz : a0.rule) + ', ' + wTxt(WHITELIST[a0.name], a0.von) + ' → ' + wTxt(WHITELIST[a0.name], a0.value) + '); erst zurücksetzen oder den Rückweg abwarten. Nichts gesendet.', 'orange'); }
         if (A.lastSend && now - A.lastSend < APPLY.abstandMin * MIN) { return deny('Zu schnell: frühestens ' + hhmm(A.lastSend + APPLY.abstandMin * MIN) + '. Nichts gesendet.', 'orange'); }
         if (A.n >= APPLY.proTag) { return deny('Tageslimit von ' + APPLY.proTag + ' Befehlen erreicht. Nichts gesendet.'); }
         // ---- senden: genau der angezeigte Vorschlag
@@ -3196,7 +3196,7 @@ var ENGINE = (function () {
                    start: fort ? (a0.start || a0.ts) : now, schritte: fort ? (a0.schritte || 1) + 1 : 1};
         if (p.einmal) { A.ak[g].einmal = true; }
         out.send.push(cmdMsg(p.cmd.name, p.cmd.value, 'Optimierer (Klick)'));
-        out.toast = {text: R.name + ': ' + p.was + (fort ? ' (Fortsetzung; Rückweg weiter auf ' + a0.von + ')' : '') + ' gesendet. Warte auf die Bestätigung der Anlage …', color: ''};
+        out.toast = {text: R.name + ': ' + p.was + (fort ? ' (Fortsetzung; Rückweg weiter auf ' + wTxt(WHITELIST[a0.name], a0.von) + ')' : '') + ' gesendet. Warte auf die Bestätigung der Anlage …', color: ''};
         var lg = {t: iso(now), aktion: 'uebernehmen', ergebnis: 'gesendet', id: p.id, sum: p.sum, regel: p.rule, v: p.ver, befehl: p.cmd.name, topic: p.cmd.topic, wert: p.cmd.value, von: A.ak[g].von, bis: until ? iso(until) : null};
         if (fort) { lg.fortsetzung = A.ak[g].schritte; }
         out.log.push(lg);
