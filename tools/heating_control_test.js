@@ -77,6 +77,54 @@ NOW += 61 * 60000; g.OPT_hc_reco = {ts: NOW, mode: 1, warn: false, text: 'Effici
 ck('Nach mehr als 60 min darf eine neue Warnung wieder melden', r[2] && r[2].highlight === 'orange', '');
 NOW += 6 * 60000; r = tick();
 ck('Veraltete Empfehlung (Optimizer liefert nichts mehr): Anzeige faellt auf Strich zurueck', r[3] && r[3].payload === '–', JSON.stringify(r[3]));
-ck('Empfehlung ist nur Anzeige: Zustandsfunktion hat keinen Ausgang zu link out/mqtt out, nur Auswahl/Text/Meldung/Empfehlungstext', by.hc_state.wires.flat().every(i => ['hc_sel', 'hc_txt', 'hc_toast', 'hc_reco_txt'].includes(i)) && by.hc_reco_txt.group === 'hc_grp' && by.hc_cmd.wires.flat().every(i => ['hc_out', 'hc_toast', 'hc_sel'].includes(i)), '');
+ck('Empfehlung ist nur Anzeige: Zustandsfunktion hat keinen Ausgang zu link out/mqtt out, nur Auswahl/Text/Meldung/Empfehlungstext', by.hc_state.wires.flat().every(i => ['hc_sel', 'hc_txt', 'hc_toast', 'hc_reco_txt'].includes(i)) && by.hc_reco_txt.group === 'hc_grp' && by.hc_cmd.wires.flat().every(i => ['hc_out', 'hc_toast', 'hc_sel', 'hc_log'].includes(i)), '');
 ck('Oberflaeche: Auswahl Comfort/Efficiency (Werte 0/1, kein Durchreichen), Gruppe HEIZREGELUNG auf der Seite Uebersicht zwischen WAERMEPUMPE und HEIZEN', by.hc_sel.options.map(o => o.value).join() === '0,1' && by.hc_sel.passthru === false && by.hc_grp.tab === 'a5be8588.b8fbc8' && by.hc_grp.order === 2, '');
+// ---------- Zeitplan (07.11.2026): Aktion "Heizregelung - Comfort/Efficiency" geht ueber denselben Befehl wie der Handschalter
+const SCHED = 'e168945122de5aa2', LOG_IN = '031e62b0bf3df7d7', SCHED_TAB = '35d210f042827344', WP_DASH = '8c9d42231fd19d3c';
+const fSched = mk(SCHED);
+const sched = (action, over, when) => {
+    const gg = Object.assign({Schedule_3_state: 1, Schedule_3_day: ['Saturday'], Schedule_3_hour: '6', Schedule_3_minutes: '30', Schedule_3_action: action, TOP0_Heatpump_State: 1}, over || {}), sends = [];
+    const res = fSched({topic: 'Schedule_3', payload: when || ['Saturday', '6', '30']}, ctx(gg), ctx({}), {send: m => sends.push(m)}, FakeDate);
+    return {res: res || [], sends, gg};
+};
+const planCmd = (payload, topic) => fCmd({payload, source: 'Zeitplan', topic: topic || 'Scheduler (#3)'}, ctx(g), ctx(fl), {}, FakeDate);
+let s = sched('HC_0');
+ck('Zeitplan-Zeile mit "Heizregelung - Comfort" zur eingestellten Zeit: genau eine Nachricht an den Schalter (Ausgang 10, Wert "0", Quelle Zeitplan), Protokollzeile, letzter Lauf gemerkt, sonst nichts',
+   s.res.length === 10 && s.res.slice(0, 8).every(m => m === null) && s.res[9].payload === '0' && s.res[9].source === 'Zeitplan' && s.res[9].topic === 'Scheduler (#3)' && /Heizregelung Comfort angefordert/.test(s.res[8].payload) && s.res[8].topic === 'Scheduler (#3)' && s.gg.Schedule_3_last_run === NOW && s.sends.length === 0, JSON.stringify(s.res));
+s = sched('HC_1');
+ck('"Heizregelung - Efficiency": Wert "1"', s.res[9] && s.res[9].payload === '1' && /Efficiency angefordert/.test(s.res[8].payload), JSON.stringify(s.res[9]));
+s = sched('HC_0', {Schedule_3_state: 0});
+ck('Zeile ausgeschaltet: nichts', s.res.length === 0 && s.sends.length === 0, '');
+s = sched('HC_0', {}, ['Saturday', '6', '31']);
+ck('Andere Minute: nichts', s.res.length === 0, '');
+reset({HEATING_CONTROL: 1, TOP14_Outside_Temp: 12}); s = sched('HC_0'); r = fCmd(s.res[9], ctx(g), ctx(fl), {}, FakeDate);
+ck('Kette Zeitplan -> Schalter: SetHeatingControl "0" auf dem gemeinsamen Weg, Quelle "Zeitplan", Meldung nennt die Zeile, Protokoll "gesendet"',
+   sent(r) && sent(r).topic === 'panasonic_heat_pump/commands/SetHeatingControl' && sent(r).payload === '0' && sent(r).source === 'Zeitplan' && /^Scheduler \(#3\): Heizregelung → Comfort gesendet/.test(toastOf(r).payload) && r[3] && r[3].topic === 'Scheduler (#3)' && /Heizregelung Comfort gesendet/.test(r[3].payload), JSON.stringify(r));
+reset({HEATING_CONTROL: 0}); r = planCmd('0');
+ck('Zeitplan, Stand ist schon Comfort: nichts gesendet, keine Meldung, Protokoll sagt warum', sent(r) === null && toastOf(r) === null && /steht schon auf Comfort, nichts gesendet/.test(r[3].payload), r[3] && r[3].payload);
+reset({HEATING_CONTROL: 0, MQTT: {block_active: 1, block_mode: 2, allow_scheduler: 1, messages_today: 0, message_limit: 500}}); r = planCmd('1');
+ck('Zeitplan bei MQTT-Sperre: nichts gesendet (wie von Hand, der gemeinsame Weg sperrt ohnehin alles), Protokoll nennt die Sperre', sent(r) === null && /gesperrt/.test(r[3].payload) && /Nichts gesendet/.test(r[3].payload), r[3] && r[3].payload);
+reset(); r = planCmd('1');
+ck('Zeitplan bei unbekanntem Stand: nichts gesendet, Protokoll nennt den Grund', sent(r) === null && /unbekannt/.test(r[3].payload), r[3] && r[3].payload);
+reset({HEATING_CONTROL: 0}); cmd('1'); state(1); NOW += 2 * 60000; r = planCmd('0');
+ck('Zeitplan 2 min nach einem Wechsel von Hand: Schonfrist gilt auch hier, Protokoll nennt die Restzeit', sent(r) === null && /frühestens in 3 min/.test(r[3].payload), r[3] && r[3].payload);
+reset({HEATING_CONTROL: 0, TOP14_Outside_Temp: 2}); r = planCmd('1');
+ck('Zeitplan Efficiency bei 2 °C: wird gesendet, Hinweis steht auch im Protokoll', sent(r) && /gesendet/.test(r[3].payload) && /2,0 °C/.test(r[3].payload), r[3] && r[3].payload);
+reset({HEATING_CONTROL: 0}); r = cmd('1');
+ck('Von Hand (ohne Quelle Zeitplan): kein Protokolleintrag, Quelle bleibt "Heizregelung-Schalter", Meldung ohne Zeilen-Vorsatz', r[3] === null && sent(r).source === 'Heizregelung-Schalter' && /^Heizregelung → Efficiency/.test(toastOf(r).payload), JSON.stringify(r[3]));
+const fs9 = by[SCHED];
+ck('Verdrahtung: "Function schedule" hat 10 Ausgaenge, der neue geht per Link nach WP Dash in "Heizregelung Befehl"; das Ergebnis geht per Link ins Protokoll ("Input LOGS"); kein eigener mqtt out',
+   fs9.outputs === 10 && fs9.wires.length === 10 && fs9.wires[9].join() === 'hc_sched_out' && /Heizregelung/.test(fs9.outputLabels[9]) && by.hc_sched_out.type === 'link out' && by.hc_sched_out.z === SCHED_TAB && by.hc_sched_out.links.join() === 'hc_sched_in'
+   && by.hc_sched_in.type === 'link in' && by.hc_sched_in.z === WP_DASH && by.hc_sched_in.links.includes('hc_sched_out') && by.hc_sched_in.wires.join() === 'hc_cmd'
+   && by.hc_cmd.outputs === 4 && by.hc_cmd.wires[3].join() === 'hc_log' && by.hc_log.links.join() === LOG_IN && by[LOG_IN].links.includes('hc_log')
+   && !flows.some(n => ['hc_sched_in', 'hc_sched_out', 'hc_log'].includes(n.id) && n.type === 'mqtt out'), '');
+const acts = flows.filter(n => n.type === 'ui_dropdown' && /^Action\d+$/.test(n.name || ''));
+const DROP = ['DHW', 'Sterilization', 'OperationMode1', 'OperationMode2', 'OperationMode3', 'OperationMode4', 'OperationMode5', 'OperationMode6', 'DHW setpoint'];
+const sep = o => /^-+$/.test(o.label);
+const optOk = n => { const v = n.options.map(o => o.value), i = v.indexOf('QM_3');
+    return v[i + 1] === 'hc_sep' && sep(n.options[i + 1]) && v[i + 2] === 'HC_0' && n.options[i + 2].label === 'Heizregelung - Comfort' && v[i + 3] === 'HC_1' && n.options[i + 3].label === 'Heizregelung - Efficiency'
+        && !v.some(x => DROP.includes(x)) && new Set(v).size === v.length && !n.options.some((o, k) => k > 0 && sep(o) && sep(n.options[k - 1])) && !sep(n.options[n.options.length - 1])
+        && ['HP_turn_on', 'QM_0', 'OperationMode0', 'NightReductionWaterTempOn', 'Room setpoint RTC', 'toggle item'].every(x => v.includes(x)); };
+ck('Alle 10 Aktion-Auswahlen: "Heizregelung - Comfort/Efficiency" nach Leisemodus 3 (eigener Trenner), ohne Warmwasser, Desinfektion, Kuehlen, Auto und Warmwasser-Sollwert (Anlage ohne beides), keine doppelten Trenner',
+   acts.length === 10 && acts.every(optOk), acts.filter(n => !optOk(n)).map(n => n.name).join());
 process.exit(fails ? 1 : 0);

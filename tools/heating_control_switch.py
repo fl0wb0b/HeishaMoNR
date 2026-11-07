@@ -8,6 +8,10 @@
   last change is less than 5 minutes ago. Warns (does not forbid) for Efficiency in unfavourable conditions.
 * The selection always shows the state reported by HeishaMon (main/Heating_Control); a command is confirmed or reported as unconfirmed after 90 s.
 * Shows the optimizer's recommendation (display only, global OPT_hc_reco) in the group and raises one notice when a new warning appears.
+* Schedule (07.11.2026): the page "Zeitplan" gets the actions "Heizregelung - Comfort/Efficiency". "Function schedule" (WP Scheduler) sends the
+  request through a new 10th output to the same command function, so every rule above applies; the result goes to the log ("Input LOGS").
+  The optimizer treats a scheduled change like one by hand (no switching back for 2 h). The actions for DHW, sterilization and cooling are
+  removed from the selection (the plant has neither DHW nor cooling).
 
 Usage: python3 tools/heating_control_switch.py "<flows.json>"
 """
@@ -19,24 +23,31 @@ LINK_IN = "8b3d729fe630c248"        # "> MQTT OUT" (WP Managers): common command
 UI_TAB = "a5be8588.b8fbc8"          # page "Uebersicht"
 BROKER = "d82cfde48e832830"         # MQTT (lokal) 10.10.10.128
 GROUP = "hc_grp"
+SCHED_TAB = "35d210f042827344"      # WP Scheduler
+SCHED_FN = "e168945122de5aa2"       # "Function schedule" (WP Scheduler)
+LOG_IN = "031e62b0bf3df7d7"         # "Input LOGS": Protokoll
 
-CMD_JS = r"""// Heizregelung (Comfort / Efficiency) von Hand umschalten. KEIN automatischer Eingriff: nur auf Auswahl durch den Betreiber, ein einzelner Befehl,
-// ueber den gemeinsamen Befehlsweg (Sperre, Befehlsbudget, Quellen-Markierung). Der Zustand wird zurueckgelesen und bestaetigt (Funktion "Heizregelung Zustand").
+CMD_JS = r"""// Heizregelung (Comfort / Efficiency) umschalten: von Hand (Auswahl auf der Uebersicht) oder aus dem Zeitplan (Aktion "Heizregelung - Comfort/Efficiency",
+// msg.source 'Zeitplan', msg.topic = Zeile). KEIN automatischer Eingriff: ein einzelner Befehl ueber den gemeinsamen Befehlsweg (Sperre, Befehlsbudget,
+// Quellen-Markierung). Der Zustand wird zurueckgelesen und bestaetigt (Funktion "Heizregelung Zustand"). Aus dem Zeitplan steht das Ergebnis im Protokoll (Ausgang 4).
 var now = Date.now(), NAMES = ['Comfort', 'Efficiency'];
+var plan = msg.source === 'Zeitplan', wer = plan ? String(msg.topic || 'Zeitplan') : '';
 var want = String(msg.payload) === '1' ? 1 : (String(msg.payload) === '0' ? 0 : null);
-if (want === null) { return [null, null, null]; }
-function toast(text, color) { return {topic: 'Heizregelung', payload: text, highlight: color || ''}; }
+if (want === null) { return [null, null, null, null]; }
+function toast(text, color) { return {topic: 'Heizregelung', payload: (plan ? wer + ': ' : '') + text, highlight: color || ''}; }
+function prot(text) { return plan ? {topic: wer, payload: 'Heizregelung ' + text} : null; }                 // Protokollzeile, nur aus dem Zeitplan
+function nein(text, color, b) { return [null, toast(text, color), b, prot(NAMES[want] + ' – ' + text)]; }
 var cur = global.get('HEATING_CONTROL');
 var back = (cur === 0 || cur === 1) ? {payload: String(cur)} : null;                 // Auswahl zurueck auf den wirklichen Stand
 var pend = flow.get('hcPending');
-if (cur === want && !pend) { return [null, null, null]; }                              // ist schon so eingestellt
-if (cur !== 0 && cur !== 1) { return [null, toast('Heizregelung: Der aktuelle Stand der Wärmepumpe ist unbekannt (keine Meldung von HeishaMon). Nichts gesendet.', 'red'), null]; }
+if (cur === want && !pend) { return [null, null, null, prot('steht schon auf ' + NAMES[want] + ', nichts gesendet')]; }
+if (cur !== 0 && cur !== 1) { return nein('Heizregelung: Der aktuelle Stand der Wärmepumpe ist unbekannt (keine Meldung von HeishaMon). Nichts gesendet.', 'red', null); }
 var MQTT = global.get('MQTT', 'file') || {};
-if (MQTT.block_active === 1) { return [null, toast('Alle MQTT-Befehle sind gesperrt. Nichts gesendet.', 'red'), back]; }
-if (MQTT.message_limit !== undefined && MQTT.messages_today >= MQTT.message_limit) { return [null, toast('Das Tagesbudget für MQTT-Befehle ist aufgebraucht (' + MQTT.messages_today + ' von ' + MQTT.message_limit + '). Nichts gesendet.', 'red'), back]; }
-if (pend && now - pend.ts < 120000) { return [null, toast('Ein Befehl läuft noch (warte auf die Bestätigung der Wärmepumpe). Nichts gesendet.', 'orange'), back]; }
+if (MQTT.block_active === 1) { return nein('Alle MQTT-Befehle sind gesperrt. Nichts gesendet.', 'red', back); }
+if (MQTT.message_limit !== undefined && MQTT.messages_today >= MQTT.message_limit) { return nein('Das Tagesbudget für MQTT-Befehle ist aufgebraucht (' + MQTT.messages_today + ' von ' + MQTT.message_limit + '). Nichts gesendet.', 'red', back); }
+if (pend && now - pend.ts < 120000) { return nein('Ein Befehl läuft noch (warte auf die Bestätigung der Wärmepumpe). Nichts gesendet.', 'orange', back); }
 var MIN = 5 * 60000, last = flow.get('hcLast') || 0;
-if (now - last < MIN) { return [null, toast('Zu schnell: frühestens in ' + Math.ceil((MIN - (now - last)) / 60000) + ' min wieder umschalten (schont die Anlage). Nichts gesendet.', 'orange'), back]; }
+if (now - last < MIN) { return nein('Zu schnell: frühestens in ' + Math.ceil((MIN - (now - last)) / 60000) + ' min wieder umschalten (schont die Anlage). Nichts gesendet.', 'orange', back); }
 // Hinweise (kein Sperrgrund, die Entscheidung bleibt beim Betreiber)
 var hints = [], at = Number(global.get('TOP14_Outside_Temp')), sol = Number(global.get('TOP42_Z1_Water_Target_Temp')), vl = Number(global.get('TOP6_Main_Outlet_Temp'));
 var S = global.get('OPT_state') || {};
@@ -47,9 +58,50 @@ if (want === 1) {
     if (Number(global.get('compressor_frequency')) > 0 && isFinite(sol) && isFinite(vl) && sol - vl > 2) { hints.push('Vorlauf liegt ' + (sol - vl).toFixed(1).replace('.', ',') + ' K unter Soll'); }
 }
 flow.set('hcPending', {want: want, ts: now, from: cur}); flow.set('hcLast', now);
-var out = {topic: 'panasonic_heat_pump/commands/SetHeatingControl', payload: String(want), source: 'Heizregelung-Schalter'};
-return [out, toast('Heizregelung → ' + NAMES[want] + ' gesendet' + (hints.length ? '. Hinweis: ' + hints.join('; ') : '') + '. Warte auf die Bestätigung …', hints.length ? 'orange' : ''), null];
+var out = {topic: 'panasonic_heat_pump/commands/SetHeatingControl', payload: String(want), source: plan ? 'Zeitplan' : 'Heizregelung-Schalter'};
+var hinw = hints.length ? '. Hinweis: ' + hints.join('; ') : '';
+return [out, toast('Heizregelung → ' + NAMES[want] + ' gesendet' + hinw + '. Warte auf die Bestätigung …', hints.length ? 'orange' : ''), null, prot(NAMES[want] + ' gesendet' + hinw)];
 """
+
+# Zeitplan (07.11.2026): Aktion "Heizregelung - Comfort/Efficiency" in "Function schedule" (WP Scheduler). Der Block steht zwischen festen Markern und wird
+# bei jedem Lauf ersetzt (idempotent). Er schickt die Anforderung ueber einen neuen 10. Ausgang an "Heizregelung Befehl" (oben); dort gelten alle Schutzregeln.
+SCHED_BEGIN = "        // >>> Heizregelung aus dem Zeitplan (tools/heating_control_switch.py)\n"
+SCHED_END = "        // <<< Heizregelung aus dem Zeitplan\n"
+SCHED_JS = SCHED_BEGIN + r"""        // Comfort/Efficiency ueber den Schalter "Heizregelung Befehl" (WP Dash): Stand bekannt, MQTT-Sperre, Tagesbudget, 5 min Abstand, Bestaetigung;
+        // das Ergebnis (gesendet oder warum nicht) schreibt der Schalter ins Protokoll
+        if (action === "HC_0" || action === "HC_1")
+        {
+            var hcWant = action === "HC_0" ? 0 : 1;
+            msg99.topic = 'Scheduler (#' + scheduleNumber + ')'; msg99.payload = 'Heizregelung ' + (hcWant === 0 ? 'Comfort' : 'Efficiency') + ' angefordert';
+            global.set(topic + '_last_run', CurrentTime, "file");
+            return [null, null, null, null, null, null, null, null, msg99, {payload: String(hcWant), source: 'Zeitplan', topic: 'Scheduler (#' + scheduleNumber + ')'}];
+        }
+""" + SCHED_END
+SCHED_ANCHOR = '        if (action === "QM_0")'
+# Anlage ohne Warmwasser und ohne Kuehlen: diese Aktionen fallen aus der Auswahl (die Zeitplan-Logik bleibt unveraendert)
+ACTION_DROP = {"DHW", "Sterilization", "OperationMode1", "OperationMode2", "OperationMode3", "OperationMode4", "OperationMode5", "OperationMode6", "DHW setpoint"}
+ACTION_HC = [{"label": "------------------------------", "value": "hc_sep", "type": "str"},
+             {"label": "Heizregelung - Comfort", "value": "HC_0", "type": "str"},
+             {"label": "Heizregelung - Efficiency", "value": "HC_1", "type": "str"}]
+
+
+def is_sep(o):
+    return set(o.get("label", "")) == {"-"}
+
+
+def action_options(opts):
+    """Auswahl ohne Warmwasser/Kuehlen, Heizregelung nach Leisemodus 3, keine zwei Trenner hintereinander und keiner am Ende."""
+    keep = [o for o in opts if o.get("value") not in ACTION_DROP and o.get("value") not in {"hc_sep", "HC_0", "HC_1"}]
+    pos = next(i for i, o in enumerate(keep) if o.get("value") == "QM_3") + 1
+    keep[pos:pos] = [dict(o) for o in ACTION_HC]
+    out = []
+    for o in keep:
+        if is_sep(o) and (not out or is_sep(out[-1])):
+            continue
+        out.append(o)
+    while out and is_sep(out[-1]):
+        out.pop()
+    return out
 
 STATE_JS = r"""// Heizregelung: Zustand von HeishaMon (main/Heating_Control: 0 = Comfort, 1 = Efficiency) anzeigen, einen gesendeten Befehl bestaetigen oder melden,
 // dass keine Bestaetigung kam (Ausloeser "tick" alle 15 s). Sendet selbst nie etwas an die Waermepumpe.
@@ -94,8 +146,10 @@ def nodes():
          "group": GROUP, "order": 1, "width": 0, "height": 0, "passthru": False, "multiple": False,
          "options": [{"label": "Comfort", "value": "0", "type": "str"}, {"label": "Efficiency", "value": "1", "type": "str"}],
          "payload": "", "topic": "topic", "topicType": "msg", "className": "", "x": 190, "y": y0, "wires": [["hc_cmd"]]},
-        {"id": "hc_cmd", "type": "function", "z": TAB, "name": "Heizregelung Befehl", "func": CMD_JS, "outputs": 3, "timeout": 0, "noerr": 0, "initialize": "", "finalize": "", "libs": [],
-         "x": 430, "y": y0, "wires": [["hc_out"], ["hc_toast"], ["hc_sel"]]},
+        {"id": "hc_cmd", "type": "function", "z": TAB, "name": "Heizregelung Befehl", "func": CMD_JS, "outputs": 4, "timeout": 0, "noerr": 0, "initialize": "", "finalize": "", "libs": [],
+         "x": 430, "y": y0, "wires": [["hc_out"], ["hc_toast"], ["hc_sel"], ["hc_log"]]},
+        {"id": "hc_sched_in", "type": "link in", "z": TAB, "name": "Heizregelung aus dem Zeitplan", "links": ["hc_sched_out"], "x": 190, "y": y0 + 40, "wires": [["hc_cmd"]]},
+        {"id": "hc_log", "type": "link out", "z": TAB, "name": "Heizregelung (Zeitplan) → Protokoll", "mode": "link", "links": [LOG_IN], "x": 670, "y": y0 + 165, "wires": []},
         {"id": "hc_out", "type": "link out", "z": TAB, "name": "Heizregelung → MQTT OUT", "mode": "link", "links": [LINK_IN], "x": 670, "y": y0 - 30, "wires": []},
         {"id": "hc_in", "type": "mqtt in", "z": TAB, "name": "Status Heizregelung", "topic": "panasonic_heat_pump/main/Heating_Control", "qos": "0", "datatype": "auto-detect",
          "broker": BROKER, "nl": False, "rap": True, "rh": 0, "inputs": 0, "x": 200, "y": y0 + 80, "wires": [["hc_state"]]},
@@ -112,10 +166,38 @@ def nodes():
     ]
 
 
+def patch_schedule(fn):
+    """Block "Heizregelung" in "Function schedule" (ersetzt einen vorhandenen), 10. Ausgang auf hc_sched_out. Gibt den neuen Knoten zurueck."""
+    func = fn["func"]
+    a, b = func.find(SCHED_BEGIN), func.find(SCHED_END)
+    if a >= 0 and b > a:
+        func = func[:a] + func[b + len(SCHED_END):]
+    if func.count(SCHED_ANCHOR) != 1:
+        raise SystemExit("'Function schedule': Ansatzpunkt %r nicht genau einmal gefunden, nichts geaendert" % SCHED_ANCHOR)
+    func = func.replace(SCHED_ANCHOR, SCHED_JS + SCHED_ANCHOR)
+    wires = [list(w) for w in fn["wires"][:9]]
+    if len(wires) != 9:
+        raise SystemExit("'Function schedule' hat %d statt 9 Ausgaenge, nichts geaendert" % len(fn["wires"]))
+    labels = list(fn.get("outputLabels") or [""] * 9)[:9] + ["Heizregelung (WP Dash)"]
+    return dict(fn, func=func, outputs=10, wires=wires + [["hc_sched_out"]], outputLabels=labels)
+
+
 def apply(flows):
+    by = {n["id"]: n for n in flows}
+    for need, what in ((LINK_IN, "Link-In '> MQTT OUT'"), (LOG_IN, "Link-In 'Input LOGS'"), (SCHED_FN, "'Function schedule'")):
+        if need not in by:
+            raise SystemExit("%s (%s) nicht gefunden, nichts geaendert" % (what, need))
+    fn = by[SCHED_FN]
+    new = nodes() + [patch_schedule(fn),
+                     {"id": "hc_sched_out", "type": "link out", "z": SCHED_TAB, "name": "Heizregelung → WP Dash", "mode": "link", "links": ["hc_sched_in"],
+                      "x": fn["x"] + 290, "y": fn["y"] + 140, "wires": []}]
+    acts = [n for n in flows if n["type"] == "ui_dropdown" and n.get("z") == SCHED_TAB and str(n.get("name", "")).startswith("Action") and str(n.get("name"))[6:].isdigit()]
+    if len(acts) != 10:
+        raise SystemExit("%d statt 10 Aktion-Auswahlen im Zeitplan gefunden, nichts geaendert" % len(acts))
+    new += [dict(n, options=action_options(n["options"])) for n in acts]
     index = {n["id"]: i for i, n in enumerate(flows)}
     changed = False
-    for n in nodes():
+    for n in new:
         if n["id"] in index:
             if flows[index[n["id"]]] != n:
                 flows[index[n["id"]]] = n
@@ -123,12 +205,11 @@ def apply(flows):
         else:
             flows.append(n)
             changed = True
-    link_in = next((n for n in flows if n["id"] == LINK_IN), None)
-    if link_in is None:
-        raise SystemExit("Link-In '> MQTT OUT' (%s) nicht gefunden, nichts geaendert" % LINK_IN)
-    if "hc_out" not in link_in.get("links", []):
-        link_in["links"] = list(link_in.get("links", [])) + ["hc_out"]
-        changed = True
+    for lid, sender in ((LINK_IN, "hc_out"), (LOG_IN, "hc_log")):
+        link_in = flows[index[lid]]
+        if sender not in link_in.get("links", []):
+            link_in["links"] = list(link_in.get("links", [])) + [sender]
+            changed = True
     return changed
 
 
