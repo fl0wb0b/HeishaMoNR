@@ -159,7 +159,7 @@ function txt() {
     if (!A.on) { return 'aus'; }
     if (!A.cand) { return 'an · wartet auf ≤ 2 °C oder ≥ 4 °C'; }
     var v = A.versuch && A.versuch.lage === A.cand ? A.versuch : null;
-    return 'an · ' + lage(A.cand) + ' seit ' + hm(A.seit) + (A.erledigt === A.cand ? ' · geschaltet ' + hm(A.erledigtTs)
+    return 'an · ' + lage(A.cand) + ' seit ' + hm(A.seit) + (A.erledigt === A.cand ? (A.abbruch ? ' · keine Bestätigung nach ' + VERSUCHE + ' Versuchen' : ' · geschaltet ' + hm(A.erledigtTs))
         : (v ? ' · angefordert ' + hm(v.ts) + (v.n > 1 ? ' (Versuch ' + v.n + ')' : '') : ' · schaltet ab ' + hm(A.seit + HALTEN * MIN)));
 }
 function anfordern(kalt, at) {                                                       // Heizregelung an den Schalter-Befehl, bei warm dazu Quiet 3; liefert die Protokollzeile
@@ -185,13 +185,13 @@ if (msg.topic === 'schalter') {
     if (context.get('neu') !== false) { context.set('neu', false); out[3] = {payload: !!A.on}; }   // nach Neustart/Einspielen: Schalter zeigt den gemerkten Stand
     var raw = global.get('TOP14_Outside_Temp'), at = (raw === null || raw === undefined || raw === '') ? NaN : Number(raw);
     var z = (A.on && isFinite(at) && global.get('TOP26_Defrosting_State') !== 1) ? (at <= 2 ? 'kalt' : (at >= 4 ? 'warm' : null)) : null;
-    if (A.versuch && global.get('HEATING_CONTROL') === (A.versuch.lage === 'kalt' ? 0 : 1)) { A.erledigt = A.versuch.lage; A.erledigtTs = now; A.versuch = null; }   // von HeishaMon gemeldet: Lage erledigt (auch wenn die Temperatur inzwischen wieder wechselt)
+    if (A.versuch && global.get('HEATING_CONTROL') === (A.versuch.lage === 'kalt' ? 0 : 1)) { A.erledigt = A.versuch.lage; A.erledigtTs = now; A.versuch = null; A.abbruch = false; }   // von HeishaMon gemeldet: Lage erledigt (auch wenn die Temperatur inzwischen wieder wechselt)
     if (z && z !== A.cand) { A.cand = z; A.seit = now; }
     if (A.on && A.cand && A.cand !== A.erledigt && now - A.seit >= HALTEN * MIN) {
         var kalt = A.cand === 'kalt', v = A.versuch && A.versuch.lage === A.cand ? A.versuch : null;
         if (!v) { A.versuch = {lage: A.cand, ts: now, n: 1}; out[2] = {topic: WER, payload: 'Außen ' + at + ' °C seit ' + HALTEN + ' min: ' + anfordern(kalt, at)}; }
         else if (now - v.ts >= WIEDER * MIN) {
-            if (v.n >= VERSUCHE) { A.erledigt = A.cand; A.erledigtTs = now; A.versuch = null; out[2] = {topic: WER, payload: (kalt ? 'Comfort' : 'Efficiency') + ' nach ' + VERSUCHE + ' Versuchen nicht gemeldet, Automatik wartet auf den nächsten Wechsel'}; }
+            if (v.n >= VERSUCHE) { A.erledigt = A.cand; A.erledigtTs = now; A.versuch = null; A.abbruch = true; out[2] = {topic: WER, payload: (kalt ? 'Comfort' : 'Efficiency') + ' nach ' + VERSUCHE + ' Versuchen nicht gemeldet, Automatik wartet auf den nächsten Wechsel'}; }
             else { v.n++; v.ts = now; out[2] = {topic: WER, payload: 'Versuch ' + v.n + ': ' + anfordern(kalt, at)}; }
         }
     }

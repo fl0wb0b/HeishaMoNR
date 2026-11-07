@@ -182,7 +182,7 @@ ck('... in den naechsten 9 min keine weitere', out(o, 0).length === 0, '');
 o = run(1, 1, false);
 ck('... nach 10 min Versuch 2 (Protokoll "Versuch 2")', out(o, 0).length === 1 && /Versuch 2/.test(out(o, 2)[0].payload), JSON.stringify(out(o, 2)));
 o = run(10, 1, false).concat(run(10, 1, false), run(60, 1, false));
-ck('... Versuch 3, danach Schluss mit Protokoll "nach 3 Versuchen", keine 4. Anforderung', out(o, 0).length === 1 && out(o, 2).some(m => /nach 3 Versuchen/.test(m.payload)), JSON.stringify(out(o, 2)));
+ck('... Versuch 3, danach Schluss mit Protokoll "nach 3 Versuchen", keine 4. Anforderung, Text "keine Bestätigung" statt "geschaltet" (Kimi 07.11.)', out(o, 0).length === 1 && out(o, 2).some(m => /nach 3 Versuchen/.test(m.payload)) && out(o, 4).some(m => /keine Bestätigung nach 3 Versuchen/.test(m.payload)) && !out(o, 4).some(m => /geschaltet/.test(m.payload)), JSON.stringify(out(o, 4)));
 atReset({HEATING_CONTROL: 1}); at('schalter', true); o = run(31, 1, false); g.HEATING_CONTROL = 0; o = run(1, 1, false); const tx2 = (out(o, 4).pop() || {}).payload || '';
 ck('Meldet HeishaMon den Modus (z. B. nach Handschaltung), ist die Lage erledigt: keine weitere Anforderung, Text "geschaltet"', out(o, 0).length === 0 && /geschaltet/.test(tx2) && run(30, 1, false).every(r => !r[0]), tx2);
 atReset(); at('schalter', true); o = run(60, null);
