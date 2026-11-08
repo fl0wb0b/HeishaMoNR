@@ -98,7 +98,7 @@ const BIND_REL = 0.25, BINDUNG = 0.1;
 const SCHALTER = {startHystK: 5, comfortWiederK: 5};             // 99 = „aus“: für Glättung/Bindung auf 5 K begrenzt (wirkt ab ~3 K wie aus), ab 5 K wieder 99
 const GRENZEN = {ua: [0.05, 0.4], gain: [-0.5, 1.5], sonne: [0, 0.5], ch: [0.5, 30], cr: [0.1, 5], hr: [0.1, 2],                         // nur die Grenzen der Fits (lsqBox, Filter der Kandidatenlisten)
                  hausAtTauMin: [1, 720], startK: [2.5, 3.5], stopK: [2.75, 3.5], startVerzugMin: [1, 25], stopHaltMin: [1, 6], eisRate: [0.0005, 0.5],
-                 abtauDauerMin: [5, 15], abtauPelW: [300, 2500], abtauWaermeKWh: [0.1, 2], nachAbtauEffMin: [0, 90]};   // und die Such-/Rasterbereiche
+                 abtauDauerMin: [5, 15], abtauPelW: [300, 2500], abtauWaermeKWh: [0.1, 2], nachAbtauEffMin: [0, 90], pelHz2: [0, 0.15]};   // und die Such-/Rasterbereiche
 const BAENDER = [{id: 'unter0', name: '< 0 °C', lo: -Infinity, hi: 0}, {id: '0bis4', name: '0…4 °C', lo: 0, hi: 4}, {id: '4bis8', name: '4…8 °C', lo: 4, hi: 8},
                  {id: '8bis12', name: '8…12 °C', lo: 8, hi: 12}, {id: 'ab12', name: '≥ 12 °C', lo: 12, hi: Infinity}];
 const ABDECKUNG = {laufMinBand: 300, tage: 21, baender: 3};       // Dünn-Daten-Phase: unter 21 Tagen oder unter 3 Bändern mit je ≥ 300 Laufminuten
@@ -109,9 +109,10 @@ const GATE = {rel: 0.10, kennzahlen: [
     {id: 'wasserkreis', name: 'Wasserkreis RMSE (K)', wert: g => g.teil.wasserkreisRmseK, grenze: 1.5, tol: 0.02},
     {id: 'pause', name: 'Pause Median-Fehler (min)', wert: g => g.zyklenHausSimuliert.pause.medianAbsMin, n: g => g.zyklenHausSimuliert.pause.n, grenze: 30, tol: 1},
     // 08.11.2026: Strom und Abtauungen im Freilauf (dort, wo es zählt); Mediane aus weniger als GATE_N_MIN Fällen entscheiden nichts (im Dauerlauf gab es 1 Pause im Test)
-    {id: 'freilaufStrom', ampel: false, name: 'Freilauf Strom-Abweichung (Anteil)', wert: g => g.freilaufSumme && g.freilaufSumme.kwhElMessung > 0 ? Math.abs(g.freilaufSumme.kwhElZwilling / g.freilaufSumme.kwhElMessung - 1) : null, grenze: 0.10, tol: 0.01},
-    {id: 'freilaufAbtau', ampel: false, name: 'Freilauf Abtauungen-Abweichung (Anteil)', wert: g => g.freilaufSumme ? Math.abs(g.freilaufSumme.abtauZwilling - g.freilaufSumme.abtauMessung) / Math.max(3, g.freilaufSumme.abtauMessung) : null, grenze: 0.5, tol: 0.1}]};
+    {id: 'freilaufStrom', ampel: false, name: 'Freilauf Strom-Abweichung (Anteil)', wert: g => g.freilaufSumme && g.freilauf && g.freilauf.length >= 2 && g.freilaufSumme.kwhElMessung > 0 ? Math.abs(g.freilaufSumme.kwhElZwilling / g.freilaufSumme.kwhElMessung - 1) : null, grenze: 0.10, tol: 0.01},
+    {id: 'freilaufAbtau', ampel: false, name: 'Freilauf Abtauungen-Abweichung (Anteil)', wert: g => g.freilaufSumme && g.freilauf && g.freilauf.length >= 2 ? Math.abs(g.freilaufSumme.abtauZwilling - g.freilaufSumme.abtauMessung) / Math.max(3, g.freilaufSumme.abtauMessung) : null, grenze: 0.3, tol: 0.1}]};
 const GATE_N_MIN = 3;
+const LERN_KEYS = ['abtauDauerMin', 'abtauLinie', 'abtauPelW', 'abtauWaermeKWh', 'eisAnker', 'nachAbtauEffMin', 'hsBeimAbtauen', 'capQ3Tab'];
 const FIT_KEYS = {waerme: ['pthHz', 'pthHzAT', 'pthEnde'], strom: ['pel0', 'pelHz', 'pelRL', 'pelAT', 'pelHz2'], standby: ['pelPauseW', 'pelAusW'], pumpe: ['flowPause', 'flowComfort', 'flowEff', 'pumpe0', 'pumpeJeL'], luefter: ['fanQ', 'fanJeHz'],
                   rohr: ['pipe0', 'pipeQ'], startStopp: ['stopK', 'stopHaltMin', 'startK', 'startVerzugMin', 'startHystK'], regler: ['regSenkK', 'regAbHzMin', 'comfortWiederK', 'effT1', 'effK1', 'effL1', 'effT2', 'effK2', 'effKp', 'effKi'],
                   wasserkreis: ['cw', 'krad', 'cr', 'hr', 'kv'], zyklen: [], haus: ['ua', 'gain', 'ch', 'sonne', 'hausAtTauMin'], raeume: ['raeume'], abtau: ['abtauDauerMin', 'abtauLinie', 'abtauPelW', 'abtauWaermeKWh', 'eisAnker', 'nachAbtauEffMin'], deckel: ['capQ3Tab'], vereisung: ['eisRate']};
@@ -235,7 +236,9 @@ function fitPth(D, r, B) {
 function fitPel(D, r, B) {
     const S = stabil(D, r), X = S.map(m => [1, m.hz, m.hz * m.rl, m.hz * m.at, m.hz * m.hz]), y = S.map(m => m.pel), K = ['pel0', 'pelHz', 'pelRL', 'pelAT', 'pelHz2'];
     const vor = B ? K.map(k => B.vor[k] !== undefined ? B.vor[k] : (Z.PARAM[k] ? Z.PARAM[k][0] : 0)) : null;   // aelterer Satz ohne pelHz2: Vorgabe 0
-    const f = B ? lsqBind(X, y, vor, skalen(B, K), B.lambda) : lsq(X, y); return {pel0: rd(f.x[0], 2), pelHz: rd(f.x[1], 4), pelRL: rd(f.x[2], 5), pelAT: rd(f.x[3], 5), pelHz2: rd(f.x[4], 6), _fit: {n: f.n, rmseW: rd(f.rmse, 1), modell: 'TOP16 = c0 + Hz · (c1 + c2 · RL + c3 · AT)', dPel_dRL_16_5Hz: rd(f.x[2] * 16.5, 2), dPel_dAT_16_5Hz: rd(f.x[3] * 16.5, 2)}}; }
+    let f = B ? lsqBind(X, y, vor, skalen(B, K), B.lambda) : lsq(X, y);
+    if (!(f.x[4] >= 0 && f.x[4] <= GRENZEN.pelHz2[1])) { f = lsqBox(X, y, [-1e9, -1e9, -1e9, -1e9, 0], [1e9, 1e9, 1e9, 1e9, GRENZEN.pelHz2[1]]); }   // Kimi 08.11.: sonst kippt die Aufteilung linear/quadratisch (pelHz < 0)
+    return {pel0: rd(f.x[0], 2), pelHz: rd(f.x[1], 4), pelRL: rd(f.x[2], 5), pelAT: rd(f.x[3], 5), pelHz2: rd(f.x[4], 6), _fit: {n: f.n, rmseW: rd(f.rmse, 1), modell: 'TOP16 = c0 + Hz · (c1 + c2 · RL + c3 · AT)', dPel_dRL_16_5Hz: rd(f.x[2] * 16.5, 2), dPel_dAT_16_5Hz: rd(f.x[3] * 16.5, 2)}}; }
 function fitStandby(D, r) {
     const p = D.M.filter(m => m.ok && inTage(m, r) && !m.lauf && m.pel !== null);
     const a = p.filter(m => m.pumpe).map(m => m.pel), b = p.filter(m => !m.pumpe).map(m => m.pel);
@@ -482,8 +485,8 @@ function abtauungen(D, r) {
     const M = D.M, ep = [];
     for (let i = 1; i < M.length; i++) {
         if (!(M[i].def && !M[i - 1].def && inTage(M[i], r))) { continue; }
-        let j = i; while (j + 1 < M.length && M[j + 1].def) { j++; }
-        const v = M[i - 1], w = M.slice(i, j + 1), nach = [];
+        let j = i; for (;;) { let k = j + 1; while (k < M.length && k <= j + 3 && !M[k].def) { k++; } if (k < M.length && k <= j + 3 && M[k].def) { j = k; } else { break; } }   // Lücken bis 2 min: dieselbe Abtauung (Kimi 08.11.)
+        const v = M[i - 1], w = M.slice(i, j + 1).filter(m => m.def), nach = [];
         for (let o = 1; o <= 60 && j + o < M.length; o++) { const m = M[j + o]; nach.push(m.lauf && !m.def ? m.hz : null); }
         ep.push({i0: i, i1: j, dauer: j - i + 1, at: v.at, rh: M[i].rh, pipe: v.pipe, hc: v.hc, ok: w.every(m => m.ok) && v.ok,
                  pel: median(w.filter(m => m.hz > 0 && m.pel !== null && !m.hI).map(m => m.pel)),
@@ -565,8 +568,8 @@ function kalibriereEis(P0) {
 // ------------------------------------------------------------------ Alles fitten
 // B (optional, training-v2): Bindung an die Vorwerte {vor: Parametersatz (Z.mitWerten), lambda}; null = ungebunden wie bisher
 function fitAlles(D, r, B) {
-    let P = Z.standard(); const fit = {};
-    const nimm = (name, o) => { fit[name] = o._fit || {}; Object.keys(o).forEach(k => { if (k !== '_fit') { P[k] = o[k]; } }); };
+    let P = Z.standard(); const fit = {}, geliefert = {};
+    const nimm = (name, o) => { fit[name] = o._fit || {}; Object.keys(o).forEach(k => { if (k !== '_fit') { P[k] = o[k]; geliefert[k] = true; } }); };
     B = B && B.vor && B.lambda > 0 ? B : null;
     nimm('waerme', fitPth(D, r, B));
     nimm('strom', fitPel(D, r, B));
@@ -583,7 +586,7 @@ function fitAlles(D, r, B) {
     nimm('deckel', fitDeckelQ3(D, r, P));
     nimm('abtau', fitAbtau(D, r, P));
     nimm('vereisung', fit.abtau && fit.abtau.n >= ABTAU_MIN ? kalibriereEisDaten(D, r, P) : kalibriereEis(P));
-    return {P: P, fit: fit};
+    return {P: P, fit: fit, geliefert: geliefert};
 }
 
 // ------------------------------------------------------------------ Güte
@@ -636,17 +639,17 @@ function freilauf(D, tag, P) {
     if (idx.length < 600) { return null; }
     let S = Z.neu(P, initAus(D, idx[0], P));
     const e = {vl: [], pel: [], th: [], raeume: {}}; RAEUME.forEach(id => { e.raeume[id] = []; });
-    const sum = {elZ: 0, elM: 0, thZ: 0, thM: 0, startsZ: 0, startsM: 0, laufZ: 0, laufM: 0, abtauZ: 0, abtauM: 0, hsZ: 0};
+    const sum = {elZ: 0, elM: 0, thZ: 0, thM: 0, startsZ: 0, startsM: 0, laufZ: 0, laufM: 0, abtauZ: 0, abtauM: 0, hsZ: 0, hsM: 0};
     let hzVor = null, modVor = null;
     idx.forEach((i, k) => {
         const m = D.M[i], res = Z.schritt(S, eingabe(m, true), P); S = res.S; const A = res.A;
         if (k > 0) {
             if (m.vl !== null && m.pumpe) { e.vl.push(A.hp.Main_Outlet_Temp - m.vl); }
-            if (m.pel !== null) { e.pel.push(A.pelKorr - (m.pel + (m.lauf ? P.pelKorrW : 0))); }
+            if (m.pel !== null) { e.pel.push(A.pelKorr + (A.pelHs || 0) - (m.pel + (m.lauf ? P.pelKorrW : 0))); }
             if (m.th !== null) { e.th.push(A.th - m.th); }
             RAEUME.forEach(id => { if (m.rooms[id] !== null) { e.raeume[id].push(A.raeume[id] - m.rooms[id]); } });
         }
-        sum.elZ += A.pelKorr / 60000; sum.elM += m.pel === null ? 0 : (m.pel + (m.lauf ? P.pelKorrW : 0)) / 60000;
+        sum.elZ += (A.pelKorr + (A.pelHs || 0)) / 60000; if (A.hs) { sum.hsZ++; } if (m.hI) { sum.hsM++; } sum.elM += m.pel === null ? 0 : (m.pel + (m.lauf ? P.pelKorrW : 0)) / 60000;   // TOP16 der Anlage enthält den internen Heizstab (Abtauungen mit Heizstab: 3,6–3,8 kW)
         sum.thZ += Math.max(0, A.pth) / 60000; sum.thM += m.lauf && m.flow > 1 && m.vl !== null && m.rl !== null ? Math.max(0, m.flow * Z.CP * (m.vl - m.rl)) / 60 : 0;
         // Starts wie gemessen zaehlen: Verdichter aus → an (mit den zwei Starts je Abtauung); bis 08.11. zaehlte der Zwilling nur Thermostat-Starts
         if (k > 0 && A.hz > 0 && !(hzVor > 0)) { sum.startsZ++; } if (k > 0 && m.lauf && !D.M[i - 1].lauf) { sum.startsM++; }
@@ -654,7 +657,7 @@ function freilauf(D, tag, P) {
         hzVor = A.hz; modVor = A.modus;
         if (A.modus === 'lauf' || A.modus === 'abtauen') { sum.laufZ++; } if (m.lauf) { sum.laufM++; }
     });
-    const o = {tag: tag, minuten: idx.length, kwhElZwilling: rd(sum.elZ, 2), kwhElMessung: rd(sum.elM, 2), kwhThZwilling: rd(sum.thZ, 2), kwhThMessung: rd(sum.thM, 2), startsZwilling: sum.startsZ, startsMessung: sum.startsM, abtauZwilling: sum.abtauZ, abtauMessung: sum.abtauM,
+    const o = {tag: tag, minuten: idx.length, kwhElZwilling: rd(sum.elZ, 2), kwhElMessung: rd(sum.elM, 2), kwhThZwilling: rd(sum.thZ, 2), kwhThMessung: rd(sum.thM, 2), startsZwilling: sum.startsZ, startsMessung: sum.startsM, abtauZwilling: sum.abtauZ, abtauMessung: sum.abtauM, heizstabMinZwilling: sum.hsZ, heizstabMinMessung: sum.hsM,
                laufMinZwilling: sum.laufZ, laufMinMessung: sum.laufM, rmseVlK: rd(rmse(e.vl), 2), rmsePelW: rd(rmse(e.pel), 1), rmseHausK: rd(rmse(e.th), 2), biasHausK: rd(mean(e.th), 2), raeume: {}};
     RAEUME.forEach(id => { o.raeume[id] = e.raeume[id].length ? {rmseK: rd(rmse(e.raeume[id]), 2), biasK: rd(mean(e.raeume[id]), 2)} : null; });
     return o;
@@ -742,6 +745,11 @@ function trainiere(dir, opt) {
     const her = Z.herkunft(), rohW = {}, rohT = {};
     Object.keys(her).forEach(k => { rohW[k] = fall.P[k]; rohT[k] = ftr.P[k]; });
     const werte = V ? glaetteSatz(vorW, rohW, anteil) : rohW, werteTraining = V ? glaetteSatz(vorT, rohT, anteil) : rohT;
+    if (V) {                                                                         // Kimi 08.11.: Lernwerte, die heute nichts lieferten (zu wenige Abtauungen/Stufen), bleiben beim Champion statt zur Vorgabe zu wandern
+        LERN_KEYS.forEach(k => { if (!fall.geliefert[k] && k in vorW) { werte[k] = clone(vorW[k]); } if (!ftr.geliefert[k] && k in vorT) { werteTraining[k] = clone(vorT[k]); } });
+        if (fall.fit.abtau && fall.fit.abtau.n >= ABTAU_MIN) { werte.eisRate = kalibriereEisDaten(D, alle, Z.mitWerten(werte)).eisRate; }   // Klippe: eisRate passend zum geglätteten Satz
+        if (ftr.fit.abtau && ftr.fit.abtau.n >= ABTAU_MIN) { werteTraining.eisRate = kalibriereEisDaten(D, T.train, Z.mitWerten(werteTraining)).eisRate; }
+    }
     const PK = Z.mitWerten(werteTraining);
     const gTrain = guete(D, T.train, PK), gTest = guete(D, T.test, PK);
     let roh = null, vorherNeu = null, ent = entscheide(gTest, null, opt.gate);

@@ -302,11 +302,15 @@ function schritt(S0, E, P) {
     }
     if (abtauJetzt) { pthW = hz > 0 ? -P.abtauWaermeKWh * 1000 * 60 / abtauUmkehrMin(P) : 0; pelW = hz > 0 ? P.abtauPelW : P.pelPauseW; }   // Wärmeentzug nur in der Kreisumkehr
     // 6. Heizstab (Handbuch J 14.6.1 mit den Einstellungen der Anlage)
+    // Heizstab beim Abtauen (eigene Daten 06.11.2026, AT −1 °C): ein bei Vorlauf ≤ Soll + hsStartK, an bis zum Ende der Abtauung (auch wenn der Vorlauf wieder steigt),
+    // danach aus; ohne Wartezeiten. Nur mit hsBeimAbtauen (gelernt) und unter der Heizstab-Freigabe.
+    const abHs = abtauJetzt && P.hsFrei && P.hsBeimAbtauen && aw < P.hsOnAT;
     if (S.hs) {
-        if (!lauf || aw > P.hsOnAT + 2 || S.vl >= soll + P.hsStopK || (abtauJetzt && !P.hsBeimAbtauen)) { S.hs = 0; S.hsAus = 0; }
+        if (S.hsAbtau ? !abtauJetzt : (!lauf || aw > P.hsOnAT + 2 || S.vl >= soll + P.hsStopK || (abtauJetzt && !P.hsBeimAbtauen))) { S.hs = 0; S.hsAus = 0; S.hsAbtau = false; }
     } else {
         S.hsAus++;
-        if (P.hsFrei && lauf && aw < P.hsOnAT && S.rt >= P.hsDelayMin && S.rt >= P.hsPumpeMin && S.vl < soll + P.hsStartK && S.hsAus >= P.hsSperreMin && (!abtauJetzt || P.hsBeimAbtauen)) { S.hs = 1; }
+        if (abHs && S.vl < soll + P.hsStartK) { S.hs = 1; S.hsAbtau = true; }
+        else if (P.hsFrei && lauf && !abtauJetzt && aw < P.hsOnAT && S.rt >= P.hsDelayMin && S.rt >= P.hsPumpeMin && S.vl < soll + P.hsStartK && S.hsAus >= P.hsSperreMin) { S.hs = 1; }
     }
     if (S.hs) { S.n.hsMin++; }
     // 7. Pumpe
