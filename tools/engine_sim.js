@@ -1184,6 +1184,8 @@ console.log('--- Seite "Optimierer": Karten-Daten und Darstellung');
       check('kurze "wartet"-Episoden (< 5 min ohne Sperre/Vorschlag) werden ausgefiltert, die Liste bleibt leer', V2.ep.length === 4 && VW.logRows(V2, T0 + 40 * MIN).length === 0, V2.ep.length + ' Episoden'); }
     const evil = JSON.parse(JSON.stringify(B)); evil.card.prop.warum = '<script>alert(1)</script>'; evil.rules.rules[1].line.l = '<img src=x onerror=1>';
     check('Darstellung: Texte werden maskiert (kein HTML aus Gruenden/Namen)', !/<script>alert|<img src=x/.test(UI.html('card', evil.card) + UI.html('rules', evil.rules)), '');
+    check('Regelzeilen (08.11.2026, Design-Kritik): Bezeichnung bricht nur an Wortgrenzen, der Wert rutscht rechtsbuendig in die naechste Zeile (vorher "Bedarfsä|nderung", "Rückstan|d")',
+          /\.oe-ln\{[^}]*flex-wrap:wrap/.test(usrc) && /\.oe-ln span\{[^}]*overflow-wrap:break-word/.test(usrc) && !/\.oe-ln span\{[^}]*anywhere/.test(usrc) && /\.oe-ln b\{[^}]*margin-left:auto/.test(usrc), '');
     const hc = UI.html('card', B.card), pB = B.card.prop;
     check('Vorschlagskarte (13.10.): hervorgehoben, Befehl, Zielwert, Begruendung, erwartete Wirkung und Rueckweg offen sichtbar (nicht eingeklappt), Knopf Übernehmen grau mit Grund "gesperrt: Hauptschalter aus", Verwerfen',
           /class="oe-prop"/.test(hc) && /<button data-a="uebernehmen" disabled>Übernehmen<\/button>/.test(hc) && /🔒 gesperrt: Hauptschalter aus/.test(hc) && /data-a="verwerfen"/.test(hc) && !/data-a="zuruecksetzen"|data-a="sperren"/.test(hc) && !/<details/.test(hc) &&
