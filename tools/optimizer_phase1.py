@@ -2679,21 +2679,22 @@ upsert({"id": UI_TAB, "type": "ui_tab", "name": "Optimierung", "icon": "tune", "
 # Seiten zusammengelegt (13.10., Branch tabs-zusammen): "Optimierung" = Verlaeufe + Raumkarte + Waermefahrplan, "Optimierer" = Entscheidungsmaschine +
 # Quiet-Messwerte, "Daten & Güte" bleibt. Die Tabs "Wärmefahrplan" und "Quiet-Messwerte" bleiben als leere, ausgeblendete Tabs stehen (IDs und Menue-
 # Positionen bleiben, Lesezeichen #!/n zeigen weiter auf dieselbe Stelle; deploy_opt.sh entfernt keine Knoten).
-OPT_W = 17
+OPT_W = 16                                       # UI-Überarbeitung 03.–05.11.2026 (live, übernommen 08.11.): 16 Einheiten = 858 px statt 17
 ENG_TAB = "opt_eng_ui_tab"                       # Seite "Optimierer" (eigenes Kennzeichen; ui_tab und Karten der Maschine weiter unten)
-ENG_W = 17                                       # Gruppenbreite der Seite "Optimierer" (Begruendung bei ENG_GROUPS); gilt auch fuer die Quiet-Karten dort (keine gemischten Breiten)
+ENG_W = 16                                       # Gruppenbreite der Seite "Optimierer" (Begruendung bei ENG_GROUPS); gilt auch fuer die Quiet-Karten dort (keine gemischten Breiten)
 UI_TAB_DATA = "opt_ui_tab_data"
 upsert({"id": UI_TAB_DATA, "type": "ui_tab", "name": "Daten & Güte", "icon": "analytics", "order": 12.75, "disabled": False, "hidden": False})
-GROUPS = [("opt_g_ch_wp", "Wärmepumpe · letzte 24 h", OPT_W, UI_TAB), ("opt_g_ch_rooms", "Räume · letzte 24 h", OPT_W, UI_TAB), ("opt_g_ch_at", "Wetter · 24 h zurück, 36 h voraus", OPT_W, UI_TAB),
-          ("opt_g_rooms", "Räume und Komfortbänder", OPT_W, UI_TAB),
-          ("opt_g_opt", "Optimierung", OPT_W, UI_TAB_DATA),
-          ("opt_g_wx", "Außen & Wetter", OPT_W, UI_TAB_DATA), ("opt_g_calc", "Berechnete Außentemperatur", OPT_W, UI_TAB_DATA), ("opt_g_quiet", "Leistung & Quiet", OPT_W, UI_TAB_DATA), ("opt_g_en", "Energie & Preise", OPT_W, UI_TAB_DATA),
-          ("opt_g_fq", "Prognosegüte", OPT_W, UI_TAB_DATA), ("opt_g_wp", "Wärmepumpe", OPT_W, UI_TAB_DATA),
-          ("opt_g_nas", "Auswertung NAS", OPT_W, UI_TAB_DATA), ("opt_g_zaehler", "Stromzähler", OPT_W, UI_TAB_DATA)]
-_ord = {}
-for gid, gname, gwidth, gtab in GROUPS:
-    _ord[gtab] = _ord.get(gtab, 0) + 1
-    upsert({"id": gid, "type": "ui_group", "name": gname, "tab": gtab, "order": _ord[gtab], "disp": True,
+# [Gruppe, Titel, Breite, Seite, Reihenfolge]. UI-Überarbeitung 03.–05.11.2026 (live, übernommen 08.11.): die Messwert-Karten (Optimierung, Außen & Wetter,
+# Berechnete Außentemperatur, Leistung & Quiet, Energie & Preise, Wärmepumpe) stehen auf "Optimierung" hinter dem Wärmefahrplan (5/6) auf 7–12;
+# "Daten & Güte" behält Prognosegüte, Auswertung NAS, Stromzähler (1–3)
+GROUPS = [("opt_g_ch_wp", "Wärmepumpe · letzte 24 h", OPT_W, UI_TAB, 1), ("opt_g_ch_rooms", "Räume · letzte 24 h", OPT_W, UI_TAB, 2), ("opt_g_ch_at", "Wetter · 24 h zurück, 36 h voraus", OPT_W, UI_TAB, 3),
+          ("opt_g_rooms", "Räume und Komfortbänder", OPT_W, UI_TAB, 4),
+          ("opt_g_opt", "Optimierung", OPT_W, UI_TAB, 7),
+          ("opt_g_wx", "Außen & Wetter", OPT_W, UI_TAB, 8), ("opt_g_calc", "Berechnete Außentemperatur", OPT_W, UI_TAB, 9), ("opt_g_quiet", "Leistung & Quiet", OPT_W, UI_TAB, 10), ("opt_g_en", "Energie & Preise", OPT_W, UI_TAB, 11),
+          ("opt_g_fq", "Prognosegüte", OPT_W, UI_TAB_DATA, 1), ("opt_g_wp", "Wärmepumpe", OPT_W, UI_TAB, 12),
+          ("opt_g_nas", "Auswertung NAS", OPT_W, UI_TAB_DATA, 2), ("opt_g_zaehler", "Stromzähler", OPT_W, UI_TAB_DATA, 3)]
+for gid, gname, gwidth, gtab, gord in GROUPS:
+    upsert({"id": gid, "type": "ui_group", "name": gname, "tab": gtab, "order": gord, "disp": True,
             "width": gwidth, "collapse": False, "className": ""})
 
 # Waermefahrplan auf der Seite "Optimierung" unter den Verlaeufen, zwei gleich breite Karten: Kennzahlen + Diagramm + Details | Stundenuebersicht (bei >= 1920 px
@@ -3259,10 +3260,11 @@ PLAN_TPL = """<div class="optp optfit">
 <div class="sum" ng-if="plOpen"><span ng-repeat-start="r in msg.payload.rows track by $index" class="k">{{r[0]}}</span><span ng-repeat-end class="v" ng-class="r[2]" title="{{r[3]}}">{{r[1]}}</span></div>
 </div>"""
 # Stundenuebersicht als eigene Karte (dieselbe Nachricht wie die Plan-Karte)
-PLAN_TAB_TPL = """<div class="optpt optfit"><table>
+PLAN_TAB_TPL = """<style>details.optzu>summary{cursor:pointer;outline:none;font-size:12px;color:#00729f;font-weight:600;text-transform:uppercase;letter-spacing:.06em;padding:4px 0}details.optzu[open]>summary{margin-bottom:6px}</style><div class="optpt optfit"><details class="optzu" ontoggle="var F = window.__optFit; if (F &amp;&amp; F.fns &amp;&amp; F.fns['opt_t_plan_tab']) { setTimeout(F.fns['opt_t_plan_tab'], 30); }">
+<summary>Tabelle · {{(msg.payload.plan || []).length}} Stunden</summary><table>
 <tr><th>Ab</th><th>Außen °C</th><th>Wärme kWh</th><th title="{{msg.payload.korr}}">COP</th><th title="{{msg.payload.korr}}">Strom kWh</th><th>Feuchte · Taupunkt</th><th>PV W</th><th>Abtaurisiko</th><th>Vertrauen</th></tr>
 <tr ng-repeat="r in msg.payload.plan track by $index"><td>{{r.z}}</td><td>{{r.at}}</td><td>{{r.b}}</td><td>{{r.cop}}</td><td>{{r.e}}</td><td>{{r.h}}</td><td>{{r.pv}}</td><td>{{r.d}}</td><td>{{r.v}}</td></tr>
-</table></div>"""
+</table></details></div>"""
 PLAN_CH_JS = ("<script>" + UI_CHART_JS + "</script><script>(function (scope) {\n"
     "var last = null;\n"
     "function draw() {\n"
@@ -3288,7 +3290,7 @@ PLAN_CH_JS = ("<script>" + UI_CHART_JS + "</script><script>(function (scope) {\n
 upsert({"id": "opt_t_plan", "type": "ui_template", "z": TAB, "group": "opt_g_plan", "name": "Wärmefahrplan", "order": 1, "width": 0, "height": 10,
         "format": PLAN_TPL + PLAN_CH_JS + FIT_JS.replace("__ID__", "opt_t_plan"), "storeOutMessages": True, "fwdInMessages": False, "resendOnRefresh": True,
         "templateScope": "local", "className": "", "x": 1260, "y": 440, "wires": [[]]})
-upsert({"id": "opt_t_plan_tab", "type": "ui_template", "z": TAB, "group": "opt_g_plan_tab", "name": "Wärmefahrplan Stunden", "order": 1, "width": 0, "height": 11,
+upsert({"id": "opt_t_plan_tab", "type": "ui_template", "z": TAB, "group": "opt_g_plan_tab", "name": "Wärmefahrplan Stunden", "order": 1, "width": 0, "height": 2,
         "format": PLAN_TAB_TPL + FIT_JS.replace("__ID__", "opt_t_plan_tab"), "storeOutMessages": True, "fwdInMessages": False, "resendOnRefresh": True,
         "templateScope": "local", "className": "", "x": 1260, "y": 480, "wires": [[]]})
 
@@ -3869,9 +3871,11 @@ upsert({"id": ENG_TAB, "type": "ui_tab", "name": "Optimierer", "icon": "lightbul
 # damit die Masonry die Karten mit und ohne Vorschlag gleich anordnet: links Vorschlag, Messwerte; rechts Regeln, Punkte, Entscheidungen. Die beiden
 # Quiet-Karten (gleich hoch) folgen danach und fuellen je eine Spalte nach unten auf; sie aendern die Anordnung der fuenf Karten nicht. ENG_W steht oben bei OPT_W.
 # [Gruppe, Titel, Vorlage, Art, Starthoehe in Einheiten (passt ohne Einpassen fuer den ueblichen Inhalt, statische Vorschau 13.10.), y im Editor]
-ENG_GROUPS = (("opt_g_eng_prop", "Aktueller Vorschlag", "opt_t_eng_prop", "card", 4, 2060), ("opt_g_eng_rules", "Regeln", "opt_t_eng_rules", "rules", 3, 2100),
-              ("opt_g_eng_score", "Punkte", "opt_t_eng_score", "score", 9, 2140), ("opt_g_eng_mess", "Messwerte & Lernen", "opt_t_eng_mess", "mess", 10, 2160),
-              ("opt_g_eng_log", "Entscheidungen", "opt_t_eng_log", "log", 12, 2180))
+# Cockpit (eng_ui VER 11, UI-Überarbeitung 03.–05.11.2026, live, übernommen 08.11.): Punkte stehen in den Regelkacheln, Punkteverlauf/Messwerte sind
+# zugeklappt (Starthöhe 2), Entscheidungen zeigen fünf Zeilen direkt (6)
+ENG_GROUPS = (("opt_g_eng_prop", "Aktueller Vorschlag", "opt_t_eng_prop", "card", 4, 2060), ("opt_g_eng_rules", "Regeln und Punkte", "opt_t_eng_rules", "rules", 4, 2100),
+              ("opt_g_eng_score", "Punkteverlauf und Auswertung", "opt_t_eng_score", "score", 2, 2140), ("opt_g_eng_mess", "Messwerte, Lernen und Wächter", "opt_t_eng_mess", "mess", 2, 2160),
+              ("opt_g_eng_log", "Entscheidungen", "opt_t_eng_log", "log", 6, 2180))
 for _ord, _g in enumerate(ENG_GROUPS, start=1):
     upsert({"id": _g[0], "type": "ui_group", "name": _g[1], "tab": ENG_TAB, "order": _ord, "disp": True, "width": ENG_W, "collapse": False, "className": ""})
 
@@ -3912,7 +3916,7 @@ upsert(fn("opt_engine", "Entscheidungsmaschine (Shadow)", ENGINE_CORE_JS + ENGIN
 # Quiet-Karten): die Anordnung der fuenf Maschinenkarten und der Quiet-Karten bleibt, die neue Karte fuellt die kuerzere Spalte auf
 # ui-review-b 20.10.2026: vor den beiden (zugeklappten) Quiet-Karten (Reihenfolge 5,5), damit sie die kuerzere Spalte auffuellt und die Quiet-Karten unten folgen
 upsert({"id": "opt_g_eng_cop", "type": "ui_group", "name": "COP: Ziel und Ist", "tab": ENG_TAB, "order": 5.5, "disp": True, "width": ENG_W, "collapse": False, "className": ""})
-upsert(eng_template("opt_t_eng_cop", "opt_g_eng_cop", "COP: Ziel und Ist", 8, eng_format("cop", "opt_t_eng_cop"), 2200))
+upsert(eng_template("opt_t_eng_cop", "opt_g_eng_cop", "COP: Ziel und Ist", 3, eng_format("cop", "opt_t_eng_cop"), 2200))
 upsert({"id": "opt_f_eng", "type": "file", "z": TAB, "name": "Entscheidungen, Punkte, Ereignisse", "filename": "filename", "filenameType": "msg", "appendNewline": False,
         "createDir": True, "overwriteFile": "false", "encoding": "utf8", "x": 760, "y": 2160, "wires": [[]]})
 # Uebernahme: Klick (Karte) und Takt alle 15 s -> opt_apply -> (1) mqtt out GESPERRT, (2) Meldung, (3) Protokoll, (4) Anzeige neu

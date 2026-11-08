@@ -3,7 +3,7 @@
  *   optEngUi.html(kind, P)              -> HTML einer Karte (kind: 'card' | 'rules' | 'score' | 'mess' | 'log' | 'cop' | 'zaehler'), P = Nutzlast aus ENGVIEW.build bzw. opt_zaehler
  *   optEngUi.mount(el, kind, P, scope)  -> zeichnet in ein Element, Knoepfe schicken nur Aktion + ID + Pruefsumme, Diagramm ueber optChart */
 (function (root) {
-    var VER = 10;                                                                 // 10: ui-review-b (Kachelreihen ohne Waisen, Mindestleistung zugeklappt, kurze Sperr-Zeile); 8: Karten „COP: Ziel und Ist“ und „Stromzähler“ (cop-ziel 17.10.2026); 4: Vorschlag mit Befehl/Zielwert/Begruendung/Wirkung/Rueckweg offen, Karte "Messwerte & Lernen"; 5: Räume und Wächter (raumeinfluss-v3); 6: UI-Optik (Schrift, Kontrast, Platzhalter statt fast leerem Punkte-Diagramm); 7: fünf Regelkacheln (Heizregelung)
+    var VER = 11;                                                                 // 11: Cockpit (Punkte in den Regeln, Diagnose und Verlauf zugeklappt, fuenf Entscheidungen direkt); 10: ui-review-b
     if (root.optEngUi && root.optEngUi.v === VER) { return; }
     var U = {v: VER};
     function esc(s) { return String(s === undefined || s === null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
@@ -31,7 +31,7 @@
         '.oe button.sec{background:#fff;color:#00729f}' +
         '.oe button[disabled]{background:#eceff1;border-color:#cfd8dc;color:#546e7a;cursor:not-allowed}' +
         '.oe-grund{font-size:13px;color:#546e7a}' +
-        '.oe-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}' +
+        '.oe-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}' +
         '.oe-tile{border:1px solid #e0e6e9;border-radius:8px;background:#f7f9fa;padding:10px 12px;min-width:0}' +
         '.oe-hd{display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:8px}' +
         '.oe-nm{font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
@@ -43,7 +43,7 @@
         '.oe-pt{font-size:26px;font-weight:600;line-height:1.2;margin-bottom:2px}.oe-neg{color:#c62828}' +
         '.oe-sub{font-size:13px;color:#546e7a;min-height:19px}' +
         '.oe-wr{font-size:13px;color:#c62828;min-height:19px}' +
-        '.oe-kr{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}' +
+        '.oe-kr{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}.oe-kr .oe-chip{max-width:100%;box-sizing:border-box;white-space:normal;overflow-wrap:anywhere}' +
         '.oe details{margin-top:6px;font-size:13px;color:#546e7a}.oe summary{cursor:pointer;color:#00729f;outline:none}' +
         '.oe-sec{margin:16px 0 8px;font-size:12px;color:#00729f;font-weight:600;text-transform:uppercase;letter-spacing:.06em}.oe-sec:first-child{margin-top:2px}' +
         '.oe-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:10px}' +
@@ -104,7 +104,9 @@
         return '<div class="oe-grid">' + (P.rules || []).map(function (r) {
             var seg = '<div class="oe-st">' + chip(r.chip, r.cls) + '<div class="oe-seg">' + (r.bed || []).map(function (b) { return '<i' + (b[1] ? ' class="on"' : '') + ' title="' + esc((b[1] ? '✓ ' : '✗ ') + b[2]) + '"></i>'; }).join('') + '</div></div>';
             var L = r.line || {}, ln = '<div class="oe-ln" title="' + esc(r.grund) + '"><span' + (L.v ? '' : ' class="w"') + '>' + (L.lock ? '🔒 ' : '') + esc(L.l) + '</span><b>' + esc(L.v) + '</b></div>';
-            return '<div class="oe-tile" style="border-top:3px solid ' + esc(r.c) + '"><div class="oe-hd"><span class="oe-nm">' + esc(r.name) + '</span></div>' + seg + ln +
+            var t = (P.tiles || []).filter(function (x) { return x.id === r.id; })[0], rf = t && t.reife;
+            var pt = t ? '<div class="oe-ln"><span>Punkte · Freigabe</span><b' + (t.neg ? ' class="oe-neg"' : '') + '>' + esc(t.punkte) + (rf ? ' · ' + rf.n + '/' + rf.m + (rf.reif ? ' · reif' : '') : '') + '</b></div>' : '';
+            return '<div class="oe-tile" style="border-top:3px solid ' + esc(r.c) + '"><div class="oe-hd"><span class="oe-nm">' + esc(r.name) + '</span></div>' + seg + ln + pt +
                    (L.f !== null && L.f !== undefined ? bar(L.f, r.st === 'vorschlag' || r.st === 'hinweis' ? r.c : '') : '<div class="oe-bar" style="visibility:hidden"></div>') + '</div>';
         }).join('') + '</div>';
     }
@@ -130,16 +132,11 @@
                    '<div class="oe-pt' + (t.neg ? ' oe-neg' : '') + '">' + esc(t.punkte) + '</div><div class="oe-sub">' + esc(t.sub) + '</div><div class="oe-sub">' + esc(t.more) + '</div><div class="oe-wr">' + esc(t.warn) + '</div>' +
                    (t.sperre !== null && t.sperre !== undefined ? '<div class="oe-ln" data-k="sperre" title="verpasst während Sperre"><span>🔒 verpasst</span><b>' + esc(String(t.sperre)) + '</b></div>' : '<div class="oe-ln"></div>') + rf + '</div>';
         }).join('') + '</div>';
-        return h;
+        return '<details class="oe-zu" data-k="punkte"><summary>Punkteverlauf und Auswertung</summary>' + h + '</details>';
     }
     // ---------------------------------------------------------------- Karte 4: Messwerte & Lernen (Kennzahlen mit Status-Chip, Mindestleistung je Band, COP-Matrix)
-    // Spalten je Kachelreihe (ui-review-b 20.10.2026): alle Reihen gleich voll statt auto-fit mit Einzelkachel am Ende; hoechstens 7 je Reihe, 6 bei langen Werten
-    U.spalten = function (list) {
-        var n = (list || []).length, lang = (list || []).some(function (t) { return String(t.v === undefined ? '' : t.v).length > 9; }), max = lang ? 6 : 7;
-        return n ? Math.ceil(n / Math.ceil(n / max)) : 1;
-    };
     function kpis(list) {
-        return '<div class="oe-kpis" style="grid-template-columns:repeat(' + U.spalten(list) + ',minmax(0,1fr))">' + (list || []).map(function (t) {
+        return '<div class="oe-kpis">' + (list || []).map(function (t) {
             return '<div class="oe-kpi"' + tt(t.title) + '><div class="oe-kk">' + esc(t.k) + '</div><div class="oe-kv' + (t.vc ? ' oe-' + esc(t.vc) + 't' : '') + (String(t.v === undefined ? '' : t.v).length > 12 ? ' oe-lang' : '') + '">' + esc(t.v) + '</div>' +
                    '<div class="oe-ks">' + (t.chip ? chip(t.chip, t.c) : '') + (t.s ? '<span>' + esc(t.s) + '</span>' : '') + '</div></div>';
         }).join('') + '</div>';
@@ -158,11 +155,12 @@
         var mv = (P.ml || []).map(function (c) { return String(c.v || ''); }).filter(function (v) { return isFinite(parseFloat(v.replace(',', '.'))); })
                 .sort(function (x, y) { return parseFloat(x.replace(',', '.')) - parseFloat(y.replace(',', '.')); }),
             sp = !mv.length ? '' : (mv[0] === mv[mv.length - 1] ? mv[0] : mv[0].replace(/ kW$/, '') + '–' + mv[mv.length - 1]);   // Spanne in der Titelzeile, z. B. 1,7–1,9 kW
-        return '<div class="oe-sec">Takt und Leistung</div>' + kpis(P.takt) +
+        return '<details class="oe-zu" data-k="messwerte"><summary>Messwerte, Lernen und Wächter</summary>' +
+               '<div class="oe-sec">Takt und Leistung</div>' + kpis(P.takt) +
                '<details class="oe-zu" data-k="ml"><summary>Mindestleistung je Außenband' + (sp ? '<span>' + esc(sp) + '</span>' : '') + '</summary>' + ml + '</details>' +
                '<div class="oe-sec"' + tt(P.cop && P.cop.title) + '>COP je Modus und Quiet · 30 Tage</div>' + cop(P.cop) +
                '<div class="oe-sec">Lernen</div>' + kpis(P.lern) +
-               ((P.raum || []).length ? '<div class="oe-sec">Räume und Wächter</div>' + kpis(P.raum) : '');
+               ((P.raum || []).length ? '<div class="oe-sec">Räume und Wächter</div>' + kpis(P.raum) : '') + '</details>';
     }
     // ---------------------------------------------------------------- Karte "COP: Ziel und Ist" (Seite Optimierer) und "Stromzähler" (Daten & Güte), cop-ziel 17.10.2026
     function copZ(P) {
@@ -170,7 +168,7 @@
         var t = '<table class="oe-cz"><tr><th>Posten</th>' + (P.spalten || []).map(function (s) { return '<th>' + esc(s) + '</th>'; }).join('') + '</tr>' + (P.zeilen || []).map(function (z) {
             return '<tr' + (z.warn ? ' class="oe-rw"' : '') + tt(z.title) + '><td>' + esc(z.name) + '</td>' + z.zellen.map(function (c) { return '<td' + tt(c.t) + '>' + esc(c.v) + (c.p ? '<i>' + esc(c.p) + '</i>' : '') + '</td>'; }).join('') + '</tr>';
         }).join('') + '</table>';
-        return kpis(P.kpi) + '<div class="oe-sec">Posten · kWh Strom und Anteil</div>' + t + '<div class="oe-sec">Grundlage</div>' + kpis(P.info);
+        return kpis(P.kpi) + '<details class="oe-zu" data-k="cop_posten"><summary>Posten und Grundlage</summary><div class="oe-sec">Posten · kWh Strom und Anteil</div>' + t + '<div class="oe-sec">Grundlage</div>' + kpis(P.info) + '</details>';
     }
     function opt(v, cur, txt) { return '<option value="' + esc(v) + '"' + (String(v) === String(cur) ? ' selected' : '') + '>' + esc(txt) + '</option>'; }
     function zform(F) {
@@ -191,10 +189,11 @@
     function log(P) {
         var rows = P.rows || [];
         if (!rows.length) { return '<div class="oe-sub">–</div>'; }
-        return '<table><tr><th>Zeit</th><th>Regel</th><th>Verlauf</th><th>Ende</th></tr>' + rows.map(function (r) {
+        var tab = function (list) { return '<table><tr><th>Zeit</th><th>Regel</th><th>Verlauf</th><th>Ende</th></tr>' + list.map(function (r) {
             return '<tr><td class="t">' + esc(r.t) + '</td><td class="n"><i class="oe-dot" style="background:' + esc(r.c) + '"></i>' + esc(r.n) + '</td><td>' +
                    r.steps.map(function (s) { return chip(s[0], s[1]); }).join('<span class="arr">›</span>') + (r.was ? ' <span class="oe-was2">' + esc(r.was) + '</span>' : '') + '</td><td class="e">' + (r.offen ? chip('läuft', 'ok') : esc(r.ende)) + '</td></tr>';
-        }).join('') + '</table>';
+        }).join('') + '</table>'; };
+        return tab(rows.slice(0, 5)) + (rows.length > 5 ? '<details class="oe-zu" data-k="log_weitere"><summary>Weitere Entscheidungen <span>' + (rows.length - 5) + '</span></summary>' + tab(rows.slice(5)) + '</details>' : '');
     }
     U.html = function (kind, P) { P = P || {}; return '<div class="oe">' + (kind === 'card' ? card(P) : kind === 'rules' ? rules(P) : kind === 'score' ? score(P) : kind === 'mess' ? mess(P) : kind === 'cop' ? copZ(P) : kind === 'zaehler' ? zaehler(P) : kind === 'zlform' ? zlform(P) : log(P)) + '</div>'; };
     U.chartSpec = function (P) {
@@ -216,7 +215,11 @@
                 return o;
             };
             Array.prototype.forEach.call(el.querySelectorAll('[data-f]'), function (x) { var mk = function () { el.__zf = formWerte(); }; x.addEventListener('input', mk); x.addEventListener('change', mk); });
-            Array.prototype.forEach.call(el.querySelectorAll('details[data-k]'), function (d) { var k = d.getAttribute('data-k'); if (open[k]) { d.open = true; } d.addEventListener('toggle', function () { open[k] = d.open; var F = root.__optFit; if (F && F.fns) { setTimeout(function () { Object.keys(F.fns).forEach(function (f) { F.fns[f](); }); }, 30); } }); });
+            var chart = function () {
+                var ch = el.querySelector('#oe_chart'), r = ch && ch.getBoundingClientRect();
+                if (kind === 'score' && ch && r && r.width > 0 && root.optChart) { root.optChart.mount(ch, U.chartSpec(P)); }
+            };
+            Array.prototype.forEach.call(el.querySelectorAll('details[data-k]'), function (d) { var k = d.getAttribute('data-k'); if (open[k]) { d.open = true; } d.addEventListener('toggle', function () { open[k] = d.open; if (d.open && k === 'punkte') { setTimeout(chart, 30); } var F = root.__optFit; if (F && F.fns) { setTimeout(function () { Object.keys(F.fns).forEach(function (f) { F.fns[f](); }); }, 30); } }); });
             Array.prototype.forEach.call(el.querySelectorAll('button[data-a]'), function (b) {
                 b.addEventListener('click', function () {
                     var a = b.getAttribute('data-a');
@@ -228,8 +231,7 @@
                     else if (a === 'zaehler_speichern') { scope.send({topic: 'zaehler_speichern', payload: formWerte()}); el.__zf = null; }
                 });
             });
-            var ch = el.querySelector('#oe_chart');
-            if (kind === 'score' && ch && root.optChart) { root.optChart.mount(ch, U.chartSpec(P)); }
+            chart();
         } catch (e) { /* Karte bleibt leer */ }
     };
     root.optEngUi = U;
