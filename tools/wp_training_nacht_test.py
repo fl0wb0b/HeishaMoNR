@@ -180,7 +180,7 @@ def main():
 
 def _gate_js():
     try:
-        r = subprocess.run(["node", "-e", "console.log(JSON.stringify(require(process.argv[1]).GATE.kennzahlen.map(k => k.grenze)))", os.path.join(HIER, "wp_training.js")],
+        r = subprocess.run(["node", "-e", "console.log(JSON.stringify(require(process.argv[1]).GATE.kennzahlen.filter(k => k.ampel !== false).map(k => k.grenze)))", os.path.join(HIER, "wp_training.js")],
                            capture_output=True, timeout=60, check=False)
         return json.loads(r.stdout.decode())
     except (OSError, ValueError):

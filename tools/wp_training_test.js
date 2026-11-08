@@ -19,9 +19,9 @@ console.log('--- Glättung (Anteil der neuen Werte je Nacht)');
     check('Objekt (raeume) je Raum und Element; Raum ohne Vorwert wird roh übernommen', JSON.stringify(r.ki_oben) === JSON.stringify([2, 0.2, 0.1, 0, 60]) && JSON.stringify(r.dazu) === JSON.stringify([5]), JSON.stringify(r));
     check('Schalter-Wert 99 („aus“) gleitet über 5 K: 99 → 0,5 ergibt 3,5; 0,5 → 99 ergibt 2,0; 99 → 99 bleibt 99', T.glaette(99, 0.5, 1 / 3, 'startHystK') === 3.5 && T.glaette(0.5, 99, 1 / 3, 'comfortWiederK') === 2 && T.glaette(99, 99, 1 / 3, 'startHystK') === 99);
     const alt = Z.standard(), neu = Z.standard();
-    neu.ch = 6; neu.abtauDauerMin = 11; alt.ua = 0.9; neu.ua = 0.9;
+    neu.ch = 6; neu.abtauHz = 61; alt.ua = 0.9; neu.ua = 0.9;
     const S = T.glaetteSatz(alt, neu, 1 / 3);
-    check('Satz: nur gefittete Parameter werden geglättet (ch), feste (Forum/Handbuch/Annahme, z. B. abtauDauerMin) kommen aus PARAM bzw. roh', S.ch === rd6(alt.ch + (6 - alt.ch) / 3) && S.abtauDauerMin === 11, 'ch ' + S.ch);
+    check('Satz: nur gefittete Parameter werden geglättet (ch), feste (Forum/Handbuch/Annahme, z. B. abtauHz; abtauDauerMin wird seit 08.11. gelernt) kommen aus PARAM bzw. roh', S.ch === rd6(alt.ch + (6 - alt.ch) / 3) && S.abtauHz === 61, 'ch ' + S.ch);
     check('Satz: physikalische Grenzen wie in den Fits (ua ≤ 0,4 kW/K)', S.ua === 0.4, 'ua ' + S.ua);
     let v = 0; for (let n = 0; n < 3; n++) { v = T.glaette(v, 1, 1 / 3, 'x'); }
     check('drei Nächte mit gleichem roh gelerntem Wert: 1 − (2/3)³ = 70,4 % des Sprungs übernommen', nah(v, 1 - Math.pow(2 / 3, 3), 1e-5), String(v));
@@ -70,7 +70,7 @@ console.log('--- Gate: Champion gegen Herausforderer (synthetische Sätze)');
     check('mehrere Kennzahlen schlechter: alle im Grund genannt', s3.ergebnis === 'abgelehnt' && s3.kennzahlen.filter(k => k.verletzt).length === 3, s3.grund);
     check('fehlende Kennzahl (keine Pausen im Test): nicht bewertbar, entscheidet nicht', e(g(18, 1, null), g(18, 1, 6)).ergebnis === 'übernommen' && /nicht bewertbar/.test(e(g(18, 1, null), g(18, 1, 6)).kennzahlen[2].warum));
     check('Schwelle konfigurierbar (rel 0,5: +40 % Strom übernommen)', e(g(26, 1, 6), g(18.6, 1, 6), {rel: 0.5}).ergebnis === 'übernommen');
-    check('Grenzen des Gates = Ampel-Grenzen in ot.py (40 W, 1,5 K, 30 min)', T.GATE.kennzahlen.map(k => k.grenze).join(',') === '40,1.5,30');
+    check('Grenzen des Gates = Ampel-Grenzen in ot.py (40 W, 1,5 K, 30 min)', T.GATE.kennzahlen.filter(k => k.ampel !== false).map(k => k.grenze).join(',') === '40,1.5,30');
 }
 
 console.log('--- Außentemperatur-Bänder und Abdeckung (synthetische Daten)');
@@ -130,6 +130,26 @@ if (datenDir) {
     const a = T.entscheide(gS, gG), b = T.entscheide(gG, gS);
     check('echte Daten: verdorbener Herausforderer (pelHz × 1,3) gegen guten Champion → abgelehnt (Strom)', a.ergebnis === 'abgelehnt' && a.kennzahlen[0].verletzt, a.grund);
     check('echte Daten: guter Herausforderer gegen verdorbenen Champion → übernommen', b.ergebnis === 'übernommen', b.kennzahlen.map(k => k.id + ' ' + k.kandidat + '/' + k.bisher).join(', '));
+}
+// ------------------------------------------------------------------ Abtauen und Quiet-3-Deckel aus eigenen Daten (08.11.2026)
+{
+    const Zz = require('./wp_zwilling.js'), P0 = Zz.standard(), M = [], t0 = new Date(2026, 10, 1, 0, 0).getTime();
+    for (let i = 0; i < 2 * 1440; i++) {                                              // 2 Tage, 0 °C, 91 %, Lauf mit 20 Hz; alle 130 min eine Abtauung von 9 min, Rohr davor −8 °C
+        const k = i % 139, def = k >= 130, vorher = k === 129, tag = i < 1440 ? '2026-11-01' : '2026-11-02';
+        M.push({t: t0 + i * 60000, tag: tag, ok: true, at: 0, rh: 91, hc: 1, q: 3, lauf: !def || (k - 130) % 9 < 5, def: def, hz: def ? ((k - 130) % 9 < 5 ? 58 : 0) : (k < 30 ? 16 : 21), pel: def ? 900 : 480,
+                pipe: vorher ? -8 : -3, hI: false, flow: 15, vl: def ? 25 : 32, rl: def ? 27 : 29, rm: 100});
+    }
+    const D = {M: M}, f = T.fitAbtau(D, ['2026-11-01', '2026-11-02'], P0);
+    check('Abtauen aus eigenen Daten: 9-min-Abtauungen alle 139 Laufminuten bei 0 °C/91 % → Dauer 9, Auslöser-Linie b = −8 (Rohr in der Minute davor), Anker 0 °C/91 %/139 min, Strom 900 W, Frequenz danach (Efficiency) gelernt',
+          f._fit.n >= 8 && f.abtauDauerMin === 9 && f.abtauLinie[1] === -8 && f.eisAnker[0] === 0 && f.eisAnker[1] === 91 && f.eisAnker[2] === 139 && f.abtauPelW === 900 && f.nachAbtauEffMin === 30, JSON.stringify(Object.assign({}, f, {_fit: undefined})));
+    const wenig = T.fitAbtau({M: M.slice(0, 300)}, ['2026-11-01', '2026-11-02'], P0);
+    check('Abtauen: unter 8 Abtauungen bleiben die Vorgaben (keine Werte, nur Hinweis)', wenig.abtauDauerMin === undefined && /zu wenige/.test(wenig._fit.quelle), wenig._fit.quelle);
+    const Mq = []; for (let i = 0; i < 400; i++) { [[0, 25], [5, 18], [9, 17]].forEach(([at, hz], j) => Mq.push({t: t0 + (i * 3 + j) * 60000, tag: '2026-11-01', ok: true, lauf: true, def: false, q: 3, rm: 60, at: at, hz: hz})); }
+    const d = T.fitDeckelQ3({M: Mq}, ['2026-11-01', '2026-11-01'], P0);
+    check('Quiet-3-Deckel aus eigenen Daten: 0 °C 25 Hz, 5 °C 18 Hz, 9 °C 17 Hz → Stufen [[0,25],[5,18],[99,17]]', JSON.stringify(d.capQ3Tab) === '[[0,25],[5,18],[99,17]]', JSON.stringify(d.capQ3Tab));
+    const g = (pause, n) => ({teil: {pelRmseW: 20, wasserkreisRmseK: 1}, zyklenHausSimuliert: {pause: {medianAbsMin: pause, n: n}}, freilaufSumme: {kwhElZwilling: 10, kwhElMessung: 10, abtauZwilling: 2, abtauMessung: 2}});
+    const e1 = T.entscheide(g(11, 1), g(8, 1)), e2 = T.entscheide(g(11, 5), g(8, 5));
+    check('Gate: Pause-Median aus 1 Pause entscheidet nichts (übernommen), aus je 5 Pausen schon (11 statt 8 min: abgelehnt)', e1.ergebnis === 'übernommen' && e2.ergebnis === 'abgelehnt', e1.grund + ' | ' + e2.grund);
 }
 console.log('\n' + oks + ' OK, ' + fails + ' FAIL');
 process.exitCode = fails ? 1 : 0;

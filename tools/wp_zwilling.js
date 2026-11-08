@@ -36,6 +36,7 @@ const PARAM = {
     hzMaxTab: [[[-4, 52], [4, 48], [9, 35], [99, 30]], 'Hz', 'F/M', 'Höchstfrequenz je WP-AT in Stufen (Winterpaket 16.10.2026, LEISHA_WISSEN (a)): ≤ −4 °C 52 Hz, −3…+4 °C 48 Hz (vorläufig; L5 48 Hz nach nächtlicher Abschaltung bei 2 °C 4517558, „5er 48 Hz bei +4 °C“ 4103634 niedrig), 5…9 °C 35 Hz (M: 35 Hz bei 6 °C; F 4132106), ab 10 °C 30 Hz (F L5 4134403; M 31–34 Hz bei 11–13 °C liegt knapp darüber); Sprungstelle 4/5 °C (L7 4515271); bis 15.10. linear interpoliert'],
     spike: [[33, 24], 'Hz', 'M', 'Startspitze Laufminute 0/1 (Median 32 Starts), unabhängig von Quiet (F L7 4187405: „Startspike trotzdem 34 Hz“)'],
     capQ3: [17, 'Hz', 'M', 'Quiet 3 hält 16–17 Hz (1–14 °C)'],
+    capQ3Tab: [[[3, 25], [7, 18], [99, 17]], 'Hz', 'M', 'Quiet-3-Deckel je WP-AT in Stufen (bis AT ≤ x °C gilt der Wert): eigene Daten 19.10.–08.11. (Q3, ab Laufminute 40, nicht nach dem Abtauen, 95-%-Wert): ≤ 3 °C 25 Hz, 4–7 °C 18 Hz, darüber 17 Hz; bis 08.11. galt fest capQ3 = 17 Hz (Zwilling bei 0 °C zu schwach); im Training gelernt'],
     capQ2kalt: [21, 'Hz', 'M', 'Quiet 2 bis 20–21 Hz bei 1–4 °C (12.10., 168 min)'],
     capQ2warm: [17, 'Hz', 'M', 'Quiet 2 hält 16–17 Hz bei 12–13 °C'],
     capQ2grenze: [7, '°C', 'M', 'Grenze zwischen beiden Quiet-2-Deckeln (DECKEL-Tabelle, engine_core)'],
@@ -63,6 +64,7 @@ const PARAM = {
     pelHz: [11.4, 'W/Hz', 'M', 'Strom je Hz (Formel bei pel0)'],
     pelRL: [0.634, 'W/(Hz·K)', 'M', 'Strom je Hz und K Rücklauf (Formel bei pel0)'],
     pelAT: [-0.284, 'W/(Hz·K)', 'M', 'Strom je Hz und K Außentemperatur (Formel bei pel0)'],
+    pelHz2: [0, 'W/Hz²', 'M', 'Krümmung: der Strom je Hz steigt bei hoher Frequenz (eigene Daten 19.10.–08.11.: linear unterschätzt 32–40 Hz um 4–10 %); im Training gefittet'],
     pelKorrW: [80, 'W', 'F/M', 'TOP16 untertreibt im Lauf um 70–90 W (L5 4545989, 4597230); nur bei laufendem Verdichter'],
     pelPauseW: [34, 'W', 'M', 'TOP16 in der Pause mit Pumpe'],
     pelAusW: [15, 'W', 'M', 'TOP16 im Heizgrenze-Aus (Pumpe aus)'],
@@ -158,12 +160,13 @@ function hzMinAt(P, at) { for (let i = 0; i < P.hzMinFrost.length; i++) { if (at
 function stufe(T, x) { for (let i = 0; i < T.length; i++) { if (x <= T[i][0]) { return T[i][1]; } } return T[T.length - 1][1]; }
 function hzMaxAt(P, at) { return stufe(P.hzMaxTab, at); }                        // Winterpaket: Stufen statt Interpolation (Sprungstelle 4/5 °C)
 function atWP(P, at) { const v = P.atExtVersatz || 0; return v ? at + v * Math.max(0, Math.min(1, (P.atExtAbC - at) / Math.max(0.1, P.atExtAbC))) : at; }   // WP-AT aus der Physik-AT (externer Fühler)
-function abtauUmkehrMin(P) { return Math.max(1, P.abtauDauerMin - (P.abtauStoppVorMin || 0) - (P.abtauStoppNachMin || 0)); }
-function abtauHzAt(P, i) { return i < (P.abtauStoppVorMin || 0) || i >= P.abtauDauerMin - (P.abtauStoppNachMin || 0) ? 0 : P.abtauHz; }   // i = Minute im Abtausignal (0 …)
+function abtauDauer(P) { return Math.max(1, Math.round(P.abtauDauerMin)); }       // ganze Minuten: geglättete Lernwerte (z. B. 8,33) liessen den Abtau-Zaehler nie 0 werden (Schleife, 08.11.)
+function abtauUmkehrMin(P) { return Math.max(1, abtauDauer(P) - (P.abtauStoppVorMin || 0) - (P.abtauStoppNachMin || 0)); }
+function abtauHzAt(P, i) { return i < (P.abtauStoppVorMin || 0) || i >= abtauDauer(P) - (P.abtauStoppNachMin || 0) ? 0 : P.abtauHz; }   // i = Minute im Abtausignal (0 …)
 function abtauLinieAt(P, at) { const L = P.abtauLinie; return Math.min(L[3], Math.max(L[2], L[0] * at + L[1])); }
 function capOf(P, q, at) {
     const mn = hzMinAt(P, at), mx = hzMaxAt(P, at);
-    let c = q === 0 ? mx : (q === 1 ? P.capQ1 : (q === 2 ? (at < P.capQ2grenze ? P.capQ2kalt : P.capQ2warm) : P.capQ3));
+    let c = q === 0 ? mx : (q === 1 ? P.capQ1 : (q === 2 ? (at < P.capQ2grenze ? P.capQ2kalt : P.capQ2warm) : (Array.isArray(P.capQ3Tab) ? stufe(P.capQ3Tab, at) : P.capQ3)));
     return Math.max(mn, Math.min(c, mx));                                        // F: keine Stufe deckelt unter die Mindestfrequenz
 }
 function frostFaktor(P, at) { return at >= P.pthFrostAb ? 1 : Math.max(P.pthFrostMin, 1 - P.pthFrostJeK * (P.pthFrostAb - at)); }
@@ -171,7 +174,7 @@ function pthOf(P, hz, at, vlRel) { if (!(hz > 0)) { return 0; } return hz * (P.p
 function pelOf(P, hz, at, rl) {                                                   // W, TOP16 roh (ohne Korrektur)
     if (!(hz > 0)) { return 0; }
     const g = 1 - P.pelFrostAnteil * (1 - frostFaktor(P, at));
-    return Math.max(80, P.pel0 + hz * (P.pelHz + P.pelRL * rl + P.pelAT * at) * g);
+    return Math.max(80, P.pel0 + hz * (P.pelHz + P.pelRL * rl + P.pelAT * at + (P.pelHz2 || 0) * hz) * g);
 }
 function fanOf(P, q, hz, at) { const qq = Math.max(0, Math.min(3, q)); return hz > 0 ? P.fanQ[qq] + (at !== undefined && at !== null && at <= P.fanKaltAtC ? P.fanKalt[qq] : 0) + P.fanJeHz * Math.max(0, hz - P.hzMin) : 0; }   // at = WP-AT (Lüfterstufe ≤ 4 °C)
 function taupunkt(at, rh) { if (rh === null || rh === undefined || !(rh > 0)) { return -99; } const a = 17.62, b = 243.12, g = Math.log(Math.min(100, rh) / 100) + a * at / (b + at); return b * g / (a - g); }
@@ -267,7 +270,7 @@ function schritt(S0, E, P) {
     // 4. Abtauen und Verdichter
     let hz = 0;
     if (lauf) {
-        if (S.abtau > 0) { hz = abtauHzAt(P, P.abtauDauerMin - S.abtau); }
+        if (S.abtau > 0) { hz = abtauHzAt(P, abtauDauer(P) - S.abtau); }
         else {
             if (S.startHoch && (hc !== 0 || S.rt >= P.startHochMaxMin || (S.rt >= P.spike.length && S.vl >= soll - P.startHochBisK))) { S.startHoch = false; }
             const r = regler(P, S.lvl, {at: atI, soll: soll, vl: S.vl, q: q, hc: hc, rt: S.rt, nachAbtau: S.nachAbtau, comfortAb: S.ab, startHoch: S.startHoch}); hz = r.hz; S.lvl = r.lvl; S.ab = r.ab;
@@ -290,7 +293,7 @@ function schritt(S0, E, P) {
         const linie = abtauLinieAt(P, aw);                                          // Winterpaket: min(−5; max(−22,5; 0,9·WP-AT − 6)), bis WP-AT unter 10 °C
         S.abZ = (aw < P.abtauAtMax && S.pipe < linie) ? S.abZ + 1 : 0;
         if (S.heizMin > P.abtauMinHeizMin && (S.abZ >= P.abtauHaltMin || (P.forceDefrostAuto && aw < 5 && S.heizMin >= 180))) {
-            S.abtau = P.abtauDauerMin; S.abZ = 0; S.n.abtau++; hz = abtauHzAt(P, 0); abtauJetzt = true; S.pipe = at;
+            S.abtau = abtauDauer(P); S.abZ = 0; S.n.abtau++; hz = abtauHzAt(P, 0); abtauJetzt = true; S.pipe = at;
         }
         if (!abtauJetzt && S.rt >= P.spike.length) { S.hzSlow += (hz - S.hzSlow) / P.pipeSlowMin; }
     } else if (!lauf) {
@@ -379,4 +382,4 @@ function zuEngine(A, raumCfg, P, extra) {
         pipeOut: h.Outside_Pipe_Temp, rh: A.rh !== undefined && A.rh !== null ? Math.round(A.rh) : null}, extra);   // Winterpaket: Abtauwetter (Rohr aussen, OWM-Feuchte)
 }
 
-module.exports = {PARAM, standard, herkunft, mitWerten, neu, schritt, simuliere, regler, zuEngine, kurveSoll, hzMinAt, hzMaxAt, atWP, abtauLinieAt, abtauHzAt, abtauUmkehrMin, capOf, pthOf, pelOf, fanOf, frostFaktor, taupunkt, flowEffOf, qrad, trAus, heizkreis, raumWert, hausSchritt, MIN, CP, DT};
+module.exports = {PARAM, standard, herkunft, mitWerten, neu, schritt, simuliere, regler, zuEngine, kurveSoll, hzMinAt, hzMaxAt, atWP, abtauLinieAt, abtauHzAt, abtauUmkehrMin, abtauDauer, capOf, pthOf, pelOf, fanOf, frostFaktor, taupunkt, flowEffOf, qrad, trAus, heizkreis, raumWert, hausSchritt, MIN, CP, DT};

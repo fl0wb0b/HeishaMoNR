@@ -69,8 +69,8 @@ console.log('--- Frost: Mindestfrequenz, Deckel, Kennlinien');
 {
     const hzBei = (at, q, hc) => { const r = lauf(Z.neu(P, {modus: 'lauf', rt: 100, th: 20, tw: 30, vl: 30}), 30, i => E(i, {at: at, q: q, hc: hc, th: 20})); return r.A.slice(5).filter(x => x.modus === 'lauf').map(x => x.hz); };
     const h5 = hzBei(5, 3, 1), hm5 = hzBei(-5, 3, 1), hm11 = hzBei(-11, 3, 1), hm3 = hzBei(-3, 3, 1);
-    check('Quiet 3 bei +5 °C hält ≤ 17 Hz; bei −3 °C Mindestfrequenz 16–17 Hz; ab −4 °C ≥ 25 Hz, ab −10 °C ≥ 35 Hz (Forum 4596796/4593782, Flüstermodus ändert das nicht 4593801)',
-          Math.max.apply(null, h5) <= 17 && Math.min.apply(null, hm3) >= 16 && Math.max.apply(null, hm3) <= 17 && Math.min.apply(null, hm5) >= 25 && Math.min.apply(null, hm11) >= 35, [h5[0], hm3[0], hm5[0], hm11[0]].join(' / ') + ' Hz');
+    check('Quiet 3 (Deckel capQ3Tab aus eigenen Daten 19.10.–08.11.): bei +5 °C höchstens 18 Hz; bei −3 °C mindestens 16 Hz und höchstens 25 Hz (bis 08.11. Forum: 17 Hz); ab −4 °C ≥ 25 Hz, ab −10 °C ≥ 35 Hz (Forum 4596796/4593782)',
+          Math.max.apply(null, h5) <= 18 && Math.min.apply(null, hm3) >= 16 && Math.max.apply(null, hm3) <= 25 && Math.min.apply(null, hm5) >= 25 && Math.min.apply(null, hm11) >= 35, [h5[0], hm3[0], hm5[0], hm11[0]].join(' / ') + ' Hz');
     check('Höchstfrequenz je WP-AT in Stufen (Winterpaket, LEISHA_WISSEN (a)): 52 Hz ab −4 °C, 48 Hz bei −3…+4 °C, 35 Hz bei 5…9 °C, 30 Hz ab 10 °C; Sprungstelle 4/5 °C', Z.hzMaxAt(P, -6) === 52 && Z.hzMaxAt(P, -4) === 52 && Z.hzMaxAt(P, -3) === 48 && Z.hzMaxAt(P, 4) === 48 && Z.hzMaxAt(P, 5) === 35 && Z.hzMaxAt(P, 9) === 35 && Z.hzMaxAt(P, 10) === 30,
           [-6, -3, 4, 5, 10].map(a => Z.hzMaxAt(P, a)).join('/'));
     const cop = (at, hz, rl) => Z.pthOf(P, hz, at, 0) / (Z.pelOf(P, hz, at, rl) + P.pelKorrW);
