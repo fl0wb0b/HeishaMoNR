@@ -37,7 +37,8 @@ CMD_JS = r"""// Heizregelung (Comfort / Efficiency) umschalten: von Hand (Auswah
 var now = Date.now(), NAMES = ['Comfort', 'Efficiency'];
 function uebernahme() {                                                            // laufende Klick-Uebernahme der Heizregelung; ein alter Stand (Optimierer rechnet nicht) zaehlt nicht
     var O = global.get('OPT_apply'); if (!O || !(now - O.ts <= 5 * 60000)) { return null; }
-    var p = O.pending; return (O.ak && O.ak.hc) || (p && (p.g === 'hc' || p.name === 'SetHeatingControl') ? p : null);
+    var a = O.ak && O.ak.hc, p = O.pending;                                        // Rueckweg abgebrochen (rueckFehl) oder Klick nie bestaetigt (unbestaetigt): der Optimierer tut nichts mehr (Kimi 08.11.)
+    return (a && !a.rueckFehl && !a.unbestaetigt ? a : null) || (p && (p.g === 'hc' || p.name === 'SetHeatingControl') ? p : null);
 }
 var plan = !!msg.source, wer = plan ? String(msg.topic || msg.source) : '';
 var want = String(msg.payload) === '1' ? 1 : (String(msg.payload) === '0' ? 0 : null);
@@ -168,7 +169,8 @@ var A = global.get('HC_AT', 'file') || {on: false};
 function hm(t) { return new Date(t).toLocaleTimeString('de-DE', {hour: '2-digit', minute: '2-digit'}); }
 function ueb(g, name) {                                                             // laufende Klick-Uebernahme des Optimierers fuer diese Groesse; alter Stand zaehlt nicht
     var O = global.get('OPT_apply'); if (!O || !(now - O.ts <= 5 * MIN)) { return null; }
-    var p = O.pending; return (O.ak && O.ak[g]) || (p && (p.g === g || p.name === name) ? p : null);
+    var a = O.ak && O.ak[g], p = O.pending;                                        // Rueckweg abgebrochen (rueckFehl) oder Klick nie bestaetigt (unbestaetigt): zaehlt nicht (Kimi 08.11.)
+    return (a && !a.rueckFehl && !a.unbestaetigt ? a : null) || (p && (p.g === g || p.name === name) ? p : null);
 }
 function lage(z) { return z === 'kalt' ? 'kalt (≤ 2 °C)' : 'warm (≥ 4 °C)'; }
 function ziel(z) { return z === 'kalt' ? 'Comfort' : 'Efficiency + Quiet 3'; }
@@ -177,7 +179,7 @@ function txt() {                                                                
     if (!A.cand) { return 'an · wartet auf ≤ 2 °C (Comfort) oder ≥ 4 °C (Efficiency + Quiet 3)'; }
     var v = A.versuch && A.versuch.lage === A.cand ? A.versuch : null, s = 'an · ' + lage(A.cand) + ' seit ' + hm(A.seit) + ' · ';
     if (A.erledigt === A.cand) { return s + (A.abbruch ? ziel(A.cand) + ' nicht bestätigt (' + VERSUCHE + ' Versuche)' : 'auf ' + ziel(A.cand) + ' gestellt ' + hm(A.erledigtTs)); }
-    if (A.wartet) { return s + ziel(A.cand) + ' wartet: der Optimierer hat die Heizregelung übernommen'; }
+    if (A.wartet && ueb('hc', 'SetHeatingControl')) { return s + ziel(A.cand) + ' wartet: der Optimierer hat die Heizregelung übernommen'; }
     if (v) { return s + ziel(A.cand) + ' angefordert ' + hm(v.ts) + (v.n > 1 ? ' (Versuch ' + v.n + ')' : ''); }
     var a = A.seit + HALTEN * MIN, b = A.letzteTs ? A.letzteTs + ABSTAND * MIN : 0;   // fruehestens: 30 min am Stueck und 2 h Abstand
     return s + (b > a ? 'stellt frühestens ' + hm(b) + ' auf ' + ziel(A.cand) + ' (2 h Abstand)' : 'stellt um ' + hm(a) + ' auf ' + ziel(A.cand));
@@ -213,7 +215,7 @@ if (msg.topic === 'schalter') {
     if (A.on && A.cand && A.cand !== A.erledigt && now - A.seit >= HALTEN * MIN) {
         var kalt = A.cand === 'kalt', v = A.versuch && A.versuch.lage === A.cand ? A.versuch : null;
         if (ueb('hc', 'SetHeatingControl')) {                                        // Klick-Uebernahme hat Vorrang: nichts stellen, einmal protokollieren
-            if (!A.wartet) { A.wartet = true; out[2] = {topic: WER, payload: 'Außen ' + at + ' °C: ' + (kalt ? 'Comfort' : 'Efficiency') + ' wäre dran, aber der Optimierer hat die Heizregelung übernommen – nichts gestellt, die Automatik wartet, bis die Übernahme endet'}; }
+            if (!A.wartet) { A.wartet = true; A.versuch = null; out[2] = {topic: WER, payload: 'Außen ' + at + ' °C: ' + (kalt ? 'Comfort' : 'Efficiency') + ' wäre dran, aber der Optimierer hat die Heizregelung übernommen – nichts gestellt, die Automatik wartet, bis die Übernahme endet'}; }
         } else {
             A.wartet = false;
             if (!v && A.letzteTs && now - A.letzteTs < ABSTAND * MIN) { /* 2 h Abstand zum letzten Wechsel: warten */ }

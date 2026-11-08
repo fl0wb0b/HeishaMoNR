@@ -234,5 +234,18 @@ ck('Verdrahtung Automatik: Takt jede Minute, Ausgaenge Schalter-Befehl / gemeins
   reset({HEATING_CONTROL: 0, OPT_apply: {ts: NOW, ak: {hc: HC}}}); r = cmd('1');
   ck('Handschalter bei laufender Übernahme: wird gesendet (deine Entscheidung, der Optimierer meldet die Änderung von außen)', sent(r) && sent(r).payload === '1', '');
   reset({HEATING_CONTROL: 0, OPT_apply: {ts: NOW - 10 * 60000, ak: {hc: HC}}}); r = planCmd('1');
-  ck('Zeitplan bei altem Übernahme-Stand (10 min): wird gesendet', sent(r) && sent(r).payload === '1', ''); }
+  ck('Zeitplan bei altem Übernahme-Stand (10 min): wird gesendet', sent(r) && sent(r).payload === '1', '');
+  // Kimi-Kontrolle 08.11.: Endzustaende blockieren nicht, Textzeile, abgeloester Versuch, Automatik-Quelle an hc_cmd
+  atReset(); at('schalter', true); u = runU(31, 6, {ak: {hc: Object.assign({}, HC, {rueckFehl: NOW})}, pending: null});
+  ck('Rückweg des Optimierers abgebrochen (rueckFehl): blockiert nicht, Automatik stellt Efficiency', out(u, 0).length === 1 && out(u, 0)[0].payload === '1', '');
+  atReset(); at('schalter', true); u = runU(31, 6, {ak: {hc: Object.assign({}, HC, {bestaetigt: false, unbestaetigt: true})}, pending: null});
+  ck('Klick nie bestätigt (unbestaetigt, kein offener Befehl): blockiert nicht', out(u, 0).length === 1, '');
+  atReset(); at('schalter', true); runU(40, 6, {ak: {hc: HC}, pending: null}); runU(2, 3, {ak: {}, pending: null}); const t3 = cx.txt || '';
+  ck('Übernahme endet bei 3 °C (Hysterese): Textzeile sagt nicht mehr "wartet: … übernommen"', !/übernommen/.test(t3), t3);
+  atReset(); at('schalter', true); u = run(31, 6, false); const n1 = out(u, 0).length;
+  u = runU(30, 6, {ak: {hc: HC}, pending: null}); const u2 = runU(5, 6, {ak: {}, pending: null});
+  ck('Versuch lief schon, dann Übernahme: der Versuch ist abgelöst, nach dem Ende kein sofortiger Versuch 2 (2-h-Abstand zum ersten Versuch)', n1 === 1 && out(u, 0).length === 0 && out(u2, 0).length === 0 && !g.HC_AT.versuch, JSON.stringify(out(u2, 2)));
+  reset({HEATING_CONTROL: 0, OPT_apply: {ts: NOW, ak: {hc: HC}}}); r = fCmd({payload: '1', source: 'Außentemperatur', topic: 'Heizregelung nach Außentemperatur'}, ctx(g), ctx(fl), {}, FakeDate);
+  ck('Automatik-Anforderung direkt an hc_cmd während Übernahme: nichts gesendet (zweite Sicherung)', sent(r) === null && /übernommen/.test(r[3].payload), '');
+}
 process.exit(fails ? 1 : 0);
