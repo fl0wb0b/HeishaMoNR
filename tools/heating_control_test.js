@@ -214,4 +214,25 @@ ck('Verdrahtung Automatik: Takt jede Minute, Ausgaenge Schalter-Befehl / gemeins
    && JSON.stringify(by.hc_at.wires) === JSON.stringify([['hc_cmd'], ['hc_out'], ['hc_log'], ['hc_at_sw'], ['hc_at_txt']]) && /neu/.test(by.hc_at.initialize)
    && by.hc_at_sw.type === 'ui_switch' && by.hc_at_sw.group === 'hc_grp' && by.hc_at_sw.passthru === false && by.hc_at_sw.topic === 'schalter' && by.hc_at_sw.wires.join() === 'hc_at'
    && by.hc_at_txt.group === 'hc_grp' && !flows.some(n => ['hc_at', 'hc_at_sw', 'hc_at_txt', 'hc_at_tick'].includes(n.id) && n.type === 'mqtt out'), '');
+// ---------- Vorrang der Klick-Uebernahmen des Optimierers (Kimi-Pruefung 08.11.2026: zwei Schreiber ohne gegenseitige Kenntnis)
+{ const runU = (min, t, U) => { const oo = []; for (let i = 0; i < min; i++) { g.TOP14_Outside_Temp = t; NOW += 60000; if (U) { g.OPT_apply = Object.assign({}, U, {ts: NOW}); } const r0 = at() || []; oo.push(r0);
+        if (r0[0]) { g.HEATING_CONTROL = Number(r0[0].payload); } if (r0[1]) { g.TOP18_Quiet_Mode_Level = 3; } } return oo; };
+  const HC = {name: 'SetHeatingControl', value: 0, von: 1, bestaetigt: true};
+  atReset(); at('schalter', true); let u = runU(60, 6, {ak: {hc: HC}, pending: null}); const tW = cx.txt || '';
+  ck('Übernahme Heizregelung (Comfort) läuft, 60 min warm: Automatik stellt nichts (kein Befehl, kein Quiet), genau ein Protokolleintrag, Textzeile "wartet"',
+     out(u, 0).length === 0 && out(u, 1).length === 0 && out(u, 2).length === 1 && /wäre dran, aber der Optimierer hat die Heizregelung übernommen/.test(out(u, 2)[0].payload) && /wartet: der Optimierer hat die Heizregelung übernommen/.test(tW), tW);
+  u = runU(3, 6, {ak: {}, pending: null});
+  ck('... Übernahme beendet: die Automatik stellt sofort Efficiency und Quiet 3 (kein 2-h-Abstand, sie hatte nichts gestellt)', out(u, 0).length === 1 && out(u, 0)[0].payload === '1' && out(u, 1).length === 1 && out(u, 1)[0].payload === '3', JSON.stringify(out(u, 2)));
+  atReset(); at('schalter', true); u = runU(31, 6, {ak: {}, pending: {name: 'SetHeatingControl', value: 0, g: 'hc'}});
+  ck('Klick-Befehl Heizregelung wartet noch auf Bestätigung (pending): Automatik stellt nichts', out(u, 0).length === 0 && out(u, 1).length === 0, '');
+  atReset(); at('schalter', true); g.OPT_apply = {ts: NOW - 10 * 60000, ak: {hc: HC}}; u = run(31, 6);
+  ck('Alter Übernahme-Stand (Optimierer rechnet seit 10 min nicht): zählt nicht, Automatik stellt Efficiency', out(u, 0).length === 1 && out(u, 0)[0].payload === '1', '');
+  atReset(); at('schalter', true); u = runU(31, 6, {ak: {quiet: {name: 'SetQuietMode', value: 0, von: 3, bestaetigt: true}}, pending: null});
+  ck('Übernahme Quiet läuft: Automatik stellt Efficiency, Quiet 3 bleibt weg (Protokoll nennt den Grund)', out(u, 0).length === 1 && out(u, 1).length === 0 && /Quiet 3 nicht gesendet: der Optimierer hat Quiet übernommen/.test(out(u, 2)[0].payload), out(u, 2)[0] && out(u, 2)[0].payload);
+  reset({HEATING_CONTROL: 0, OPT_apply: {ts: NOW, ak: {hc: HC}}}); r = planCmd('1');
+  ck('Zeitplan will Efficiency, Übernahme Comfort läuft: nichts gesendet, Protokoll "Optimierer hat die Heizregelung übernommen (Comfort)"', sent(r) === null && r[3] && /Optimierer hat die Heizregelung übernommen \(Comfort\)/.test(r[3].payload), r[3] && r[3].payload);
+  reset({HEATING_CONTROL: 0, OPT_apply: {ts: NOW, ak: {hc: HC}}}); r = cmd('1');
+  ck('Handschalter bei laufender Übernahme: wird gesendet (deine Entscheidung, der Optimierer meldet die Änderung von außen)', sent(r) && sent(r).payload === '1', '');
+  reset({HEATING_CONTROL: 0, OPT_apply: {ts: NOW - 10 * 60000, ak: {hc: HC}}}); r = planCmd('1');
+  ck('Zeitplan bei altem Übernahme-Stand (10 min): wird gesendet', sent(r) && sent(r).payload === '1', ''); }
 process.exit(fails ? 1 : 0);

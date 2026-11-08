@@ -32,8 +32,13 @@ LOG_IN = "031e62b0bf3df7d7"         # "Input LOGS": Protokoll
 CMD_JS = r"""// Heizregelung (Comfort / Efficiency) umschalten: von Hand (Auswahl auf der Uebersicht, ohne msg.source), aus dem Zeitplan (Aktion "Heizregelung - Comfort/Efficiency",
 // msg.source 'Zeitplan', msg.topic = Zeile) oder von der Automatik nach Aussentemperatur (msg.source 'Außentemperatur'). Ein einzelner Befehl ueber den gemeinsamen
 // Befehlsweg (Sperre, Befehlsbudget, Quellen-Markierung). Der Zustand wird zurueckgelesen und bestaetigt (Funktion "Heizregelung Zustand"). Mit Quelle steht das
-// Ergebnis im Protokoll (Ausgang 4).
+// Ergebnis im Protokoll (Ausgang 4). Hat der Optimierer die Heizregelung per Klick uebernommen (OPT_apply), stellen Zeitplan und Automatik nichts (Kimi-Pruefung 08.11.:
+// zwei Schreiber ohne gegenseitige Kenntnis); der Handschalter bleibt frei (deine Entscheidung, der Optimierer meldet das als Aenderung von aussen).
 var now = Date.now(), NAMES = ['Comfort', 'Efficiency'];
+function uebernahme() {                                                            // laufende Klick-Uebernahme der Heizregelung; ein alter Stand (Optimierer rechnet nicht) zaehlt nicht
+    var O = global.get('OPT_apply'); if (!O || !(now - O.ts <= 5 * 60000)) { return null; }
+    var p = O.pending; return (O.ak && O.ak.hc) || (p && (p.g === 'hc' || p.name === 'SetHeatingControl') ? p : null);
+}
 var plan = !!msg.source, wer = plan ? String(msg.topic || msg.source) : '';
 var want = String(msg.payload) === '1' ? 1 : (String(msg.payload) === '0' ? 0 : null);
 if (want === null) { return [null, null, null, null]; }
@@ -45,6 +50,8 @@ var back = (cur === 0 || cur === 1) ? {payload: String(cur)} : null;            
 var pend = flow.get('hcPending');
 if (cur === want && !pend) { return [null, null, null, prot('steht schon auf ' + NAMES[want] + ', nichts gesendet')]; }
 if (cur !== 0 && cur !== 1) { return nein('Heizregelung: Der aktuelle Stand der Wärmepumpe ist unbekannt (keine Meldung von HeishaMon). Nichts gesendet.', 'red', null); }
+var U = plan ? uebernahme() : null;
+if (U) { return nein('Der Optimierer hat die Heizregelung übernommen (' + (NAMES[Number(U.value)] || U.value) + '). Nichts gesendet, die Übernahme hat Vorrang.', 'orange', back); }
 var MQTT = global.get('MQTT', 'file') || {};
 if (MQTT.block_active === 1) { return nein('Alle MQTT-Befehle sind gesperrt. Nichts gesendet.', 'red', back); }
 if (MQTT.message_limit !== undefined && MQTT.messages_today >= MQTT.message_limit) { return nein('Das Tagesbudget für MQTT-Befehle ist aufgebraucht (' + MQTT.messages_today + ' von ' + MQTT.message_limit + '). Nichts gesendet.', 'red', back); }
@@ -153,10 +160,16 @@ AT_JS = r"""// Heizregelung nach Aussentemperatur (07.11.2026, Kevin): faellt di
 // Gegen Flattern (Kevin 07.11.): "am Stueck" heisst jeder gueltige Wert der 30 min liegt in der Lage, ein Wert von 3 °C startet die Zeit neu; zwischen zwei
 // Wechseln der Automatik mindestens 2 h. Replay 07.10.-07.11. (5-min-Werte): ohne beides 22 Wechsel, kuerzester Abstand 1,0 h (03.11. 05:06/06:06);
 // mit strenger Zaehlung 20 Wechsel, hoechstens 2 am Tag, kuerzester Abstand 4,9 h.
+// Vorrang der Klick-Uebernahmen (Kimi-Pruefung 08.11.): laeuft eine Uebernahme der Heizregelung, stellt die Automatik nichts und wartet (ein Protokolleintrag),
+// bis sie endet; laeuft eine Uebernahme der Quiet-Stufe, bleibt Quiet 3 weg.
 // Ausgaenge: [Heizregelung Befehl, gemeinsamer Weg (Quiet), Protokoll, Schalter, Textzeile]
 var now = Date.now(), MIN = 60000, HALTEN = 30, WIEDER = 10, VERSUCHE = 3, ABSTAND = 120, WER = 'Heizregelung nach Außentemperatur';
 var A = global.get('HC_AT', 'file') || {on: false};
 function hm(t) { return new Date(t).toLocaleTimeString('de-DE', {hour: '2-digit', minute: '2-digit'}); }
+function ueb(g, name) {                                                             // laufende Klick-Uebernahme des Optimierers fuer diese Groesse; alter Stand zaehlt nicht
+    var O = global.get('OPT_apply'); if (!O || !(now - O.ts <= 5 * MIN)) { return null; }
+    var p = O.pending; return (O.ak && O.ak[g]) || (p && (p.g === g || p.name === name) ? p : null);
+}
 function lage(z) { return z === 'kalt' ? 'kalt (≤ 2 °C)' : 'warm (≥ 4 °C)'; }
 function ziel(z) { return z === 'kalt' ? 'Comfort' : 'Efficiency + Quiet 3'; }
 function txt() {                                                                     // Textzeile: Lage, seit wann, und was wann passiert (Kevin 07.11.: "schaltet ab" war missverstaendlich)
@@ -164,6 +177,7 @@ function txt() {                                                                
     if (!A.cand) { return 'an · wartet auf ≤ 2 °C (Comfort) oder ≥ 4 °C (Efficiency + Quiet 3)'; }
     var v = A.versuch && A.versuch.lage === A.cand ? A.versuch : null, s = 'an · ' + lage(A.cand) + ' seit ' + hm(A.seit) + ' · ';
     if (A.erledigt === A.cand) { return s + (A.abbruch ? ziel(A.cand) + ' nicht bestätigt (' + VERSUCHE + ' Versuche)' : 'auf ' + ziel(A.cand) + ' gestellt ' + hm(A.erledigtTs)); }
+    if (A.wartet) { return s + ziel(A.cand) + ' wartet: der Optimierer hat die Heizregelung übernommen'; }
     if (v) { return s + ziel(A.cand) + ' angefordert ' + hm(v.ts) + (v.n > 1 ? ' (Versuch ' + v.n + ')' : ''); }
     var a = A.seit + HALTEN * MIN, b = A.letzteTs ? A.letzteTs + ABSTAND * MIN : 0;   // fruehestens: 30 min am Stueck und 2 h Abstand
     return s + (b > a ? 'stellt frühestens ' + hm(b) + ' auf ' + ziel(A.cand) + ' (2 h Abstand)' : 'stellt um ' + hm(a) + ' auf ' + ziel(A.cand));
@@ -173,7 +187,8 @@ function anfordern(kalt, at) {                                                  
     var zeile = (kalt ? 'Comfort' : 'Efficiency') + ' angefordert';
     if (!kalt) {
         var q = Number(global.get('TOP18_Quiet_Mode_Level')), MQ = global.get('MQTT', 'file') || {};
-        if (q === 3) { zeile += '; Quiet steht schon auf 3, nichts gesendet'; }
+        if (ueb('quiet', 'SetQuietMode')) { zeile += '; Quiet 3 nicht gesendet: der Optimierer hat Quiet übernommen'; }
+        else if (q === 3) { zeile += '; Quiet steht schon auf 3, nichts gesendet'; }
         else if (MQ.block_active === 1) { zeile += '; Quiet 3 nicht gesendet: alle MQTT-Befehle sind gesperrt'; }
         else if (MQ.message_limit !== undefined && MQ.messages_today >= MQ.message_limit) { zeile += '; Quiet 3 nicht gesendet: Tagesbudget für MQTT-Befehle aufgebraucht'; }
         else { out[1] = {topic: 'panasonic_heat_pump/commands/SetQuietMode', payload: '3', source: 'Außentemperatur'}; zeile += '; Quiet 3 gesendet'; }
@@ -193,15 +208,20 @@ if (msg.topic === 'schalter') {
     var gueltig = A.on && isFinite(at) && global.get('TOP26_Defrosting_State') !== 1;
     var z = gueltig ? (at <= 2 ? 'kalt' : (at >= 4 ? 'warm' : null)) : null;
     if (A.versuch && global.get('HEATING_CONTROL') === (A.versuch.lage === 'kalt' ? 0 : 1)) { A.erledigt = A.versuch.lage; A.erledigtTs = now; A.versuch = null; A.abbruch = false; }   // von HeishaMon gemeldet: Lage erledigt (auch wenn die Temperatur inzwischen wieder wechselt)
-    if (z && z !== A.cand) { A.cand = z; A.seit = now; }
+    if (z && z !== A.cand) { A.cand = z; A.seit = now; A.wartet = false; }
     else if (gueltig && !z && A.cand && A.cand !== A.erledigt && !(A.versuch && A.versuch.lage === A.cand)) { A.seit = now; }   // 3 °C, solange noch nicht angefordert: die 30 min beginnen neu
     if (A.on && A.cand && A.cand !== A.erledigt && now - A.seit >= HALTEN * MIN) {
         var kalt = A.cand === 'kalt', v = A.versuch && A.versuch.lage === A.cand ? A.versuch : null;
-        if (!v && A.letzteTs && now - A.letzteTs < ABSTAND * MIN) { /* 2 h Abstand zum letzten Wechsel: warten */ }
-        else if (!v) { A.versuch = {lage: A.cand, ts: now, n: 1}; A.letzteTs = now; out[2] = {topic: WER, payload: 'Außen ' + at + ' °C seit ' + HALTEN + ' min: ' + anfordern(kalt, at)}; }
-        else if (now - v.ts >= WIEDER * MIN) {
-            if (v.n >= VERSUCHE) { A.erledigt = A.cand; A.erledigtTs = now; A.versuch = null; A.abbruch = true; out[2] = {topic: WER, payload: (kalt ? 'Comfort' : 'Efficiency') + ' nach ' + VERSUCHE + ' Versuchen nicht gemeldet, Automatik wartet auf den nächsten Wechsel'}; }
-            else { v.n++; v.ts = now; out[2] = {topic: WER, payload: 'Versuch ' + v.n + ': ' + anfordern(kalt, at)}; }
+        if (ueb('hc', 'SetHeatingControl')) {                                        // Klick-Uebernahme hat Vorrang: nichts stellen, einmal protokollieren
+            if (!A.wartet) { A.wartet = true; out[2] = {topic: WER, payload: 'Außen ' + at + ' °C: ' + (kalt ? 'Comfort' : 'Efficiency') + ' wäre dran, aber der Optimierer hat die Heizregelung übernommen – nichts gestellt, die Automatik wartet, bis die Übernahme endet'}; }
+        } else {
+            A.wartet = false;
+            if (!v && A.letzteTs && now - A.letzteTs < ABSTAND * MIN) { /* 2 h Abstand zum letzten Wechsel: warten */ }
+            else if (!v) { A.versuch = {lage: A.cand, ts: now, n: 1}; A.letzteTs = now; out[2] = {topic: WER, payload: 'Außen ' + at + ' °C seit ' + HALTEN + ' min: ' + anfordern(kalt, at)}; }
+            else if (now - v.ts >= WIEDER * MIN) {
+                if (v.n >= VERSUCHE) { A.erledigt = A.cand; A.erledigtTs = now; A.versuch = null; A.abbruch = true; out[2] = {topic: WER, payload: (kalt ? 'Comfort' : 'Efficiency') + ' nach ' + VERSUCHE + ' Versuchen nicht gemeldet, Automatik wartet auf den nächsten Wechsel'}; }
+                else { v.n++; v.ts = now; out[2] = {topic: WER, payload: 'Versuch ' + v.n + ': ' + anfordern(kalt, at)}; }
+            }
         }
     }
 }
