@@ -2,6 +2,7 @@
 # Spielt eine gepatchte Flow-Datei (v2-Format mit rev) in das Node-RED auf der NAS (10.10.10.128:1880) ein,
 # nur geaenderte Knoten (Deployment-Type nodes), mit rev-Pruefung gegen den aktuellen Stand. Nutzung: nas_deploy.sh <gepatchte.json>
 set -e
+curl() { command curl --fail-with-body "$@"; }   # lehnt Node-RED ab (HTTP 4xx/5xx, z. B. rev-Konflikt), endet das Skript mit Fehler statt mit 0
 F="$1"; [ -f "$F" ] || { echo "Datei fehlt: $F"; exit 1; }
 REV_FILE=$(python3 -I -c "import json,sys; print(json.load(open(sys.argv[1]))['rev'])" "$F")
 REV_LIVE=$(curl -s -m 15 -H 'Node-RED-API-Version: v2' http://10.10.10.128:1880/flows | python3 -I -c "import json,sys; print(json.load(sys.stdin)['rev'])")
