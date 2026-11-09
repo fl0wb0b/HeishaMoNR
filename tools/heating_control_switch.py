@@ -17,7 +17,7 @@ import sys
 TAB = "8c9d42231fd19d3c"            # WP Dash
 LINK_IN = "8b3d729fe630c248"        # "> MQTT OUT" (WP Managers): common command path
 UI_TAB = "a5be8588.b8fbc8"          # page "Uebersicht"
-BROKER = "d82cfde48e832830"         # MQTT (lokal) 10.10.10.128
+BROKER = "d82cfde48e832830"         # MQTT (lokal), NAS
 GROUP = "hc_grp"
 
 CMD_JS = r"""// Heizregelung (Comfort / Efficiency) von Hand umschalten. KEIN automatischer Eingriff: nur auf Auswahl durch den Betreiber, ein einzelner Befehl,

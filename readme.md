@@ -130,9 +130,12 @@ Die Messungen und Herleitungen stehen in [docs/OPTIMIERER.md](docs/OPTIMIERER.md
 
 **Nur `opt_*` über den Generator.** Der Generator ist idempotent: Er ersetzt die Knoten, die ihm gehören, und lässt alles andere unberührt. Zugangsdaten (OpenWeatherMap, VRM) liegen nur in Dateien im Container, nie im Flow oder im Repository.
 
+**Installationswerte nur lokal.** Hosts von Venus und NAS sowie die MQTT-Topics der Raumfühler stehen in `lokal.json` im Wurzelordner. Die Datei ist nicht versioniert (`.gitignore`), die Vorlage ist `lokal.example.json`. Generator, `nas_deploy.sh` und der ssh-Abruf von Beobachter und Training lesen sie und brechen ohne sie mit einer Meldung ab. Ein anderer Pfad geht über `HEISHAMONR_LOKAL`. Für die Prüfungen ohne echte Anlage reicht die Vorlage: `export HEISHAMONR_LOKAL=lokal.example.json`. `tools/privat_test.py` prüft, dass keine private IP im Repo steht. Mit `nicht_im_repo` in `lokal.json` prüft er zusätzlich eigene Wörter, etwa Gerätenamen.
+
 **Erst simulieren, dann einspielen.** Steuerlogik wird nie live ausprobiert. Die Simulationen spielen den Flow offline mit einer Fake-Uhr über mehrere Tage durch, auch mit Frost, Abtauen und Heizstab, im Schattenbetrieb und mit „jeder Vorschlag sofort übernommen“. Das Replay spielt die echten Protokolle Minute für Minute durch die Maschine. Ein zweiter Lauf ist bit-identisch. Vor jeder Regeländerung wird alt gegen neu verglichen.
 
 ```
+python3 tools/privat_test.py                       # keine Installationswerte im Repo
 cp "flows (26.5.1 stable).json" /tmp/x.json
 python3 tools/optimizer_phase1.py /tmp/x.json      # opt_* erzeugen (Sendeknoten deaktiviert)
 node tools/optimizer_sim.js /tmp/x.json            # Flow-Prüfungen

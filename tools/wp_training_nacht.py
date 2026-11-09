@@ -3,7 +3,7 @@
 
 Ablauf (nur lesend gegenüber der Anlage, der NAS und MQTT):
 1. Protokolle holen: aus einem lokalen Ordner (--quelle) oder per ssh wie der Bonsai-Beobachter
-   (ssh -o BatchMode=yes 10.10.10.128 docker exec node_red-node-red-1 cat /data/optimizer/<datei>) in einen Arbeitsordner.
+   (ssh -o BatchMode=yes <nas> docker exec node_red-node-red-1 cat /data/optimizer/<datei>) in einen Arbeitsordner.
    Geholt werden quiet-, optimizer-v2- und energy-JJJJ-MM.csv des laufenden und (in den ersten 21 Tagen) des Vormonats.
 2. Training: node wp_training.js <ordner> --tage 21 (letzte 21 Kalendertage, Test = letzte 4 Tage) --vorher <bisher aktiver Satz>.
    training-v2 (18.10.2026):
@@ -45,7 +45,7 @@ import time
 
 HIER = os.path.dirname(os.path.abspath(__file__))
 AUSGABE_STANDARD = os.path.expanduser("~/Dokumente/heishamonr-optimizer/bonsai-berichte")
-SSH_VORLAGE = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "10.10.10.128", "docker", "exec", "node_red-node-red-1", "cat", "/data/optimizer/{datei}"]
+SSH_VORLAGE = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "{nas}", "docker", "exec", "node_red-node-red-1", "cat", "/data/optimizer/{datei}"]
 DATEI_MUSTER = re.compile(r"^(quiet|optimizer-v2|energy)-\d{4}-\d{2}\.csv$")
 PRAEFIXE = ("quiet", "optimizer-v2", "energy")
 DRIFT_REL = 0.10
@@ -64,14 +64,21 @@ def monate(tag, tage_zurueck=21):
     return [erster, jetzt] if erster != jetzt else [jetzt]
 
 
+def nas_host():
+    """Host der NAS aus lokal.json (tools/lokal.py); nur fuer den ssh-Abruf, im Container nicht noetig."""
+    from lokal import lade
+    return lade()["nas"]
+
+
 def hole_ssh(ordner, monatsliste, timeout=180):
     geholt = []
+    nas = nas_host()
     for mo in monatsliste:
         for pre in PRAEFIXE:
             datei = "%s-%s.csv" % (pre, mo)
             if not DATEI_MUSTER.match(datei):
                 raise ValueError("unerlaubter Dateiname: " + datei)
-            cmd = [x.replace("{datei}", datei) for x in SSH_VORLAGE]
+            cmd = [x.replace("{datei}", datei).replace("{nas}", nas) for x in SSH_VORLAGE]
             try:
                 r = subprocess.run(cmd, capture_output=True, timeout=timeout, check=False)
             except (OSError, subprocess.TimeoutExpired) as e:
@@ -332,7 +339,7 @@ def main(argv=None):
             quelle_txt = "Kopien aus %s (%s)" % (a.quelle, ", ".join(geholt))
         else:
             geholt = hole_ssh(arbeit, monate(tag, a.tage))
-            quelle_txt = "ssh 10.10.10.128 (nur lesen: %s)" % ", ".join(geholt)
+            quelle_txt = "ssh %s (nur lesen: %s)" % (nas_host(), ", ".join(geholt))
         js = os.path.join(a.ausgabe, "wp_params_%s.json" % tag_s)
         js_kand = os.path.join(a.ausgabe, "kandidat_%s.json" % tag_s)
         js_tmp = os.path.join(arbeit, "ergebnis.json")

@@ -18,10 +18,10 @@ Regelung. Der einzige Hebel bei Überheizung im Mildwetter bleibt dann weniger L
 |---|---|---|
 | Firmware kennt `SetHeatingControl`? | **Ja.** Befehl `SetHeatingControl` (SET39: 0 = Comfort, 1 = Efficiency) und Status `main/Heating_Control` (TOP139, Byte 30, Bit 5–6) | HeishaMon PR #768 (gemergt 14.01.2026): `commands.h/.cpp`, `decode.h`, `MQTT-Topics.md` |
 | Welche Firmware läuft? | HeishaMon **v4.2.2** (13.09.2026, also nach dem PR); v4.2.3 (07.10.2026) ist verfügbar | Seitenkopf der Geräteseite, GitHub-Releases |
-| Aktueller Zustand | `Heating_Control = 0` (Comfort), `Heating_Mode` = Kurve, `Pump_Flowrate_Mode = 0` (DeltaT), `Heat_Delta` 3 K, `Max_Pump_Duty` 254, Quiet-Priorität `1` = **Capacity (Leistung)** | MQTT und `http://192.168.2.170/json`, nur gelesen |
+| Aktueller Zustand | `Heating_Control = 0` (Comfort), `Heating_Mode` = Kurve, `Pump_Flowrate_Mode = 0` (DeltaT), `Heat_Delta` 3 K, `Max_Pump_Duty` 254, Quiet-Priorität `1` = **Capacity (Leistung)** | MQTT und `http://<heishamon>/json`, nur gelesen |
 | Kennt unser Node-RED das schon? | **Nein.** Weder Status noch Befehl noch Dashboard-Schalter (HeishaMoNR 26.5.1 enthält es nicht) | Suche in allen Flows |
 | Bedienung im Dashboard | **Seite Übersicht, Gruppe HEIZREGELUNG** (seit 08.10.): Auswahl Comfort/Efficiency, zeigt den von HeishaMon gemeldeten Stand. Ein Befehl nur auf Auswahl, über den gemeinsamen Befehlsweg (Sperre, Budget, Quelle `Heizregelung-Schalter`), mit Bestätigung nach höchstens 90 s. Nichts wird automatisch geschaltet. Wechsel frühestens nach 5 min, Warnhinweise bei Efficiency unter 5 °C, beim Abtauen, bei Raum unter Minimum oder Vorlauf > 2 K unter Soll. Generator `tools/heating_control_switch.py`, Test `tools/heating_control_test.js` | eigene Flows |
-| Wo kann man es manuell setzen? | HTTP: `http://192.168.2.170/command?SetHeatingControl=0` (oder `=1`); MQTT: `panasonic_heat_pump/commands/SetHeatingControl`; die HeishaMon-Webseite hat dafür **keine** Bedienseite (Menü: Firmware, Reboot, Rules, Settings) | `MQTT-Topics.md`, Geräteseite |
+| Wo kann man es manuell setzen? | HTTP: `http://<heishamon>/command?SetHeatingControl=0` (oder `=1`); MQTT: `panasonic_heat_pump/commands/SetHeatingControl`; die HeishaMon-Webseite hat dafür **keine** Bedienseite (Menü: Firmware, Reboot, Rules, Settings) | `MQTT-Topics.md`, Geräteseite |
 | Befehl getestet? | **Nein**, absichtlich nicht gesendet | |
 
 Quiet-Priorität laut Firmware: `0 = Sound (Lautstärke)`, `1 = Capacity (Leistung)`. Unsere Anzeige hatte das bis 08.10. vertauscht („Ton“ für 1).

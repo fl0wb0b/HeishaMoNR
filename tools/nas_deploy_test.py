@@ -47,7 +47,8 @@ try:
     flow = os.path.join(d, "flow.json")
     with open(flow, "w") as f:
         json.dump({"rev": "r1", "flows": []}, f)
-    env = dict(os.environ, PATH=d + os.pathsep + os.environ["PATH"])
+    env = dict(os.environ, PATH=d + os.pathsep + os.environ["PATH"],
+               HEISHAMONR_LOKAL=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lokal.example.json"))
     skript = os.path.join(os.path.dirname(os.path.abspath(__file__)), "nas_deploy.sh")
     for status, soll_ok in ((200, True), (409, False), (500, False)):
         NodeRed.post_status = status
