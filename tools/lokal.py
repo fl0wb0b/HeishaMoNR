@@ -19,11 +19,14 @@ def lade():
     except (OSError, ValueError) as e:
         sys.exit("Lokale Konfiguration %s: %s. lokal.example.json nach lokal.json kopieren und ausfuellen oder HEISHAMONR_LOKAL auf die "
                  "Datei setzen." % (os.path.normpath(PFAD), e.strerror if isinstance(e, OSError) else "kein gueltiges JSON (%s)" % e))
+    if not isinstance(L, dict):
+        sys.exit("%s: muss ein JSON-Objekt sein (siehe lokal.example.json)" % os.path.normpath(PFAD))
     for k in ("venus", "nas"):
         if not isinstance(L.get(k), str) or not HOST.match(L[k]):
             sys.exit("%s: \"%s\" fehlt oder ist kein Hostname bzw. keine IP" % (os.path.normpath(PFAD), k))
-    if not isinstance(L.get("raum_topics", {}), dict):
-        sys.exit("%s: \"raum_topics\" muss ein Objekt {Raum-ID: Topic} sein" % os.path.normpath(PFAD))
+    rt = L.get("raum_topics", {})
+    if not isinstance(rt, dict) or not all(isinstance(v, str) and v.strip() for v in rt.values()):
+        sys.exit("%s: \"raum_topics\" muss ein Objekt {Raum-ID: Topic} mit nicht leeren Texten sein" % os.path.normpath(PFAD))
     return L
 
 

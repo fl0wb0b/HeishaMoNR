@@ -12,7 +12,7 @@ Adds an editor tab "WP Optimizer" and a dashboard page "Optimierung". Everything
 The script is idempotent: re-running it replaces the nodes it owns (ids start with "opt_") and keeps the values the
 user typed into the tab environment variables.
 
-Usage: python3 tools/optimizer_phase1.py "flows (26.5.1 stable).json"
+Usage: python3 tools/optimizer_phase1.py /tmp/x.json   (Kopie der Flow-Datei; Hosts und Raum-Topics aus lokal.json)
 """
 import json
 import os
@@ -22,7 +22,9 @@ from lokal import lade as lade_lokal
 
 LOKAL = lade_lokal()   # Broker-Hosts und Raumfuehler-Topics aus lokal.json (nicht versioniert, Vorlage lokal.example.json)
 _args = [a for a in sys.argv[1:] if not a.startswith("--")]
-path = _args[0] if _args else "flows (26.5.1 stable).json"
+if not _args:   # kein Standard mehr: sonst schriebe der Generator die Installationswerte aus lokal.json in die versionierte Flow-Datei
+    sys.exit('Usage: python3 tools/optimizer_phase1.py <kopie.json>   (z. B. cp "flows (26.5.1 stable).json" /tmp/x.json)')
+path = _args[0]
 # Ein-Klick-Uebernahme: der mqtt-out-Knoten wird GESPERRT (deaktiviert) ausgeliefert. Erst mit diesem Schalter UND apply.json (enabled + Regel) kann ein Klick senden.
 APPLY_NODE_ACTIVE = "--uebernahme-knoten-aktiv" in sys.argv[1:]
 flows = json.load(open(path, encoding="utf-8"))
