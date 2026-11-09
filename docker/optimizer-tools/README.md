@@ -64,6 +64,7 @@ Wird nach jedem Lauf und beim Start des Dienstes neu geschrieben (atomar: erst `
 | `fehler` | Liste: gescheiterte Schritte (`training: …`), Daten älter als 30 min, Datenordner nicht lesbar |
 | `hinweise` | Liste, setzt `ok` nicht auf `false`: auffällige Drift, Ampel gelb, abgelehnter Parametersatz, „Zwilling hat unter X °C keine Daten“, Lücken im Minutenprotokoll, Raumfühler > 120 min ungültig |
 | `letzter_lauf` | `art` (nacht/alles/…), `beginn`, `ende`, **`dauer_s`**, `ok`, `speicher_spitze_mb`, `schritte.{training,cop_eta,replay,kennzahlen,sicherung}` je `{ok, rc, dauer_s, fehler, tag}` |
+| `letzter_nachtlauf` | `art` (nacht/alles), `beginn`, `ok` des letzten vollen Laufs; ein späterer Teilschritt (z. B. `replay`) ändert ihn nicht. Entscheidet das Nachholen nach einem Neustart |
 | `dienst` | `gestartet`, `zeitplan`, `naechster_lauf` |
 | `training` | `tag`, `ok`, **`ampel`** (`gruen`/`gelb`/`rot`), `ampel_grenzen`, **`guete_test`** (TOP16 W, Wasserkreis K, Pause min; Güte des **aktiven** Satzes auf den heutigen Testtagen), `guete_test_vorher`, **`drift`** `{gegen, auffaellig, liste, werte}` (seit training-v2 zusätzlich `auffaellig_uebernommen`, je Listeneintrag `roh`, `uebernommen`, `rel_uebernommen`), `datei` (aktiver Satz) |
 | `training.entscheidung` | training-v2: `ergebnis` (`übernommen`/`abgelehnt`), `grund`, `aktiv`, `aktiv_tag`, `kandidat_datei`, `bisher_tag`, `kandidat`/`bisher`/`roh` (Kennzahlen wie `guete_test`, alle auf denselben Testtagen), `kriterium` `{rel, tol, grenzen}`, `verletzt` (Liste) |
