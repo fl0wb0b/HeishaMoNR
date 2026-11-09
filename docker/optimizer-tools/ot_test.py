@@ -2,7 +2,6 @@
 """Pruefungen fuer ot.py ohne Container und ohne echte Werkzeuge (Schritte sind Attrappen, Ordner temporaer).
 Usage: python3 docker/optimizer-tools/ot_test.py"""
 import datetime as dt
-import json
 import os
 import shutil
 import sys
@@ -30,20 +29,28 @@ class Lauf(unittest.TestCase):
             rc = ot.lauf("alles", ["--tag", "2026-10-20"])
         finally:
             ot.schritt = alt
-        S = json.load(open(os.path.join(ot.ERGEBNIS, "status.json"), encoding="utf-8"))
+        S = ot.lies_json(os.path.join(ot.ERGEBNIS, "status.json"))
         self.assertEqual(rc, 1)
         self.assertFalse(S["letzter_lauf"]["ok"])
 
 
 class Nachholen(unittest.TestCase):
     def test_nur_nachtlauf_zaehlt(self):
-        # ein manueller Teilschritt von heute (z. B. replay) ersetzt den verpassten Nachtlauf nicht
+        # ein manueller Teilschritt von heute (z. B. replay) ersetzt den verpassten Nachtlauf nicht (status.json ohne letzter_nachtlauf: Altbestand)
         heute = dt.date(2026, 10, 20)
-        self.assertTrue(ot.heute_gelaufen({"art": "nacht", "beginn": "2026-10-20 06:40:00"}, heute))
-        self.assertTrue(ot.heute_gelaufen({"art": "alles", "beginn": "2026-10-20 09:00:00"}, heute))
-        self.assertFalse(ot.heute_gelaufen({"art": "replay", "beginn": "2026-10-20 08:00:00"}, heute))
-        self.assertFalse(ot.heute_gelaufen({"art": "nacht", "beginn": "2026-10-19 06:40:00"}, heute))
+        self.assertTrue(ot.heute_gelaufen({"letzter_lauf": {"art": "nacht", "beginn": "2026-10-20 06:40:00"}}, heute))
+        self.assertTrue(ot.heute_gelaufen({"letzter_lauf": {"art": "alles", "beginn": "2026-10-20 09:00:00"}}, heute))
+        self.assertFalse(ot.heute_gelaufen({"letzter_lauf": {"art": "replay", "beginn": "2026-10-20 08:00:00"}}, heute))
+        self.assertFalse(ot.heute_gelaufen({"letzter_lauf": {"art": "nacht", "beginn": "2026-10-19 06:40:00"}}, heute))
         self.assertFalse(ot.heute_gelaufen({}, heute))
+
+    def test_nachtlauf_bleibt_nach_teilschritt_sichtbar(self):
+        # nacht um 06:40, danach ein manuelles replay: nach einem Neustart darf nacht nicht ein zweites Mal laufen
+        ot.baue_status(lauf={"art": "nacht", "beginn": "2026-10-20 06:40:00", "ok": True})
+        ot.baue_status(lauf={"art": "replay", "beginn": "2026-10-20 08:00:00", "ok": True})
+        S = ot.lies_json(os.path.join(ot.ERGEBNIS, "status.json"))
+        self.assertEqual(S["letzter_lauf"]["art"], "replay")
+        self.assertTrue(ot.heute_gelaufen(S, dt.date(2026, 10, 20)))
 
 
 if __name__ == "__main__":

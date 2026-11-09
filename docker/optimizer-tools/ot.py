@@ -326,6 +326,8 @@ def baue_status(lauf=None, dienst=None):
     S = {"format": STATUS_FORMAT, "version": VERSION, "werkzeug": "optimizer-tools %s" % VERSION, "aktualisiert": jetzt().isoformat(sep=" ")}
     S["dienst"] = dienst or alt.get("dienst")
     S["letzter_lauf"] = lauf or alt.get("letzter_lauf")
+    nl = lauf if lauf and lauf.get("art") in ("nacht", "alles") else alt.get("letzter_nachtlauf")      # für das Nachholen: ein späterer Teilschritt verdeckt ihn nicht
+    S["letzter_nachtlauf"] = {k: nl.get(k) for k in ("art", "beginn", "ok")} if nl else None
     fehler, hinweise = [], []
     tr = lies_json(os.path.join(ERGEBNIS, "training", "letzter.json"))
     S["training"] = None
@@ -554,9 +556,11 @@ def beende(sig, _frame):
         raise Stopp()
 
 
-def heute_gelaufen(alt, tag):
-    """Lief am Tag schon ein Nachtlauf? Nur „nacht“/„alles“ zählen, ein manueller Teilschritt (z. B. replay) ersetzt ihn nicht."""
-    return alt.get("art") in ("nacht", "alles") and str(alt.get("beginn", ""))[:10] == tag.isoformat()
+def heute_gelaufen(S, tag):
+    """Lief am Tag schon ein Nachtlauf (status.json S)? Nur „nacht“/„alles“ zählen, ein manueller Teilschritt (z. B. replay) ersetzt ihn nicht.
+    letzter_nachtlauf fehlt in status.json von vor diesem Feld: dann letzter_lauf."""
+    n = S.get("letzter_nachtlauf") or S.get("letzter_lauf") or {}
+    return n.get("art") in ("nacht", "alles") and str(n.get("beginn", ""))[:10] == tag.isoformat()
 
 
 def dienst():
@@ -570,7 +574,7 @@ def dienst():
     if not ergebnis_schreibbar():
         log("Warnung: Ergebnisordner %s nicht schreibbar; Läufe brechen ab (rc 4). Einmalig anlegen: %s" % (ERGEBNIS, ANLEGEN_HILFE), "dienst")
     plan = naechster(gestartet)
-    alt = (lies_json(os.path.join(ERGEBNIS, "status.json")) or {}).get("letzter_lauf") or {}
+    alt = lies_json(os.path.join(ERGEBNIS, "status.json")) or {}
     erster_heute = dt.datetime.combine(gestartet.date(), zeiten()[0])
     if NACHHOLEN and gestartet > erster_heute and not heute_gelaufen(alt, gestartet.date()):
         log("Lauf von heute %s fehlt: wird jetzt nachgeholt" % erster_heute.strftime("%H:%M"), "dienst")
