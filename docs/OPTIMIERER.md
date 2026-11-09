@@ -69,7 +69,7 @@ Takt alle 15 s (opt_i_apply) ─────────────────
 
 **Geänderter Knoten:** `opt_eval`. `OPT_state` bekommt zusätzlich die Felder `korr`, `korrCode` und `korrLead`. Das ist der Raumvorschlag der Phase 2, nur lesend. Das Verhalten ändert sich nicht, `optimizer_sim.js` bleibt grün.
 
-**Generator:** `python3 tools/optimizer_phase1.py <flows.json>` liefert den Übernahme-Knoten deaktiviert aus. Erst mit `--uebernahme-knoten-aktiv` wird er aktiv erzeugt, und das nur nach dem Go des Nutzers.
+**Generator:** `python3 tools/optimizer_phase1.py <kopie.json>` (eine Kopie wie `/tmp/x.json`, nie die versionierte Flow-Datei; ohne Pfad bricht er ab) liefert den Übernahme-Knoten deaktiviert aus. Erst mit `--uebernahme-knoten-aktiv` wird er aktiv erzeugt, und das nur nach dem Go des Nutzers.
 
 **Dateien in `/data/optimizer/`:**
 
