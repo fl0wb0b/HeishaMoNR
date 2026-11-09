@@ -327,6 +327,8 @@ def baue_status(lauf=None, dienst=None):
     S["dienst"] = dienst or alt.get("dienst")
     S["letzter_lauf"] = lauf or alt.get("letzter_lauf")
     nl = lauf if lauf and lauf.get("art") in ("nacht", "alles") else alt.get("letzter_nachtlauf")      # für das Nachholen: ein späterer Teilschritt verdeckt ihn nicht
+    if not nl and (alt.get("letzter_lauf") or {}).get("art") in ("nacht", "alles"):                  # status.json von vor diesem Feld: vollen Lauf übernehmen
+        nl = alt["letzter_lauf"]
     S["letzter_nachtlauf"] = {k: nl.get(k) for k in ("art", "beginn", "ok")} if nl else None
     fehler, hinweise = [], []
     tr = lies_json(os.path.join(ERGEBNIS, "training", "letzter.json"))
