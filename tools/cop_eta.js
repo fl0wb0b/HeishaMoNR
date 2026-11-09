@@ -122,8 +122,8 @@ function cli(argv) {
     const a = k => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : null; };
     const dir = a('--daten'), erg = a('--ergebnis'), aus = a('--aus'), tage = Number(a('--tage') || 21);
     if (!dir || (!erg && !aus)) { console.error('Usage: node tools/cop_eta.js --daten DIR --ergebnis DIR [--tag JJJJ-MM-TT] [--tage 21] [--aus datei]'); return 2; }
-    const tag = a('--tag'), d0 = tag ? new Date(tag + 'T00:00:00') : new Date(); d0.setHours(0, 0, 0, 0);
-    const bis = tag ? d0.getTime() + 24 * 60 * MIN : Date.now(), von = d0.getTime() - (tage - 1) * 24 * 60 * MIN;
+    const tag = a('--tag'), f = fenster(tag || E.ymd(Date.now()), tage);
+    const bis = tag ? f.bis : Date.now(), von = f.von;
     const M = lade(dir, von, bis);
     if (!M.length) { console.error('keine Minutenzeilen im Fenster'); return 1; }
     const o = kalibriere(M, cfgAus(dir), {defrost: defrostCsv(dir, von, bis)});
@@ -135,5 +135,7 @@ function cli(argv) {
                 ' · dT ' + Object.keys(o.dTverd).map(b => o.dTverd[b].v).join('/') + ' · Abtauungen ' + o.abtau.n + ' -> ' + ziel);
     return 0;
 }
-module.exports = {lade, kalibriere, cfgAus, eingabe, defrostCsv, leseCsv, KAL, FORMAT};
+// Fenster [von, bis) ueber `tage` Kalendertage bis einschliesslich `tag` (JJJJ-MM-TT), an lokalen Mitternachten: Tage der Zeitumstellung haben 23 bzw. 25 h
+function fenster(tag, tage) { const d = new Date(tag + 'T00:00:00'); return {von: new Date(d.getFullYear(), d.getMonth(), d.getDate() - (tage - 1)).getTime(), bis: new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime()}; }
+module.exports = {lade, kalibriere, cfgAus, eingabe, defrostCsv, leseCsv, fenster, KAL, FORMAT};
 if (require.main === module) { process.exitCode = cli(process.argv.slice(2)); }
