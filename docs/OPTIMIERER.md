@@ -61,7 +61,7 @@ Takt alle 15 s (opt_i_apply) ─────────────────
 | `opt_apply` | function | Kern + Übernahme-Hülle |
 | `opt_i_apply` | inject | alle 15 s |
 | `opt_apply_mqtt` | mqtt out | **deaktiviert** (`"d": true`) |
-| `opt_broker_cmd` | mqtt-broker | 10.10.10.128, eigener Client `nodered-optimizer-cmd` |
+| `opt_broker_cmd` | mqtt-broker | NAS (`nas` aus `lokal.json`), eigener Client `nodered-optimizer-cmd` |
 | `opt_eng_ui_tab` | ui_tab | Seite „Optimierer“, Reihenfolge 12,55 |
 | `opt_g_eng_prop`, `opt_g_eng_rules`, `opt_g_eng_score`, `opt_g_eng_mess`, `opt_g_eng_log` | ui_group | je 17 breit (seit 13.10., vorher 18) |
 | `opt_t_eng_*` | ui_template | die fünf Karten (seit 13.10. mit `opt_t_eng_mess` „Messwerte & Lernen“, Ausgang 6 von `opt_engine`) |
@@ -790,7 +790,7 @@ Aufbau:
 
 | Schritt | Was passiert |
 |---|---|
-| Quelle (nur lesen) | `--quelle ORDNER` mit Kopien oder `--ssh`, d. h. `ssh fl0wb0b@10.10.10.128 docker exec node_red-node-red-1 cat /data/optimizer/<datei>`; ohne Shell, Dateiname gegen ein festes Muster geprüft |
+| Quelle (nur lesen) | `--quelle ORDNER` mit Kopien oder `--ssh`, d. h. `ssh <nas> docker exec node_red-node-red-1 cat /data/optimizer/<datei>`; ohne Shell, Dateiname gegen ein festes Muster geprüft |
 | Fakten (deterministisch) | Abdeckung und Lücken; Minuten Lauf/Pause/Heizgrenze; Läufe (Anzahl, Starts, mittel, kürzester, längster); Pausen; Strom, Wärme, COP; maximale Frequenz ab Laufminute 2; Minuten > 20 Hz bei Quiet ≥ 1; Quiet-Minuten je Stufe; Heizregelung; Soll min/max/Wechsel; Außentemperatur; Radiator-Anteil; Ereignisse (Quiet-Befehle, davon GUI, Sollsprünge, Radiator, Vorschläge, Klicks); je Raum min/max, Minuten unter Min und über Max, ungültig in %; Maschine (Datensätze, Status-Minuten je Regel, Vorschläge); Punkte je Regel und Typ; Übernahmen (die Messaufgabe ist seit dem Review-Paket gestrichen) |
 | Regel-Befunde (geprüft) | Lücken > 10 min; Maschine lief nicht durchgehend; Raum oft ungültig; Raum lange unter Minimum; > 20 Hz trotz Quiet ≥ 1; Schaden; Verpasst; Klicks; fehlende Dateien |
 | Bonsai (ungeprüft) | drei kurze Fragen: Auffälligkeiten, Vergleich mit dem Vortag (`vortag.*`), Datenqualität. Antwort nur als JSON-Array |
