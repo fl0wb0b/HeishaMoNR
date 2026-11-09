@@ -852,6 +852,10 @@ var parts = String(msg.topic || '').split('/');                       // panason
 var grp = parts[1] || '', name = parts.slice(2).join('/');
 var raw = (msg.payload === undefined || msg.payload === null) ? '' : String(msg.payload);
 var n = Number(raw), val = (raw !== '' && isFinite(n)) ? n : raw;
+if (grp === '1wire') {                                                // DS18B20 an HeishaMon (09.11.2026): unter _ow, damit sie die Frische der Anlagenwerte (Schluessel ohne _) nicht vortaeuschen
+    if (typeof val === 'number') { hp._ow = hp._ow || {}; hp._ow[name] = {v: val, ts: now}; global.set('OPT_hp', hp); }
+    return null;
+}
 var d = new Date(now), pad = function (x) { return (x < 10 ? '0' : '') + x; };
 var iso = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
 var month = iso.slice(0, 7), file = '/data/optimizer/quiet-events-' + month + '.csv';
@@ -1328,8 +1332,10 @@ if (!qs.lastLog || now - qs.lastLog >= MS_MIN - 1000) {
                 'zustand', 'shift_anlage', 'kz_radiator_an', 'kz_heizluefter_an', 'kz_heizluefter_w', 'kz_heizluefter_online',
                 'leistung_el_korr_w', 'cop_momentan_korr', 'cop_korr_w', 'rohr_aussen',          // 14.10.2026 (nur angehaengt): Strom/COP mit Korrektur und ihre Konstante; Outside_Pipe_Temp fuer die Abtau-Kennzahl des Beobachters
                 'heizstab_stop_delta', 'verdampfer_aus', 'heissgas', 'hochdruck', 'expansionsventil', 'rohr_innen',
-                'druck_bar', 'zaehler_wp_w', 'zaehler_heizstab_w'];   // cop-ziel 17.10.2026 (nur angehaengt): Stromzaehler Shelly (Waermepumpe ohne Heizstab, Heizstab), leer ohne frischen Zaehler; Winterpaket 16.10.2026 (nur angehaengt): Water_Pressure; der Sensor zaehlt bei laufender Pumpe den Foerderdruck mit (~0,5 bar bei 4250 U/min), statisch nur bei Pumpe 0 (pumpe_speed) gueltig – Auswertung spaeter (Beobachter/Kennzahlen); Paket 2 (15.10.2026, nur angehaengt): Heater_Stop_Delta (TOP98), Eva_Outlet_Temp, Discharge_Temp, High_Pressure, Expansion_Valve, Inside_Pipe_Temp (Winter: Verdampfer/Ueberhitzung, Forum Expansionsventil)
+                'druck_bar', 'zaehler_wp_w', 'zaehler_heizstab_w',
+                'ow_vl', 'ow_rl'];   // 09.11.2026 (nur angehaengt): DS18B20 Anlegefuehler am Kupferrohr im Haus (Vorlauf 28964181e3e13ce0, Ruecklauf 28988a81e3e13ca1), leer ohne Wert der letzten 15 min;   // cop-ziel 17.10.2026 (nur angehaengt): Stromzaehler Shelly (Waermepumpe ohne Heizstab, Heizstab), leer ohne frischen Zaehler; Winterpaket 16.10.2026 (nur angehaengt): Water_Pressure; der Sensor zaehlt bei laufender Pumpe den Foerderdruck mit (~0,5 bar bei 4250 U/min), statisch nur bei Pumpe 0 (pumpe_speed) gueltig – Auswertung spaeter (Beobachter/Kennzahlen); Paket 2 (15.10.2026, nur angehaengt): Heater_Stop_Delta (TOP98), Eva_Outlet_Temp, Discharge_Temp, High_Pressure, Expansion_Valve, Inside_Pipe_Temp (Winter: Verdampfer/Ueberhitzung, Forum Expansionsventil)
     var hv = function (n) { return HP[n] && typeof HP[n].v === 'number' ? HP[n].v : null; };
+    var owv = function (id) { var o = HP._ow && HP._ow[id]; return o && typeof o.v === 'number' && o.v > -55 && o.v < 85 && now - o.ts <= 15 * MS_MIN ? o.v : null; };   // DS18B20: -127 = Fuehler weg, 85 = Startwert nach Spannungsausfall
     // Review-Paket 13.10.2026: Spalten der gestrichenen Quiet-Empfehlung, des Kontrolltests und des Eskalationswaechters bleiben im Kopf (Leser nach Spaltenname), Werte leer
     var vals2 = [iso, qNow, '', '', '', '', '', '', '', c(solVL), c(istVL), c(solRL), c(istRL), c(rlErr), c(qs.errS),
                  c(spread), c(zDelta), c(freq), c(pel), c(pthHs), c(pthCalc), c(copNow), c(flw), c(hv('Pump_Duty')), c(hv('Pump_Speed')), c(hv('Max_Pump_Duty')), c(fan1), c(hv('Fan2_Motor_Speed')),
@@ -1340,7 +1346,7 @@ if (!qs.lastLog || now - qs.lastLog >= MS_MIN - 1000) {
                  zustandNow, c(shiftHpNow), kzRad, kzFanOn, c(kzFanW), kzFanOnline,
                  c(pelKNow), c(copNowK), COP_KW, c(hv('Outside_Pipe_Temp')),
                  c(hv('Heater_Stop_Delta')), c(hv('Eva_Outlet_Temp')), c(hv('Discharge_Temp')), c(hv('High_Pressure')), c(hv('Expansion_Valve')), c(hv('Inside_Pipe_Temp')),
-                 c(hv('Water_Pressure')), c(ZQ.w), c(ZQ.hs)];
+                 c(hv('Water_Pressure')), c(ZQ.w), c(ZQ.hs), c(owv('28964181e3e13ce0')), c(owv('28988a81e3e13ca1'))];
     var file = '/data/optimizer/quiet-' + month + '.csv', head = cols.join(',');
     var needHead = true;
     if (flow.get('qHead') === month + '|' + head) { needHead = false; }
@@ -3421,7 +3427,8 @@ upsert({"id": "opt_broker_nas", "type": "mqtt-broker", "name": "MQTT (NAS) Optim
         "birthMsg": {}, "closeTopic": "", "closeQos": "0", "closeRetain": "false", "closePayload": "", "closeMsg": {}, "willTopic": "",
         "willQos": "0", "willRetain": "false", "willPayload": "", "willMsg": {}, "userProps": "", "sessionExpiry": ""})
 for _i, _t in enumerate(("panasonic_heat_pump/main/+", "panasonic_heat_pump/extra/+", "panasonic_heat_pump/commands/SetQuietMode", "panasonic_heat_pump/commands/SetHeatingControl",
-                         "panasonic_heat_pump/commands/SetPumpFlowrateMode", "panasonic_heat_pump/commands/SetMaxPumpDuty", "panasonic_heat_pump/commands/SetQuietModePriority")):
+                         "panasonic_heat_pump/commands/SetPumpFlowrateMode", "panasonic_heat_pump/commands/SetMaxPumpDuty", "panasonic_heat_pump/commands/SetQuietModePriority",
+                         "panasonic_heat_pump/1wire/+")):
     upsert({"id": f"opt_mqtt_hp_{_i}", "type": "mqtt in", "z": TAB, "name": "", "topic": _t, "qos": "0", "datatype": "auto-detect",
             "broker": "opt_broker_nas", "nl": False, "rap": True, "rh": 0, "inputs": 0, "x": 160, "y": 1120 + 60 * _i, "wires": [["opt_hp_in"]]})
 upsert(fn("opt_hp_in", "Anlagenwerte lesen (nur lesen)", HP_IN_JS, 1, [["opt_f_qev"]], 440, 1180, FS))
