@@ -207,6 +207,13 @@ class EchteDaten(unittest.TestCase):
             shutil.rmtree(out, ignore_errors=True)
 
 
+class Randfaelle(unittest.TestCase):
+    def test_cop_vergleich_aussen_ausreisser(self):
+        # Fuehler-Ausreisser (z. B. -127 °C) duerfen die Bandbestimmung nicht mit StopIteration abbrechen
+        r = {"verdichter_hz": "30", "verdichter_laufzeit_min": "20", "heizregelung": "0", "aussen": "-127", "leistung_el_w": "500", "leistung_th_heisha_w": "2000"}
+        self.assertIn("unter 3 °C", B.cop_vergleich({"quiet": [r]}))
+
+
 class LlmNieWarnung(unittest.TestCase):
     def test_llm_schwere_gedeckelt(self):
         self.assertEqual(B.llm_schwere("warnung"), "hinweis")

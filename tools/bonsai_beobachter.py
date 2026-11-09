@@ -554,7 +554,7 @@ def bonsai_lang(frag, text):
     return gut, verworfen, fehler
 
 
-BAENDER = [(-99, 3, "unter 3 °C"), (3, 7, "3 bis 7 °C"), (7, 12, "7 bis 12 °C"), (12, 99, "ab 12 °C")]
+BAENDER = [(float("-inf"), 3, "unter 3 °C"), (3, 7, "3 bis 7 °C"), (7, 12, "7 bis 12 °C"), (12, float("inf"), "ab 12 °C")]   # lueckenlos: auch Fuehler-Ausreisser (-127 °C) haben ein Band
 
 
 def cop_vergleich(d):
