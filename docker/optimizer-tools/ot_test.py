@@ -52,6 +52,13 @@ class Nachholen(unittest.TestCase):
         self.assertEqual(S["letzter_lauf"]["art"], "replay")
         self.assertTrue(ot.heute_gelaufen(S, dt.date(2026, 10, 20)))
 
+    def test_altbestand_uebernimmt_nachtlauf(self):
+        # status.json von vor letzter_nachtlauf (heutiger nacht-Lauf nur in letzter_lauf), dann ein replay: nacht bleibt erkannt
+        ot.schreibe_atomar(os.path.join(ot.ERGEBNIS, "status.json"), '{"letzter_lauf": {"art": "nacht", "beginn": "2026-10-21 06:40:00", "ok": true}}')
+        ot.baue_status(lauf={"art": "replay", "beginn": "2026-10-21 08:00:00", "ok": True})
+        S = ot.lies_json(os.path.join(ot.ERGEBNIS, "status.json"))
+        self.assertTrue(ot.heute_gelaufen(S, dt.date(2026, 10, 21)))
+
 
 if __name__ == "__main__":
     try:
