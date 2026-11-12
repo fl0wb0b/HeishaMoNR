@@ -2229,10 +2229,11 @@ check('ohne Kinderzimmer-Werte (frischer Start): vier Spalten leer, Karte zeigt 
   const zielVon = (origin, pathname) => { let h = null; const ctx = {window: {}, location: {origin, pathname, set href(v) { h = v; }}, document: {addEventListener: (t, fn) => { ctx.klick = fn; }}};
     vm.runInNewContext(js, ctx); const it = {innerText: 'Venus (Victron)', closest: () => it}; const ev = {target: it, preventDefault() {}, stopPropagation() {}};
     ctx.location = {origin, pathname, set href(v) { h = v; }}; ctx.window.location = ctx.location; ctx.klick(ev); return h; };
+  const LOK = JSON.parse(fs.readFileSync(process.env.HEISHAMONR_LOKAL || path.join(__dirname, '..', 'lokal.json'), 'utf8')), VUI = 'https://' + LOK.venus + ':1881/ui/';   // wie der Generator
   let ok1 = false, a, b, c;
-  try { a = zielVon('http://10.10.10.128:1880', '/ui/'); b = zielVon('https://192.168.5.11:1881', '/nas/ui/'); c = zielVon('https://abc.proxyrelay2.victronenergy.com', '/proxy/xyz/nas/ui/'); ok1 = true; } catch (e) { a = e.message; }
-  check('Venus-Link: ui_link "Venus (Victron)" im Menü (Reihenfolge nach allen Seiten), globales Skript leitet um: NAS direkt -> https://192.168.5.11:1881/ui/, über den Venus -> https://192.168.5.11:1881/ui/, über einen Proxy-Unterpfad -> derselbe Unterpfad + /ui/',
-        L && L.type === 'ui_link' && L.order >= 17 && T && T.templateScope === 'global' && ok1 && a === 'https://192.168.5.11:1881/ui/' && b === 'https://192.168.5.11:1881/ui/' && c === 'https://abc.proxyrelay2.victronenergy.com/proxy/xyz/ui/', JSON.stringify([a, b, c]));
+  try { a = zielVon('http://' + LOK.nas + ':1880', '/ui/'); b = zielVon('https://' + LOK.venus + ':1881', '/nas/ui/'); c = zielVon('https://abc.proxyrelay2.victronenergy.com', '/proxy/xyz/nas/ui/'); ok1 = true; } catch (e) { a = e.message; }
+  check('Venus-Link: ui_link "Venus (Victron)" im Menü (Reihenfolge nach allen Seiten), globales Skript leitet um: NAS direkt -> https://<venus>:1881/ui/, über den Venus -> https://<venus>:1881/ui/, über einen Proxy-Unterpfad -> derselbe Unterpfad + /ui/',
+        L && L.type === 'ui_link' && L.order >= 17 && T && T.templateScope === 'global' && ok1 && a === VUI && b === VUI && c === 'https://abc.proxyrelay2.victronenergy.com/proxy/xyz/ui/', JSON.stringify([a, b, c]));
 })();
 // ---- Paket 2 (15.10.2026): Karte "Auswertung NAS" (Daten & Güte) liest /data/optimizer-tools/status.json des Containers optimizer-tools (nur lesen)
 console.log('\n--- Auswertung NAS (status.json des Containers optimizer-tools)');
@@ -2450,18 +2451,18 @@ console.log('\n--- Zeitleiste: Zustandsleiste und Sonnenstand');
         NBx('opt_f_evcc').type === 'file' && NBx('opt_i_evcc_q').repeat === '600' && JSON.stringify(NBx('opt_i_evcc_q').wires) === '[["opt_evcc_q"]]' && tabN.filter(n => n.type === 'http request').every(n => n.method === 'GET'), '');
   NOW = Date.parse('2026-10-25T19:02:37+01:00');
   const rq = run('opt_evcc_req', {}), jq = rq ? decodeURIComponent(rq.url.split('jq=')[1] || '') : '';
-  const cfgKeep = gstore.OPT_cfg.energy.evccUrl; gstore.OPT_cfg.energy.evccUrl = 'http://10.10.10.128:7070/x?y'; const rqBad = run('opt_evcc_req', {}), abBad = (gstore.OPT_evcc_plan || {}).abruf; gstore.OPT_cfg.energy.evccUrl = cfgKeep;
-  check('evcc-Anfrage: GET http://10.10.10.128:7070/api/state?jq=… nur evopt, Akku-Ladestand, Netzpreis, Version; ungueltige Adresse in der Konfiguration -> kein Abruf, Fehler im Abruf-Status', rq && rq.url.indexOf('http://10.10.10.128:7070/api/state?jq=') === 0 &&
+  const cfgKeep = gstore.OPT_cfg.energy.evccUrl; gstore.OPT_cfg.energy.evccUrl = cfgKeep + '/x?y'; const rqBad = run('opt_evcc_req', {}), abBad = (gstore.OPT_evcc_plan || {}).abruf; gstore.OPT_cfg.energy.evccUrl = cfgKeep;
+  check('evcc-Anfrage: GET <evcc_url aus lokal.json>/api/state?jq=… nur evopt, Akku-Ladestand, Netzpreis, Version; ungueltige Adresse in der Konfiguration -> kein Abruf, Fehler im Abruf-Status', rq && rq.url.indexOf(cfgKeep + '/api/state?jq=') === 0 && /^https?:\/\/[^\/]+$/.test(cfgKeep) &&
         jq === '{evopt: .evopt, soc: .battery.soc, tariffGrid: .tariffGrid, version: .version}' && rqBad === null && abBad && abBad.fehler === 'evcc-Adresse ungültig', rq && rq.url);
   delete gstore.OPT_evcc_plan;
   const o1 = run('opt_evcc', {statusCode: 200, payload: JSON.stringify(RAW)}), EP1 = gstore.OPT_evcc_plan, L1 = o1 ? JSON.parse(o1.payload) : {};
   check('evcc-Antwort: OPT_evcc_plan (kompakt: Zeitstempel, Leisha, Haus, BWWP, PV, Preis, Akku laden/entladen, Ladestand, Netzbezug/Einspeisung), eine Zeile je Abruf in evcc-plan-2026-10.jsonl (< 4 KB)',
         EP1 && EP1.abruf.ok && EP1.plan.n === 93 && EP1.plan.leisha[1] === 60 && ['haus', 'bwwp', 'pv', 'preis', 'laden', 'entladen', 'soc', 'bezug', 'einspeisung'].every(k => Array.isArray(EP1.plan[k])) &&
         o1.filename === '/data/optimizer/evcc-plan-2026-10.jsonl' && o1.payload.endsWith('\n') && o1.payload.length < 4000 && L1.t === Math.round(NOW / 1000) && L1.zeit0 === Math.round(Date.parse('2026-10-25T18:57:44+01:00') / 1000), o1 && o1.payload.length);
-  NOW += 20 * M; const o2 = run('opt_evcc', {error: {message: 'connect ECONNREFUSED 10.10.10.128:7070'}}), EP2 = gstore.OPT_evcc_plan, L2 = JSON.parse(o2.payload);
+  NOW += 20 * M; const o2 = run('opt_evcc', {error: {message: 'connect ECONNREFUSED 192.0.2.128:7070'}}), EP2 = gstore.OPT_evcc_plan, L2 = JSON.parse(o2.payload);
   const o2b = run('opt_evcc', {statusCode: 'ECONNREFUSED', payload: 'Error: connect ECONNREFUSED'});                // derselbe Fehler am Ausgang des http-request-Knotens: keine zweite Zeile
   NOW += 15000; const o3 = run('opt_evcc', {statusCode: 502, payload: 'Bad Gateway'}); NOW += 15000; const o4 = run('opt_evcc', {statusCode: 200, payload: '{"version":"0.318.1"}'}); NOW -= 30000;
-  check('evcc nicht erreichbar / HTTP 502 / ohne evopt: letzter Plan bleibt, Abruf-Status mit Grund, Protokollzeile mit Fehler und Zeit des letzten Plans', EP2.plan.n === 93 && EP2.plan.ts === NOW - 20 * M && L2.fehler === 'nicht erreichbar (connect ECONNREFUSED 10.10.10.128:7070)' &&
+  check('evcc nicht erreichbar / HTTP 502 / ohne evopt: letzter Plan bleibt, Abruf-Status mit Grund, Protokollzeile mit Fehler und Zeit des letzten Plans', EP2.plan.n === 93 && EP2.plan.ts === NOW - 20 * M && L2.fehler === 'nicht erreichbar (connect ECONNREFUSED 192.0.2.128:7070)' &&
         L2.letzter === Math.round((NOW - 20 * M) / 1000) && o2b === null && JSON.parse(o3.payload).fehler === 'HTTP 502' && /evopt fehlt/.test(JSON.parse(o4.payload).fehler) && gstore.OPT_evcc_plan.abruf.ok === false, JSON.stringify(L2));
   let e = run('opt_energy', {}), r = e[0].payload.rows.find(x => x[0] === 'Daten evcc-Plan');
   check('Energie & Preise: Zeile "Daten evcc-Plan" (ok · Alter 20 min · letzter Abruf: Grund · reicht … voraus); OPT_plan_in.evcc mit Akku-Minimum 07:00 / 6,54 kWh, Fenstern, PV-Prognose evcc (W)',

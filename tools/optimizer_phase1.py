@@ -12,14 +12,23 @@ Adds an editor tab "WP Optimizer" and a dashboard page "Optimierung". Everything
 The script is idempotent: re-running it replaces the nodes it owns (ids start with "opt_") and keeps the values the
 user typed into the tab environment variables.
 
-Usage: python3 tools/optimizer_phase1.py "flows (26.5.1 stable).json"
+Usage: python3 tools/optimizer_phase1.py /tmp/x.json   (Kopie der Flow-Datei; Hosts und Raum-Topics aus lokal.json)
 """
 import json
 import os
+import re
 import sys
 
+from lokal import lade as lade_lokal
+
+LOKAL = lade_lokal()   # Broker-Hosts und Raumfuehler-Topics aus lokal.json (nicht versioniert, Vorlage lokal.example.json)
+EVCC_URL = LOKAL.get("evcc_url") or "http://%s:7070" % LOKAL["nas"]   # evcc-Abgleich: Standard evcc auf der NAS, Port 7070; abweichend "evcc_url" in lokal.json
+if not isinstance(EVCC_URL, str) or not re.match(r"^https?://[A-Za-z0-9][A-Za-z0-9.-]*(:\d+)?$", EVCC_URL):
+    sys.exit("lokal.json: \"evcc_url\" muss http(s)://host[:port] ohne Pfad sein")
 _args = [a for a in sys.argv[1:] if not a.startswith("--")]
-path = _args[0] if _args else "flows (26.5.1 stable).json"
+if not _args:   # kein Standard mehr: sonst schriebe der Generator die Installationswerte aus lokal.json in die versionierte Flow-Datei
+    sys.exit('Usage: python3 tools/optimizer_phase1.py <kopie.json>   (z. B. cp "flows (26.5.1 stable).json" /tmp/x.json)')
+path = _args[0]
 # Ein-Klick-Uebernahme: der mqtt-out-Knoten wird GESPERRT (deaktiviert) ausgeliefert. Erst mit diesem Schalter UND apply.json (enabled + Regel) kann ein Klick senden.
 APPLY_NODE_ACTIVE = "--uebernahme-knoten-aktiv" in sys.argv[1:]
 flows = json.load(open(path, encoding="utf-8"))
@@ -58,7 +67,7 @@ upsert({"id": TAB, "type": "tab", "label": "WP Optimizer", "disabled": False,
         "env": env})
 
 # ---------------------------------------------------------------- broker (own client id so it never kicks other clients)
-upsert({"id": BROKER, "type": "mqtt-broker", "name": "MQTT (Venus) Optimizer", "broker": "192.168.5.11", "port": "1883",
+upsert({"id": BROKER, "type": "mqtt-broker", "name": "MQTT (Venus) Optimizer", "broker": LOKAL["venus"], "port": "1883",
         "clientid": "nodered-optimizer", "autoConnect": True, "usetls": False, "protocolVersion": "4",
         "keepalive": "60", "cleansession": True, "autoUnsubscribe": True,
         "birthTopic": "", "birthQos": "0", "birthRetain": "false", "birthPayload": "", "birthMsg": {},
@@ -96,9 +105,9 @@ ROOMS = [
     # Quiet-Bedarf fuer das ganze Haus; zaehlt weiter fuer Absenkungen (keine -1 K, solange er unter Minimum liegt) und fuer den Hinweis Waermeverteilung. config.json kann es je Raum setzen.
     # sonnenfenster (Paket 2 vom 15.10.2026): Raum mit Sonnenfenster (Wohnzimmer, Suedwest; nachmittags warm durch Sonne) -> kein Ueberschuss-Ausloeser fuer -1 K, solange Sonne
     # anliegt und er bei stehender WP bzw. fallendem Vorlauf steigt (Raumeinfluss v5, Deckel/Laufzeit v6); fuer Bedarf, Reserve und Waermeverteilung zaehlt er immer.
-    {"id": "ki_oben", "name": "Kinderzimmer oben", "topic": "shellyhtg3-lucas/status/temperature:0",
+    {"id": "ki_oben", "name": "Kinderzimmer oben", "topic": None,
      "active": True, "min": 22.5, "max": 23.5, "weight": 1, "maxAgeMin": 90, "eigeneHeizung": True, "sonnenfenster": False},
-    {"id": "ki_unten", "name": "Kinderzimmer unten", "topic": "shellyhtg3-lina/status/temperature:0",
+    {"id": "ki_unten", "name": "Kinderzimmer unten", "topic": None,
      "active": True, "min": 22.5, "max": 23.5, "weight": 1, "maxAgeMin": 90, "eigeneHeizung": False, "sonnenfenster": False},
     {"id": "schlaf", "name": "Schlafzimmer", "topic": "shellies/shellyht-Schlaf/sensor/temperature",
      "active": True, "min": 19, "max": 21, "weight": 1, "maxAgeMin": 90, "eigeneHeizung": False, "sonnenfenster": False},
@@ -106,6 +115,10 @@ ROOMS = [
     {"id": "wohn", "name": "Wohnzimmer", "topic": "shellies/shelly-ht-wohnzimmer/sensor/temperature",
      "active": False, "min": 20, "max": 22.5, "weight": 1, "maxAgeMin": 90, "eigeneHeizung": False, "sonnenfenster": True},
 ]
+for _r in ROOMS:   # Topic je Raum aus lokal.json (raum_topics); ohne Standard hier (None) ist der Eintrag dort Pflicht
+    _r["topic"] = LOKAL.get("raum_topics", {}).get(_r["id"]) or _r["topic"]
+    if not _r["topic"]:
+        sys.exit("lokal.json: raum_topics.%s fehlt (MQTT-Topic des Raumfuehlers, siehe lokal.example.json)" % _r["id"])
 # Standard "eigene Nachheizung" je Raum-ID: Rueckfall fuer Leser, solange OPT_cfg im Speicher das Feld noch nicht hat (Deploy ohne erneutes opt_i_init)
 EIGEN_STD_JS = json.dumps({r["id"]: r["eigeneHeizung"] for r in ROOMS})
 SONNE_STD_JS = json.dumps({r["id"]: r["sonnenfenster"] for r in ROOMS})
@@ -199,7 +212,7 @@ var d = {
     plan: __PLAN__,
     cop: __COP__,                                    // COP-Korrektur: W, die TOP16 im Lauf fehlen (Forum 189605, Annahme 80 W)
     zaehler: __ZAEHLER__,                            // Stromzaehler Shelly 3EM-63 Gen3 (cop-ziel 17.10.2026): Topic, Broker, Klemmen, Quelle (Standard heishamon)
-    energy: {vrmMaxAgeH: 4, evccMaxAgeH: 6, batteryInstance: 278, evccUrl: 'http://10.10.10.128:7070',          // evccUrl: Optimierer-Plan von evcc, nur GET /api/state (evcc-abgleich 25.10.2026)
+    energy: {vrmMaxAgeH: 4, evccMaxAgeH: 6, batteryInstance: 278, evccUrl: '__EVCC_URL__',          // evccUrl: Optimierer-Plan von evcc, nur GET /api/state (evcc-abgleich 25.10.2026)
              tariff: {buy: [['00:00', '05:00', 0.21], ['05:00', '24:00', 0.31]], sell: 0.06, source: 'VRM Dynamic ESS (fester HT/NT-Tarif)'},       // Kaufpreis EUR/kWh je Zeitfenster, Verkaufspreis
              battery: {capacityKwh: 43, maxChargeKw: 12, maxDischargeKw: 12, costEurKwh: 0.01}, grid: {importKw: 32, exportKw: 32}},          // Werte aus VRM Dynamic ESS (fuer spaetere Phasen)
     calcAT: {wNow: 0.5, wHist: 0.25, wFc: 0.25, minHistH: 6},
@@ -3359,7 +3372,7 @@ upsert({"id": "opt_t_rooms", "type": "ui_template", "z": TAB, "group": "opt_g_ro
 upsert(comment("opt_c1", "Phase 1: nur messen, glätten, anzeigen, protokollieren – KEIN Eingriff in die Regelung", 380, 40))
 upsert(comment("opt_c2", "Raumsensoren (Venus-Broker) → Plausibilität, Ausreißer, Glättung, Trend", 380, 80))
 upsert(inject("opt_i_init", "Standardwerte", 0, 3, ["opt_defaults"], 140, 140))
-upsert(fn("opt_defaults", "Standardwerte setzen", js(DEFAULTS_JS), 0, [], 380, 140, FS))
+upsert(fn("opt_defaults", "Standardwerte setzen", js(DEFAULTS_JS).replace("__EVCC_URL__", EVCC_URL), 0, [], 380, 140, FS))
 # input from the room card; output 1: red message for a rejected input, output 2: evaluate now (the card shows the valid values again)
 upsert(fn("opt_set", "Einstellung übernehmen und speichern", js(SET_CFG_JS), 2, [["opt_ui_toast"], ["opt_eval"]], 1500, 320, FS))
 
@@ -3421,7 +3434,7 @@ upsert(fn("opt_eval", "Auswerten · Anzeigen · Protokollieren", EVAL_JS.replace
 
 # ---------------------------------------------------------------- phase 4 (shadow): quiet recommendation; READ ONLY, there is no mqtt out in this tab
 upsert(comment("opt_c5", "Quiet-Wächter (Shadow): Anlagenwerte nur lesen, messen und anzeigen, Stufe NICHT schalten", 380, 1060))
-upsert({"id": "opt_broker_nas", "type": "mqtt-broker", "name": "MQTT (NAS) Optimizer lesen", "broker": "10.10.10.128", "port": "1883",
+upsert({"id": "opt_broker_nas", "type": "mqtt-broker", "name": "MQTT (NAS) Optimizer lesen", "broker": LOKAL["nas"], "port": "1883",
         "clientid": "nodered-optimizer-nas", "autoConnect": True, "usetls": False, "protocolVersion": "4", "keepalive": "60",
         "cleansession": True, "autoUnsubscribe": True, "birthTopic": "", "birthQos": "0", "birthRetain": "false", "birthPayload": "",
         "birthMsg": {}, "closeTopic": "", "closeQos": "0", "closeRetain": "false", "closePayload": "", "closeMsg": {}, "willTopic": "",
@@ -3538,7 +3551,7 @@ upsert(fn("opt_vrm_parse", "VRM-Antwort auswerten", VRM_PARSE_JS, 1, [[]], 880, 
 EVCC_REQ_JS = r"""
 // evcc-Abgleich: Optimierer-Plan von evcc NUR LESEN (GET /api/state mit jq-Auszug: evopt, Akku-Ladestand, Netzpreis, Version). Es wird nichts an evcc gesendet.
 var cfg = global.get('OPT_cfg') || {}, E = cfg.energy || {};
-var base = String(E.evccUrl || 'http://10.10.10.128:7070').replace(/\/+$/, '');
+var base = String(E.evccUrl || '__EVCC_URL__').replace(/\/+$/, '');
 if (!/^https?:\/\/[^\/\s?#]+$/.test(base)) { var ep = global.get('OPT_evcc_plan') || {}; ep.abruf = {ts: Date.now(), ok: false, fehler: 'evcc-Adresse ungültig'}; global.set('OPT_evcc_plan', ep); return null; }
 var JQ = '{evopt: .evopt, soc: .battery.soc, tariffGrid: .tariffGrid, version: .version}';
 return {topic: 'evcc', url: base + '/api/state?jq=' + encodeURIComponent(JQ), payload: ''};
@@ -3616,7 +3629,7 @@ return neu ? {payload: neu + ' Tag(e) geprüft'} : null;
 """
 upsert(comment("opt_c_evcc", "evcc-Abgleich: Optimierer-Plan von evcc nur lesen (GET alle 15 min), tägliche Prüfung evcc/Modell gegen den Zähler - nur Anzeige und Protokoll", 380, 4160))
 upsert(inject("opt_i_evcc", "evcc-Plan abrufen (15 min)", 900, 50, ["opt_evcc_req"], 140, 4200))
-upsert(fn("opt_evcc_req", "evcc-Anfrage (nur GET)", EVCC_REQ_JS, 1, [["opt_http_evcc"]], 400, 4200))
+upsert(fn("opt_evcc_req", "evcc-Anfrage (nur GET)", EVCC_REQ_JS.replace("__EVCC_URL__", EVCC_URL), 1, [["opt_http_evcc"]], 400, 4200))
 upsert({"id": "opt_http_evcc", "type": "http request", "z": TAB, "name": "evcc /api/state (lesen)", "method": "GET", "ret": "obj", "paytoqs": "ignore",
         "url": "", "tls": "", "persist": False, "proxy": "", "insecureHTTPParser": False, "authType": "", "senderr": False,
         "headers": [], "x": 640, "y": 4200, "wires": [["opt_evcc"]]})
@@ -3931,7 +3944,7 @@ upsert({"id": "opt_i_apply", "type": "inject", "z": TAB, "name": "alle 15 s (Rü
         "repeat": "15", "crontab": "", "once": True, "onceDelay": "55", "topic": "tick", "payload": "", "payloadType": "date", "x": 160, "y": 2240, "wires": [["opt_apply"]]})
 upsert(fn("opt_apply", "Übernahme per Klick (gesperrt ausgeliefert)", ENGINE_CORE_JS + APPLY_WRAP_JS.replace("__KNOTEN__", "true" if APPLY_NODE_ACTIVE else "false"), 4,
           [["opt_apply_mqtt"], ["opt_ui_toast"], ["opt_f_eng"], ["opt_engine"]], 440, 2240, FS))
-upsert({"id": "opt_broker_cmd", "type": "mqtt-broker", "name": "MQTT (NAS) Optimierer Übernahme", "broker": "10.10.10.128", "port": "1883",
+upsert({"id": "opt_broker_cmd", "type": "mqtt-broker", "name": "MQTT (NAS) Optimierer Übernahme", "broker": LOKAL["nas"], "port": "1883",
         "clientid": "nodered-optimizer-cmd", "autoConnect": True, "usetls": False, "protocolVersion": "4", "keepalive": "60",
         "cleansession": True, "autoUnsubscribe": True, "birthTopic": "", "birthQos": "0", "birthRetain": "false", "birthPayload": "",
         "birthMsg": {}, "closeTopic": "", "closeQos": "0", "closeRetain": "false", "closePayload": "", "closeMsg": {}, "willTopic": "",
@@ -4067,9 +4080,9 @@ if UE_TAB in B and B[UE_TAB]["type"] == "ui_tab":
 else:
     print("Hinweis: Seite Übersicht (" + UE_TAB + ") fehlt, Anlagenschema nur auf der Seite Optimierer")
 # venus-link 19.10.2026: Menüpunkt "Venus (Victron)" im NAS-Dashboard zurück zum Venus-Dashboard. Das NAS-Dashboard ist auch über den Venus
-# erreichbar (Venus-Node-RED reicht /nas/ui/ an 10.10.10.128:1880/ui durch, tools/venus_nasui_patch.py; so auch über den VRM-Proxy).
-# Ziel je nach Aufruf: unter .../nas/ui/ -> relativ .../ui/ (Venus selbst bzw. derselbe VRM-Proxy), direkt auf der NAS -> https://192.168.5.11:1881/ui/.
-VENUS_UI = "https://192.168.5.11:1881/ui/"
+# erreichbar (Venus-Node-RED reicht /nas/ui/ an <nas>:1880/ui durch, tools/venus_nasui_patch.py; so auch über den VRM-Proxy).
+# Ziel je nach Aufruf: unter .../nas/ui/ -> relativ .../ui/ (Venus selbst bzw. derselbe VRM-Proxy), direkt auf der NAS -> https://<venus>:1881/ui/ (Hosts aus lokal.json).
+VENUS_UI = "https://%s:1881/ui/" % LOKAL["venus"]
 upsert({"id": "opt_link_venus", "type": "ui_link", "z": TAB, "name": "Venus (Victron)", "link": "../../ui/", "icon": "fa-bolt", "target": "this",
         "order": 17, "className": "", "x": 1260, "y": 4060})
 VENUS_LINK_JS = ("<script>(function () {   // venus-link: Klick auf den Menüpunkt \"Venus (Victron)\" je nach Aufruf richtig umleiten\n"

@@ -407,7 +407,8 @@ def vergleich_7t(tage, tag):
     if len(ref) >= VERGLEICH_MIN_TAGE and z.get("effizienz.kwh_je_gradstunde") is not None and z.get("effizienz.vollstaendig") == 1:
         m = sum(ref) / len(ref)
         V["effizienz.vergleich_mittel"] = round(m, 4)
-        V["effizienz.abweichung_prozent"] = round(100 * (z["effizienz.kwh_je_gradstunde"] / m - 1))
+        if m > 0:                                    # Mittel 0 (Vortage ohne Strom, z. B. Waermepumpe aus): Abweichung in Prozent nicht bestimmbar
+            V["effizienz.abweichung_prozent"] = round(100 * (z["effizienz.kwh_je_gradstunde"] / m - 1))
     return V
 
 
@@ -597,7 +598,7 @@ def regel_befunde(F, extra):
 
 
 
-BAENDER = [(-99, 3, "unter 3 °C"), (3, 7, "3 bis 7 °C"), (7, 12, "7 bis 12 °C"), (12, 99, "ab 12 °C")]
+BAENDER = [(float("-inf"), 3, "unter 3 °C"), (3, 7, "3 bis 7 °C"), (7, 12, "7 bis 12 °C"), (12, float("inf"), "ab 12 °C")]   # lueckenlos: auch Fuehler-Ausreisser (-127 °C) haben ein Band
 
 
 

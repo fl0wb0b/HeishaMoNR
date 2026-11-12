@@ -23,7 +23,7 @@ import sys
 TAB = "8c9d42231fd19d3c"            # WP Dash
 LINK_IN = "8b3d729fe630c248"        # "> MQTT OUT" (WP Managers): common command path
 UI_TAB = "a5be8588.b8fbc8"          # page "Uebersicht"
-BROKER = "d82cfde48e832830"         # MQTT (lokal) 10.10.10.128
+BROKER = "d82cfde48e832830"         # MQTT (lokal), NAS
 GROUP = "hc_grp"
 SCHED_TAB = "35d210f042827344"      # WP Scheduler
 SCHED_FN = "e168945122de5aa2"       # "Function schedule" (WP Scheduler)

@@ -69,6 +69,7 @@ Wird nach jedem Lauf und beim Start des Dienstes neu geschrieben (atomar: erst `
 | `fehler` | Liste: gescheiterte Schritte (`training: …`), Daten älter als 30 min, Datenordner nicht lesbar |
 | `hinweise` | Liste, setzt `ok` nicht auf `false`: auffällige Drift, Ampel gelb, abgelehnter Parametersatz, „Zwilling hat unter X °C keine Daten“, Lücken im Minutenprotokoll, Raumfühler > 120 min ungültig |
 | `letzter_lauf` | `art` (nacht/alles/…), `beginn`, `ende`, **`dauer_s`**, `ok`, `speicher_spitze_mb`, `schritte.{training,cop_eta,replay,kennzahlen,sicherung}` je `{ok, rc, dauer_s, fehler, tag}` |
+| `letzter_nachtlauf` | `art` (nacht/alles), `beginn`, `ok` des letzten vollen Laufs; ein späterer Teilschritt (z. B. `replay`) ändert ihn nicht. Entscheidet das Nachholen nach einem Neustart |
 | `dienst` | `gestartet`, `zeitplan`, `naechster_lauf` |
 | `training` | `tag`, `ok`, **`ampel`** (`gruen`/`gelb`/`rot`), `ampel_grenzen`, **`guete_test`** (TOP16 W, Wasserkreis K, Pause min; Güte des **aktiven** Satzes auf den heutigen Testtagen), `guete_test_vorher`, **`drift`** `{gegen, auffaellig, liste, werte}` (seit training-v2 zusätzlich `auffaellig_uebernommen`, je Listeneintrag `roh`, `uebernommen`, `rel_uebernommen`), `datei` (aktiver Satz) |
 | `training.entscheidung` | training-v2: `ergebnis` (`übernommen`/`abgelehnt`), `grund`, `aktiv`, `aktiv_tag`, `kandidat_datei`, `bisher_tag`, `kandidat`/`bisher`/`roh` (Kennzahlen wie `guete_test`, alle auf denselben Testtagen), `kriterium` `{rel, tol, grenzen}`, `verletzt` (Liste) |
@@ -120,12 +121,12 @@ docker build --build-arg OT_VERSION=$(git rev-parse --short HEAD) -f docker/opti
 ## Start auf der NAS
 
 Alles als `fl0wb0b` (uid 1000, Gruppe `docker`), **ohne sudo**. Die compose-Datei liegt in `~/optimizer-tools` (`/home/fl0wb0b/optimizer-tools` auf volume1).
-Das Image wird auf dem PC gebaut und per ssh übertragen.
+Das Image wird auf dem PC gebaut und per ssh übertragen. In den Befehlen steht `$NAS` für den Host der NAS: `NAS=$(python3 tools/lokal.py nas)` (Wert aus `lokal.json`, siehe `lokal.example.json`).
 
 **Einmalig vorab:** den Ergebnisordner im Node-RED-Volume anlegen, und zwar *als node-red* über `docker exec` (kein root nötig):
 
 ```sh
-ssh 10.10.10.128 "docker exec node_red-node-red-1 sh -c 'mkdir -p /data/optimizer-tools && chmod 2775 /data/optimizer-tools && ls -ld /data/optimizer-tools'"
+ssh "$NAS" "docker exec node_red-node-red-1 sh -c 'mkdir -p /data/optimizer-tools && chmod 2775 /data/optimizer-tools && ls -ld /data/optimizer-tools'"
 # erwartet: drwxrwsr-x … node-red node-red … /data/optimizer-tools
 ```
 
@@ -136,11 +137,11 @@ Fehlt der Ordner, bricht `docker compose up` mit „bind source path does not ex
 
 ```sh
 docker build --build-arg OT_VERSION=$(git rev-parse --short HEAD) -f docker/optimizer-tools/Dockerfile -t optimizer-tools:training-v2 .
-docker save optimizer-tools:training-v2 | gzip | ssh 10.10.10.128 'gunzip | docker load'
-ssh 10.10.10.128 'mkdir -p ~/optimizer-tools' && scp docker/optimizer-tools/compose.yml 10.10.10.128:optimizer-tools/
-ssh 10.10.10.128 'cd ~/optimizer-tools && docker compose run --rm optimizer-tools alles'      # erste Füllung (ca. 4–6 min)
-ssh 10.10.10.128 'cd ~/optimizer-tools && docker compose up -d && docker compose ps'
-ssh 10.10.10.128 'docker exec node_red-node-red-1 cat /data/optimizer-tools/status.json | head -20'   # Sicht von Node-RED
+docker save optimizer-tools:training-v2 | gzip | ssh "$NAS" 'gunzip | docker load'
+ssh "$NAS" 'mkdir -p ~/optimizer-tools' && scp docker/optimizer-tools/compose.yml "$NAS":optimizer-tools/
+ssh "$NAS" 'cd ~/optimizer-tools && docker compose run --rm optimizer-tools alles'      # erste Füllung (ca. 4–6 min)
+ssh "$NAS" 'cd ~/optimizer-tools && docker compose up -d && docker compose ps'
+ssh "$NAS" 'docker exec node_red-node-red-1 cat /data/optimizer-tools/status.json | head -20'   # Sicht von Node-RED
 ```
 
 Update: dieselben Schritte (Bauen, `docker load`, ggf. `scp`), dann `docker compose up -d` (erstellt den Container mit dem neuen Image neu).
@@ -222,16 +223,16 @@ docker exec node_red-node-red-1 ls -l /data/optimizer/quiet-2026-10.csv
 ```
 
 Ohne Dateinamen am Ende spielt `tar` alle Dateien des Archivs zurück und überschreibt die aktuellen. Zeilen nach dem Sicherungszeitpunkt fehlen danach; sie stehen ggf. noch in der `.kaputt`-Datei.
-Ein Archiv auf den PC holen: `ssh 10.10.10.128 'docker exec optimizer-tools cat /ergebnis/sicherung/daten-2026-10-15.tar.gz' > daten-2026-10-15.tar.gz`.
+Ein Archiv auf den PC holen: `ssh "$NAS" 'docker exec optimizer-tools cat /ergebnis/sicherung/daten-2026-10-15.tar.gz' > daten-2026-10-15.tar.gz`.
 
 ## Zugriff von außen
 
 **Bonsai-Beobachter (PC)** liest wie bisher per ssh, nur aus diesem Container:
 
 ```sh
-ssh -o BatchMode=yes 10.10.10.128 docker exec optimizer-tools cat /ergebnis/kennzahlen/2026-10-14.json
-ssh -o BatchMode=yes 10.10.10.128 docker exec optimizer-tools cat /ergebnis/status.json
-ssh -o BatchMode=yes 10.10.10.128 'docker exec optimizer-tools tar -C /ergebnis -cf - status.json kennzahlen training/wp_training.md replay' | tar -x -C ~/Dokumente/heishamonr-optimizer/nas-ergebnis
+ssh -o BatchMode=yes "$NAS" docker exec optimizer-tools cat /ergebnis/kennzahlen/2026-10-14.json
+ssh -o BatchMode=yes "$NAS" docker exec optimizer-tools cat /ergebnis/status.json
+ssh -o BatchMode=yes "$NAS" 'docker exec optimizer-tools tar -C /ergebnis -cf - status.json kennzahlen training/wp_training.md replay' | tar -x -C ~/Dokumente/heishamonr-optimizer/nas-ergebnis
 ```
 
 Die Schlüssel in `kennzahlen/<tag>.json` → `fakten` sind dieselben wie in `zusammenfassung()` des Beobachters. Getestet: 127 von 127 gleich.

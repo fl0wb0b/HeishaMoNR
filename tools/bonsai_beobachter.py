@@ -2,7 +2,7 @@
 """Bonsai-Beobachter: begleitet den Optimierer als Dauerhelfer (nur beratend, nie im Regelkreis).
 
 1. Holt die Protokolle des Optimierers NUR LESEND: aus einem lokalen Ordner (Kopien) oder per Befehl, z. B.
-   ssh fl0wb0b@10.10.10.128 docker exec node_red-node-red-1 cat /data/optimizer/<datei>
+   ssh <nas> docker exec node_red-node-red-1 cat /data/optimizer/<datei>
 2. Rechnet die Tageszusammenfassung SELBST und deterministisch: Starts, Laeufe, Pausen, Heizgrenze, Soll-/Quiet-/Radiator-Ereignisse,
    Energie und COP, Raumverlaeufe gegen die Baender, Entscheidungen und Punkte der Entscheidungsmaschine,
    Datenqualitaet. Daraus feste Regel-Befunde (geprueft).
@@ -29,7 +29,7 @@ import urllib.request
 
 VERSION = 1
 DATEI_MUSTER = re.compile(r"^(quiet|quiet-events|optimizer-v2|energy|decisions|scores|applied)-\d{4}-\d{2}\.(csv|jsonl)$")
-SSH_STANDARD = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "10.10.10.128", "docker", "exec", "node_red-node-red-1", "cat", "/data/optimizer/{datei}"]   # Zugang wie bei den Handabrufen (Standardbenutzer, Key-Auth)
+SSH_STANDARD = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "{nas}", "docker", "exec", "node_red-node-red-1", "cat", "/data/optimizer/{datei}"]   # Zugang wie bei den Handabrufen (Standardbenutzer, Key-Auth)
 AUSGABE_STANDARD = os.path.expanduser("~/Dokumente/heishamonr-optimizer/bonsai-berichte")
 HOSTS_STANDARD = os.path.expanduser("~/Dokumente/bonsai/llm-hosts.txt")
 RAEUME = [("ki_oben", "Kinderzimmer oben"), ("ki_unten", "Kinderzimmer unten"), ("schlaf", "Schlafzimmer"), ("wohn", "Wohnzimmer")]
@@ -60,7 +60,10 @@ class OrdnerQuelle:
 class BefehlQuelle:
     """Liest per Befehl (Standard: ssh + docker exec cat). Nur 'cat' einer Datei aus /data/optimizer, ohne Shell, Dateiname geprueft."""
     def __init__(self, vorlage=None, timeout=120):
-        self.vorlage = vorlage or SSH_STANDARD
+        if vorlage is None:                                  # Standard: ssh zur NAS, Host aus lokal.json (tools/lokal.py)
+            from lokal import lade
+            vorlage = [x.replace("{nas}", lade()["nas"]) for x in SSH_STANDARD]
+        self.vorlage = vorlage
         self.timeout = timeout
 
     def lies(self, datei):
@@ -554,7 +557,7 @@ def bonsai_lang(frag, text):
     return gut, verworfen, fehler
 
 
-BAENDER = [(-99, 3, "unter 3 °C"), (3, 7, "3 bis 7 °C"), (7, 12, "7 bis 12 °C"), (12, 99, "ab 12 °C")]
+BAENDER = [(float("-inf"), 3, "unter 3 °C"), (3, 7, "3 bis 7 °C"), (7, 12, "7 bis 12 °C"), (12, float("inf"), "ab 12 °C")]   # lueckenlos: auch Fuehler-Ausreisser (-127 °C) haben ein Band
 
 
 def cop_vergleich(d):

@@ -176,7 +176,7 @@
         var inv = F.invertieren || [false, false, false];
         return '<div class="oe-form">' +
             '<label class="oe-wide">MQTT-Name<input type="text" data-f="topic" value="' + esc(F.topic || '') + '" title="z. B. shelly3em63g3-xxxxxxxxxxxx/status/em:0 oder nur der Gerätename (Topic-Präfix)"></label>' +
-            '<label>Broker<select data-f="broker">' + opt('venus', F.broker, 'Venus 192.168.5.11') + opt('nas', F.broker, 'NAS 10.10.10.128') + '</select></label>' +
+            '<label>Broker<select data-f="broker">' + opt('venus', F.broker, 'Venus') + opt('nas', F.broker, 'NAS') + '</select></label>' +
             '<label>Profil<select data-f="profil">' + opt('auto', F.profil, 'erkennen') + opt('triphase', F.profil, 'Drehstrom (em:0)') + opt('monophase', F.profil, 'drei Kanäle (em1:0–2)') + '</select></label>' +
             '<label>Klemme Wärmepumpe' + K('klemme_wp', F.klemme_wp, false) + '</label><label>Klemme Heizstab' + K('klemme_heizstab', F.klemme_heizstab, true) + '</label><label>Klemme Sonstiges' + K('klemme_sonstiges', F.klemme_sonstiges, true) + '</label>' +
             '<label>Invertieren<span class="oe-inv">' + [0, 1, 2].map(function (i) { return '<label><input type="checkbox" data-f="inv' + i + '"' + (inv[i] ? ' checked' : '') + '>' + (i + 1) + '</label>'; }).join('') + '</span></label>' +

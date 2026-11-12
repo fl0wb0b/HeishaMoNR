@@ -1,0 +1,10 @@
+{
+  "_hinweis": "Vorlage. Als lokal.json kopieren und die echten Werte eintragen. lokal.json steht in .gitignore und kommt nie ins Repo. venus: MQTT-Broker/Node-RED auf dem Venus, nas: NAS mit Node-RED (Port 1880) und ssh-Zugang. evcc_url (optional): evcc-Adresse ohne Pfad, Standard http://<nas>:7070. raum_topics: MQTT-Topic je Raum-ID; ki_oben und ki_unten sind Pflicht, schlaf und wohn optional (sonst Standard aus dem Generator). nicht_im_repo: Woerter, die tools/privat_test.py im Repo-Baum verbietet.",
+  "venus": "192.0.2.11",
+  "nas": "192.0.2.128",
+  "raum_topics": {
+    "ki_oben": "shellyhtg3-raum1/status/temperature:0",
+    "ki_unten": "shellyhtg3-raum2/status/temperature:0"
+  },
+  "nicht_im_repo": []
+}

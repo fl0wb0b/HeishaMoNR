@@ -165,7 +165,7 @@ var ZAEHLER = (function () {
         c = cfgOf(c); x = x || {};
         var kw = have(x.korrW) ? x.korrW : 80, top = have(x.top16) ? x.top16 + (x.lauf ? kw : 0) : null, status = [], kpi = [];
         if (!c.prefix) { status.push({t: 'nicht eingerichtet', c: 'mute', title: 'MQTT-Name des Shelly eintragen (Gerätename bzw. Topic-Präfix)'}); }
-        else if (!have(st.alter)) { status.push({t: 'keine Nachricht', c: 'warn', title: 'abonniert: ' + abos(c).join(', ') + ' (Broker ' + (c.broker === 'nas' ? 'NAS 10.10.10.128' : 'Venus 192.168.5.11') + ')'}); }
+        else if (!have(st.alter)) { status.push({t: 'keine Nachricht', c: 'warn', title: 'abonniert: ' + abos(c).join(', ') + ' (Broker ' + (c.broker === 'nas' ? 'NAS' : 'Venus') + ')'}); }
         else { status.push({t: st.ok ? 'online · ' + de(st.alter, 0) + ' min' : 'veraltet · ' + de(st.alter, 0) + ' min', c: st.ok ? 'ok' : 'bad', title: st.nachrichten + ' Nachrichten · ' + c.prefix}); }
         if (st.profil) { status.push({t: st.profil === 'triphase' ? 'Drehstrom em:0' : 'drei Kanäle em1', c: 'mute'}); }
         status.push({t: c.broker === 'nas' ? 'Broker NAS' : 'Broker Venus', c: 'mute'});

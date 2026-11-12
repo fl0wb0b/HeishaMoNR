@@ -9,7 +9,7 @@ const E = require('./engine_core.js');
 const K = require('./cop_eta.js');
 const argv = process.argv.slice(2), dir = argv[0], a = k => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : null; };
 if (!dir) { console.error('Usage: node tools/cop_ziel_replay.js <datenordner> [--von T] [--bis T] [--eta start|auto|datei] [--json datei]'); process.exit(2); }
-const von = new Date((a('--von') || '2026-10-07') + 'T00:00:00').getTime(), bis = new Date((a('--bis') || '2026-10-17') + 'T00:00:00').getTime() + 24 * 3600000;
+const von = K.fenster(a('--von') || '2026-10-07', 1).von, bis = K.fenster(a('--bis') || '2026-10-17', 1).bis;   // lokale Mitternachten (Zeitumstellung: 23/25 h)
 const M = K.lade(dir, von, bis), base = K.cfgAus(dir), etaArt = a('--eta') || 'auto';
 let eta = null;
 if (etaArt === 'auto') { eta = K.kalibriere(M, base); } else if (etaArt !== 'start') { eta = JSON.parse(fs.readFileSync(etaArt, 'utf8')); }
