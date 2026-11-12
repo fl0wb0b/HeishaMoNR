@@ -16,11 +16,15 @@ Usage: python3 tools/optimizer_phase1.py /tmp/x.json   (Kopie der Flow-Datei; Ho
 """
 import json
 import os
+import re
 import sys
 
 from lokal import lade as lade_lokal
 
 LOKAL = lade_lokal()   # Broker-Hosts und Raumfuehler-Topics aus lokal.json (nicht versioniert, Vorlage lokal.example.json)
+EVCC_URL = LOKAL.get("evcc_url") or "http://%s:7070" % LOKAL["nas"]   # evcc-Abgleich: Standard evcc auf der NAS, Port 7070; abweichend "evcc_url" in lokal.json
+if not isinstance(EVCC_URL, str) or not re.match(r"^https?://[A-Za-z0-9][A-Za-z0-9.-]*(:\d+)?$", EVCC_URL):
+    sys.exit("lokal.json: \"evcc_url\" muss http(s)://host[:port] ohne Pfad sein")
 _args = [a for a in sys.argv[1:] if not a.startswith("--")]
 if not _args:   # kein Standard mehr: sonst schriebe der Generator die Installationswerte aus lokal.json in die versionierte Flow-Datei
     sys.exit('Usage: python3 tools/optimizer_phase1.py <kopie.json>   (z. B. cp "flows (26.5.1 stable).json" /tmp/x.json)')
@@ -208,7 +212,7 @@ var d = {
     plan: __PLAN__,
     cop: __COP__,                                    // COP-Korrektur: W, die TOP16 im Lauf fehlen (Forum 189605, Annahme 80 W)
     zaehler: __ZAEHLER__,                            // Stromzaehler Shelly 3EM-63 Gen3 (cop-ziel 17.10.2026): Topic, Broker, Klemmen, Quelle (Standard heishamon)
-    energy: {vrmMaxAgeH: 4, evccMaxAgeH: 6, batteryInstance: 278,
+    energy: {vrmMaxAgeH: 4, evccMaxAgeH: 6, batteryInstance: 278, evccUrl: '__EVCC_URL__',          // evccUrl: Optimierer-Plan von evcc, nur GET /api/state (evcc-abgleich 25.10.2026)
              tariff: {buy: [['00:00', '05:00', 0.21], ['05:00', '24:00', 0.31]], sell: 0.06, source: 'VRM Dynamic ESS (fester HT/NT-Tarif)'},       // Kaufpreis EUR/kWh je Zeitfenster, Verkaufspreis
              battery: {capacityKwh: 43, maxChargeKw: 12, maxDischargeKw: 12, costEurKwh: 0.01}, grid: {importKw: 32, exportKw: 32}},          // Werte aus VRM Dynamic ESS (fuer spaetere Phasen)
     calcAT: {wNow: 0.5, wHist: 0.25, wFc: 0.25, minHistH: 6},
@@ -656,6 +660,11 @@ var rows = [
     ['Daten PV-Prognose', pvSeries.length ? pvSrc + (pvOk ? '' : ' (zu kurz)') + ' · reicht ' + f(pvCov, 0, 'h') + ' voraus' : 'keine · VRM: ' + (vrm.status || 'nicht konfiguriert'), warnS(pvOk)],
     ['VRM-Abruf', (vrm.status || 'nicht konfiguriert') + (vrmAge !== null ? ' · ' + ageTxt(vrmAge) : ''), vrm.status === 'OK' ? 'ok' : '']
 ];
+// evcc-Abgleich (25.10.2026): Optimierer-Plan von evcc (opt_evcc, alle 15 min) -> Datenlage wie bei den anderen Quellen; nicht erreichbar: letzter Stand mit Alter, ab 60 min veraltet
+var EVP = global.get('OPT_evcc_plan') || {}, evIn = null;
+try { evIn = EVC.planIn(EVP.plan || null, EVP.abruf || null, now, cfg); } catch (e) { evIn = {da: false, fehler: 'Auswertung: ' + e.message, zeile: {k: 'evcc', v: 'kein Plan', c: 'warn', t: ''}}; }
+rows.push(['Daten evcc-Plan', evIn.da ? (evIn.veraltet ? 'veraltet' : 'ok') + ' · Alter ' + ageTxt(evIn.alterMin * MS_MIN) + (EVP.abruf && !EVP.abruf.ok && EVP.abruf.fehler ? ' · letzter Abruf: ' + EVP.abruf.fehler : '') + ' · reicht ' + f(Math.max(0, (evIn.bis - now) / H), 0, 'h') + ' voraus'
+                                    : (EVP.abruf ? 'kein Plan · ' + (EVP.abruf.fehler || 'keine Daten') : 'noch nicht abgerufen'), warnS(evIn.da && !evIn.veraltet)]);
 var vi = flow.get('vrmInfo');
 var out = [{payload: {rows: rows}}, null, null, {payload: (!vi || !vi.hasToken) ? 'Noch kein VRM-Token gespeichert. Token und Installations-ID oben eintragen und auf SPEICHERN klicken.'
     : 'Token gespeichert (' + vi.tokenLen + ' Zeichen) · Installation ' + vi.id + ' · Abruf: ' + (vrm.status || 'noch nicht abgerufen') + (vrmAge !== null ? ' (Alter ' + ageTxt(vrmAge) + ')' : '')}, null];
@@ -750,10 +759,15 @@ FQ_H.forEach(function (h) {
 fqRows.push(['Gesammelt', fqHist.length + ' Stunden Ist-Werte · ' + fqSn.length + ' Prognose-Schnappschüsse', '']);
 var fqTab = FQ_H.map(function (h) { var a = fq.at[h], g = fq.pv[h]; return ['+' + h + ' h', a && a.n >= 3 ? (a.bias / a.n >= 0 ? '+' : '') + f(a.bias / a.n, 1, 'K') : '–', a && a.n >= 3 ? f(a.abs / a.n, 1, 'K') : '–', a ? a.n : 0,
     g && g.n >= 3 ? f(100 * g.fc / g.act, 0, '%') : '–', g && g.n >= 3 ? f(g.abs / g.n, 0, 'W') : '–', g ? g.n : 0]; });   // ui-daten 18.10.: Tabelle Horizont x (Aussentemperatur, PV)
-out[4] = {payload: {rows: fqRows, tab: fqTab, pvQuelle: pvSrc === '–' ? 'Prognose' : pvSrc.split(' ')[0], sammel: fqHist.length + ' Stunden Ist-Werte · ' + fqSn.length + ' Prognose-Schnappschüsse'}};
+var EQ = global.get('OPT_evcc_q') || null;                                     // evcc-Abgleich: taegliche Pruefung (opt_evcc_q) als weitere Zeilen der Tabelle (Waermepumpe, Vortag)
+out[4] = {payload: {rows: fqRows, tab: fqTab, pvQuelle: pvSrc === '–' ? 'Prognose' : pvSrc.split(' ')[0], sammel: fqHist.length + ' Stunden Ist-Werte · ' + fqSn.length + ' Prognose-Schnappschüsse',
+                    ev: EQ && Array.isArray(EQ.zeilen) ? EQ.zeilen : [], evTag: EQ && EQ.tag ? 'Vortag ' + EQ.tag.slice(8, 10) + '.' + EQ.tag.slice(5, 7) + '.' : 'Vortag',
+                    evTitel: 'Strom Wärmepumpe je Viertelstunde gegen den Zähler (zaehler_wp_w): evcc-Prognose „' + (EQ && EQ.titel ? EQ.titel : 'Panasonic Leisha') + '“ ~6 h vorher bzw. letzter Plan vor Mitternacht, Modell = Wärmefahrplan (Strom = Bedarf ÷ COP, plus Standby im Stillstand und Abtau-Abzug × Abtaurisiko) letzter Schnappschuss vor Mitternacht' +
+                            (EQ && EQ.mess && EQ.mess.kwh !== null ? ' · gemessen ' + f(EQ.mess.kwh, 2, 'kWh') + ' in ' + EQ.mess.n + ' Viertelstunden' : '') + (EQ && EQ.hinweis ? ' · ' + EQ.hinweis : '')}};
 global.set('OPT_plan_in', {ts: now, price: pSlots ? pSlots.filter(function (s) { return s.e > now - 2 * H && s.s < now + 40 * H; }).map(function (s) { return [s.s, s.e, s.p]; }) : null, priceSrc: pSrc,
     pv: pvSeries.length ? pvSeries.filter(function (s) { return s.t + s.dt > now - 2 * H && s.t < now + 40 * H; }).map(function (s) { return [s.t, Math.round(s.w), s.dt]; }) : null, pvSrc: pvSrc,
-    pvNow: pv, soc: soc, socSrc: socSrc, liveOk: liveOk, grid: grid, batP: batP, vrmHpKwh: hpK});
+    pvNow: pv, soc: soc, socSrc: socSrc, liveOk: liveOk, grid: grid, batP: batP, vrmHpKwh: hpK,
+    evcc: evIn});                                                                // evcc-Abgleich: Akku-Minimum, Netzbezugs-/Einspeisefenster, PV-Prognose evcc, Kennzahlenzeile (nur Eingang/Anzeige)
 function G0(k) { return global.get(k); }
 function num0(v) { v = Number(v); return (v === null || v === undefined || !isFinite(v)) ? null : v; }
 function jload(file, dflt) { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { return dflt; } }
@@ -851,6 +865,10 @@ var parts = String(msg.topic || '').split('/');                       // panason
 var grp = parts[1] || '', name = parts.slice(2).join('/');
 var raw = (msg.payload === undefined || msg.payload === null) ? '' : String(msg.payload);
 var n = Number(raw), val = (raw !== '' && isFinite(n)) ? n : raw;
+if (grp === '1wire') {                                                // DS18B20 an HeishaMon (09.11.2026): unter _ow, damit sie die Frische der Anlagenwerte (Schluessel ohne _) nicht vortaeuschen
+    if (typeof val === 'number') { hp._ow = hp._ow || {}; hp._ow[name] = {v: val, ts: now}; global.set('OPT_hp', hp); }
+    return null;
+}
 var d = new Date(now), pad = function (x) { return (x < 10 ? '0' : '') + x; };
 var iso = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
 var month = iso.slice(0, 7), file = '/data/optimizer/quiet-events-' + month + '.csv';
@@ -991,7 +1009,7 @@ if (!qs) {
     } catch (e) { /* noch keine Datei */ }
     try {                                                                                            // Wechselzeit und Abtau-/Warmwasser-Ende ueberstehen einen Neustart
         var wj = JSON.parse(fs.readFileSync('/data/optimizer/watcher-state.json', 'utf8'));
-        if (wj) { qs.esc = {lastChg: wj.lastChg || 0, lastChgWhat: wj.lastChgWhat || ''}; qs.lastDefrostEnd = wj.lastDefrostEnd || 0; qs.lastDhwEnd = wj.lastDhwEnd || 0; if (wj.lastDefrostStart) { qs.lastDefrostStart = wj.lastDefrostStart; } }      // eine alte Sperre (blockUntil) gilt nicht mehr
+        if (wj) { qs.esc = {lastChg: wj.lastChg || 0, lastChgWhat: wj.lastChgWhat || ''}; qs.lastDefrostEnd = wj.lastDefrostEnd || 0; qs.lastDhwEnd = wj.lastDhwEnd || 0; if (wj.lastDefrostStart) { qs.lastDefrostStart = wj.lastDefrostStart; } if (wj.dfSR) { qs.dfSR = wj.dfSR; } if (wj.stPrev !== undefined) { qs.stPrev = wj.stPrev; } if (wj.echtStop) { qs.echtStop = wj.echtStop; } }      // eine alte Sperre (blockUntil) gilt nicht mehr
     } catch (e) { /* noch keine Datei */ }
     qs.born = now;
 }
@@ -1010,13 +1028,47 @@ var stat = function (lv) {
 };
 var FIELDS = ['hz', 'pel', 'pth', 'cop', 'vl', 'rl', 'svl', 'srl', 'dt', 'flow', 'at', 'fan'];
 // Wechsel erkennen: Verdichterstart/-ende, Abtauen, Warmwasser
-if (running && !qs.freqOn) { qs.lastStart = now; qs.runStart = now; if (qNow !== null) { stat(qNow).starts++; } }
-if (!running && qs.freqOn && qs.runStart) {
-    qs.runs.push([qs.runStart, Math.round((now - qs.runStart) / MS_MIN), qNow]);
+// abtau-starts 20.10.2026: die Verdichter-Stopps vor und nach jeder Abtauung (4-Wege-Ventil schaltet nur drucklos, Forum 4899279/2917785/3724609) sind weder Laufende
+// noch Start. Werte wie in der Entscheidungsmaschine (ENGINE.ABL): Signal binnen 2 min nach einem Stopp ohne Abschaltung ueber den Vorlauf, Neustart binnen 5 min
+// nach dem Signalende, Stillstand hoechstens 20 min. Sieht der Waechter keinen Stopp (Stillstand kuerzer als sein Takt), aendert sich nichts.
+var ABL = {vorMin: 2, nachMin: 5, maxMin: 20};
+function runEnde(t, q) {
+    var dm = Math.round((t - qs.runStart) / MS_MIN);
+    qs.runs.push([qs.runStart, dm, q]);
     qs.runs = qs.runs.filter(function (r) { return r[0] > now - 24 * 60 * MS_MIN; });
-    if (qNow !== null) { stat(qNow).runMin += Math.round((now - qs.runStart) / MS_MIN); }
-    qs.runStart = 0;
+    if (q !== null) { stat(q).runMin += dm; }
+    qs.runStart = 0; qs.echtStop = t;
+    return dm;
 }
+if (qs.ablU && (running || now - qs.ablU.t > ABL.vorMin * MS_MIN)) { qs.ablU = null; }
+if (qs.ablU && defrost) {                                                                   // Signal kurz nach dem Stopp: der Stopp gehoerte zur Abtauung (zuruecknehmen)
+    var ablLr = qs.runs[qs.runs.length - 1];
+    if (ablLr && ablLr[0] === qs.ablU.rs) { qs.runs.pop(); var ablSt = qs.ablU.st ? (qs[qs.ablU.st[0]] || {})[qs.ablU.st[1]] : null; if (ablSt) { ablSt.runMin -= qs.ablU.dm; } }
+    qs.runStart = qs.ablU.rs; qs.echtStop = qs.ablU.echtVor; qs.ablHalt = {t: qs.ablU.t, q: qs.ablU.q}; qs.ablU = null;
+}
+if (running && !qs.freqOn) {
+    if (qs.ablHalt && qs.runStart && now - qs.ablHalt.t <= ABL.maxMin * MS_MIN) { qs.ablHalt = null; }       // Neustart in oder nach der Abtauung: derselbe Lauf
+    else {
+        if (qs.ablHalt && qs.runStart) { runEnde(qs.ablHalt.t, qs.ablHalt.q); }
+        qs.ablHalt = null; qs.lastStart = now; qs.runStart = now; if (qNow !== null) { stat(qNow).starts++; }
+    }
+}
+if (!running && qs.freqOn && qs.runStart && !qs.ablHalt) {
+    if (defrost) { qs.ablHalt = {t: now, q: qNow}; }                                         // Stopp im Abtausignal: kein Laufende
+    else {
+        var ablRs = qs.runStart, ablEv = qs.echtStop || 0, ablDm = runEnde(now, qNow);
+        var ablTh = istVL !== null && solVL !== null && istVL - solVL >= 2.75;               // Abschaltung ueber den Vorlauf (Schwelle wie thermoStoppK): nie zuruecknehmen
+        qs.ablU = ablTh ? null : {t: now, rs: ablRs, dm: ablDm, q: qNow, st: (qNow !== null && band !== null) ? [hcMode === 1 ? 'kfE' : 'kf', qNow + '|' + band] : null, echtVor: ablEv};
+    }
+}
+if (!running && qs.ablHalt) {                                                                // Stillstand in der Abtauung: ohne Neustart endete der Lauf mit dem Stopp
+    var ablEnde = defrost ? 0 : (qs.defrost ? now : qs.lastDefrostEnd);
+    if (now - qs.ablHalt.t > ABL.maxMin * MS_MIN || (ablEnde && ablEnde >= qs.ablHalt.t && now - ablEnde > ABL.nachMin * MS_MIN)) { if (qs.runStart) { runEnde(qs.ablHalt.t, qs.ablHalt.q); } qs.ablHalt = null; }
+}
+// Starts_Today (HeishaMoNR) zaehlt den Wechsel in und aus dem Abtauen als je einen Start, auch ohne sichtbaren 0-Hz-Wert (Knoten "Log HP data": "läuft (übersprungen)"),
+// Panasonic zaehlt zwei Starts je Abtauung (2917785): Anzeige "ohne Abtauen" = Starts - 2 x Abtauungen seit dem letzten Zuruecksetzen von Starts_Today (Home Assistant 4607656)
+if (startsToday !== null) { if (qs.stPrev !== undefined && qs.stPrev !== null && startsToday < qs.stPrev) { qs.dfSR = 0; } qs.stPrev = startsToday; }
+if (defrost && !qs.defrost) { qs.dfSR = (qs.dfSR || 0) + 1; }
 if (defrost && !qs.defrost && qNow !== null) { stat(qNow).defrosts++; }
 if (!defrost && qs.defrost) { qs.lastDefrostEnd = now; }
 // ---------- Abtauzyklen festhalten (Grundlage fuer die Bewertung Comfort/Efficiency): Beginn, Dauer, Strom, Waerme, Einbruch von Vor-/Ruecklauf, Wiederaufheizzeit
@@ -1087,7 +1139,9 @@ if (rlErr !== null) {
 // Taktung der letzten 24 h
 var runs24 = qs.runs.filter(function (r) { return r[0] > now - 24 * 60 * MS_MIN; });
 var meanRun = runs24.length ? runs24.reduce(function (a, r) { return a + r[1]; }, 0) / runs24.length : null;
-var cycleBad = (rtLast !== null && rtLast < qn(Q.minRunMin, 20)) || (startsToday !== null && startsToday > qn(Q.maxStartsDay, 24));      // kurze Laeufe oder viele Starts
+var rtLastOk = rtLast !== null && !(qs.lastDefrostStart && qs.lastDefrostStart > (qs.echtStop || 0));        // abtau-starts: nach einer Abtauung ist compressor_last_runtime ein Stueck des Laufs, kein Laufende
+var startsOhne = startsToday !== null ? Math.max(0, startsToday - 2 * (qs.dfSR || 0)) : null;                  // ohne die zwei Starts je Abtauung
+var cycleBad = (rtLastOk && rtLast < qn(Q.minRunMin, 20)) || (startsOhne !== null && startsOhne > qn(Q.maxStartsDay, 24));      // kurze Laeufe oder viele Starts
 
 // ---------- Quellen der Quiet-Stufe (damit nichts unbemerkt gegen einen Regler arbeitet)
 var mq = G('MQTT') || {}, sol = G('F_SOLAR') || {};
@@ -1177,7 +1231,7 @@ if (!escDataOk) {
     } else if (escDef || escDhw || escDev === null || escDev < -escBand - 0.5) { ES.reachSince = 0; }
     escTxt = 'läuft ' + Math.round(escRunMin) + ' min' + (ES.late ? ' (Beginn unbekannt)' : '') + ' · Vorlauf ' + (escDev !== null ? sg(escDev, 1, 'K') + ' zum Soll' : '–') + ' · ' + (ES.reached !== null ? (ES.late ? 'Sollvorlauf erreicht' : 'Sollvorlauf erreicht nach ' + ES.reached + ' min') : 'Sollvorlauf noch nicht erreicht');
 }
-var escSave = JSON.stringify({lastChg: ES.lastChg, lastChgWhat: ES.lastChgWhat, lastDefrostEnd: qs.lastDefrostEnd, lastDhwEnd: qs.lastDhwEnd, lastDefrostStart: qs.lastDefrostStart || 0});   // Paket 2: Beginn der letzten Abtauung (Abstand im Abtau-Protokoll nach einem Neustart)
+var escSave = JSON.stringify({lastChg: ES.lastChg, lastChgWhat: ES.lastChgWhat, lastDefrostEnd: qs.lastDefrostEnd, lastDhwEnd: qs.lastDhwEnd, lastDefrostStart: qs.lastDefrostStart || 0, dfSR: qs.dfSR || 0, stPrev: qs.stPrev === undefined ? null : qs.stPrev, echtStop: qs.echtStop || 0});   // Paket 2: Beginn der letzten Abtauung (Abstand im Abtau-Protokoll nach einem Neustart)
 if (escSave !== ES.saved) { try { fs.mkdirSync('/data/optimizer', {recursive: true}); fs.writeFileSync('/data/optimizer/watcher-state.json', escSave); ES.saved = escSave; } catch (e) { /* kein Zugriff */ } }
 
 var rows = [
@@ -1193,7 +1247,7 @@ var rows = [
     ['COP', copQNow !== null ? f(copQNow, 1) : '–', '', 'Wärme ÷ Strom, Strom ' + ZQ_TXT + (copNow !== null ? ' (roh ' + f(copNow, 1) + (ZQ.aktiv && copNowK !== null ? ', ' + KORR_TXT + ' ' + f(copNowK, 1) : '') + ')' : '')],
     ['Flow · Pumpe (nur Beobachtung)', f(flw, 1, 'l/min') + ' · ' + (HP.Pump_Duty ? f(HP.Pump_Duty.v, 0) : '–') + ' / ' + (HP.Pump_Speed ? f(HP.Pump_Speed.v, 0, 'U/min') : '–'), ''],
     ['Kinderzimmer oben', 'Radiator ' + (kzRad === '' ? '–' : (kzRad ? 'an' : 'aus')) + ' · Heizlüfter ' + (kzFanOnline === 0 ? 'offline' : (kzFanOn === '' ? '–' : (kzFanOn ? 'an' + (kzFanW !== null ? ' (' + f(kzFanW, 0, 'W') + ')' : '') : 'aus'))), ''],
-    ['Taktung', 'heute ' + f(startsToday, 0) + ' Starts · Ø Lauf 24 h ' + (meanRun !== null ? f(meanRun, 0, 'min') : '–') + ' (' + runs24.length + ')', cycleBad ? 'warn' : ''],
+    ['Taktung', 'heute ' + f(startsToday, 0) + ' Starts' + (qs.dfSR ? ' (ohne Abtauen ' + f(startsOhne, 0) + ', ' + qs.dfSR + ' Abtauungen × 2)' : '') + ' · Ø Lauf 24 h ' + (meanRun !== null ? f(meanRun, 0, 'min') : '–') + ' (' + runs24.length + ')', cycleBad ? 'warn' : ''],
     ['Quiet aktuell', qNow !== null ? 'Stufe ' + qNow + ' seit ' + dur(now - qs.levelSince) + (deckelTxt ? ' · ' + deckelTxt : '') + (prio !== null ? ' · Priorität ' + (prio === 1 ? 'Leistung' : 'Lautstärke') : '') : '–', ''],
     ['Quiet-Regeln (Entscheidungsmaschine)', qRules, qRulesCls],
     ['Heizregelung', hcReco.text, hcReco.cls],
@@ -1291,8 +1345,10 @@ if (!qs.lastLog || now - qs.lastLog >= MS_MIN - 1000) {
                 'zustand', 'shift_anlage', 'kz_radiator_an', 'kz_heizluefter_an', 'kz_heizluefter_w', 'kz_heizluefter_online',
                 'leistung_el_korr_w', 'cop_momentan_korr', 'cop_korr_w', 'rohr_aussen',          // 14.10.2026 (nur angehaengt): Strom/COP mit Korrektur und ihre Konstante; Outside_Pipe_Temp fuer die Abtau-Kennzahl des Beobachters
                 'heizstab_stop_delta', 'verdampfer_aus', 'heissgas', 'hochdruck', 'expansionsventil', 'rohr_innen',
-                'druck_bar', 'zaehler_wp_w', 'zaehler_heizstab_w'];   // cop-ziel 17.10.2026 (nur angehaengt): Stromzaehler Shelly (Waermepumpe ohne Heizstab, Heizstab), leer ohne frischen Zaehler; Winterpaket 16.10.2026 (nur angehaengt): Water_Pressure; der Sensor zaehlt bei laufender Pumpe den Foerderdruck mit (~0,5 bar bei 4250 U/min), statisch nur bei Pumpe 0 (pumpe_speed) gueltig – Auswertung spaeter (Beobachter/Kennzahlen); Paket 2 (15.10.2026, nur angehaengt): Heater_Stop_Delta (TOP98), Eva_Outlet_Temp, Discharge_Temp, High_Pressure, Expansion_Valve, Inside_Pipe_Temp (Winter: Verdampfer/Ueberhitzung, Forum Expansionsventil)
+                'druck_bar', 'zaehler_wp_w', 'zaehler_heizstab_w',
+                'ow_vl', 'ow_rl'];   // 09.11.2026 (nur angehaengt): DS18B20 Anlegefuehler am Kupferrohr im Haus (Vorlauf 28964181e3e13ce0, Ruecklauf 28988a81e3e13ca1), leer ohne Wert der letzten 15 min;   // cop-ziel 17.10.2026 (nur angehaengt): Stromzaehler Shelly (Waermepumpe ohne Heizstab, Heizstab), leer ohne frischen Zaehler; Winterpaket 16.10.2026 (nur angehaengt): Water_Pressure; der Sensor zaehlt bei laufender Pumpe den Foerderdruck mit (~0,5 bar bei 4250 U/min), statisch nur bei Pumpe 0 (pumpe_speed) gueltig – Auswertung spaeter (Beobachter/Kennzahlen); Paket 2 (15.10.2026, nur angehaengt): Heater_Stop_Delta (TOP98), Eva_Outlet_Temp, Discharge_Temp, High_Pressure, Expansion_Valve, Inside_Pipe_Temp (Winter: Verdampfer/Ueberhitzung, Forum Expansionsventil)
     var hv = function (n) { return HP[n] && typeof HP[n].v === 'number' ? HP[n].v : null; };
+    var owv = function (id) { var o = HP._ow && HP._ow[id]; return o && typeof o.v === 'number' && o.v > -55 && o.v < 85 && now - o.ts <= 15 * MS_MIN ? o.v : null; };   // DS18B20: -127 = Fuehler weg, 85 = Startwert nach Spannungsausfall
     // Review-Paket 13.10.2026: Spalten der gestrichenen Quiet-Empfehlung, des Kontrolltests und des Eskalationswaechters bleiben im Kopf (Leser nach Spaltenname), Werte leer
     var vals2 = [iso, qNow, '', '', '', '', '', '', '', c(solVL), c(istVL), c(solRL), c(istRL), c(rlErr), c(qs.errS),
                  c(spread), c(zDelta), c(freq), c(pel), c(pthHs), c(pthCalc), c(copNow), c(flw), c(hv('Pump_Duty')), c(hv('Pump_Speed')), c(hv('Max_Pump_Duty')), c(fan1), c(hv('Fan2_Motor_Speed')),
@@ -1303,7 +1359,7 @@ if (!qs.lastLog || now - qs.lastLog >= MS_MIN - 1000) {
                  zustandNow, c(shiftHpNow), kzRad, kzFanOn, c(kzFanW), kzFanOnline,
                  c(pelKNow), c(copNowK), COP_KW, c(hv('Outside_Pipe_Temp')),
                  c(hv('Heater_Stop_Delta')), c(hv('Eva_Outlet_Temp')), c(hv('Discharge_Temp')), c(hv('High_Pressure')), c(hv('Expansion_Valve')), c(hv('Inside_Pipe_Temp')),
-                 c(hv('Water_Pressure')), c(ZQ.w), c(ZQ.hs)];
+                 c(hv('Water_Pressure')), c(ZQ.w), c(ZQ.hs), c(owv('28964181e3e13ce0')), c(owv('28988a81e3e13ca1'))];
     var file = '/data/optimizer/quiet-' + month + '.csv', head = cols.join(',');
     var needHead = true;
     if (flow.get('qHead') === month + '|' + head) { needHead = false; }
@@ -1328,7 +1384,9 @@ var cfg = global.get('OPT_cfg');
 if (!cfg) { return null; }
 var PC = cfg.plan || {};
 __COPKW__
-var PLAN_VER = 14;                                                                                // bei jeder Aenderung der Plan-Felder erhoehen: aeltere Plaene im Speicher werden dann sofort neu gerechnet
+var PLAN_VER = 15;                                                                                // bei jeder Aenderung der Plan-Felder erhoehen: aeltere Plaene im Speicher werden dann sofort neu gerechnet
+// PLAN_VER 15 (31.10.2026, Temperatur-Restkorrektur): je Slot Aussentemperatur = Prognose (OWM + Tagesgang + Anker, geschrumpft) + gelernter Rest (Fuehler − Prognose) je Vorlauf und Stunde
+//   (7 Tage, Backtest 20.–30.10.: Bias 6 h +0,69 → +0,07 K, Fehler 1,71 → 1,35 K); Schnappschuss-Spalte at_roh = ohne Rest, plan-eval prog_aussen_roh
 // PLAN_VER 14 (16.10.2026, Winterpaket): je Slot zusaetzlich COP und Strom mit Abtau-Abzug (copAb = COP · (1 − abtauAbzug · Abtaurisiko)); COP, Strom und Schnappschuss unveraendert
 // PLAN_VER 13 (15.10.2026, Entscheidung 2): Gebaeudemodell UA * (T_innen - T_aussen) - Gewinne statt UA * max(0, 15 - T_aussen); Prognose mit Tagesgang Fuehler - OWM
 // PLAN_VER 12 (14.10.2026): COP-Kennfeld und Strom je Slot mit der COP-Korrektur (COP_KW je Laufminute); Schnappschuss-meta cop_korr_w kennzeichnet die Version
@@ -1588,6 +1646,37 @@ function tgProfil(rows, d0, tage) {
     if (S.some(function (x) { return x[1] < 2 * tage; })) { return null; }
     return S.map(function (x) { return Math.round(x[0] / x[1] * 100) / 100; });
 }
+// Temperatur-Restkorrektur (PLAN_VER 15): Rest = Fuehler − Prognose (ohne Rest) je Vorlauf-Stuetzstelle (1/3/6/12/24 h) und Stunde, abklingend gemittelt
+// (M: 20.–30.10. Prognose nachts +1,6 K zu warm, tags −1,0 K bei 6 h; Tagesmittel +0,7…+1,1 K je nach Vorlauf). Je Stunde und Vorlauf 4 Werte am Tag -> lambda = exp(−1/28) ≈ 7 Tage.
+var AT_REST_HZ = [1, 3, 6, 12, 24], AT_REST_LAMBDA = Math.exp(-1 / 28), AT_REST_N0 = 8, AT_REST_MAX = 3;   // N0: Daempfung bei wenigen Werten (A); ±3 K Deckel (A)
+function atRestLern(L, hour, r) {
+    if (!ok(r) || Math.abs(r) > 10 || AT_REST_HZ.indexOf(L) < 0) { return; }
+    var R = pl.learn.atRest = pl.learn.atRest || {}, k = String(L), b = R[k] = R[k] || {}, h = String(hour), e = b[h] || [0, 0];
+    b[h] = [e[0] * AT_REST_LAMBDA + r, e[1] * AT_REST_LAMBDA + 1];
+}
+function atRestWert(L, hour) {                                                                       // Korrektur in K fuer Vorlauf L (h) und Stunde; zwischen den Stuetzstellen linear, unter 1 h von 0 aufwachsend
+    var R = pl.learn.atRest; if (!R || pn('atRestAktiv', 1) === 0) { return 0; }                     // cfg.plan.atRestAktiv = 0 schaltet die Korrektur ab (Werte lernen weiter)
+    function c(h) { var b = R[String(h)], e = b && b[String(hour)]; return (e && e[1] > 0) ? clamp(e[0] / e[1] * e[1] / (e[1] + AT_REST_N0), -AT_REST_MAX, AT_REST_MAX) : 0; }
+    if (L <= 0) { return 0; }
+    if (L <= AT_REST_HZ[0]) { return c(AT_REST_HZ[0]) * L / AT_REST_HZ[0]; }
+    for (var i = 1; i < AT_REST_HZ.length; i++) { if (L <= AT_REST_HZ[i]) { return lerp(L, AT_REST_HZ[i - 1], c(AT_REST_HZ[i - 1]), AT_REST_HZ[i], c(AT_REST_HZ[i])); } }
+    return c(AT_REST_HZ[AT_REST_HZ.length - 1]);
+}
+function atRestStart() {                                                                              // einmalig ohne gelernten Stand: die letzten 7 Tage aus plan-eval nachlernen (ist_aussen − prog_aussen_roh bzw. prog_aussen)
+    if (pl.learn.atRest) { return; }
+    pl.learn.atRest = {}; var von = now - 7 * 86400000, rows = [], mm = new Date(now); mm.setDate(1);
+    [new Date(mm.getFullYear(), mm.getMonth() - 1, 1), mm].forEach(function (d) {
+        try { rows = rows.concat(parseCsv(fs.readFileSync('/data/optimizer/plan-eval-' + d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '.csv', 'utf8'))); } catch (e) { /* keine Datei */ }
+    });
+    var n = 0;
+    rows.forEach(function (r) {
+        var m = /^(\d{4})-(\d\d)-(\d\d) (\d\d):(\d\d)/.exec(r.slot_start || ''); if (!m) { return; }
+        var t = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]).getTime(), L = num(r.vorlauf_soll_h), ist = num(r.ist_aussen), roh = num(r.prog_aussen_roh); if (roh === null) { roh = num(r.prog_aussen); }
+        if (t < von || t > now || L === null || ist === null || roh === null) { return; }
+        atRestLern(L, +m[4], ist - roh); n++;
+    });
+    pl.learn.atRestBoot = {ts: now, n: n}; pl.lastSave = 0;
+}
 function biasFeat(hour, wind, pvW, cl) {                                                             // Merkmale der Fuehlerkorrektur OWM -> Fuehler: [1, Wind, Sonne, Nacht, Nacht*klar]
     var night = (hour >= 20 || hour < 6) ? 1 : 0, clear = isN(cl) ? 1 - Math.min(100, Math.max(0, cl)) / 100 : 0.5, sun = isN(pvW) ? Math.min(1.5, Math.max(0, pvW / 15000)) : 0;
     return [1, isN(wind) ? wind : 0, sun, night, night * clear];
@@ -1683,7 +1772,7 @@ var ACT_Z = ['ist_strom_zaehler_kwh', 'ist_zaehler_min'];                       
 var ACT_COLS = ['ist_aussen', 'ist_pv_w', 'ist_preis', 'ist_cop', 'ist_waerme_kwh', 'ist_strom_kwh', 'ist_abtauungen', 'ist_ww_min', 'ist_verdichter_min', 'ist_hz', 'ist_quiet_stufe', 'ist_soc', 'ist_waerme_gesamt_kwh', 'ist_strom_heizen_kwh', 'ist_abtau_min', 'ist_abtau_strom_kwh', 'ist_abtau_waerme_kwh', 'ist_spreizung', 'ist_vl_abweichung', 'ist_pumpe_u_min', 'ist_heizregelung']
     .concat(roomIds.map(function (id) { return 'ist_raum_' + id; }))
     .concat(['ist_wind_ms', 'ist_bewoelkung_pct', 'ist_aussen_owm', 'ist_aussen_regel', 'ist_t_custom']);       // Fahrplan v2: Wind, Bewoelkung, OWM-Temperatur, Regelwert T_outside, eigener Fuehler (nur anhaengen)
-var EV_COLS2 = ['prog_wind_ms', 'prog_bewoelkung_pct', 'prog_aussen_korr', 'prog_sonne_kwh', 'prog_bedarf_basis_kwh', 'prog_bedarf_kand_kwh', 'prog_strom_kwh', 'prog_cop_korr_w'].concat(ACT_K);   // prog_cop_korr_w: Korrektur, mit der der Schnappschuss rechnete (leer = vor PLAN_VER 12, roh)                       // Vergleichsspalten hinter den Ist-Werten (nur anhaengen; prog_strom_kwh seit PLAN_VER 11)
+var EV_COLS2 = ['prog_wind_ms', 'prog_bewoelkung_pct', 'prog_aussen_korr', 'prog_sonne_kwh', 'prog_bedarf_basis_kwh', 'prog_bedarf_kand_kwh', 'prog_strom_kwh', 'prog_cop_korr_w'].concat(ACT_K).concat(['prog_aussen_roh']);   // prog_aussen_roh seit PLAN_VER 15: Aussentemperatur ohne Restkorrektur   // prog_cop_korr_w: Korrektur, mit der der Schnappschuss rechnete (leer = vor PLAN_VER 12, roh)                       // Vergleichsspalten hinter den Ist-Werten (nur anhaengen; prog_strom_kwh seit PLAN_VER 11)
 function csvOut(file, head, lines) {                                                           // Kopfzeile einmal je Datei (und bei geaenderten Spalten neu)
     var needHead = true, key = file + '|' + head;
     pl.heads = pl.heads || {};
@@ -1739,6 +1828,7 @@ if (pl.acc && pl.acc.s !== s0) {                                                
             var k = Math.round((a.s - sn.s0) / Q15); if (k < 0 || k >= sn.slots.length) { return; }
             var sl = sn.slots[k], K = sn.cols;
             var g = function (name) { return sl[K.indexOf(name)]; };
+            if (L > 0 && isN(actual.at)) { var aRoh = isN(g('at_roh')) ? g('at_roh') : g('at'); if (isN(aRoh)) { atRestLern(L, new Date(a.s).getHours(), actual.at - aRoh); } }   // Restkorrektur lernt gegen die Prognose OHNE Rest (sonst schwingt sie)
             if ((L === 6 || L === 24) && isN(g('bedarf_basis')) && isN(g('bedarf_kand')) && isN(actual.th) && sn.meta && sn.meta.modell_ver === MODELL_VER) {   // nur Schnappschuesse des jetzigen Gebaeudemodells   // Tagesbilanz des Waermebedarf-Modells: Plan-Modell gegen Kandidat (Sonne/Wind) bei 6 und 24 h Vorlauf
                 var abD = dayStart(a.s); pl.ab = pl.ab || {d0: abD};
                 if (pl.ab.d0 !== abD) { pl.learn.ab = (pl.learn.ab || []).concat([pl.ab]).slice(-21); abTag(pl.ab); pl.lastSave = 0; pl.ab = {d0: abD}; }
@@ -1747,7 +1837,7 @@ if (pl.acc && pl.acc.s !== s0) {                                                
             }
             var recT = {1: 'VORZIEHEN', 0: 'NORMAL', '-1': 'VERSCHIEBEN'}[g('rec')] || '', qT = g('quiet') === undefined || g('quiet') === null ? '' : String(g('quiet')).replace(/,/g, ';');
             evLines.push([stamp(a.s), L, c((a.s - sn.t) / H, 2), stamp(sn.t), c(g('at'), 2), c(g('rh'), 0), c(g('cop'), 2), c(g('price'), 4), c(g('pv'), 0), c(g('bedarf'), 3), c(g('plan'), 3), c(g('kosten'), 2), c(g('defrost'), 2), c(g('taupunkt'), 1), c(g('kosten_basis'), 2), c(g('strafe_defrost'), 2), c(g('strafe_unsicher'), 2), c(g('reserve_hinten'), 3), c(g('reserve_vorn'), 3),
-                          c(g('conf_at'), 2), c(g('conf_pv'), 2), c(g('att'), 0), recT, c(g('offset'), 1), qT].concat(aVals).concat([c(g('wind'), 1), c(g('wolken'), 0), c(g('at_korr'), 2), c(g('sonne_kwh'), 3), c(g('bedarf_basis'), 3), c(g('bedarf_kand'), 3), c(g('strom'), 3), sn.meta && ok(sn.meta.cop_korr_w) ? String(sn.meta.cop_korr_w) : ''].concat(kVals)).join(','));
+                          c(g('conf_at'), 2), c(g('conf_pv'), 2), c(g('att'), 0), recT, c(g('offset'), 1), qT].concat(aVals).concat([c(g('wind'), 1), c(g('wolken'), 0), c(g('at_korr'), 2), c(g('sonne_kwh'), 3), c(g('bedarf_basis'), 3), c(g('bedarf_kand'), 3), c(g('strom'), 3), sn.meta && ok(sn.meta.cop_korr_w) ? String(sn.meta.cop_korr_w) : ''].concat(kVals).concat([c(g('at_roh'), 2)])).join(','));
         });
         if (evLines.length) { out[2] = csvOut('/data/optimizer/plan-eval-' + mo + '.csv', 'slot_start,' + EV_COLS.join(',') + ',' + ACT_COLS.join(',') + ',' + EV_COLS2.join(','), evLines); }
     }
@@ -2027,6 +2117,7 @@ function buildPlan() {
     raw.forEach(function (x) {
         var cA = confAt(cAt, x.L), cP = confAt(cPv, x.L);
         var atE = cA * x.atF + (1 - cA) * atRef, rhE = cA * (x.rhF === null ? rhRef : x.rhF) + (1 - cA) * rhRef;   // je schlechter die Prognose, desto weniger weicht sie vom Tagesmittel ab
+        var atRoh = atE; atE = atRoh + atRestWert(x.L, new Date(x.t).getHours());                                 // PLAN_VER 15: gelernter Rest Fuehler − Prognose je Vorlauf und Stunde
         var vl = curve(atE), copM = CT.at(atE), cg = carnot(atE, vl), copSrc = copM !== null ? 'Messung' : 'Carnot';
         var cop = copM !== null ? copM : (cg === null ? 3 : eta * cg);
         cop = clamp(cop, 1.5, copMax);
@@ -2043,7 +2134,7 @@ function buildPlan() {
             atK = atO + dHat + rest * Math.exp(-x.L / tauA);
         }
         var riskS = defr(atE, rhE), copAb = cop * (1 - ABZ_PLAN * riskS);                              // Winterpaket: Abtau-Abzug (Waerme beim Abtauen/Wiederaufheizen ist keine Nutzwaerme)
-        slots.push({t: x.t, L: x.L, at: atE, atRaw: x.atF, rh: rhE, dew: dewp(atE, rhE), vl: vl, cop: cop, copSrc: copSrc, el: bedarf / cop, copAb: copAb, elAb: bedarf / copAb, pv: x.pv, wind: x.windF, cl: x.clF, atK: atK, sun: sunE, solK: solK, winK: winK, bas: bas, kand: kand, solU: solU, winU: winU, bedarf: bedarf, risk: defr(atE, rhE), cA: cA, cP: cP});
+        slots.push({t: x.t, L: x.L, at: atE, atRaw: x.atF, rh: rhE, dew: dewp(atE, rhE), vl: vl, cop: cop, copSrc: copSrc, el: bedarf / cop, copAb: copAb, elAb: bedarf / copAb, pv: x.pv, wind: x.windF, cl: x.clF, atK: atK, sun: sunE, solK: solK, winK: winK, bas: bas, kand: kand, solU: solU, winU: winU, bedarf: bedarf, risk: defr(atE, rhE), cA: cA, cP: cP, atRoh: atRoh});
     });
     // Kennzahlen (24 h)
     var sumB = 0, sumEl = 0, sumElAb = 0, sumSol = 0, sumWin = 0, pvKwh = 0, pvN = 0, atMin = null, atMax = null, copMin = null, copMaxV = null, maxD = null;
@@ -2069,6 +2160,7 @@ function buildPlan() {
     return P;
 }
 
+atRestStart();                                                                                   // PLAN_VER 15: Restkorrektur beim ersten Lauf aus plan-eval der letzten 7 Tage vorbelegen
 if (!pl.plan || pl.planSlot !== s0 || pl.plan.status !== 'ok' || pl.plan.ver !== PLAN_VER) {
     pl.plan = buildPlan(); pl.planSlot = s0;
 }
@@ -2076,14 +2168,14 @@ var P = pl.plan;
 
 // ---------- Schnappschuss: je Stunde eine Vorschau mit allen Eingaengen (bleibt unveraendert, wird nur fuer den spaeteren Vergleich gelesen)
 // Review-Paket 13.10.2026 (PLAN_VER 11): ohne Preis, Plan, Kosten, Empfehlung, Offset, Quiet und Reserve; neu Strom je Slot
-var SNAP_COLS = ['t', 'at', 'rh', 'cop', 'pv', 'bedarf', 'strom', 'defrost', 'conf_at', 'conf_pv', 'taupunkt', 'wind', 'wolken', 'at_korr', 'sonne_kwh', 'solar_kand_kwh', 'wind_kand_kwh', 'bedarf_basis', 'bedarf_kand'];
+var SNAP_COLS = ['t', 'at', 'rh', 'cop', 'pv', 'bedarf', 'strom', 'defrost', 'conf_at', 'conf_pv', 'taupunkt', 'wind', 'wolken', 'at_korr', 'sonne_kwh', 'solar_kand_kwh', 'wind_kand_kwh', 'bedarf_basis', 'bedarf_kand', 'at_roh'];   // at_roh seit PLAN_VER 15 (nur angehaengt)
 var hourNow = Math.floor(now / H) * H;
 if (P.status === 'ok' && P.slots && pl.snapHour !== hourNow) {
     var snap = {t0: hourNow, s0: P.s0, t: now, status: 'ok', cols: SNAP_COLS, slots: P.slots.map(function (x) {
         return [x.t, Math.round(x.at * 100) / 100, Math.round(x.rh), Math.round(x.cop * 100) / 100, x.pv === null ? null : Math.round(x.pv), Math.round(x.bedarf * 1000) / 1000, Math.round(x.el * 1000) / 1000, Math.round(x.risk * 100) / 100,
                 Math.round(x.cA * 100) / 100, Math.round(x.cP * 100) / 100, Math.round(x.dew * 10) / 10,
                 ok(x.wind) ? Math.round(x.wind * 10) / 10 : null, ok(x.cl) ? Math.round(x.cl) : null, ok(x.atK) ? Math.round(x.atK * 100) / 100 : null,
-                Math.round(x.sun * 1000) / 1000, Math.round(x.solK * 1000) / 1000, Math.round(x.winK * 1000) / 1000, Math.round(x.bas * 1000) / 1000, Math.round(x.kand * 1000) / 1000];
+                Math.round(x.sun * 1000) / 1000, Math.round(x.solK * 1000) / 1000, Math.round(x.winK * 1000) / 1000, Math.round(x.bas * 1000) / 1000, Math.round(x.kand * 1000) / 1000, ok(x.atRoh) ? Math.round(x.atRoh * 100) / 100 : null];
     }), meta: {plan_ver: PLAN_VER, modell_ver: MODELL_VER, plan_slots: 96, el_model_24h_kwh: Math.round(P.elModel * 100) / 100, vrm_hp_24h_kwh: P.vrmHp, model: P.model, cop_quelle: P.sum.copSrc, cop_korr_w: COP_KW, res: {at_min: 180, rh_min: 180, pv_min: P.sum.pvRes},
             conf_at: P.conf.at.map(function (a) { return [a.h, Math.round(a.c * 100) / 100, a.n]; }), conf_pv: P.conf.pv.map(function (a) { return [a.h, Math.round(a.c * 100) / 100, a.n]; })}};
     pl.snaps = (pl.snaps || []).filter(function (x) { return x.t0 > now - pn('snapKeepH', 27) * H; });
@@ -2135,6 +2227,11 @@ if (P.status === 'ok') {
             txt = 'jetzt ' + sgn(dN, 1, 'K') + ' · Wind ' + sgn(cc[1], 2, 'K je m/s') + ' · Sonne ' + sgn(cc[2], 1, 'K') + ' · Nacht ' + sgn(cc[3], 1, 'K') + ' · Nacht klar ' + sgn(cc[4], 1, 'K') + ' · ' + bi.days + ' Tage · Fehler OWM ' + f(bi.maeZero, 2, 'K') + ' / Korrektur ' + f(bi.maeMod, 2, 'K') + ' · ' + (bi.aktiv ? 'aktiv' : 'Kandidat');
         }
         rows.splice(rows.findIndex(function (r) { return r[0] === 'Gebäudemodell'; }) + 1, 0, ['Fühlerkorrektur', txt, cls]);
+        var hN = new Date(now).getHours(), R = pl.learn.atRest || {}, nR = 0, mn = null, mx = null;                   // Temperatur-Restkorrektur (PLAN_VER 15): aktiv im Plan
+        Object.keys(R).forEach(function (L) { Object.keys(R[L]).forEach(function (h) { var e = R[L][h]; nR += e[1]; }); });
+        for (var hh = 0; hh < 24; hh++) { var v6 = atRestWert(6, hh); if (mn === null || v6 < mn) { mn = v6; } if (mx === null || v6 > mx) { mx = v6; } }
+        rows.splice(rows.findIndex(function (r) { return r[0] === 'Fühlerkorrektur'; }) + 1, 0, ['Temperatur-Rest', pn('atRestAktiv', 1) === 0 ? 'aus (cfg.plan.atRestAktiv = 0), lernt weiter' : nR < 1 ? 'noch keine Werte (lernt ab jetzt)' :
+            'jetzt +6 h ' + sgn(atRestWert(6, (hN + 6) % 24), 1, 'K') + ' · +24 h ' + sgn(atRestWert(24, hN), 1, 'K') + ' · 6 h über den Tag ' + sgn(mn, 1) + '…' + sgn(mx, 1, 'K') + ' · ' + Math.round(nR / (4 * 5)) + ' Tage · aktiv (Fühler − Prognose je Vorlauf und Stunde, ~7 Tage)', '']);
     })();
     (function () {                                                                                 // A/B des Waermebedarf-Modells (Tageswaerme gegen Ist): bisheriges Modell gegen Kandidat mit Sonne/Wind
         var days = (pl.learn.ab || []), txt;
@@ -2176,7 +2273,9 @@ if (P.status === 'ok') {                                                        
            {k: 'Außen 24 h', v: f(sm2.atMin, 0) + ' … ' + f(sm2.atMax, 0, '°C'), s: 'Prognose (Fühler-angeglichen)'},
            {k: 'PV-Prognose 24 h', v: sm2.pv !== null ? f(sm2.pv, 0, 'kWh') : '–', s: sm2.pv !== null ? 'Anzeige' : 'keine Prognose'}];
 }
-out[0] = {payload: {rows: rows, plan: tab, chart: chartD, kpi: kpi, korr: KORR_TXT}};
+// evcc-Abgleich (25.10.2026): Kennzahlenzeile aus dem evcc-Plan (OPT_plan_in.evcc von opt_energy) - nur Anzeige, der Fahrplan rechnet ohne sie
+var evZ = (piFresh && PI.evcc && PI.evcc.zeile) ? PI.evcc.zeile : {k: 'evcc', v: 'kein Plan', c: 'warn', t: 'Kein Optimierer-Plan von evcc (OPT_plan_in.evcc fehlt oder ist älter als 5 min)'};
+out[0] = {payload: {rows: rows, plan: tab, chart: chartD, kpi: kpi, korr: KORR_TXT, evcc: evZ}};
 // Gebaeudemodell fuer die Entscheidungsmaschine (Regel Vorausschau): Lernstand, Gate, coefActivate; Sonne/Wind-Koeffizienten nur bei aktivem Modell
 var cfX = pl.learn.coef || {}, cfK = coefSafe((cfX.aktiv && cfX.n >= 3) ? (cfX.maeWind !== null && cfX.maeWind !== undefined ? {bs: cfX.bsW || 0, bw: cfX.bw || 0} : {bs: cfX.bs || 0, bw: 0}) : {bs: 0, bw: 0});
 // Lernstand (B Lern-Gate, D Drift/Rueckfall) fuer die Seite "Optimierer", Karte "Messwerte & Lernen": dieselben Groessen wie die Zeilen "Lern-Gate" und
@@ -2189,7 +2288,7 @@ var lern = (function () {
             drift: {n: L.n || 0, up: r1(L.up && L.up.s), dn: r1(L.dn && L.dn.s), upAn: !!(L.up && L.up.an), dnAn: !!(L.dn && L.dn.an), h: DRIFT.h},
             rueckfall: (rf && now < rf.bis) ? {ts: rf.ts, bis: rf.bis} : null, rb: (cfX.aktiv && L.rb) ? {s: r1(L.rb.s), h: DRIFT.rbH} : null};
 })();
-global.set('OPT_plan', {ts: now, s0: P.s0, status: P.status, slots: P.slots ? P.slots.map(function (x) { return [x.t, Math.round(x.bedarf * 1000) / 1000, Math.round(x.cop * 100) / 100, Math.round(x.el * 1000) / 1000, x.cA]; }) : null,      // Slot: [Zeit, Waerme kWh, COP, Strom kWh, Vertrauen]
+global.set('OPT_plan', {ts: now, s0: P.s0, status: P.status, slots: P.slots ? P.slots.map(function (x) { return [x.t, Math.round(x.bedarf * 1000) / 1000, Math.round(x.cop * 100) / 100, Math.round(x.el * 1000) / 1000, x.cA, ok(x.at) ? Math.round(x.at * 100) / 100 : null, ok(x.atRoh) ? Math.round(x.atRoh * 100) / 100 : null]; }) : null,      // Slot: [Zeit, Waerme kWh, COP, Strom kWh, Vertrauen]
                         model: {n: cfX.n || 0, minDays: pn('coefMinDays', 10), gate: !!(cfX.gate && cfX.gate.ok), why: (cfX.gate && cfX.gate.why) || [], aktiv: !!cfX.aktiv, bs: cfK.bs, bw: cfK.bw,
                                 ua: Math.round(MDL.ua * 10000) / 10000, g: Math.round(MDL.g * 1000) / 1000, ti: Math.round(MDL.ti * 100) / 100, tbal: Math.round(BIL * 100) / 100, windTot: WIND_TOT, ver: MODELL_VER}, lern: lern});   // Modell v3: tbal = Bilanzpunkt T_innen - Gewinne/UA (ua * max(0, tbal - T) = max(0, UA * (T_innen - T) - Gewinne))
 flow.set('plan', pl);
@@ -2359,7 +2458,7 @@ var HPe = G('OPT_hp') || {}, hcV = (HPe.Heating_Control && typeof HPe.Heating_Co
 var hcHm = function (ts) { return new Date(ts).toLocaleTimeString('de-DE', {hour: '2-digit', minute: '2-digit'}); };
 var rowsWp = [
     ['Betriebszustand', mode + (ssOn ? ' · Sanftanlauf' : ''), ''],
-    ['Heizregelung', hcV === null ? '–' : (hcV === 1 ? 'Efficiency' : 'Comfort') + (HPe._hcSince ? ' · ' + (HPe._hcSince.first ? 'seit Beobachtung ' : 'seit ') + hcHm(HPe._hcSince.ts) : ''), hcV === 1 ? 'warn' : ''],
+    ['Heizregelung', hcV === null ? '–' : (hcV === 1 ? 'Efficiency' : 'Comfort') + (HPe._hcSince ? ' · ' + (HPe._hcSince.first ? 'seit Beobachtung ' : 'seit ') + hcHm(HPe._hcSince.ts) : ''), ''],   // ui-review-b 20.10.2026: Efficiency ist ein normaler Zustand (Rot nur fuer Fehler)
     ['Soll-Vorlauf (Heizkurve)', f(target, 0, '°C'), ''],
     ['Verschiebung manuell', f(shiftBase, 0, 'K'), ''],
     ['Korrektur Raumregelung', f(rtcCorr, 0, 'K'), ''],
@@ -2599,21 +2698,22 @@ upsert({"id": UI_TAB, "type": "ui_tab", "name": "Optimierung", "icon": "tune", "
 # Seiten zusammengelegt (13.10., Branch tabs-zusammen): "Optimierung" = Verlaeufe + Raumkarte + Waermefahrplan, "Optimierer" = Entscheidungsmaschine +
 # Quiet-Messwerte, "Daten & Güte" bleibt. Die Tabs "Wärmefahrplan" und "Quiet-Messwerte" bleiben als leere, ausgeblendete Tabs stehen (IDs und Menue-
 # Positionen bleiben, Lesezeichen #!/n zeigen weiter auf dieselbe Stelle; deploy_opt.sh entfernt keine Knoten).
-OPT_W = 17
+OPT_W = 16                                       # UI-Überarbeitung 03.–05.11.2026 (live, übernommen 08.11.): 16 Einheiten = 858 px statt 17
 ENG_TAB = "opt_eng_ui_tab"                       # Seite "Optimierer" (eigenes Kennzeichen; ui_tab und Karten der Maschine weiter unten)
-ENG_W = 17                                       # Gruppenbreite der Seite "Optimierer" (Begruendung bei ENG_GROUPS); gilt auch fuer die Quiet-Karten dort (keine gemischten Breiten)
+ENG_W = 16                                       # Gruppenbreite der Seite "Optimierer" (Begruendung bei ENG_GROUPS); gilt auch fuer die Quiet-Karten dort (keine gemischten Breiten)
 UI_TAB_DATA = "opt_ui_tab_data"
 upsert({"id": UI_TAB_DATA, "type": "ui_tab", "name": "Daten & Güte", "icon": "analytics", "order": 12.75, "disabled": False, "hidden": False})
-GROUPS = [("opt_g_ch_wp", "Wärmepumpe · letzte 24 h", OPT_W, UI_TAB), ("opt_g_ch_rooms", "Räume · letzte 24 h", OPT_W, UI_TAB), ("opt_g_ch_at", "Wetter · 24 h zurück, 36 h voraus", OPT_W, UI_TAB),
-          ("opt_g_rooms", "Räume und Komfortbänder", OPT_W, UI_TAB),
-          ("opt_g_opt", "Optimierung", OPT_W, UI_TAB_DATA),
-          ("opt_g_wx", "Außen & Wetter", OPT_W, UI_TAB_DATA), ("opt_g_calc", "Berechnete Außentemperatur", OPT_W, UI_TAB_DATA), ("opt_g_quiet", "Leistung & Quiet", OPT_W, UI_TAB_DATA), ("opt_g_en", "Energie & Preise", OPT_W, UI_TAB_DATA),
-          ("opt_g_fq", "Prognosegüte", OPT_W, UI_TAB_DATA), ("opt_g_wp", "Wärmepumpe", OPT_W, UI_TAB_DATA),
-          ("opt_g_nas", "Auswertung NAS", OPT_W, UI_TAB_DATA), ("opt_g_zaehler", "Stromzähler", OPT_W, UI_TAB_DATA)]
-_ord = {}
-for gid, gname, gwidth, gtab in GROUPS:
-    _ord[gtab] = _ord.get(gtab, 0) + 1
-    upsert({"id": gid, "type": "ui_group", "name": gname, "tab": gtab, "order": _ord[gtab], "disp": True,
+# [Gruppe, Titel, Breite, Seite, Reihenfolge]. UI-Überarbeitung 03.–05.11.2026 (live, übernommen 08.11.): die Messwert-Karten (Optimierung, Außen & Wetter,
+# Berechnete Außentemperatur, Leistung & Quiet, Energie & Preise, Wärmepumpe) stehen auf "Optimierung" hinter dem Wärmefahrplan (5/6) auf 7–12;
+# "Daten & Güte" behält Prognosegüte, Auswertung NAS, Stromzähler (1–3)
+GROUPS = [("opt_g_ch_wp", "Wärmepumpe · letzte 24 h", OPT_W, UI_TAB, 1), ("opt_g_ch_rooms", "Räume · letzte 24 h", OPT_W, UI_TAB, 2), ("opt_g_ch_at", "Wetter · 24 h zurück, 36 h voraus", OPT_W, UI_TAB, 3),
+          ("opt_g_rooms", "Räume und Komfortbänder", OPT_W, UI_TAB, 4),
+          ("opt_g_opt", "Optimierung", OPT_W, UI_TAB, 7),
+          ("opt_g_wx", "Außen & Wetter", OPT_W, UI_TAB, 8), ("opt_g_calc", "Berechnete Außentemperatur", OPT_W, UI_TAB, 9), ("opt_g_quiet", "Leistung & Quiet", OPT_W, UI_TAB, 10), ("opt_g_en", "Energie & Preise", OPT_W, UI_TAB, 11),
+          ("opt_g_fq", "Prognosegüte", OPT_W, UI_TAB_DATA, 1), ("opt_g_wp", "Wärmepumpe", OPT_W, UI_TAB, 12),
+          ("opt_g_nas", "Auswertung NAS", OPT_W, UI_TAB_DATA, 2), ("opt_g_zaehler", "Stromzähler", OPT_W, UI_TAB_DATA, 3)]
+for gid, gname, gwidth, gtab, gord in GROUPS:
+    upsert({"id": gid, "type": "ui_group", "name": gname, "tab": gtab, "order": gord, "disp": True,
             "width": gwidth, "collapse": False, "className": ""})
 
 # Waermefahrplan auf der Seite "Optimierung" unter den Verlaeufen, zwei gleich breite Karten: Kennzahlen + Diagramm + Details | Stundenuebersicht (bei >= 1920 px
@@ -2672,10 +2772,13 @@ TABLE = ('<div class="optfit"><div class="optkv"><div class="kv" ng-repeat="r in
          '<span class="l">{{r[0]}}</span><span class="v" ng-class="r[2]">{{r[1]}}</span></div></div></div>')
 
 
-FQ_TABLE = ('<div class="optfit optpt optfq"><table><tr><th></th><th colspan="3">Außentemperatur (OWM)</th><th colspan="3">PV ({{msg.payload.pvQuelle}})</th></tr>'
+FQ_TABLE = ('<div class="optfit optpt optfq"><table title="{{msg.payload.sammel}}"><tr><th></th><th colspan="3">Außentemperatur (OWM)</th><th colspan="3">PV ({{msg.payload.pvQuelle}})</th></tr>'
             '<tr><th>Horizont</th><th>Abw.</th><th>Fehler</th><th>n</th><th>Prognose / Ist</th><th>Fehler</th><th>n</th></tr>'
-            '<tr ng-repeat="z in msg.payload.tab track by $index"><td>{{z[0]}}</td><td>{{z[1]}}</td><td>{{z[2]}}</td><td>{{z[3]}}</td><td>{{z[4]}}</td><td>{{z[5]}}</td><td>{{z[6]}}</td></tr></table>'
-            '<div class="mute" style="margin-top:6px;font-size:12.5px">{{msg.payload.sammel}}</div></div>')   # ui-daten 18.10.2026: Prognoseguete als Tabelle
+            '<tr ng-repeat="z in msg.payload.tab track by $index"><td>{{z[0]}}</td><td>{{z[1]}}</td><td>{{z[2]}}</td><td>{{z[3]}}</td><td>{{z[4]}}</td><td>{{z[5]}}</td><td>{{z[6]}}</td></tr>'
+            # evcc-Abgleich 25.10.2026: Strom der Waermepumpe am Vortag (taegliche Pruefung opt_evcc_q), dieselben 7 Spalten, Bewertung ok/Hinweis (Bernstein)/Warnung (Rot)
+            '<tr ng-if="msg.payload.ev && msg.payload.ev.length"><th title="{{msg.payload.evTitel}}">WP-Strom {{msg.payload.evTag}}</th><th>Prognose kWh</th><th>Messung kWh</th><th>Abw.</th><th>7 Tage</th><th colspan="2">Bewertung</th></tr>'
+            '<tr ng-repeat="z in msg.payload.ev track by $index" title="{{z[7]}}"><td>{{z[0]}}</td><td>{{z[1]}}</td><td>{{z[2]}}</td><td>{{z[3]}}</td><td>{{z[4]}}</td><td colspan="2" ng-class="z[6]">{{z[5]}}</td></tr></table>'
+            '</div>')   # ui-daten 18.10.2026: Prognoseguete als Tabelle; ui-review-b 20.10.2026: Sammelzeile ("240 Stunden Ist-Werte ...") nur noch als Tooltip der Tabelle
 
 
 def template(i, gid, height, y):
@@ -2705,15 +2808,22 @@ QSTATS_HEAD = ['Stufe', 'Außen', 'Minuten Lauf', 'Ø Hz', 'Ø Fan', '<span titl
 QSTATS_COLS = ([0, 1, 2, 3, 4, 5, 6, 7, 8, 9], [0, 1, 10, 11, 12, 13, 14, 15, 16])
 
 
-def qstats_tpl(cols):
-    return ('<div class="optfit"><table class="optq" title="Nur Minuten mit laufendem Verdichter, ohne Abtauen und Warmwasser; Zeilen nur für benutzte Stufen"><tr>'
+QSTATS_ZU_CSS = ('<style>details.optzu>summary{cursor:pointer;outline:none;font-size:12px;color:#00729f;font-weight:600;text-transform:uppercase;letter-spacing:.06em;padding:4px 0}'
+                 'details.optzu[open]>summary{margin-bottom:6px}</style>')
+
+
+def qstats_tpl(cols, node_id):
+    """ui-review-b 20.10.2026: Tabelle zugeklappt (Messgrundlage, nicht Tagesgeschaeft); aufklappen passt die Karte sofort ein"""
+    return (QSTATS_ZU_CSS + '<div class="optfit"><details class="optzu" ontoggle="var F = window.__optFit; if (F &amp;&amp; F.fns &amp;&amp; F.fns[\'' + node_id + '\']) { setTimeout(F.fns[\'' + node_id + '\'], 30); }">'
+            '<summary>Tabelle · {{(msg.payload.stats || []).length}} Zeilen</summary>'
+            '<table class="optq" title="Nur Minuten mit laufendem Verdichter, ohne Abtauen und Warmwasser; Zeilen nur für benutzte Stufen"><tr>'
             + ''.join('<th>' + QSTATS_HEAD[c] + '</th>' for c in cols) + '</tr>'
-            '<tr ng-repeat="r in msg.payload.stats track by $index" ng-class="{leer: r[1] === \'keine Daten\'}"><td ng-repeat="c in [' + ','.join(str(c) for c in cols) + '] track by $index">{{r[c]}}</td></tr></table></div>')
+            '<tr ng-repeat="r in msg.payload.stats track by $index" ng-class="{leer: r[1] === \'keine Daten\'}"><td ng-repeat="c in [' + ','.join(str(c) for c in cols) + '] track by $index">{{r[c]}}</td></tr></table></details></div>')
 
 
 for _qid, _qg, _qn, _qc, _qy in (("opt_t_qstats", "opt_g_qstats", "Quiet-Statistik", QSTATS_COLS[0], 320), ("opt_t_qstats2", "opt_g_qstats2", "Quiet-Statistik Temperaturen", QSTATS_COLS[1], 360)):
     upsert({"id": _qid, "type": "ui_template", "z": TAB, "group": _qg, "name": _qn, "order": 1, "width": 0, "height": 4,
-            "format": qstats_tpl(_qc) + FIT_JS.replace("__ID__", _qid), "storeOutMessages": True, "fwdInMessages": False, "resendOnRefresh": True,
+            "format": qstats_tpl(_qc, _qid) + FIT_JS.replace("__ID__", _qid), "storeOutMessages": True, "fwdInMessages": False, "resendOnRefresh": True,
             "templateScope": "local", "className": "", "x": 1260, "y": _qy, "wires": [[]]})
 upsert(template("opt_t_wp", "opt_g_wp", 3, 260))
 HIST_JS = r"""
@@ -2974,18 +3084,20 @@ if (L) {
     rows.push(['Letzter Lauf', dmhm(L.ende || L.beginn) + ' · ' + dauer(L.dauer_s), L.ok === false ? 'Fehler' : (alt ? 'veraltet' : 'ok'), L.ok === false ? 'fehler' : (alt ? 'warn' : 'ok'),
                'Art ' + (L.art || '–') + ' · ' + schT.join(' · ') + (st.dienst && st.dienst.naechster_lauf ? ' · nächster Lauf ' + dmhm(st.dienst.naechster_lauf) : '') + (st.version ? ' · Stand ' + st.version : '')]);
 } else { rows.push(['Letzter Lauf', 'kein Lauf', 'kein Lauf', 'warn', 'status.json ohne letzten Lauf (Dienst gestartet ' + dmhm(st.dienst && st.dienst.gestartet) + ')']); }
-// Training: Ampel und Drift
+// Training: technischen Lauf und fachlichen Befund getrennt ausweisen
 var T = st.training || null;
 if (T) {
-    var amp = String(T.ampel || ''), ampT = {gruen: 'grün', gelb: 'gelb', rot: 'rot'}[amp] || '–', dr = T.drift || {}, nDr = ok(dr.auffaellig) ? dr.auffaellig : null, G = T.guete_test || {};
+    var amp = String(T.ampel || ''), dr = T.drift || {}, nDr = ok(dr.auffaellig) ? dr.auffaellig : null, G = T.guete_test || {};
     var ent = T.entscheidung && T.entscheidung.ergebnis ? String(T.entscheidung.ergebnis) : '';                        // training-v2: Gate uebernommen/abgelehnt
+    var laufFehler = T.ok === false || amp === 'rot', pruefen = ent === 'abgelehnt' || amp === 'gelb' || nDr > 0;
     var drT = Array.isArray(dr.liste) ? dr.liste.map(function (e) {                                                  // Drift-Eintraege {name, vorher, heute, rel} lesbar (vorher "[object Object]")
         if (!e || typeof e !== 'object') { return String(e); }
         var rr = (ok(e.vorher) && ok(e.heute) && e.vorher !== 0) ? (e.heute - e.vorher) / Math.abs(e.vorher) : (ok(e.rel) ? e.rel : null);   // Prozent aus den gezeigten Zahlen (training-v2: e.rel bezieht sich auf den roh gelernten Wert)
         var rel = rr !== null ? ' (' + (rr >= 0 ? '+' : '') + f(100 * rr, 0) + ' %)' : '';
         return e.name + ' ' + (ok(e.vorher) ? f(e.vorher, Math.abs(e.vorher) < 10 ? 2 : 0) : '–') + ' → ' + (ok(e.heute) ? f(e.heute, Math.abs(e.heute) < 10 ? 2 : 0) : '–') + rel;
     }) : [];
-    rows.push(['Training', dm(T.tag) + ' · Drift ' + (nDr === null ? '–' : nDr + ' auffällig') + (dr.gegen ? '' : ' (erster Lauf)') + (ent ? ' · ' + ent : ''), T.ok === false ? 'Fehler' : ampT, T.ok === false || amp === 'rot' ? 'fehler' : (amp === 'gelb' || nDr > 0 ? 'warn' : (amp === 'gruen' ? 'ok' : '')),
+    rows.push(['Training', (laufFehler ? 'Lauf Fehler' : 'Lauf ok') + ' · ' + dm(T.tag) + ' · Drift ' + (nDr === null ? '–' : nDr + ' auffällig') + (dr.gegen ? '' : ' (erster Lauf)') + (ent ? ' · Modell ' + ent : ''),
+               laufFehler ? 'Fehler' : (pruefen ? 'prüfen' : 'ok'), laufFehler ? 'fehler' : (pruefen ? 'warn' : 'ok'),
                Object.keys(G).filter(function (k) { return ok(G[k]); }).map(function (k) { return k + ' ' + f(G[k], G[k] < 10 ? 2 : 0); }).join(' · ') + (drT.length ? ' · Drift: ' + drT.join(', ') : '') + (T.entscheidung && T.entscheidung.grund ? ' · Gate: ' + T.entscheidung.grund : '') + (T.fehler ? ' · ' + T.fehler : '')]);
 } else { rows.push(['Training', 'noch keins', '–', '', '']); }
 // Replay-Güte
@@ -2996,6 +3108,18 @@ if (RG) {
                RG.bewertbar && ok(RG.prozent) ? (RG.prozent >= 99 ? 'ok' : 'Abweichung') : 'offen', RG.bewertbar && ok(RG.prozent) ? (RG.prozent >= 99 ? 'ok' : 'warn') : 'warn',
                regT.join(' · ') + (ok(R.vorschlaege) ? ' · Vorschläge ' + R.vorschlaege : '')]);
 } else { rows.push(['Replay-Güte', R ? dm(R.tag) + ' · ohne Güte' : 'noch keins', '–', '', '']); }
+// Anlagen-Gesundheit (02.11.2026, Container-Schritt gesundheit): schleichende Veraenderungen gegen den Bezug derselben Lage
+var GH = st.gesundheit || null;
+if (GH) {
+    var ghB = (Array.isArray(GH.befunde) ? GH.befunde : []).filter(function (b) { return b && (b.schwere === 'warnung' || b.schwere === 'hinweis'); });
+    var ghW = ghB.some(function (b) { return b.schwere === 'warnung'; }), ghLern = ok(GH.bezug_tage) && GH.bezug_tage < 5;
+    var ghE = {fuehler_versatz: ['Fühler', 'K', 2], wasserdruck: ['Druck', 'bar', 2], hydraulik: ['Durchfluss', '%', 1], verdampfer: ['Verdampfer', 'K', 1],
+               heissgas: ['Heißgas', 'K', 1], expansionsventil: ['Exp.-Ventil', 'Schr.', 0], guetegrad: ['Gütegrad', '%', 1], stromzaehler: ['Zähler', 'W', 0]};
+    var ghT = Object.keys(ghE).map(function (k) { var v = (GH.trend || {})[k]; return ghE[k][0] + ' ' + (ok(v) ? (v >= 0 ? '+' : '') + f(v, ghE[k][2]) + ' ' + ghE[k][1] : '–'); });
+    rows.push(['Gesundheit', dm(GH.tag) + ' · ' + (ghLern ? 'lernt noch (' + GH.bezug_tage + ' Bezugstage)' : (ghB.length ? ghB.map(function (b) { return b.titel; }).join(', ') : 'unauffällig')),
+               ghLern ? 'lernt' : (ghW ? 'Warnung' : (ghB.length ? 'Hinweis' : 'ok')), ghLern ? '' : (ghW ? 'fehler' : (ghB.length ? 'warn' : 'ok')),
+               '5-Tage-Median gegen den Bezug derselben Lage (' + (GH.bezug_tage || 0) + ' Tage): ' + ghT.join(' · ') + ' · Datei ' + (GH.datei || '–')]);
+}
 // Datenluecken: Minutenprotokoll und Raumfuehler
 var DL = st.datenluecken || {}, MP = DL.minutenprotokoll || null, FR = DL.frische || null, RF = DL.raumfuehler || null;
 if (MP || FR) {
@@ -3006,8 +3130,8 @@ if (MP || FR) {
 }
 if (RF && RF.raeume) {
     var RR = Object.keys(RF.raeume).map(function (k) { var x = RF.raeume[k] || {}; return {n: x.name || k, u: ok(x.ungueltig_min) ? x.ungueltig_min : 0, l: ok(x.laengste_min) ? x.laengste_min : 0}; });
-    var lang = RR.filter(function (x) { return x.l > 120; }).sort(function (a, b) { return b.u - a.u; }), summe = RR.reduce(function (a, x) { return a + x.u; }, 0);
-    rows.push(['Raumfühler', dm(RF.tag) + ' · ' + (lang.length ? lang.map(function (x) { return x.n + ' ' + x.u + ' min'; }).join(', ') : (summe ? summe + ' min ungültig' : 'alle gültig')), lang.length ? 'Lücke' : 'ok', lang.length ? 'warn' : 'ok',
+    var lang = RR.filter(function (x) { return x.l > 120; }).sort(function (a, b) { return b.l - a.l; }), summe = RR.reduce(function (a, x) { return a + x.u; }, 0);
+    rows.push(['Raumfühler', dm(RF.tag) + ' · ' + (lang.length ? lang.map(function (x) { return x.n + ' Lücke ' + x.l + ' min'; }).join(', ') : 'keine langen Lücken · ' + (summe ? summe + ' min ungültig' : 'alle gültig')), lang.length ? 'Lücke' : 'ok', lang.length ? 'warn' : 'ok',
                'ungültige Minuten (längste Lücke): ' + RR.map(function (x) { return x.n + ' ' + x.u + ' (' + x.l + ')'; }).join(' · ')]);
 }
 // Sicherung
@@ -3029,17 +3153,137 @@ upsert({"id": "opt_t_nas", "type": "ui_template", "z": TAB, "group": "opt_g_nas"
 upsert(fn("opt_nas", "Status NAS-Container (nur lesen)", NAS_JS, 1, [["opt_t_nas"]], 440, 580, FS))
 upsert(inject("opt_i_nas", "alle 5 Minuten", 300, 25, ["opt_nas"], 140, 580))
 
+# ---------------------------------------------------------------- Lambda-Eingang (05.11.2026, Kevin "Weg 1"): predictive-heating und adaptive-curve (rpo-suite)
+# Nur Rechnung, kein Befehl: die Ergebnisse gehen als Eingang in die Entscheidungsmaschine (Datensatz, Kacheln, Kurvenform-Hinweis).
+# Voraussetzung: Module node-red-contrib-predictive-heating und node-red-contrib-adaptive-curve installiert (05.11.2026 auf der NAS).
+LAMBDA_IN_JS = EIGEN_JS + r"""
+// Ausgang 1 -> predictive-heating: Aussenfuehler der WP (TOP14), Tagesmittel der OWM-Vorhersage (OPT_weather.fpts, f_ts hoechstens 2 h alt) fuer den Rest von heute und morgen
+//   (uebermorgen liefert OWM nicht: Gewicht 0; UV liefert OWM nicht: Sonnenkorrektur 0, die Sonne rechnet der Waermefahrplan).
+// Ausgang 2 -> adaptive-curve: Haus-Abweichung = Mittel (Wert - Bandmitte) der aktiven Raeume ohne eigene Nachheizung (Werte bis 6 h alt)
+//   gegen Sollwert 0, dazu die Aussentemperatur. Nach einem Neustart zuerst die zuletzt gelernte Verschiebung (OPT_lambda) zurueckgeben.
+var MIN = 60000, now = Date.now();
+var G = function (k) { var v; try { v = global.get(k, 'file'); } catch (e) { v = undefined; } return v !== undefined ? v : global.get(k); };
+function num(v) { var n = parseFloat(v); return isFinite(n) ? n : null; }
+function avg(a) { return a.length ? Math.round(a.reduce(function (s, x) { return s + x; }, 0) / a.length * 10) / 10 : undefined; }
+var at = num(G('TOP14_Outside_Temp'));
+if (at === null) { node.status({fill: 'grey', shape: 'ring', text: 'Außentemperatur fehlt'}); return null; }
+var W = G('OPT_weather') || {}, d0 = [], d1 = [], heute = new Date(now).toDateString(), morgen = new Date(now + 24 * 60 * MIN).toDateString();
+(Array.isArray(W.fpts) && num(W.f_ts) !== null && now - W.f_ts < 2 * 60 * MIN ? W.fpts : []).forEach(function (p) {
+    var t = num(p && p[0]), v = num(p && p[1]); if (t === null || v === null || t < now - 90 * MIN) { return; }
+    var ds = new Date(t).toDateString(); if (ds === heute) { d0.push(v); } else if (ds === morgen) { d1.push(v); }
+});
+// Fehlende Tage immer als Aussentemperatur schicken: sonst nimmt predictive-heating seinen alten gespeicherten Tageswert (beliebig alt)
+var m1 = {topic: 'lambda', at_current: at, avg_day0: d0.length ? avg(d0) : at, avg_day1: d1.length ? avg(d1) : at, avg_day2: at, uv_day0: 0, uv_day1: 0};
+// Lueftungspause je Raum (05.11.2026, Morgen-Analyse: Schlafzimmer werktags 06:26-07:37 lange gelueftet): faellt der geglaettete Wert um >= 0,6 K unter das
+// Maximum der letzten 60 min (Lueftungsverdacht wie die Bewertung, SCORE.lueftungEmaK), zaehlt der Raum nicht mit, bis er wieder bis 0,3 K an den Wert vor dem Sturz
+// heran ist, hoechstens 6 h; sackt er waehrend der Pause nochmals um 0,6 K unter ihren Tiefstwert, beginnen die 6 h neu (zweites Lueften, Kimi 05.11.). Verlauf im Knoten-Kontext (nach einem Neustart
+// erst nach Werten ueber 60 min wieder erkennbar; Vereinfachung, reicht fuer einen Hinweis). Kuehlt ein Raum dauerhaft schneller als 0,6 K/h (Heizungsausfall), bleibt er draussen.
+var CF = G('OPT_cfg') || {}, RM = G('OPT_rooms') || {}, dev = [], LH = context.get('lhist') || {}, LS = context.get('luft') || {}, luftN = [];
+(CF.rooms || []).forEach(function (rc) {
+    if (!rc || !rc.active || eigenOf(rc) || num(rc.min) === null || num(rc.max) === null) { return; }
+    var r = RM[rc.id] || {}, t = num(r.ema), ts = num(r.ts); if (t === null || ts === null || now - ts > 360 * MIN) { return; }
+    var h = (LH[rc.id] || []).filter(function (p) { return now - p[0] <= 60 * MIN; }); h.push([now, t]); LH[rc.id] = h;
+    var vor = Math.max.apply(null, h.map(function (p) { return p[1]; })), L = LS[rc.id];
+    if (L) { if (t <= L.tief - 0.6 + 1e-9) { L.seit = now; } L.tief = Math.min(L.tief === undefined ? t : L.tief, t); }   // zweites Absacken: 0,6 K unter den Tiefstwert der Pause
+    else if (vor - t >= 0.6 - 1e-9) { L = LS[rc.id] = {seit: now, vor: vor, tief: t}; }                                       // vor = Wert vor dem Sturz (Ende der Pause)
+    if (L && (t >= L.vor - 0.3 - 1e-9 || now - L.seit > 360 * MIN)) { delete LS[rc.id]; L = null; }
+    if (L) { luftN.push(rc.name || rc.id); return; }
+    dev.push(t - (num(rc.min) + num(rc.max)) / 2);
+});
+context.set('lhist', LH); context.set('luft', LS);
+var out2 = [];
+if (!context.get('seeded')) {
+    context.set('seeded', true);
+    var LB = G('OPT_lambda') || {};
+    if (LB.adapt && num(LB.adapt.shift) !== null) { out2.push({shift: num(LB.adapt.shift)}); }
+}
+// Ohne Raumwerte pausieren, aber die Zeit weiterlaufen lassen (adaptive-curve integriert sonst die ganze Luecke mit dem alten Raumwert auf einmal)
+// Lernen nur ohne eigene Verschiebung (TOP27 = 0): sonst lernte die Kurve nur den Rest nach unserem +-1 K
+var sh = num(G('TOP27_Z1_Heat_Request_Temp')), lernt = dev.length && sh === 0;
+m1.lernt = lernt ? 1 : 0;                                                       // fuer den Verlauf (Diagramm): predictive-heating reicht die Nachricht durch
+// Neustart des Lernens, wenn die Heizkurve Z1 von Hand geaendert wurde (Kennung wie die Kennzahl Kurvenform): adaptive-curve integriert nur, solange niemand
+// die Kurve verstellt; ohne Neustart liefe der Wert nach einer Korrektur weiter (Replay 07.10.-05.11.: ohne Rueckkopplung -0,5 K nach 4 Tagen, -3 K nach 24 Tagen)
+var sig = ['Z1_Heat_Curve_Outside_Low_Temp', 'Z1_Heat_Curve_Outside_High_Temp', 'Z1_Heat_Curve_Target_Low_Temp', 'Z1_Heat_Curve_Target_High_Temp'].map(function (k) { return num(G(k)); });
+sig = sig.every(function (x) { return x !== null; }) ? sig.join('/') : '';
+// einmal je neuer Kennung: antwortet adaptive-curve nicht (z. B. kein Raumwert), bleibt OPT_lambda.adapt.sig alt; ohne Merker kaeme jeden Takt ein reset (Kimi 05.11.)
+var sigAlt = ((G('OPT_lambda') || {}).adapt || {}).sig || '', neu = !!(sig && sigAlt && sig !== sigAlt && sig !== context.get('sigReset'));
+if (neu) { out2.push({reset: true}); context.set('sigReset', sig); }
+out2.push({pauseAdaptation: !lernt});
+out2.push({topic: 'outdoor', payload: at, ohneRaum: !dev.length, sig: sig});
+if (dev.length) { out2.push({topic: 'room', payload: Math.round(dev.reduce(function (s, x) { return s + x; }, 0) / dev.length * 100) / 100, sig: sig}); }
+node.status({fill: neu ? 'blue' : 'green', shape: 'dot', text: 'AT ' + at + ' °C · ' + d0.length + '/' + d1.length + ' Vorhersagen · ' + dev.length + ' Räume' + (luftN.length ? ' · Lüften: ' + luftN.join(', ') : '') + (lernt ? '' : ' · lernt nicht') + (neu ? ' · Heizkurve geändert: neu lernen' : '')});
+return [m1, out2];
+"""
+LAMBDA_OUT_JS = r"""
+// Ergebnisse von predictive-heating und adaptive-curve fuer die Entscheidungsmaschine ablegen (OPT_lambda, Speicher "file": die gelernte Verschiebung ueberlebt einen Neustart)
+var now = Date.now(), LB, out = null;
+try { LB = global.get('OPT_lambda', 'file'); } catch (e) { LB = undefined; }
+LB = (LB && typeof LB === 'object') ? LB : (global.get('OPT_lambda') || {});
+function num(v) { var n = parseFloat(v); return isFinite(n) ? n : null; }
+if (msg.adaptiveCurve) {
+    var a = msg.adaptiveCurve; LB.adapt = {shift: num(a.shift), err: msg.ohneRaum ? null : num(a.error), adapting: a.adapting ? 1 : 0, at: num(a.outdoor), sig: String(msg.sig || ''), ts: now};
+} else if (msg.payload && typeof msg.payload === 'object' && msg.payload.at_predictive !== undefined) {
+    var p = msg.payload; LB.pred = {at: num(p.at_predictive), korr: num(p.correction), mode: String(p.mode || ''), at0: num(msg.at_current), ts: now};
+    out = verlauf(now, LB, msg.lernt);
+} else { return null; }
+LB.ts = now;
+try { global.set('OPT_lambda', LB, 'file'); } catch (e) { global.set('OPT_lambda', LB); }
+return out;
+// Verlauf fuer das Diagramm (05.11.2026): je Takt ein Punkt [Zeit, Fuehler, Lambda, gelernt, Raeume zur Bandmitte, lernt], 7 Tage, eigener Schluessel
+// OPT_lambda_hist (Speicher "file"; die Maschine liest ihn nicht). Gelernt/Raeume stammen aus dem letzten adaptive-curve-Ergebnis (hoechstens 15 min alt).
+function verlauf(now, LB, lernt) {
+    var H; try { H = global.get('OPT_lambda_hist', 'file'); } catch (e) { H = undefined; }
+    H = Array.isArray(H) ? H : (global.get('OPT_lambda_hist') || []);
+    var A = LB.adapt && now - LB.adapt.ts <= 15 * 60000 ? LB.adapt : null;
+    H.push([now, LB.pred.at0, LB.pred.at, A ? A.shift : null, A && A.err !== null ? -A.err : null, lernt ? 1 : 0]);
+    H = H.filter(function (q) { return q[0] > now - 7 * 24 * 3600000; });
+    try { global.set('OPT_lambda_hist', H, 'file'); } catch (e) { global.set('OPT_lambda_hist', H); }
+    var pause = [], cur = null;                                                 // Zeitbaender "lernt nicht": nur aufeinanderfolgende Takte (1 min Spiel), ein Lernpunkt trennt (Kimi 05.11.)
+    H.forEach(function (q) { if (q[5]) { cur = null; return; } if (cur && q[0] - cur[1] <= 60000) { cur[1] = q[0] + 5 * 60000; } else { cur = [q[0], q[0] + 5 * 60000]; pause.push(cur); } });
+    function col(i) { return H.map(function (q) { return q[i]; }); }
+    return {payload: {now: now, n: H.length, t: col(0), at0: col(1), at: col(2), shift: col(3), dev: col(4), pause: pause}};
+}
+"""
+upsert(comment("opt_c_lambda", "Lernende Heizkurve und gewichtete Außentemperatur (05.11.2026, Vorbild Lambda-Wärmepumpen): predictive-heating und adaptive-curve, nur Rechnung, Eingang der Entscheidungsmaschine", 330, 4380))
+upsert(inject("opt_i_lambda", "alle 5 Minuten", 300, 40, ["opt_lambda_in"], 140, 4440))
+upsert(fn("opt_lambda_in", "Heizkurve lernen: Eingänge (Außen, Vorhersage, Haus)", LAMBDA_IN_JS, 2, [["opt_lambda_pred"], ["opt_lambda_adapt"]], 400, 4440))
+upsert({"id": "opt_lambda_pred", "type": "predictive-heating", "z": TAB, "name": "Gewichtete Außentemperatur",
+        "weightCurrent": "4", "weightDay0": "2", "weightDay1": "1", "weightDay2": "0", "uvMaxOffset": "0",
+        "x": 680, "y": 4420, "wires": [["opt_lambda_out"]]})
+upsert({"id": "opt_lambda_adapt", "type": "adaptive-curve", "z": TAB, "name": "Kurve gelernt (Haus gegen Bandmitte)",
+        "roomSetpoint": "0", "heatingLimit": "15", "adaptationRate": "0.0002", "maxShift": "3", "deadband": "0.3",
+        "topicRoom": "room", "topicOutdoor": "outdoor", "persistent": True, "decimals": "2",
+        "x": 680, "y": 4460, "wires": [["opt_lambda_out"]]})
+upsert(fn("opt_lambda_out", "Heizkurve lernen: Ergebnisse -> OPT_lambda, Verlauf", LAMBDA_OUT_JS, 1, [["opt_t_ch_lambda"]], 960, 4440))
+# Diagramm (05.11.2026, Kevin "Diagramm bauen"): Seite "Optimierer", Karte nach "Entscheidungen"; Baukasten ui_chart.js wie Wetterkarte/Verlauf Raeume.
+# Farben mit dem dataviz-Validator geprueft (blau/lila/orange: Helligkeit, Buntheit, Farbfehlsicht, Kontrast bestanden); Fuehler grau wie in der Wetterkarte.
+CH_LAMBDA = (
+    "    var t = P.t, t0 = Math.max(P.now - 7 * 24 * H, Math.min(t[0], P.now - 6 * H));\n"
+    "    spec = {t0: t0, t1: P.now, panels: [\n"
+    "        {h: 140, unit: '°C', series: [\n"
+    "            {n: 'Außen (Fühler WP)', c: '#37474f', k: 'line', w: 1.4, dg: 1, u: '°C', d: pairs(t, P.at0)},\n"
+    "            {n: 'Gewichtete Außentemp.', t: 'predictive-heating: Fühler und OWM-Tagesmittel heute/morgen, gewichtet 4/2/1 (Vorbild: Lambda-Wärmepumpen); nur Vergleich, kein Befehl', c: '#1976d2', k: 'line', w: 2, dg: 1, u: '°C', d: pairs(t, P.at)}]},\n"
+    "        {h: 110, unit: 'K', zero: true, bands: [{a: -0.5, b: 0.5, c: 'rgba(46,125,50,.08)'}], tb: (P.pause || []).map(function (b) { return {a: b[0], b: b[1], c: 'rgba(84,110,122,.12)', n: 'lernt nicht'}; }), series: [\n"
+    "            {n: 'Kurve gelernt', t: 'adaptive-curve: gelernte Kurvenverschiebung; außerhalb des grünen Bands (±0,5 K) Hinweis „Heizkurve anheben/senken“ (von Hand)', c: '#8e24aa', k: 'line', w: 2, dg: 2, u: 'K', d: pairs(t, P.shift)},\n"
+    "            {n: 'Räume Ø zur Bandmitte', t: 'Mittel der aktiven Räume ohne eigene Nachheizung: geglätteter Wert minus Bandmitte (positiv = zu warm)', c: '#ef6c00', k: 'line', w: 1.4, dg: 1, u: 'K', d: pairs(t, P.dev)},\n"
+    "            {n: 'ohne Hinweis (±0,5 K)', t: 'solange die gelernte Verschiebung in diesem Band liegt, kein Hinweis in „Kurvenform“', c: '#a5d6a7', k: 'area', d: []},\n"
+    "            {n: 'lernt nicht', t: 'eigene Verschiebung aktiv (TOP27 ≠ 0) oder keine Raumwerte', c: '#90a4ae', k: 'area', d: []}]}]};\n")
+upsert({"id": "opt_g_eng_lambda", "type": "ui_group", "name": "Lernende Heizkurve · Verlauf", "tab": ENG_TAB, "order": 5.3, "disp": True, "width": ENG_W, "collapse": False, "className": ""})
+upsert(chart_card("lambda", "opt_g_eng_lambda", "Verlauf lernende Heizkurve", 6, 4500, CH_LAMBDA))
+
 PLAN_TPL = """<div class="optp optfit">
-<div class="kpi"><div class="tile" ng-repeat="t in msg.payload.kpi track by $index" title="{{t.t}}"><div class="k">{{t.k}}</div><div class="v">{{t.v}}</div><div class="s">{{t.s}}</div></div></div>
+<div class="kpi" ng-if="msg.payload.kpi.length"><div class="tile" ng-repeat="t in msg.payload.kpi track by $index" title="{{t.t}}"><div class="k">{{t.k}}</div><div class="v">{{t.v}}</div><div class="s" title="{{t.s}}">{{t.s}}</div></div></div>
+<div class="sum" ng-if="msg.payload.evcc"><span class="k">{{msg.payload.evcc.k}}</span><span class="v" ng-class="msg.payload.evcc.c" title="{{msg.payload.evcc.t}}">{{msg.payload.evcc.v}}</span></div>
 <div id="optch_plan" style="min-height:120px"></div>
 <div class="sec" style="cursor:pointer" ng-click="plOpen = !plOpen">Details und Modell {{plOpen ? '▾' : '▸'}}</div>
 <div class="sum" ng-if="plOpen"><span ng-repeat-start="r in msg.payload.rows track by $index" class="k">{{r[0]}}</span><span ng-repeat-end class="v" ng-class="r[2]" title="{{r[3]}}">{{r[1]}}</span></div>
 </div>"""
 # Stundenuebersicht als eigene Karte (dieselbe Nachricht wie die Plan-Karte)
-PLAN_TAB_TPL = """<div class="optpt optfit"><table>
+PLAN_TAB_TPL = """<style>details.optzu>summary{cursor:pointer;outline:none;font-size:12px;color:#00729f;font-weight:600;text-transform:uppercase;letter-spacing:.06em;padding:4px 0}details.optzu[open]>summary{margin-bottom:6px}</style><div class="optpt optfit"><details class="optzu" ontoggle="var F = window.__optFit; if (F &amp;&amp; F.fns &amp;&amp; F.fns['opt_t_plan_tab']) { setTimeout(F.fns['opt_t_plan_tab'], 30); }">
+<summary>Tabelle · {{(msg.payload.plan || []).length}} Stunden</summary><table>
 <tr><th>Ab</th><th>Außen °C</th><th>Wärme kWh</th><th title="{{msg.payload.korr}}">COP</th><th title="{{msg.payload.korr}}">Strom kWh</th><th>Feuchte · Taupunkt</th><th>PV W</th><th>Abtaurisiko</th><th>Vertrauen</th></tr>
 <tr ng-repeat="r in msg.payload.plan track by $index"><td>{{r.z}}</td><td>{{r.at}}</td><td>{{r.b}}</td><td>{{r.cop}}</td><td>{{r.e}}</td><td>{{r.h}}</td><td>{{r.pv}}</td><td>{{r.d}}</td><td>{{r.v}}</td></tr>
-</table></div>"""
+</table></details></div>"""
 PLAN_CH_JS = ("<script>" + UI_CHART_JS + "</script><script>(function (scope) {\n"
     "var last = null;\n"
     "function draw() {\n"
@@ -3065,7 +3309,7 @@ PLAN_CH_JS = ("<script>" + UI_CHART_JS + "</script><script>(function (scope) {\n
 upsert({"id": "opt_t_plan", "type": "ui_template", "z": TAB, "group": "opt_g_plan", "name": "Wärmefahrplan", "order": 1, "width": 0, "height": 10,
         "format": PLAN_TPL + PLAN_CH_JS + FIT_JS.replace("__ID__", "opt_t_plan"), "storeOutMessages": True, "fwdInMessages": False, "resendOnRefresh": True,
         "templateScope": "local", "className": "", "x": 1260, "y": 440, "wires": [[]]})
-upsert({"id": "opt_t_plan_tab", "type": "ui_template", "z": TAB, "group": "opt_g_plan_tab", "name": "Wärmefahrplan Stunden", "order": 1, "width": 0, "height": 11,
+upsert({"id": "opt_t_plan_tab", "type": "ui_template", "z": TAB, "group": "opt_g_plan_tab", "name": "Wärmefahrplan Stunden", "order": 1, "width": 0, "height": 2,
         "format": PLAN_TAB_TPL + FIT_JS.replace("__ID__", "opt_t_plan_tab"), "storeOutMessages": True, "fwdInMessages": False, "resendOnRefresh": True,
         "templateScope": "local", "className": "", "x": 1260, "y": 480, "wires": [[]]})
 
@@ -3128,7 +3372,7 @@ upsert({"id": "opt_t_rooms", "type": "ui_template", "z": TAB, "group": "opt_g_ro
 upsert(comment("opt_c1", "Phase 1: nur messen, glätten, anzeigen, protokollieren – KEIN Eingriff in die Regelung", 380, 40))
 upsert(comment("opt_c2", "Raumsensoren (Venus-Broker) → Plausibilität, Ausreißer, Glättung, Trend", 380, 80))
 upsert(inject("opt_i_init", "Standardwerte", 0, 3, ["opt_defaults"], 140, 140))
-upsert(fn("opt_defaults", "Standardwerte setzen", js(DEFAULTS_JS), 0, [], 380, 140, FS))
+upsert(fn("opt_defaults", "Standardwerte setzen", js(DEFAULTS_JS).replace("__EVCC_URL__", EVCC_URL), 0, [], 380, 140, FS))
 # input from the room card; output 1: red message for a rejected input, output 2: evaluate now (the card shows the valid values again)
 upsert(fn("opt_set", "Einstellung übernehmen und speichern", js(SET_CFG_JS), 2, [["opt_ui_toast"], ["opt_eval"]], 1500, 320, FS))
 
@@ -3196,7 +3440,8 @@ upsert({"id": "opt_broker_nas", "type": "mqtt-broker", "name": "MQTT (NAS) Optim
         "birthMsg": {}, "closeTopic": "", "closeQos": "0", "closeRetain": "false", "closePayload": "", "closeMsg": {}, "willTopic": "",
         "willQos": "0", "willRetain": "false", "willPayload": "", "willMsg": {}, "userProps": "", "sessionExpiry": ""})
 for _i, _t in enumerate(("panasonic_heat_pump/main/+", "panasonic_heat_pump/extra/+", "panasonic_heat_pump/commands/SetQuietMode", "panasonic_heat_pump/commands/SetHeatingControl",
-                         "panasonic_heat_pump/commands/SetPumpFlowrateMode", "panasonic_heat_pump/commands/SetMaxPumpDuty", "panasonic_heat_pump/commands/SetQuietModePriority")):
+                         "panasonic_heat_pump/commands/SetPumpFlowrateMode", "panasonic_heat_pump/commands/SetMaxPumpDuty", "panasonic_heat_pump/commands/SetQuietModePriority",
+                         "panasonic_heat_pump/1wire/+")):
     upsert({"id": f"opt_mqtt_hp_{_i}", "type": "mqtt in", "z": TAB, "name": "", "topic": _t, "qos": "0", "datatype": "auto-detect",
             "broker": "opt_broker_nas", "nl": False, "rap": True, "rh": 0, "inputs": 0, "x": 160, "y": 1120 + 60 * _i, "wires": [["opt_hp_in"]]})
 upsert(fn("opt_hp_in", "Anlagenwerte lesen (nur lesen)", HP_IN_JS, 1, [["opt_f_qev"]], 440, 1180, FS))
@@ -3276,13 +3521,14 @@ upsert(fn("opt_owm_save", "Zugangsdaten speichern", OWM_SAVE_JS, 4,
 
 # ---------------------------------------------------------------- energy and prices: display and log only, no effect on the control
 # live values from the Venus MQTT (passive: this tab only listens), prices from evcc, PV forecast from the VRM API (token entered in the dashboard)
+EVCC_CORE_JS = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "evcc_core.js"), encoding="utf-8").read()      # evcc-Abgleich: reine Funktionen (tools/evcc_core_test.js)
 upsert(comment("opt_c6", "Energie & Preise: Venus-MQTT (live), evcc (Preise), VRM-API (PV-Prognose) - nur Anzeige und Protokoll", 380, 1360))
 for _i, (_t, _b) in enumerate((("N/+/system/0/#", BROKER), ("evcc/site/+", "opt_broker_nas"), ("evcc/site/forecast/+", "opt_broker_nas"), ("evcc/site/battery/soc", "opt_broker_nas"), ("N/+/battery/278/Soc", BROKER))):
     upsert({"id": f"opt_mqtt_en{_i}", "type": "mqtt in", "z": TAB, "name": "", "topic": _t, "qos": "0", "datatype": "auto-detect",
             "broker": _b, "nl": False, "rap": True, "rh": 0, "inputs": 0, "x": 160, "y": 1400 + 50 * _i, "wires": [["opt_en_in"]]})
 upsert(fn("opt_en_in", "Energiewerte lesen (nur lesen)", EN_IN_JS, 0, [], 440, 1425, FS))
 upsert(inject("opt_i_en", "jede Minute", 60, 30, ["opt_energy"], 140, 1540))
-upsert(fn("opt_energy", "Energie & Preise auswerten", ENERGY_JS, 5, [["opt_t_en"], ["opt_f_en"], ["opt_f_fc"], ["opt_ui_vrmstatus"], ["opt_t_fq"]], 440, 1540, FS))
+upsert(fn("opt_energy", "Energie & Preise auswerten", EVCC_CORE_JS + ENERGY_JS, 5, [["opt_t_en"], ["opt_f_en"], ["opt_f_fc"], ["opt_ui_vrmstatus"], ["opt_t_fq"]], 440, 1540, FS))
 for _fid, _name, _y in (("opt_f_en", "Energie-Protokoll", 1500), ("opt_f_fc", "Prognose-Schnappschüsse", 1580)):
     upsert({"id": _fid, "type": "file", "z": TAB, "name": _name, "filename": "filename", "filenameType": "msg", "appendNewline": False,
             "createDir": True, "overwriteFile": "false", "encoding": "utf8", "x": 760, "y": _y, "wires": [[]]})
@@ -3299,6 +3545,100 @@ upsert({"id": "opt_http_vrm", "type": "http request", "z": TAB, "name": "VRM-API
 upsert({"id": "opt_catch_vrm", "type": "catch", "z": TAB, "name": "", "scope": ["opt_http_vrm"], "uncaught": False,
         "x": 640, "y": 1720, "wires": [["opt_vrm_parse"]]})
 upsert(fn("opt_vrm_parse", "VRM-Antwort auswerten", VRM_PARSE_JS, 1, [[]], 880, 1660))
+# ---------------------------------------------------------------- evcc-Abgleich (25.10.2026, Nutzer-Go "1 bauen" + "taeglich pruefen"): NUR LESEN, keine Regelwirkung
+# alle 15 min GET /api/state?jq=... (evopt, Akku-Ladestand, Netzpreis) -> OPT_evcc_plan + evcc-plan-YYYY-MM.jsonl; ab 00:10 Pruefung des Vortags je Viertelstunde
+# (evcc-Leisha 6 h / Tag, Modell Tag gegen zaehler_wp_w) -> evcc-quality.json, OPT_evcc_q (Tabelle "Prognoseguete", Hinweis der Maschine); OPT_plan_in.evcc (Waermefahrplan)
+EVCC_REQ_JS = r"""
+// evcc-Abgleich: Optimierer-Plan von evcc NUR LESEN (GET /api/state mit jq-Auszug: evopt, Akku-Ladestand, Netzpreis, Version). Es wird nichts an evcc gesendet.
+var cfg = global.get('OPT_cfg') || {}, E = cfg.energy || {};
+var base = String(E.evccUrl || '__EVCC_URL__').replace(/\/+$/, '');
+if (!/^https?:\/\/[^\/\s?#]+$/.test(base)) { var ep = global.get('OPT_evcc_plan') || {}; ep.abruf = {ts: Date.now(), ok: false, fehler: 'evcc-Adresse ungültig'}; global.set('OPT_evcc_plan', ep); return null; }
+var JQ = '{evopt: .evopt, soc: .battery.soc, tariffGrid: .tariffGrid, version: .version}';
+return {topic: 'evcc', url: base + '/api/state?jq=' + encodeURIComponent(JQ), payload: ''};
+"""
+EVCC_JS = r"""
+// evcc-Abgleich: Antwort einordnen -> OPT_evcc_plan {plan (kompakt), abruf {ts, ok, fehler}} und eine Zeile je Abruf in evcc-plan-YYYY-MM.jsonl.
+// Fehler setzen nur den Abruf-Status, der letzte gueltige Plan bleibt (und altert; ab 60 min "veraltet", siehe opt_energy).
+var now = Date.now(), cfg = global.get('OPT_cfg') || {}, EP = global.get('OPT_evcc_plan') || {};
+function p2(x) { return (x < 10 ? '0' : '') + x; }
+var d = new Date(now), month = d.getFullYear() + '-' + p2(d.getMonth() + 1);
+var ab = {ts: now, ok: false, fehler: null, http: msg.statusCode === undefined ? null : msg.statusCode};
+if (msg.error) { ab.fehler = 'nicht erreichbar (' + String((msg.error && msg.error.message) || msg.error).slice(0, 80) + ')'; }
+else if (typeof msg.statusCode === 'string' && !/^\d+$/.test(msg.statusCode)) { ab.fehler = 'nicht erreichbar (' + msg.statusCode + ')'; }     // Verbindungsfehler (z. B. ECONNREFUSED) am Ausgang des http-request-Knotens
+else if (Number(msg.statusCode) !== 200) { ab.fehler = 'HTTP ' + msg.statusCode; }
+else {
+    var body = msg.payload;
+    if (typeof body === 'string') { try { body = JSON.parse(body); } catch (e) { body = null; } }
+    var k = null;
+    try { k = EVC.kompakt(body, now, cfg); } catch (e) { k = {fehler: 'Auswertung: ' + e.message}; }
+    if (k.fehler) { ab.fehler = k.fehler; } else { ab.ok = true; EP.plan = k.plan; }
+}
+var doppelt = !ab.ok && EP.abruf && !EP.abruf.ok && now - EP.abruf.ts < 10000;          // derselbe Fehler kommt ueber den catch-Knoten und den Ausgang: eine Protokollzeile
+EP.abruf = ab;
+global.set('OPT_evcc_plan', EP);
+if (doppelt) { return null; }
+var line = ab.ok ? EVC.zeile(EP.plan) : {t: Math.round(now / 1000), fehler: ab.fehler, letzter: EP.plan ? Math.round(EP.plan.ts / 1000) : null};
+return {filename: '/data/optimizer/evcc-plan-' + month + '.jsonl', payload: JSON.stringify(line) + '\n'};
+"""
+EVCC_Q_JS = r"""
+// evcc-Abgleich, taegliche Pruefung (Nutzerwunsch 25.10.2026): ab 00:10 einmal am Tag fuer den Vortag (und fehlende Tage der letzten 7) je Viertelstunde:
+// evcc-Leisha-Prognose ~6 h vorher und aus dem letzten Plan vor Mitternacht, Modell (Waermefahrplan: Strom = Bedarf / COP + Standby im Stillstand + Abtau-Abzug, letzter Schnappschuss vor Mitternacht)
+// gegen den Stromzaehler der Waermepumpe (zaehler_wp_w je Minute aus quiet-YYYY-MM.csv). Ergebnis: evcc-quality.json, OPT_evcc_q. Nur lesen, keine Regelwirkung.
+var now = Date.now(), MIN = 60000, H = 3600000, cfg = global.get('OPT_cfg') || {};
+function p2(x) { return (x < 10 ? '0' : '') + x; }
+function monat(t) { var d = new Date(t); return d.getFullYear() + '-' + p2(d.getMonth() + 1); }
+function lies(f) { try { return String(fs.readFileSync(f, 'utf8')); } catch (e) { return ''; } }
+var Q = flow.get('evq');
+if (!Q) { try { Q = JSON.parse(fs.readFileSync('/data/optimizer/evcc-quality.json', 'utf8')); } catch (e) { Q = null; } }
+if (!Q || typeof Q !== 'object' || !Array.isArray(Q.tage)) { Q = {ver: EVC.VER, tage: [], lauf: null}; }
+var h0 = EVC.tag0(now), heute = EVC.ymd(h0), C = EVC.cfgOf(cfg), neu = 0;
+if (now - h0 >= 10 * MIN && Q.lauf !== heute) {
+    var offen = [];
+    Q.tage = Q.tage.filter(function (x) { return x.ver === EVC.VER || !(x.d0 >= h0 - 7.5 * 24 * H); });   // VER 2 (31.10.2026): Tage der letzten Woche aus einer aelteren Fassung neu rechnen (fairer Modellwert)
+    for (var k = 7; k >= 1; k--) { var dd = new Date(h0); dd.setDate(dd.getDate() - k); var d0 = dd.getTime(); if (!Q.tage.some(function (x) { return x.tag === EVC.ymd(d0); })) { offen.push(d0); } }
+    if (offen.length) {
+        var von = offen[0] - (C.vorlaufH + 2) * H, bis = h0, ms = {}, cache = {};
+        offen.forEach(function (d0) { ms[monat(d0)] = 1; ms[monat(d0 - (C.vorlaufH + 2) * H)] = 1; });
+        var evcc = [], modell = [];
+        Object.keys(ms).forEach(function (m) {
+            lies('/data/optimizer/evcc-plan-' + m + '.jsonl').split('\n').forEach(function (l) {
+                var mt = /^\{"t":(\d+)/.exec(l); if (!mt || mt[1] * 1000 < von || mt[1] * 1000 > bis || l.indexOf('"fehler"') >= 0) { return; }
+                try { var p = EVC.ausZeile(JSON.parse(l)); if (p) { evcc.push(p); } } catch (e) { /* kaputte Zeile */ }
+            });
+            lies('/data/optimizer/plan-snapshots-' + m + '.jsonl').split('\n').forEach(function (l) {
+                var mt = /^\{"t0":(\d+)/.exec(l); if (!mt || +mt[1] < von || +mt[1] > bis) { return; }
+                try { var s = JSON.parse(l); if (s && Array.isArray(s.slots)) { modell.push({t0: s.t0, t: s.t, cols: s.cols, slots: s.slots}); } } catch (e) { /* kaputte Zeile */ }
+            });
+        });
+        offen.forEach(function (d0) {
+            var m = monat(d0); if (cache[m] === undefined) { cache[m] = lies('/data/optimizer/quiet-' + m + '.csv'); }
+            var d1 = EVC.folgeTag(d0), r = EVC.tag({d0: d0, d1: d1, mess: EVC.messViertel(cache[m], d0, d1, C), evcc: evcc, modell: modell, cfg: cfg});
+            Q.tage.push(r); neu++;
+        });
+        Q.tage.sort(function (a, b) { return a.d0 - b.d0; });
+        while (Q.tage.length > C.tageBehalten) { Q.tage.shift(); }
+        Q.tage.forEach(function (x, i) { if (i < Q.tage.length - C.viertelTage) { delete x.viertel; } });   // Viertelstunden nur der letzten 14 Tage
+    }
+    Q.lauf = heute; Q.aktualisiert = now; Q.ver = EVC.VER;
+    try { fs.mkdirSync('/data/optimizer', {recursive: true}); fs.writeFileSync('/data/optimizer/evcc-quality.json', JSON.stringify(Q)); } catch (e) { node.warn('evcc-quality.json: ' + e.message); }
+}
+flow.set('evq', Q);
+var U = EVC.uebersicht(Q, now, cfg), EPq = global.get('OPT_evcc_plan') || {};
+global.set('OPT_evcc_q', {ts: now, lauf: Q.lauf, tag: U.tag, zeilen: U.zeilen, hinweis: U.hinweis, mittel: U.mittel, mess: U.mess, titel: EPq.plan && EPq.plan.leishaTitel ? EPq.plan.leishaTitel : C.heizung});
+return neu ? {payload: neu + ' Tag(e) geprüft'} : null;
+"""
+upsert(comment("opt_c_evcc", "evcc-Abgleich: Optimierer-Plan von evcc nur lesen (GET alle 15 min), tägliche Prüfung evcc/Modell gegen den Zähler - nur Anzeige und Protokoll", 380, 4160))
+upsert(inject("opt_i_evcc", "evcc-Plan abrufen (15 min)", 900, 50, ["opt_evcc_req"], 140, 4200))
+upsert(fn("opt_evcc_req", "evcc-Anfrage (nur GET)", EVCC_REQ_JS.replace("__EVCC_URL__", EVCC_URL), 1, [["opt_http_evcc"]], 400, 4200))
+upsert({"id": "opt_http_evcc", "type": "http request", "z": TAB, "name": "evcc /api/state (lesen)", "method": "GET", "ret": "obj", "paytoqs": "ignore",
+        "url": "", "tls": "", "persist": False, "proxy": "", "insecureHTTPParser": False, "authType": "", "senderr": False,
+        "headers": [], "x": 640, "y": 4200, "wires": [["opt_evcc"]]})
+upsert({"id": "opt_catch_evcc", "type": "catch", "z": TAB, "name": "", "scope": ["opt_http_evcc"], "uncaught": False, "x": 640, "y": 4240, "wires": [["opt_evcc"]]})
+upsert(fn("opt_evcc", "evcc-Plan auswerten und protokollieren", EVCC_CORE_JS + EVCC_JS, 1, [["opt_f_evcc"]], 880, 4200))
+upsert({"id": "opt_f_evcc", "type": "file", "z": TAB, "name": "evcc-Plan-Protokoll", "filename": "filename", "filenameType": "msg", "appendNewline": False,
+        "createDir": True, "overwriteFile": "false", "encoding": "utf8", "x": 1100, "y": 4200, "wires": [[]]})
+upsert(inject("opt_i_evcc_q", "Prüfung evcc/Modell (ab 00:10)", 600, 90, ["opt_evcc_q"], 140, 4300))
+upsert(fn("opt_evcc_q", "Prüfung evcc/Modell gegen Zähler (täglich)", EVCC_CORE_JS + EVCC_Q_JS, 1, [[]], 440, 4300, FS))
 head_vrm = head_fmt
 if line and re.search(r"<left>[^<]*</left>", head_fmt):
     head_vrm = re.sub(r"(<left>)[^<]*(</left>)", r"\1VRM (PV-Prognose für die Optimierung)\2", head_fmt)
@@ -3398,6 +3738,9 @@ var inp = {t: now, hpAge: hpTs ? (now - hpTs) / MIN : null,
 var PIe = G('OPT_plan_in') || {}, WXe = G('OPT_weather') || {};
 if (PIe.ts && now - PIe.ts < 5 * MIN && num(PIe.pvNow) !== null) { inp.pv = num(PIe.pvNow); }
 if (WXe.ts && now - WXe.ts <= ((CF.weather && num(CF.weather.maxAgeMin)) || 60) * MIN && num(WXe.clouds) !== null) { inp.wolken = num(WXe.clouds); }
+// Lambda-Eingang (05.11.2026): predictive-heating / adaptive-curve aus OPT_lambda, hoechstens 30 min alt; nur Anzeige, Datensatz und Kurvenform-Hinweis
+var LBe = G('OPT_lambda') || {}, lbP = (LBe.pred && now - LBe.pred.ts <= 30 * MIN) ? LBe.pred : null, lbA = (LBe.adapt && now - LBe.adapt.ts <= 30 * MIN) ? LBe.adapt : null;
+if (lbP || lbA) { inp.lambda = {}; if (lbP) { inp.lambda.at = num(lbP.at); inp.lambda.korr = num(lbP.korr); inp.lambda.mode = String(lbP.mode || ''); } if (lbA) { inp.lambda.shift = num(lbA.shift); inp.lambda.err = num(lbA.err); } }
 // Winterpaket 16.10.2026: Abtauwetter (Sperre "abtausprung"): OWM-Feuchte (hoechstens weather.maxAgeMin alt) und Rohr aussen (Outside_Pipe_Temp, -128 = kein Fuehler)
 if (WXe.ts && now - WXe.ts <= ((CF.weather && num(CF.weather.maxAgeMin)) || 60) * MIN && num(WXe.rh) !== null) { inp.rh = num(WXe.rh); }
 var pipeO = hpSet('Outside_Pipe_Temp'); if (pipeO !== null && pipeO > -100) { inp.pipeOut = pipeO; }
@@ -3440,6 +3783,13 @@ if (msg.topic !== 'anzeige') {
     files.push({filename: '/data/optimizer/decisions-' + month + '.jsonl', payload: JSON.stringify(o.rec) + '\n'});
     if (o.scores.length) { files.push({filename: '/data/optimizer/scores-' + month + '.jsonl', payload: o.scores.map(function (x) { return JSON.stringify(x); }).join('\n') + '\n'}); }
     var evl = o.ev.slice();
+    // evcc-Abgleich (25.10.2026): Hinweis "evcc unterschaetzt die Waermepumpe um x % (7 Tage)" aus der taeglichen Pruefung (opt_evcc_q, OPT_evcc_q) - nur Hinweis, keine Regel,
+    // keine Punkte, nicht im Kern; Ereignis beim An- und Ausgehen wie die Waechter
+    var EQh = global.get('OPT_evcc_q'), evH = (EQh && typeof EQh.hinweis === 'string' && EQh.hinweis) ? EQh.hinweis : null, EH = ST.evccHw = ST.evccHw || {an: false, seit: 0, txt: ''};
+    if (evH && !EH.an) { EH.an = true; EH.seit = now; evl.push(['optimierer_hinweis', 'evcc: ' + evH]); }
+    else if (!evH && EH.an) { EH.an = false; evl.push(['optimierer_hinweis_ende', 'evcc: erledigt (' + hm(EH.seit) + '–' + hm(now) + ')']); }
+    if (evH) { EH.txt = evH; }
+    if (EH.an) { o.hinweise = (o.hinweise || []).concat([{id: 'evcc', seit: EH.seit, text: EH.txt}]); }          // in OPT_engine.hinweise wie die Waechter
     o.scores.forEach(function (x) { evl.push(['optimierer_punkte', x.regel + ' ' + x.typ + ' ' + (x.punkte > 0 ? '+' : '') + x.punkte + ': ' + x.text]); });
     if (evl.length) {
         var ef = '/data/optimizer/quiet-events-' + month + '.csv', eh = '';
@@ -3463,6 +3813,14 @@ flow.set('eng', ST);
 if (!ST.last) { return null; }
 // ---------- Anzeige (Karten-Daten aus ENGVIEW.build, gezeichnet in den Vorlagen mit optEngUi); Lernstand des Waermefahrplans aus OPT_plan (nur lesen)
 var V = ENGVIEW.build({now: now, last: ST.last, S: ST.S, V: ST.V, AP: global.get('OPT_apply') || {}, enabled: global.get('OPT_apply_enabled') === true, cfg: cfg, plan: G('OPT_plan') || null});
+(function () {                                                                    // evcc-Abgleich: Kachel unter "Räume und Wächter" (Prognose der Wärmepumpe in evcc gegen den Zähler, 7 Tage)
+    var EQ = global.get('OPT_evcc_q'), m = EQ && EQ.mittel ? (EQ.mittel.e6 && EQ.mittel.e6.tage ? [EQ.mittel.e6, '6 h'] : (EQ.mittel.eT && EQ.mittel.eT.tage ? [EQ.mittel.eT, 'Tag'] : null)) : null;
+    if (!V.mess || !Array.isArray(V.mess.raum)) { return; }
+    var a = m && typeof m[0].abw === 'number' && isFinite(m[0].abw) ? m[0].abw : null, an = !!(ST.evccHw && ST.evccHw.an);
+    V.mess.raum.push({k: 'evcc-Akkuplan', v: an ? 'Hinweis' : (a === null ? '–' : 'ok'), vc: an ? 'warn' : (a === null ? '' : 'ok'),
+                      s: a === null ? 'sammelt' : 'WP ' + (a > 0 ? '+' : '') + String(Math.round(a)).replace('-', '−') + ' % · ' + m[0].tage + ' T. (' + m[1] + ')',
+                      title: an ? ST.evccHw.txt : 'Prognose der Wärmepumpe in evcc gegen den Stromzähler (tägliche Prüfung 00:10, 7 Tage); Hinweis ab 20 % Abweichung aus mindestens 3 Tagen, damit der Akkuplan von evcc eingeordnet werden kann (keine Regel)'});
+})();
 return [{payload: V.card}, {payload: V.rules}, {payload: V.score}, {payload: V.log}, files.length ? files : null, {payload: V.mess}, {payload: V.cop}];
 """
 
@@ -3533,9 +3891,11 @@ upsert({"id": ENG_TAB, "type": "ui_tab", "name": "Optimierer", "icon": "lightbul
 # damit die Masonry die Karten mit und ohne Vorschlag gleich anordnet: links Vorschlag, Messwerte; rechts Regeln, Punkte, Entscheidungen. Die beiden
 # Quiet-Karten (gleich hoch) folgen danach und fuellen je eine Spalte nach unten auf; sie aendern die Anordnung der fuenf Karten nicht. ENG_W steht oben bei OPT_W.
 # [Gruppe, Titel, Vorlage, Art, Starthoehe in Einheiten (passt ohne Einpassen fuer den ueblichen Inhalt, statische Vorschau 13.10.), y im Editor]
-ENG_GROUPS = (("opt_g_eng_prop", "Aktueller Vorschlag", "opt_t_eng_prop", "card", 4, 2060), ("opt_g_eng_rules", "Regeln", "opt_t_eng_rules", "rules", 3, 2100),
-              ("opt_g_eng_score", "Punkte", "opt_t_eng_score", "score", 9, 2140), ("opt_g_eng_mess", "Messwerte & Lernen", "opt_t_eng_mess", "mess", 10, 2160),
-              ("opt_g_eng_log", "Entscheidungen", "opt_t_eng_log", "log", 12, 2180))
+# Cockpit (eng_ui VER 11, UI-Überarbeitung 03.–05.11.2026, live, übernommen 08.11.): Punkte stehen in den Regelkacheln, Punkteverlauf/Messwerte sind
+# zugeklappt (Starthöhe 2), Entscheidungen zeigen fünf Zeilen direkt (6)
+ENG_GROUPS = (("opt_g_eng_prop", "Aktueller Vorschlag", "opt_t_eng_prop", "card", 4, 2060), ("opt_g_eng_rules", "Regeln und Punkte", "opt_t_eng_rules", "rules", 4, 2100),
+              ("opt_g_eng_score", "Punkteverlauf und Auswertung", "opt_t_eng_score", "score", 2, 2140), ("opt_g_eng_mess", "Messwerte, Lernen und Wächter", "opt_t_eng_mess", "mess", 2, 2160),
+              ("opt_g_eng_log", "Entscheidungen", "opt_t_eng_log", "log", 6, 2180))
 for _ord, _g in enumerate(ENG_GROUPS, start=1):
     upsert({"id": _g[0], "type": "ui_group", "name": _g[1], "tab": ENG_TAB, "order": _ord, "disp": True, "width": ENG_W, "collapse": False, "className": ""})
 
@@ -3574,8 +3934,9 @@ upsert(fn("opt_engine", "Entscheidungsmaschine (Shadow)", ENGINE_CORE_JS + ENGIN
           [["opt_t_eng_prop"], ["opt_t_eng_rules"], ["opt_t_eng_score"], ["opt_t_eng_log"], ["opt_f_eng"], ["opt_t_eng_mess"], ["opt_t_eng_cop"]], 440, 2100, FS))
 # Karte "COP: Ziel und Ist" (cop-ziel 17.10.2026) auf der Seite Optimierer, gleich breit wie die anderen Karten (ENG_W), als letzte Gruppe (Reihenfolge 8 nach den beiden
 # Quiet-Karten): die Anordnung der fuenf Maschinenkarten und der Quiet-Karten bleibt, die neue Karte fuellt die kuerzere Spalte auf
-upsert({"id": "opt_g_eng_cop", "type": "ui_group", "name": "COP: Ziel und Ist", "tab": ENG_TAB, "order": 8, "disp": True, "width": ENG_W, "collapse": False, "className": ""})
-upsert(eng_template("opt_t_eng_cop", "opt_g_eng_cop", "COP: Ziel und Ist", 8, eng_format("cop", "opt_t_eng_cop"), 2200))
+# ui-review-b 20.10.2026: vor den beiden (zugeklappten) Quiet-Karten (Reihenfolge 5,5), damit sie die kuerzere Spalte auffuellt und die Quiet-Karten unten folgen
+upsert({"id": "opt_g_eng_cop", "type": "ui_group", "name": "COP: Ziel und Ist", "tab": ENG_TAB, "order": 5.5, "disp": True, "width": ENG_W, "collapse": False, "className": ""})
+upsert(eng_template("opt_t_eng_cop", "opt_g_eng_cop", "COP: Ziel und Ist", 3, eng_format("cop", "opt_t_eng_cop"), 2200))
 upsert({"id": "opt_f_eng", "type": "file", "z": TAB, "name": "Entscheidungen, Punkte, Ereignisse", "filename": "filename", "filenameType": "msg", "appendNewline": False,
         "createDir": True, "overwriteFile": "false", "encoding": "utf8", "x": 760, "y": 2160, "wires": [[]]})
 # Uebernahme: Klick (Karte) und Takt alle 15 s -> opt_apply -> (1) mqtt out GESPERRT, (2) Meldung, (3) Protokoll, (4) Anzeige neu
@@ -3707,7 +4068,9 @@ def schema_format(node_id, group_id, voll):
             "})(scope);</script>")
 
 
-upsert({"id": "opt_g_schema", "type": "ui_group", "name": "Anlagenschema", "tab": ENG_TAB, "order": 0.5, "disp": True, "width": ENG_W, "collapse": False, "className": ""})
+# ui-review-b 20.10.2026: das Schema steht auf der Übersicht; die Gruppe der Seite "Optimierer" liegt auf dem ausgeblendeten Tab "Quiet-Messwerte" (Knoten bleiben,
+# deploy_opt.sh entfernt nichts), die Seite wird ~700 px kürzer
+upsert({"id": "opt_g_schema", "type": "ui_group", "name": "Anlagenschema", "tab": UI_TAB_QUIET, "order": 0.5, "disp": True, "width": ENG_W, "collapse": False, "className": ""})
 upsert(eng_template("opt_t_schema", "opt_g_schema", "Anlagenschema (Optimierer)", 13, schema_format("opt_t_schema", "opt_g_schema", False), 2420))
 _schema_out = ["opt_t_schema"]
 if UE_TAB in B and B[UE_TAB]["type"] == "ui_tab":
@@ -3738,6 +4101,46 @@ upsert({"id": "opt_venus_link_js", "type": "ui_template", "z": TAB, "group": "",
 upsert(comment("opt_c_schema", "Anlagenschema (nur Anzeige): OPT_hp lesen → Karten auf Optimierer und Übersicht", 380, 2380))
 upsert(inject("opt_i_schema", "alle 10 s", 10, 20, ["opt_schema"], 140, 2440))
 upsert(fn("opt_schema", "Anlagenschema: Werte lesen (nur Anzeige)", SCHEMA_JS + SCHEMA_FN_JS.replace("__COPKW__", COP_KW_JS), 1, [_schema_out], 440, 2440))
+
+# ---------------------------------------------------------------- Seite "Lernen" (lern-seite 23.10.2026): was der NAS-Container optimizer-tools nachts lernt (nur lesen)
+# Der Container laeuft bewusst ohne Netz (network_mode none, read_only) und bekommt kein eigenes Web-Dashboard; diese Seite liest seine Ergebnisdateien in
+# /data/optimizer-tools (status.json, training/wp_params_<tag>.json + kandidat_<tag>.json der letzten 14 Tage, kennzahlen/tage.csv, replay/<tag>.json,
+# letzter-lauf.log) alle 5 min. Daten und Darstellung: tools/lern_ui.js (reine Funktionen, in tools/optimizer_sim.js geprueft). Vier gleich breite Karten
+# (ENG_W, Masonry-Falle), Menuepunkt nach "Daten & Güte" (12,8 < SYSTEM 13). Die Karte "Auswertung NAS" auf Daten & Güte bleibt. Keine Regelwirkung, kein Speicher
+# ausser dem Lese-Cache der geparsten Parameterdateien (Knotenkontext, nach Dateizeit und -groesse).
+LERN_TAB = "opt_lern_ui_tab"
+LERN_UI_JS = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "lern_ui.js"), encoding="utf-8").read()
+upsert({"id": LERN_TAB, "type": "ui_tab", "name": "Lernen", "icon": "school", "order": 12.8, "disabled": False, "hidden": False})
+# [Gruppe, Titel, Vorlage, Art, Starthoehe in Einheiten, y im Editor]
+LERN_GROUPS = (("opt_g_lern_heute", "Heute gelernt", "opt_t_lern_heute", "heute", 17, 3800), ("opt_g_lern_param", "Was sich verändert", "opt_t_lern_param", "param", 15, 3840),
+               ("opt_g_lern_guete", "Güte je Außenband und Lernkurve", "opt_t_lern_guete", "guete", 9, 3880), ("opt_g_lern_replay", "Replay und Kennzahlen", "opt_t_lern_replay", "replay", 15, 3920))
+for _ord, _g in enumerate(LERN_GROUPS, start=1):
+    upsert({"id": _g[0], "type": "ui_group", "name": _g[1], "tab": LERN_TAB, "order": _ord, "disp": True, "width": ENG_W, "collapse": False, "className": ""})
+
+
+def lern_format(kind, node_id):
+    """Karte der Seite "Lernen": zeichnet die Nutzlast mit optLern (HTML aus reinen Funktionen) und passt sich danach sofort ein; schickt nichts."""
+    return ('<div class="optfit"><div id="ol_' + kind + '"></div></div>'
+            + "<script>" + LERN_UI_JS + "</script><script>(function (scope) {\n"
+            "var last = null;\n"
+            "function draw() { var el = document.getElementById('ol_" + kind + "'); if (el && last && last.payload && window.optLern) { window.optLern.mount(el, '" + kind + "', last.payload);"
+            " var F = window.__optFit; if (F && F.fns && F.fns['" + node_id + "']) { setTimeout(F.fns['" + node_id + "'], 60); } } }\n"
+            "scope.$watch('msg', function (m) { last = m; setTimeout(draw, 40); });\n"
+            "})(scope);</script>")
+
+
+LERN_FN_JS = LERN_UI_JS + r"""
+// Seite "Lernen": Ergebnisdateien des Containers optimizer-tools NUR LESEN (/data/optimizer-tools), je Karte eine Nachricht. Keine Regelwirkung.
+var OL = (typeof globalThis !== 'undefined' ? globalThis : this).optLern, cache = context.get('lern_cache') || {};
+var P = OL.daten(fs, Date.now(), cache, '/data/optimizer-tools');
+context.set('lern_cache', cache);
+return [{payload: P.heute}, {payload: P.param}, {payload: P.guete}, {payload: P.replay}];
+"""
+upsert(comment("opt_c_lern", "Seite Lernen: Ergebnisdateien des Containers optimizer-tools (nur lesen, alle 5 min)", 380, 3760))
+for _g in LERN_GROUPS:
+    upsert(eng_template(_g[2], _g[0], _g[1], _g[4], lern_format(_g[3], _g[2]), _g[5]))
+upsert(fn("opt_lern", "Seite Lernen: Container-Ergebnisse (nur lesen)", LERN_FN_JS, 4, [["opt_t_lern_heute"], ["opt_t_lern_param"], ["opt_t_lern_guete"], ["opt_t_lern_replay"]], 440, 3860, FS))
+upsert(inject("opt_i_lern", "alle 5 Minuten", 300, 30, ["opt_lern"], 140, 3860))
 
 # the new page also belongs into the menu configuration (SYSTEM > menu), otherwise it can not be hidden/shown there
 form = B.get("e35b7df78bc6f722")

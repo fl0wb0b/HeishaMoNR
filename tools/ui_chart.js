@@ -9,7 +9,7 @@
  *          sym: [[t, Symbol, Text]] (Wetter-Symbolzeile ueber der Tafel, 18 px; Symbole: sonne mond sonne_wolke mond_wolke wolke regen niesel schnee nebel gewitter; Text im Tooltip)}]}
  *   optChart.symbol(name, cx, cy) -> SVG-Zeichen (16 x 16 px, eigene Pfade, keine Bilder) */
 (function (root) {
-    var VER = 7;                                                                                    // 5: UI-Optik 14.10. (Achsen 12 px, Kontrast >= 4,5:1); 6: Zeitbaender, Zeitraster, Tooltip-Fenster, Achsen mit 2,5er-Schritt zeigen die Nachkommastelle (Wetterkarte 17.10.); 7: Wetter-Symbolzeile
+    var VER = 8;                                                                                    // 8: Achsenstriche in lokaler Kalenderzeit, kein Sprung auf 23:00/05:00 an der Zeitumstellung; 7: Wetter-Symbolzeile
     if (root.optChart && root.optChart.v === VER) { return; }
     var C = {v: VER};
     var MONTHS = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
@@ -34,9 +34,10 @@
         var span = t1 - t0, H = 3600000, steps = [H, 2 * H, 3 * H, 6 * H, 12 * H, 24 * H], st = steps[steps.length - 1], i;
         for (i = 0; i < steps.length; i++) { if (span / steps[i] <= 9) { st = steps[i]; break; } }
         if (step >= H && span / step <= 16) { st = step; }                                         // fester Raster (z. B. 6 h bei 60 h), hoechstens 16 Striche
-        var out = [], d0 = new Date(t0), t = new Date(d0.getFullYear(), d0.getMonth(), d0.getDate(), 0, 0, 0).getTime();
-        while (t < t0) { t += st; }
-        for (; t <= t1; t += st) { out.push(t); }
+        var out = [], d0 = new Date(t0), y = d0.getFullYear(), m = d0.getMonth(), d = d0.getDate(), sh = st / H;
+        // Nicht t += st: eine absolute Stundenaddition verschiebt die Ortszeit an der DST-Grenze (25.10.: 23:00/05:00 statt 00:00/06:00).
+        // Von Mitternacht aus mit Kalender-Stunden springen: im Fruehjahr fehlt nur die nicht existierende Ortszeit, die Folgestriche bleiben im Raster.
+        for (i = 0; ; i++) { var t = new Date(y, m, d, i * sh, 0, 0).getTime(); if (t > t1) { break; } if (t >= t0) { out.push(t); } }
         return out;
     }
     // Wetter-Symbole (16 x 16 px um cx/cy): Farben aus ui_optik.css (Sonne/Blitz #f9a825 mit Rand #b45309, Wolke #cfd8dc mit Rand #546e7a, Mond/Nebel #546e7a,
@@ -117,7 +118,7 @@
             y = bot + GAP;
         });
         var H = y - GAP + BOT;
-        ticks.forEach(function (t) { var d = new Date(t), lab = (d.getHours() === 0) ? p2(d.getDate()) + '. ' + MONTHS[d.getMonth()] : hhmm(t); out.push('<text x="' + X(t).toFixed(1) + '" y="' + (H - 7) + '" text-anchor="middle" font-size="12" fill="' + (d.getHours() === 0 ? '#263238' : '#546e7a') + '"' + (d.getHours() === 0 ? ' font-weight="bold"' : '') + '>' + lab + '</text>'); });
+        ticks.forEach(function (t) { var d = new Date(t), lab = (d.getHours() === 0) ? p2(d.getDate()) + '. ' + MONTHS[d.getMonth()] : hhmm(t), tx = X(t), an = Math.abs(tx - x0) < 0.6 ? 'start' : (Math.abs(tx - x1) < 0.6 ? 'end' : 'middle'); out.push('<text x="' + tx.toFixed(1) + '" y="' + (H - 7) + '" text-anchor="' + an + '" font-size="12" fill="' + (d.getHours() === 0 ? '#263238' : '#546e7a') + '"' + (d.getHours() === 0 ? ' font-weight="bold"' : '') + '>' + lab + '</text>'); });
         (spec.marks || []).forEach(function (m) { if (m.t < t0 || m.t > t1) { return; } var xx = X(m.t).toFixed(1); out.push('<line x1="' + xx + '" x2="' + xx + '" y1="' + TOP + '" y2="' + (H - BOT) + '" stroke="' + (m.c || '#546e7a') + '" stroke-dasharray="4 3"/>' + (m.label ? '<text x="' + (+xx + 4) + '" y="' + ((geo.panels[0] ? geo.panels[0].top : TOP) + 10) + '" font-size="10" fill="' + (m.c || '#546e7a') + '">' + esc(m.label) + '</text>' : '')); });
         geo.H = H;
         return {svg: '<svg xmlns="http://www.w3.org/2000/svg" width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" style="display:block;font-family:inherit">' + out.join('') + '<line class="optch-x" x1="0" x2="0" y1="' + TOP + '" y2="' + (H - BOT) + '" stroke="#37474f" stroke-width="1" visibility="hidden"/></svg>', geo: geo};

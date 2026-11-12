@@ -1,0 +1,478 @@
+{
+ "format": 2,
+ "version": "ec86629",
+ "werkzeug": "optimizer-tools ec86629",
+ "aktualisiert": "2026-10-23 06:41:45",
+ "dienst": {
+  "gestartet": "2026-10-22 22:31:24",
+  "zeitplan": "06:40",
+  "naechster_lauf": "2026-10-24 06:40:00"
+ },
+ "letzter_lauf": {
+  "art": "nacht",
+  "beginn": "2026-10-23 06:40:00",
+  "ende": "2026-10-23 06:41:45",
+  "dauer_s": 104.3,
+  "ok": true,
+  "speicher_spitze_mb": 362,
+  "schritte": {
+   "training": {
+    "ok": true,
+    "rc": 0,
+    "dauer_s": 80.1,
+    "fehler": null,
+    "tag": "2026-10-23"
+   },
+   "cop_eta": {
+    "ok": true,
+    "rc": 0,
+    "dauer_s": 1.4,
+    "fehler": null,
+    "tag": "2026-10-23"
+   },
+   "replay": {
+    "ok": true,
+    "rc": 0,
+    "dauer_s": 19.7,
+    "fehler": null,
+    "tag": "2026-10-22"
+   },
+   "kennzahlen": {
+    "ok": true,
+    "rc": 0,
+    "dauer_s": 1.7,
+    "fehler": null,
+    "tag": "2026-10-22"
+   },
+   "sicherung": {
+    "ok": true,
+    "rc": 0,
+    "dauer_s": 1.4,
+    "fehler": null,
+    "tag": "2026-10-23"
+   }
+  }
+ },
+ "training": {
+  "tag": "2026-10-23",
+  "ok": true,
+  "fehler": null,
+  "dauer_s": 80.0,
+  "datei": "training/wp_params_2026-10-23.json",
+  "ampel": "gruen",
+  "ampel_grenzen": {
+   "Strom TOP16 RMSE (W)": 40.0,
+   "Wasserkreis RMSE (K)": 1.5,
+   "Pause Median-Fehler (min)": 30.0
+  },
+  "guete_test": {
+   "Strom TOP16 RMSE (W)": 19.7,
+   "Wärme RMSE (W)": 250.8,
+   "Regler RMSE (Hz)": 0.76,
+   "Wasserkreis RMSE (K)": 0.961,
+   "Hausmittel RMSE (K)": 0.451,
+   "Pause Median-Fehler (min)": 16.5,
+   "Lauf Median-Fehler (min)": 63,
+   "Freilauf kWh el Zwilling/Messung": [
+    25.8,
+    26.55
+   ]
+  },
+  "guete_test_vorher": {
+   "Strom TOP16 RMSE (W)": 19.5,
+   "Wärme RMSE (W)": 250.5,
+   "Regler RMSE (Hz)": 1.357,
+   "Wasserkreis RMSE (K)": 0.946,
+   "Hausmittel RMSE (K)": 0.505,
+   "Pause Median-Fehler (min)": 11,
+   "Lauf Median-Fehler (min)": 72,
+   "Freilauf kWh el Zwilling/Messung": [
+    24.14,
+    25.95
+   ]
+  },
+  "daten": {
+   "ordner": "protokolle_2026-10-23",
+   "von": "2026-10-07 16:55",
+   "bis": "2026-10-23 06:39",
+   "minuten": 22425,
+   "laeufe": 60,
+   "pausen": 59
+  },
+  "drift": {
+   "gegen": "2026-10-22",
+   "werte": 70,
+   "auffaellig": 2,
+   "liste": [
+    {
+     "name": "fanJeHz",
+     "vorher": 4.960493,
+     "heute": 5.250328,
+     "roh": 5.83,
+     "uebernommen": 5.250328,
+     "rel": 0.1753,
+     "rel_uebernommen": 0.0584
+    },
+    {
+     "name": "pipeQ",
+     "vorher": 0.899469,
+     "heute": 0.930979,
+     "roh": 0.994,
+     "uebernommen": 0.930979,
+     "rel": 0.1051,
+     "rel_uebernommen": 0.035
+    }
+   ]
+  },
+  "entscheidung": {
+   "ergebnis": "übernommen",
+   "grund": "nicht schlechter als der bisherige Satz (Strom, Wasserkreis, Pause je höchstens +10 %, unter der Ampelgrenze)",
+   "aktiv": "wp_params_2026-10-23.json",
+   "aktiv_tag": "2026-10-23",
+   "kandidat_datei": "wp_params_2026-10-23.json",
+   "bisher_tag": "2026-10-22",
+   "kandidat": {
+    "Strom TOP16 RMSE (W)": 19.7,
+    "Wärme RMSE (W)": 250.8,
+    "Regler RMSE (Hz)": 0.76,
+    "Wasserkreis RMSE (K)": 0.961,
+    "Hausmittel RMSE (K)": 0.451,
+    "Pause Median-Fehler (min)": 16.5,
+    "Lauf Median-Fehler (min)": 63,
+    "Freilauf kWh el Zwilling/Messung": [
+     25.8,
+     26.55
+    ]
+   },
+   "bisher": {
+    "Strom TOP16 RMSE (W)": 19.8,
+    "Wärme RMSE (W)": 251.1,
+    "Regler RMSE (Hz)": 0.76,
+    "Wasserkreis RMSE (K)": 1.021,
+    "Hausmittel RMSE (K)": 0.46,
+    "Pause Median-Fehler (min)": 16,
+    "Lauf Median-Fehler (min)": 75,
+    "Freilauf kWh el Zwilling/Messung": [
+     25.31,
+     26.55
+    ]
+   },
+   "roh": {
+    "Strom TOP16 RMSE (W)": 19.7,
+    "Wärme RMSE (W)": 250.2,
+    "Regler RMSE (Hz)": 0.76,
+    "Wasserkreis RMSE (K)": 0.856,
+    "Hausmittel RMSE (K)": 0.436,
+    "Pause Median-Fehler (min)": 14.5,
+    "Lauf Median-Fehler (min)": 70,
+    "Freilauf kWh el Zwilling/Messung": [
+     25.98,
+     26.55
+    ]
+   },
+   "kriterium": {
+    "rel": 0.1,
+    "tol": {
+     "strom": 0.5,
+     "wasserkreis": 0.02,
+     "pause": 1
+    },
+    "grenzen": {
+     "strom": 40,
+     "wasserkreis": 1.5,
+     "pause": 30
+    }
+   },
+   "verletzt": []
+  },
+  "glaettung": {
+   "anteil": 0.333333,
+   "bindung": {
+    "aktiv": true,
+    "gewicht": 0.1,
+    "skalaRel": 0.25,
+    "grund": "Dünn-Daten-Phase: 17 Tage Daten (< 21)"
+   }
+  },
+  "guete_je_band": [
+   {
+    "band": "unter0",
+    "name": "< 0 °C",
+    "minuten": 0,
+    "laufminuten": 0,
+    "status": "keine Daten, Zwilling extrapoliert",
+    "Strom TOP16 RMSE (W)": null,
+    "Wärme RMSE (W)": null,
+    "Regler RMSE (Hz)": null,
+    "Wasserkreis RMSE (K)": null,
+    "Hausmittel RMSE (K)": null,
+    "Pause Median-Fehler (min)": null,
+    "Lauf Median-Fehler (min)": null,
+    "n_pausen": 0,
+    "n_laeufe": 0
+   },
+   {
+    "band": "0bis4",
+    "name": "0…4 °C",
+    "minuten": 440,
+    "laufminuten": 438,
+    "status": "Daten",
+    "Strom TOP16 RMSE (W)": 21,
+    "Wärme RMSE (W)": 254.9,
+    "Regler RMSE (Hz)": 0.5,
+    "Wasserkreis RMSE (K)": 1.201,
+    "Hausmittel RMSE (K)": 0.595,
+    "Pause Median-Fehler (min)": null,
+    "Lauf Median-Fehler (min)": 38,
+    "n_pausen": 0,
+    "n_laeufe": 1
+   },
+   {
+    "band": "4bis8",
+    "name": "4…8 °C",
+    "minuten": 701,
+    "laufminuten": 635,
+    "status": "Daten",
+    "Strom TOP16 RMSE (W)": 19.3,
+    "Wärme RMSE (W)": 267,
+    "Regler RMSE (Hz)": 1.056,
+    "Wasserkreis RMSE (K)": 1.274,
+    "Hausmittel RMSE (K)": 0.338,
+    "Pause Median-Fehler (min)": null,
+    "Lauf Median-Fehler (min)": 130,
+    "n_pausen": 0,
+    "n_laeufe": 1
+   },
+   {
+    "band": "8bis12",
+    "name": "8…12 °C",
+    "minuten": 3488,
+    "laufminuten": 2845,
+    "status": "Daten",
+    "Strom TOP16 RMSE (W)": 19.6,
+    "Wärme RMSE (W)": 246.2,
+    "Regler RMSE (Hz)": 0.673,
+    "Wasserkreis RMSE (K)": 0.857,
+    "Hausmittel RMSE (K)": 0.443,
+    "Pause Median-Fehler (min)": 16.5,
+    "Lauf Median-Fehler (min)": 59,
+    "n_pausen": 10,
+    "n_laeufe": 8
+   },
+   {
+    "band": "ab12",
+    "name": "≥ 12 °C",
+    "minuten": 85,
+    "laufminuten": 14,
+    "status": "Daten",
+    "Strom TOP16 RMSE (W)": 34.6,
+    "Wärme RMSE (W)": 234.2,
+    "Regler RMSE (Hz)": 2.252,
+    "Wasserkreis RMSE (K)": 0.415,
+    "Hausmittel RMSE (K)": 0.661,
+    "Pause Median-Fehler (min)": null,
+    "Lauf Median-Fehler (min)": 72,
+    "n_pausen": 0,
+    "n_laeufe": 1
+   }
+  ],
+  "abdeckung": {
+   "tage": 17,
+   "duenn": true,
+   "grund": "17 Tage Daten (< 21)",
+   "baender_ausreichend": 4,
+   "at_min": 1,
+   "at_max": 19,
+   "extrapoliert_unter_c": 0,
+   "hinweis": "Zwilling hat unter 0 °C keine Daten (tiefste gemessene AT 1 °C): dort extrapoliert",
+   "kriterien": {
+    "laufMinBand": 300,
+    "tage": 21,
+    "baender": 3
+   },
+   "baender": [
+    {
+     "band": "unter0",
+     "name": "< 0 °C",
+     "minuten": 0,
+     "laufminuten": 0,
+     "tage": 0,
+     "status": "keine Daten, Zwilling extrapoliert"
+    },
+    {
+     "band": "0bis4",
+     "name": "0…4 °C",
+     "minuten": 1844,
+     "laufminuten": 1842,
+     "tage": 7,
+     "status": "ausreichend"
+    },
+    {
+     "band": "4bis8",
+     "name": "4…8 °C",
+     "minuten": 4392,
+     "laufminuten": 4091,
+     "tage": 14,
+     "status": "ausreichend"
+    },
+    {
+     "band": "8bis12",
+     "name": "8…12 °C",
+     "minuten": 10621,
+     "laufminuten": 7846,
+     "tage": 16,
+     "status": "ausreichend"
+    },
+    {
+     "band": "ab12",
+     "name": "≥ 12 °C",
+     "minuten": 5561,
+     "laufminuten": 2004,
+     "tage": 14,
+     "status": "ausreichend"
+    }
+   ]
+  }
+ },
+ "cop_eta": {
+  "datei": "training/cop_eta.json",
+  "erstellt": "2026-10-23 06:41",
+  "tag": "2026-10-23",
+  "kalibrierminuten": 11325,
+  "eta": {
+   "< 4": 0.533,
+   "4…8": 0.509,
+   "8…11": 0.503,
+   "≥ 11": 0.495
+  },
+  "abtauungen": 1
+ },
+ "replay": {
+  "tag": "2026-10-22",
+  "datei": "replay/2026-10-22.md",
+  "minuten": 1440,
+  "vorschlaege": 3,
+  "punkte_eintraege": 4,
+  "guete": {
+   "bewertbar": true,
+   "prozent": 100,
+   "grund": null,
+   "nicht_bewertbar": [],
+   "regeln": {
+    "quiet_freigabe": {
+     "prozent": 100,
+     "bewertbar": true,
+     "minuten": 1349,
+     "grund": null
+    },
+    "quiet_strecken": {
+     "prozent": 100,
+     "bewertbar": true,
+     "minuten": 1439,
+     "grund": null
+    },
+    "raum_offset": {
+     "prozent": 99.9,
+     "bewertbar": true,
+     "minuten": 1439,
+     "grund": null
+    },
+    "vorausschau": {
+     "prozent": 100,
+     "bewertbar": true,
+     "minuten": 1439,
+     "grund": null
+    },
+    "heizregelung": {
+     "prozent": 100,
+     "bewertbar": true,
+     "minuten": 1439,
+     "grund": null
+    }
+   },
+   "eingang": "live",
+   "eingang_live_minuten": 1439
+  }
+ },
+ "kennzahlen": {
+  "tag": "2026-10-22",
+  "datei": "kennzahlen/2026-10-22.json",
+  "tag_vollstaendig": true,
+  "strom_kwh": 8.0,
+  "waerme_kwh": 41.53,
+  "cop": 5.19,
+  "kwh_je_gradstunde": 0.0233,
+  "abweichung_7t_prozent": 5,
+  "komfort_gehalten": 0,
+  "laeufe": 4,
+  "starts": 3,
+  "abtauungen": 0,
+  "heizstab_min": 0,
+  "aussen_mittel": 8.1,
+  "befunde": {
+   "hinweis": 0,
+   "info": 0,
+   "warnung": 0
+  }
+ },
+ "datenluecken": {
+  "frische": {
+   "datei": "quiet-2026-10.csv",
+   "lesbar": true,
+   "juengste_zeile": "2026-10-23 06:40:54",
+   "alter_min": 0.8
+  },
+  "minutenprotokoll": {
+   "tag": "2026-10-22",
+   "minutenzeilen": 1441,
+   "luecken_ueber_10min": 0,
+   "groesste_luecke_min": 0,
+   "liste": []
+  },
+  "raumfuehler": {
+   "tag": "2026-10-22",
+   "raeume": {
+    "ki_oben": {
+     "name": "Kinderzimmer oben",
+     "ungueltig_min": 365,
+     "laengste_min": 104
+    },
+    "ki_unten": {
+     "name": "Kinderzimmer unten",
+     "ungueltig_min": 342,
+     "laengste_min": 62
+    },
+    "schlaf": {
+     "name": "Schlafzimmer",
+     "ungueltig_min": 7,
+     "laengste_min": 6
+    },
+    "wohn": {
+     "name": "Wohnzimmer",
+     "ungueltig_min": 12,
+     "laengste_min": 8
+    }
+   }
+  }
+ },
+ "sicherung": {
+  "tag": "2026-10-23",
+  "datei": "sicherung/daten-2026-10-23.tar.gz",
+  "bytes": 3416248,
+  "sha256": "fd4aab72680541f2180e52304ae66bbcb19f91cb242c155618b6e5d6e9b20c3a",
+  "dateien": 27,
+  "bytes_roh": 52639111,
+  "geprueft": true,
+  "archive": 9,
+  "aeltestes": "2026-10-15",
+  "belegt_mb": 21.4
+ },
+ "ok": true,
+ "fehler": [],
+ "hinweise": [
+  "Training: 2 Parameter mit auffälliger Drift",
+  "Zwilling hat unter 0 °C keine Daten (tiefste gemessene AT 1 °C): dort extrapoliert",
+  "Raumfühler Kinderzimmer oben: 365 min ohne gültigen Wert am 2026-10-22 (längste Lücke 104 min)",
+  "Raumfühler Kinderzimmer unten: 342 min ohne gültigen Wert am 2026-10-22 (längste Lücke 62 min)"
+ ]
+}

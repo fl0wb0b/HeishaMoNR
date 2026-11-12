@@ -1,0 +1,18 @@
+2026-10-23 06:40:00 [nacht] Lauf „nacht“ beginnt (optimizer-tools ec86629, Daten /daten, Ergebnis /ergebnis)
+2026-10-23 06:40:00 [training] Start: /usr/bin/python3 wp_training_nacht.py --daten /daten --ergebnis /ergebnis --tag 2026-10-23 --node node --glaettung 0.333333 --bindung 0.1 --gate-rel 0.10
+2026-10-23 06:41:20 [training] wp_params_2026-10-23.json und wp_training.md geschrieben (/ergebnis/training); Entscheidung: übernommen; auffällige Drift: 2
+2026-10-23 06:41:20 [training] Ende: ok nach 80.1 s (rc 0)
+2026-10-23 06:41:20 [cop_eta] Start: node cop_eta.js --daten /daten --ergebnis /ergebnis --tag 2026-10-23 --tage 21
+2026-10-23 06:41:22 [cop_eta] cop_eta: 21759 Minuten, 11325 Kalibrierminuten · eta < 4 0.533 / 4…8 0.509 / 8…11 0.503 / ≥ 11 0.495 · dT 3/3/4/6 · Abtauungen 1 -> /ergebnis/training/cop_eta.json
+2026-10-23 06:41:22 [cop_eta] Ende: ok nach 1.4 s (rc 0)
+2026-10-23 06:41:22 [replay] Start: node replay_tag.js /daten /ergebnis --tag 2026-10-22
+2026-10-23 06:41:41 [replay] Replay 2026-10-22: 1440 Minuten (Einschwingen ab 2026-10-15), 3 Vorschläge/Hinweise, 6 Ereignisse, 4 Punkte-Einträge; Status gleich live 100 %; nur Protokolle 99.4 % (alle Minuten gleicher Version) (1439 gemeinsame Minuten)
+2026-10-23 06:41:41 [replay] Ende: ok nach 19.7 s (rc 0)
+2026-10-23 06:41:41 [kennzahlen] Start: /usr/bin/python3 kennzahlen_tag.py --daten /daten --ergebnis /ergebnis --tag 2026-10-22
+2026-10-23 06:41:43 [kennzahlen] Kennzahlen 2026-10-22: 1441 Minutenzeilen, Läufe 4, Strom 8.0 kWh, Wärme 41.53 kWh, COP 5.19, kWh/Kh 0.0233, Komfort verletzt, Abtauungen 0, Befunde 0
+2026-10-23 06:41:43 [kennzahlen] tage.csv: 16 Tage
+2026-10-23 06:41:43 [kennzahlen] Ende: ok nach 1.7 s (rc 0)
+2026-10-23 06:41:43 [sicherung] Start: /usr/bin/python3 ot.py _sicherung --tag 2026-10-23
+2026-10-23 06:41:45 [sicherung] Sicherung daten-2026-10-23.tar.gz: 27 Dateien, 50.2 MB roh → 3.3 MB gepackt, geprüft, sha256 fd4aab72680541f2…; 9 Archive (21.4 MB), 0 alte gelöscht, 2 Namen übersprungen (anderer Monat oder nicht in der Allowlist)
+2026-10-23 06:41:45 [sicherung] Ende: ok nach 1.4 s (rc 0)
+2026-10-23 06:41:45 [nacht] Lauf „nacht“ fertig in 104.3 s (Speicher-Spitze des Containers 362 MB): ok

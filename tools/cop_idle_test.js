@@ -1,7 +1,7 @@
 // Pruefung der Korrektur "COP 0 bei Stillstand" (tools/cop_idle_fix.py): Betrieb unveraendert, Stillstand meldet 0.
 // Usage: python3 tools/cop_idle_fix.py <kopie.json> && node tools/cop_idle_test.js <kopie.json>   (ohne Argument: die Repo-Flowdatei, vorher gepatcht)
 const fs = require('fs'), vm = require('vm');
-const file = process.argv[2] || 'flows (26.5.1 stable).json';
+const file = process.argv[2] || (console.error('Aufruf: node tools/cop_idle_test.js <flows.json> – Flow-Datei angeben (Liste der Knoten): frische Generator-Ausgabe oder Live-Export, nicht den Snapshot vom 12.10.'), process.exit(2));
 const flows = JSON.parse(fs.readFileSync(file, 'utf8')), node0 = flows.find(n => n.id === 'f4e55b938e645737');
 const orig = fs.readFileSync(require('path').join(__dirname, 'fixtures', 'cop_calculated_original.js'), 'utf8');      // unveraenderte Originalfunktion (vor dem Patch), fest im Repo
 const compile = f => vm.runInNewContext('(function(msg,global,node){' + f + '\n})', {Number, isFinite, parseFloat, isNaN});
@@ -17,11 +17,15 @@ const fOld = compile(orig), fNew = compile(node0.func);
 let fails = 0; const ck = (n, ok, d) => { console.log((ok ? 'OK  ' : 'FAIL') + ' ' + n + (d ? '  -> ' + d : '')); if (!ok) fails++; };
 let same = 0, total = 0, diffs = [];
 [0, 1].forEach(valve => [16, 30].forEach(hz => [15, 260, 600].forEach(en => [0, 1, 5, 40, undefined].forEach(rt => {
-  const st = Object.assign({}, base, {TOP20_ThreeWay_Valve_State: valve, compressor_frequency: hz, TOP16_Heat_Energy_Consumption: en, TOP41_DHW_Energy_Consumption: en, compressor_runtime: rt});
+  const st = Object.assign({}, base, {TOP20_ThreeWay_Valve_State: valve, compressor_frequency: hz, TOP16_Heat_Energy_Consumption: en, TOP41_DHW_Energy_Consumption: en, compressor_runtime: rt, OPT_cfg: {cop: {pelKorrW: 0}}});   // Korrektur aus (tools/kern_cop_patch.py): hier zaehlt nur die Stillstand-Logik
   const a = runF(fOld, st), b = runF(fNew, st); total++;
   if (JSON.stringify(a) === JSON.stringify(b)) { same++; } else { diffs.push(JSON.stringify({valve, hz, en, rt})); }
 }))));
-ck('Betrieb (Verdichter laeuft, 60 Zustaende: Ventil Heizen/Warmwasser, 16/30 Hz, 15/260/600 W, Laufzeit 0/1/5/40/unbekannt): Ausgaben und Variablen identisch zum Original', same === total, same + ' von ' + total + (diffs.length ? ' | abweichend: ' + diffs.slice(0, 3).join(' ') : ''));
+ck('Betrieb (Verdichter laeuft, 60 Zustaende: Ventil Heizen/Warmwasser, 16/30 Hz, 15/260/600 W, Laufzeit 0/1/5/40/unbekannt) mit COP-Korrektur 0 W: Ausgaben und Variablen identisch zum Original', same === total, same + ' von ' + total + (diffs.length ? ' | abweichend: ' + diffs.slice(0, 3).join(' ') : ''));
+// COP-Korrektur (tools/kern_cop_patch.py, live seit 14.10.): bei laufendem Verdichter +80 W (Standard) auf den Verbrauch, Waermemenge Prod_* bleibt roh
+{ let ok = 0, tot = 0; [0, 1].forEach(valve => [16, 30].forEach(hz => { const st = Object.assign({}, base, {TOP20_ThreeWay_Valve_State: valve, compressor_frequency: hz, compressor_runtime: 40});
+    const a = runF(fOld, Object.assign({}, st, {TOP16_Heat_Energy_Consumption: 340, TOP41_DHW_Energy_Consumption: 340})), b = runF(fNew, Object.assign({}, st, {TOP16_Heat_Energy_Consumption: 260, TOP41_DHW_Energy_Consumption: 260})); tot++; if (JSON.stringify(a) === JSON.stringify(b)) { ok++; } }));
+  ck('COP-Korrektur Standard 80 W: live mit 260 W rechnet genau wie das Original mit 340 W (Heizen/Warmwasser, 16/30 Hz; Prod_* unveraendert)', ok === tot, ok + ' von ' + tot); }
 // Stillstand mit Bereitschaftsleistung (live: 15 W, 0 Hz, Laufzeit 0, Restwaerme dT 2 K, Durchfluss 13 l/min)
 const idleSt = Object.assign({}, base, {compressor_frequency: 0, TOP16_Heat_Energy_Consumption: 15, compressor_runtime: 0, COP_HEAT: 6.71, TOP6_Main_Outlet_Temp: 23.25, TOP5_Main_Inlet_Temp: 21.2, TOP1_Pump_Flow: 13.4});
 const oi = runF(fOld, idleSt), ni = runF(fNew, idleSt);

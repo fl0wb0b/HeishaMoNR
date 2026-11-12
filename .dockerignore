@@ -7,5 +7,6 @@
 !tools/wp_training.js
 !tools/wp_training_nacht.py
 !tools/kennzahlen_tag.py
+!tools/gesundheit_tag.py
 !tools/cop_eta.js
 !docker/optimizer-tools/ot.py

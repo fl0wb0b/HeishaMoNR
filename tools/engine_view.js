@@ -269,8 +269,13 @@ var ENGVIEW = (function (E) {
         out.push({k: 'Wärmeverteilung', v: hv.an ? 'Hinweis' : 'ok', vc: hv.an ? 'warn' : 'ok', s: (hv.n || 0) + (hv.n === 1 ? ' Episode' : ' Episoden') + (hv.seit ? ' · zuletzt ' + dm(hv.seit) : ''),
                   title: hv.an ? hv.txt : 'Ein Raum über Maximum und einer unter Minimum, 30 min am Stück: Hinweis „hydraulischer Abgleich/Thermostatventile“ statt Verschiebung (Regel-Review RE-8)' + (hv.txt ? ' · zuletzt: ' + hv.txt : '')});
         var KF = E.kurvenform(S, cfg), kb = KF.baender.map(function (x) { return x.band + ' ' + E.de((have(x.abw) ? x.abw : x.ueber) * 100, 0) + ' %'; });
-        out.push({k: 'Kurvenform', v: KF.hinweis ? 'senken?' : (KF.baender.length ? 'passt' : '–'), vc: KF.hinweis ? 'warn' : '', s: kb.length ? 'Überschuss/−1 K ' + kb.join(' · ') : 'sammelt',
+        out.push({k: 'Kurvenform', v: KF.hinweis ? ({'1': 'anheben?', '2': 'prüfen'}[KF.dir] || 'senken?') : (KF.baender.length ? 'passt' : '–'), vc: KF.hinweis ? 'warn' : '', s: kb.length ? 'Überschuss/−1 K ' + kb.join(' · ') : 'sammelt',
                   title: (KF.hinweis || 'kein Hinweis') + (KF.info ? ' · ' + KF.info : '') + ' · je Außenband (7 Tage, nur mit allen Räumen): ' + KF.baender.map(function (x) { return x.band + ' °C: ' + x.min + ' min, Überschuss ' + E.de(x.ueber * 100, 0) + ' %, Überschuss oder −1 K ' + E.de((x.abw || 0) * 100, 0) + ' %, Bedarf ' + E.de(x.bedarf * 100, 0) + ' %, Reserve Ø ' + E.de(x.reserve, 1) + ' K, Mitte Ø ' + E.sg(x.mitte, 1) + ' K'; }).join('; ') + (KF.sig ? ' · Heizkurve ' + KF.sig + ' seit ' + dm(KF.seit) : '')});
+        var LB = S.lambda;                                                          // Lambda-Eingang (05.11.2026): nur mit Werten, sonst keine Kacheln
+        if (LB && have(LB.at)) { out.push({k: 'Gewichtete Außentemp.', v: E.de(LB.at, 1) + ' °C', s: 'Korrektur ' + E.sg(LB.korr, 1) + ' K · ' + ({warming: 'wärmer', cooling: 'kälter', stable: 'stabil'}[LB.mode] || LB.mode || '–'),
+                  title: 'predictive-heating: Fühlerwert der WP und OWM-Tagesmittel heute/morgen gewichtet 4/2/1 (Vorbild: Lambda-Wärmepumpen); nur Vergleich zur Vorausschau v5, kein Befehl'}); }
+        if (LB && have(LB.shift)) { out.push({k: 'Kurve gelernt', v: E.sg(LB.shift, 2) + ' K', vc: Math.abs(LB.shift) >= E.LAMBDA.hinweisK ? 'warn' : '', s: have(LB.err) ? 'Räume Ø ' + E.sg(-LB.err, 1) + ' K zur Bandmitte' : 'lernt nicht (keine Räume)',
+                  title: 'adaptive-curve: lernt aus dem Mittel der aktiven Räume ohne eigene Nachheizung gegen die Bandmitte (Totband 0,3 K, 0,0002 K je K und Minute, höchstens ±3 K, nur unter 15 °C außen und ohne eigene Verschiebung). Ab ±' + E.de(E.LAMBDA.hinweisK, 1) + ' K Hinweis in „Kurvenform“, kein Befehl'}); }
         var P2 = E.p2Summe(S);
         out.push({k: 'Phase 2 (Vergleich)', v: have(P2.anteil) ? E.de(P2.anteil * 100, 0) + ' % gleich' : '–', s: P2.min ? P2.min + ' min · anders ' + P2.anders + ' · nur v3 ' + P2.nurV3 : 'keine Daten',
                   title: 'Raumvorschlag der Phase 2 nur noch als Vergleich: Minuten, in denen seine Richtung mit der Raumlage v3 übereinstimmt (7 Tage); „nur v3“: v3 will ändern, Phase 2 nicht; „anders“: Phase 2 will ändern, v3 nicht oder in Gegenrichtung'});
@@ -304,7 +309,8 @@ var ENGVIEW = (function (E) {
         if (!en) { st.push({t: 'Übernahme gesperrt', c: 'lock'}); }
         else if (!knoten) { st.push({t: 'Übernahme gesperrt: Sendeknoten deaktiviert', c: 'lock'}); }
         else { st.push({t: rel.length ? 'Übernahme frei: ' + rel.map(function (x) { return (E.RULE[x] && E.RULE[x].kachel) || x; }).join(', ') + ' · heute ' + heute + '/' + E.APPLY.proTag : 'Übernahme frei: keine Regel', c: rel.length ? 'ok' : 'mute'}); }
-        if (AP.alarm) { st.push({t: AP.alarm.text, c: 'bad'}); }
+        var alInfo = AP.alarm && (AP.alarm.stufe === 'info' || / wurde von außen auf /.test(AP.alarm.text));   // fremde Aenderung = Betrieb, kein Fehler (alter Zustand ohne stufe: am Text erkannt)
+        if (AP.alarm && !(alInfo && now - AP.alarm.ts > 12 * 60 * MIN)) { st.push({t: AP.alarm.text, c: alInfo ? 'mute' : 'bad'}); }
         if (verw) { st.push({t: 'verworfen: ' + p.was, c: 'mute'}); }
         var card = {status: st, prop: null, knopf: {ok: false, text: 'Übernehmen', grund: 'kein Vorschlag'}, reset: Object.keys(akL).length > 0, enabled: en, verworfen: verw ? p.id : null, leer: null};
         if (p && !verw) {
@@ -343,6 +349,7 @@ var ENGVIEW = (function (E) {
             var wn = r.wirkung.n - r.wirkung.kalib;
             if (r.art === 'befehl' && wn) { more.push('Wirkung ' + E.sg(r.wirkung.punkte, 0) + ' aus ' + wn + (wn === 1 ? ' Fall' : ' Fällen')); }
             if (r.art === 'befehl' && r.wirkung.kalib) { more.push(r.wirkung.kalib + ' Kalibrierfall' + (r.wirkung.kalib === 1 ? '' : 'e')); }
+            if (r.natur && r.natur.n) { more.push(r.natur.n + ' Naturexperiment' + (r.natur.n === 1 ? '' : 'e') + ' von Hand (gemessen ' + E.sg(r.natur.roh, 0) + ', 0 Punkte)'); }   // v6: getrennt, keine Regel-Wirkung
             var warn = []; if (r.schaden) { warn.push(r.schaden + ' × Schaden'); } if (r.verpasst) { warn.push(r.verpasst + ' × verpasst'); }
             var ok = r.kriterien.filter(function (k) { return k.ok; }).length;
             return {id: r.regel, name: (E.RULE[r.regel] || {}).kachel || (E.RULE[r.regel] || {}).kurz || r.regel, c: COL[r.regel], punkte: r.ohnePunkte ? '–' : E.sg(r.punkte, 1).replace(/^0,0$/, '0'), neg: !r.ohnePunkte && r.punkte < 0, sub: sub, more: more.join(' · '), warn: warn.join(' · '),

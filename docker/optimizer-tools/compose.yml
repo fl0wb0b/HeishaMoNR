@@ -7,7 +7,7 @@ name: optimizer-tools
 
 services:
   optimizer-tools:
-    image: optimizer-tools:${OT_TAG:-training-v2}   # training-v2 (18.10.2026); zurück: OT_TAG=1 docker compose up -d
+    image: optimizer-tools:${OT_TAG:-zwilling-lernt}   # zwilling-lernt (08.11.2026, vorher gesundheit 03.11.); zurück: OT_TAG=gesundheit docker compose up -d
     pull_policy: never              # nie von Docker Hub holen; fehlt das Image, bricht compose mit „No such image“ ab
     container_name: optimizer-tools
     labels:
