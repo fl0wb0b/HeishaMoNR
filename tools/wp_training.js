@@ -110,8 +110,13 @@ const GATE = {rel: 0.10, kennzahlen: [
     {id: 'pause', name: 'Pause Median-Fehler (min)', wert: g => g.zyklenHausSimuliert.pause.medianAbsMin, n: g => g.zyklenHausSimuliert.pause.n, grenze: 30, tol: 1},
     // 08.11.2026: Strom und Abtauungen im Freilauf (dort, wo es zählt); Mediane aus weniger als GATE_N_MIN Fällen entscheiden nichts (im Dauerlauf gab es 1 Pause im Test)
     {id: 'freilaufStrom', ampel: false, name: 'Freilauf Strom-Abweichung (Anteil)', wert: g => g.freilaufSumme && g.freilauf && g.freilauf.length >= 2 && g.freilaufSumme.kwhElMessung > 0 ? Math.abs(g.freilaufSumme.kwhElZwilling / g.freilaufSumme.kwhElMessung - 1) : null, grenze: 0.15, tol: 0.03},   // 3 Prozentpunkte (Kevin 08.11.): Tagesrauschen bei 4 Testtagen; Grenze 15 % (alter Stand −17 %), sonst hebelt sie die Toleranz um 10 % aus
-    {id: 'freilaufAbtau', ampel: false, name: 'Freilauf Abtauungen-Abweichung (Anteil)', wert: g => g.freilaufSumme && g.freilauf && g.freilauf.length >= 2 ? Math.abs(g.freilaufSumme.abtauZwilling - g.freilaufSumme.abtauMessung) / Math.max(3, g.freilaufSumme.abtauMessung) : null, grenze: 0.3, tol: 0.1}]};
-const GATE_N_MIN = 3;
+    // 13.11.2026 (Frost-Nachmessung 5a, V6): Abtauungen als Fehler je Tag in Stück (kein Ausgleich zwischen Tagen), erst ab GATE_ABTAU_MIN gemessenen Abtauungen
+    // im Testfenster; Toleranz max(2 Stück; 25 % der gemessenen). Vorher Anteil |Z−M|/max(3, M) der Summe: bei 2–3 Abtauungen lehnte 1 Abtauung Unterschied ab.
+    {id: 'freilaufAbtau', ampel: false, einheit: 'Stück', name: 'Freilauf Abtauungen: Fehler je Tag (Stück)', wert: g => g.freilauf && g.freilauf.length >= 2 ? g.freilauf.reduce((s, d) => s + Math.abs(d.abtauZwilling - d.abtauMessung), 0) : null,
+     n: g => g.freilaufSumme ? g.freilaufSumme.abtauMessung : null, nMin: 8, rel: 0, tol: g => Math.max(2, 0.25 * ((g && g.freilaufSumme && g.freilaufSumme.abtauMessung) || 0)),
+     grenze: g => Math.max(3, 0.3 * ((g && g.freilaufSumme && g.freilaufSumme.abtauMessung) || 0))}]};
+const GATE_N_MIN = 3;                                                           // Standard-Mindestfallzahl für Kennzahlen mit n (Pausen-Median); eigene Grenze je Kennzahl über nMin
+const GATE_ABTAU_MIN = GATE.kennzahlen.find(k => k.id === 'freilaufAbtau').nMin;
 const LERN_KEYS = ['abtauDauerMin', 'abtauLinie', 'abtauPelW', 'abtauWaermeKWh', 'eisAnker', 'nachAbtauEffMin', 'hsBeimAbtauen', 'capQ3Tab'];
 const FIT_KEYS = {waerme: ['pthHz', 'pthHzAT', 'pthEnde'], strom: ['pel0', 'pelHz', 'pelRL', 'pelAT', 'pelHz2'], standby: ['pelPauseW', 'pelAusW'], pumpe: ['flowPause', 'flowComfort', 'flowEff', 'pumpe0', 'pumpeJeL'], luefter: ['fanQ', 'fanJeHz'],
                   rohr: ['pipe0', 'pipeQ'], startStopp: ['stopK', 'stopHaltMin', 'startK', 'startVerzugMin', 'startHystK'], regler: ['regSenkK', 'regAbHzMin', 'comfortWiederK', 'effT1', 'effK1', 'effL1', 'effT2', 'effK2', 'effKp', 'effKi'],
@@ -154,6 +159,17 @@ function glaette(alt, neu, a, k) {                                              
     if (Array.isArray(neu) && Array.isArray(alt) && neu.length === alt.length) { return neu.map((v, i) => glaette(alt[i], v, a, k)); }
     if (neu && alt && typeof neu === 'object' && typeof alt === 'object' && !Array.isArray(neu) && !Array.isArray(alt)) { const o = {}; Object.keys(neu).forEach(j => { o[j] = j in alt ? glaette(alt[j], neu[j], a, k) : clone(neu[j]); }); return o; }
     return clone(neu);
+}
+// V5 (13.11.2026): ab ABTAU_DIREKT_N eigenen Abtauungen die gelieferten Abtauwerte ungeglättet übernehmen; Abtaulinie: nur der Achsenabschnitt b ist gelernt,
+// Steigung, untere und obere Grenze kommen immer aus den Vorgaben (sonst blieb die obere Grenze −5 über die Glättung im aktiven Satz stehen)
+function abtauDirekt(w, roh, f) {
+    if (!f.fit.abtau || !(f.fit.abtau.n >= ABTAU_DIREKT_N)) { return false; }
+    FIT_KEYS.abtau.forEach(k => { if (f.geliefert[k] && k in roh) { w[k] = clone(roh[k]); } });
+    return true;
+}
+function linieFest(w) {
+    const L0 = Z.standard().abtauLinie;
+    if (Array.isArray(w.abtauLinie) && w.abtauLinie.length === 4) { w.abtauLinie = [L0[0], w.abtauLinie[1], L0[2], L0[3]]; }
 }
 function begrenze(k, v) { const g = GRENZEN[k]; return g && typeof v === 'number' ? Math.max(g[0], Math.min(g[1], v)) : v; }
 function glaetteSatz(alt, neu, a) {                                                // ganzer Parametersatz: gefittete Schlüssel geglättet und begrenzt, alle anderen wie neu (PARAM)
@@ -480,7 +496,8 @@ function raumFehler(D, r, P, id, pr) {
 // vorigen Abtauung und die Frequenz danach (Efficiency). Erst ab ABTAU_MIN Abtauungen im Fenster, sonst bleiben die Vorgaben. Erste Auswertung 19.10.–08.11.
 // (27 Abtauungen bei −1…+2 °C, 85–95 %): Dauer 9 min (Forum 8), Auslöser Rohr ≈ 0,9·AT − 8 (Forum −6: der Zwilling taute zu früh und 1,5–4× zu oft ab),
 // Abstand 131 Laufminuten (Forum-Anker 90), Heizstab beim Abtauen in allen Abtauungen unter der Heizstab-Freigabe (AT < Heater_On_Outdoor_Temp), sonst fast nie.
-const ABTAU_MIN = 8, ABTAU_ABSTAND_MAX = 400;                                     // Abstand nur innerhalb einer Vereisungsphase (längere Lücken = es hat dazwischen nicht vereist)
+const ABTAU_MIN = 8, ABTAU_ABSTAND_MAX = 400;
+const ABTAU_DIREKT_N = 20;                                                       // ab so vielen eigenen Abtauungen gelten die gelernten Abtauwerte ohne 1/3-Glättung (Frost-Nachmessung V5: Glättung hinkte 1,4 K / 13 min nach)                                     // Abstand nur innerhalb einer Vereisungsphase (längere Lücken = es hat dazwischen nicht vereist)
 function abtauungen(D, r) {
     const M = D.M, ep = [];
     for (let i = 1; i < M.length; i++) {
@@ -716,16 +733,22 @@ function entscheide(gK, gC, opt) {
     const v2 = (f, x) => { try { return f(x); } catch (e) { return null; } };
     const ks = GATE.kennzahlen.map(k => {
         const v = x => { try { const w = k.wert(x); return w === null || w === undefined || !isFinite(w) ? null : w; } catch (e) { return null; } };
-        const a = v(gK), b = v(gC), o = {id: k.id, name: k.name, kandidat: a, bisher: b, grenze: k.grenze, tol: k.tol, verletzt: false, warum: null};
+        const fw = (f, x) => typeof f === 'function' ? v2(f, x) : f;                              // tol/grenze fest oder aus der Messung im Testfenster (beide Sätze gleich)
+        const tol = fw(k.tol, gC), grenze = fw(k.grenze, gC), relK = k.rel === undefined ? rel : k.rel, nMin = k.nMin || GATE_N_MIN, eh = k.einheit ? ' ' + k.einheit : '';
+        const a = v(gK), b = v(gC), o = {id: k.id, name: k.name, kandidat: a, bisher: b, grenze: grenze, tol: tol, verletzt: false, warum: null};
         if (a === null || b === null) { o.warum = 'nicht bewertbar (keine Werte)'; return o; }
-        if (k.n) { const na = v2(k.n, gK), nb = v2(k.n, gC); if ((typeof na === 'number' && na < GATE_N_MIN) || (typeof nb === 'number' && nb < GATE_N_MIN)) { o.warum = 'nicht bewertbar (n = ' + na + ' / ' + nb + ', weniger als ' + GATE_N_MIN + ')'; return o; } }
-        if (a - b > Math.max(rel * b, k.tol) + 1e-9) { o.verletzt = true; o.warum = 'schlechter um ' + de(100 * (a - b) / Math.max(1e-9, b), 0) + ' % (' + de(b, 2) + ' → ' + de(a, 2) + ')'; }
-        else if (a > k.grenze && b <= k.grenze) { o.verletzt = true; o.warum = 'über der Ampelgrenze ' + de(k.grenze, 1) + ' (' + de(a, 2) + ')'; }
+        if (k.n) { const na = v2(k.n, gK), nb = v2(k.n, gC); if ((typeof na === 'number' && na < nMin) || (typeof nb === 'number' && nb < nMin)) { o.warum = 'nicht bewertbar (n = ' + na + ' / ' + nb + ', weniger als ' + nMin + ')'; return o; } }
+        if (a - b > Math.max(relK * b, tol) + 1e-9) {
+            o.verletzt = true;
+            o.warum = k.einheit ? 'schlechter um ' + de(a - b, 0) + eh + ' (' + de(b, 0) + ' → ' + de(a, 0) + eh + ', Toleranz ' + de(tol, 1) + ')'
+                : (Math.abs(b) < 1e-9 ? 'schlechter (bisher 0 → ' + de(a, 2) + ')' : 'schlechter um ' + de(100 * (a - b) / b, 0) + ' % (' + de(b, 2) + ' → ' + de(a, 2) + ')');   // bisher 0: keine Division durch 1e-9
+        }
+        else if (a > grenze && b <= grenze) { o.verletzt = true; o.warum = 'über der Ampelgrenze ' + de(grenze, 1) + eh + ' (' + de(a, 2) + ')'; }
         return o;
     });
     const v = ks.filter(k => k.verletzt);
-    return {ergebnis: v.length ? 'abgelehnt' : 'übernommen', grund: v.length ? v.map(k => k.name + ': ' + k.warum).join('; ') : 'nicht schlechter als der bisherige Satz (Strom, Wasserkreis, Pause, Freilauf-Strom und -Abtauungen je höchstens +' + de(100 * rel, 0) + ' %, unter der Ampelgrenze)',
-            kriterium: {rel: rel, tol: GATE.kennzahlen.reduce((o, k) => { o[k.id] = k.tol; return o; }, {}), grenzen: GATE.kennzahlen.reduce((o, k) => { o[k.id] = k.grenze; return o; }, {})}, kennzahlen: ks};
+    return {ergebnis: v.length ? 'abgelehnt' : 'übernommen', grund: v.length ? v.map(k => k.name + ': ' + k.warum).join('; ') : 'nicht schlechter als der bisherige Satz (Strom, Wasserkreis, Pause, Freilauf-Strom je höchstens +' + de(100 * rel, 0) + ' %, Freilauf-Abtauungen je Tag höchstens max(2; 25 %) Stück ab ' + GATE_ABTAU_MIN + ' gemessenen, unter der Ampelgrenze)',
+            kriterium: {rel: rel, tol: ks.reduce((o, k) => { o[k.id] = k.tol; return o; }, {}), grenzen: ks.reduce((o, k) => { o[k.id] = k.grenze; return o; }, {}), abtauMin: GATE_ABTAU_MIN}, kennzahlen: ks};
 }
 
 // ------------------------------------------------------------------ Hauptablauf
@@ -747,9 +770,11 @@ function trainiere(dir, opt) {
     const werte = V ? glaetteSatz(vorW, rohW, anteil) : rohW, werteTraining = V ? glaetteSatz(vorT, rohT, anteil) : rohT;
     if (V) {                                                                         // Kimi 08.11.: Lernwerte, die heute nichts lieferten (zu wenige Abtauungen/Stufen), bleiben beim Champion statt zur Vorgabe zu wandern
         LERN_KEYS.forEach(k => { if (!fall.geliefert[k] && k in vorW) { werte[k] = clone(vorW[k]); } if (!ftr.geliefert[k] && k in vorT) { werteTraining[k] = clone(vorT[k]); } });
+        abtauDirekt(werte, rohW, fall); abtauDirekt(werteTraining, rohT, ftr);
         if (fall.fit.abtau && fall.fit.abtau.n >= ABTAU_MIN) { werte.eisRate = kalibriereEisDaten(D, alle, Z.mitWerten(werte)).eisRate; }   // Klippe: eisRate passend zum geglätteten Satz
         if (ftr.fit.abtau && ftr.fit.abtau.n >= ABTAU_MIN) { werteTraining.eisRate = kalibriereEisDaten(D, T.train, Z.mitWerten(werteTraining)).eisRate; }
     }
+    linieFest(werte); linieFest(werteTraining);
     const PK = Z.mitWerten(werteTraining);
     const gTrain = guete(D, T.train, PK), gTest = guete(D, T.test, PK);
     let roh = null, vorherNeu = null, ent = entscheide(gTest, null, opt.gate);
@@ -769,7 +794,7 @@ function trainiere(dir, opt) {
         werte: werte, werteTraining: werteTraining, herkunft: her,
         fit: {training: ftr.fit, alle: fall.fit},
         guete: {training: gTrain, test: gTest},
-        glaettung: {anteil: rd(anteil, 6), vorher: V ? (opt.vorherTag || null) : null, bindung: {aktiv: bindAktiv, gewicht: lam, skalaRel: BIND_REL, grund: bindAktiv ? 'Dünn-Daten-Phase: ' + abd.grund : (V ? (abd.duenn ? 'Gewicht 0' : 'genug Daten (' + abd.tage + ' Tage, ' + abd.baenderAusreichend + ' Bänder)') : 'kein Vorwert (erster Lauf)')}},
+        glaettung: {anteil: rd(anteil, 6), vorher: V ? (opt.vorherTag || null) : null, abtauDirekt: !!(V && fall.fit.abtau && fall.fit.abtau.n >= ABTAU_DIREKT_N), abtauN: fall.fit.abtau ? fall.fit.abtau.n : 0, bindung: {aktiv: bindAktiv, gewicht: lam, skalaRel: BIND_REL, grund: bindAktiv ? 'Dünn-Daten-Phase: ' + abd.grund : (V ? (abd.duenn ? 'Gewicht 0' : 'genug Daten (' + abd.tage + ' Tage, ' + abd.baenderAusreichend + ' Bänder)') : 'kein Vorwert (erster Lauf)')}},
         roh: roh, vorherNeu: vorherNeu, entscheidung: ent, abdeckung: abd
     };
 }
@@ -829,7 +854,7 @@ function markdown(R) {
     return L.join('\n') + '\n';
 }
 
-module.exports = {fitAbtau, fitDeckelQ3, abtauungen, lade, trennung, fitAlles, guete, trainiere, markdown, lsq, lsqBox, lsqBind, koordinatensuche, gebunden, strafe, glaette, glaetteSatz, abdeckung, bandOf, bandStatus, jeBand, entscheide, abtauIntervall, initAus, eingabe, readMulti,
+module.exports = {abtauDirekt, linieFest, ABTAU_DIREKT_N, fitAbtau, fitDeckelQ3, abtauungen, lade, trennung, fitAlles, guete, trainiere, markdown, lsq, lsqBox, lsqBind, koordinatensuche, gebunden, strafe, glaette, glaetteSatz, abdeckung, bandOf, bandStatus, jeBand, entscheide, abtauIntervall, initAus, eingabe, readMulti,
                   RAEUME, HAUS_RAEUME, BAENDER, GATE, ABDECKUNG, GEFITTET, KEINE_DATEN};
 
 if (require.main === module) {
