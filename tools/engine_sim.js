@@ -2055,7 +2055,7 @@ console.log('--- (b7) Bewertung v7');
     const wirk = R => [].concat(...R.outs.map(o => o.scores)).filter(x => x.typ === 'wirkung' && /Verschiebung/.test(x.text || ''));
     const W7 = wirk(runD(260, rw)), W6 = wirk(runD(260, rw, undefined, E.mergeCfg({sv: 6, rules: {vorausschau: VS3}})));   // runD: mit Tagesgang (Vorschlag in Minute 30, Uebernahme 35)
     check('b7.1 Bewertung v7: der Rueckweg der uebernommenen −1 K (−1 → 0) ist kein Naturexperiment und keine eigene Wirkung; v6 buchte ihn als Naturexperiment',
-          E.SCORE_VER === 7 && W7.length === 1 && /0 → −1|0 → -1/.test(W7[0].text) && W6.length === 2 && W6.some(x => x.naturexperiment === 1), JSON.stringify({v7: W7.map(x => x.text.slice(0, 40)), v6: W6.map(x => [x.text.slice(0, 40), x.naturexperiment])}));
+          E.SCORE_VER >= 7 && W7.length === 1 && /0 → −1|0 → -1/.test(W7[0].text) && W6.length === 2 && W6.some(x => x.naturexperiment === 1), JSON.stringify({v7: W7.map(x => x.text.slice(0, 40)), v6: W6.map(x => [x.text.slice(0, 40), x.naturexperiment])}));
     // b7.2 Quiet: Freigabe 3 -> 0 uebernommen, spaeter zurueck auf 3 (Rueckweg): in v7 keine Deckel-Wirkung/kein Naturexperiment fuer Deckel/Laufzeit
     const qb = i => inp(T0 + i * MIN, {rt: 30 + i, soll: 38, vl: 30, rl: 28.25, rooms: rooms({ki_oben: 21.2}), q: i >= 14 && i < 40 ? 0 : 3, hz: i >= 14 && i < 40 ? 30 : 16});
     const wq = R => [].concat(...R.outs.map(o => o.scores)).filter(x => x.typ === 'wirkung' && x.regel === 'quiet_strecken');
@@ -2077,6 +2077,12 @@ console.log('--- (b7) Bewertung v7');
     const Hs = runD(1500, v5h(400, 430), undefined, d5), Hf = runD(1500, v5h(100, 130), undefined, d5);
     check('vs5.9 Schaden "Heizstab" der Vorausschau: 370-400 min nach dem Vorschlag kein Schaden (Frist 6 h), 70-100 min danach wird er gezaehlt',
           shiftProps(Hs).some(x => x.rule === 'vorausschau' && x.i === 30) && !dmgV(Hs).some(x => x.arten.includes('heizstab')) && dmgV(Hf).some(x => x.arten.includes('heizstab')), JSON.stringify({spaet: dmgV(Hs).map(x => x.arten), frueh: dmgV(Hf).map(x => x.arten)}));
+    // b8 Bewertung v8 (13.11.2026, Frost-Nachmessung V7): Heizstab nur waehrend einer Abtauung (Abtau-Heizstab bei AT < 0 °C) ist kein Schaden; v7 zaehlte ihn
+    const v5hd = (a, b) => i => Object.assign(v5h(a, b)(i), {defrost: i >= a - 3 && i < b ? 1 : 0});
+    const Hd8 = runD(1500, v5hd(100, 106), undefined, d5), Hd7 = runD(1500, v5hd(100, 106), undefined, E.mergeCfg({sv: 7})), Hn8 = runD(1500, v5h(100, 106), undefined, d5);
+    check('b8.1 Bewertung v8: Heizstab 6 min nur in einer Abtauung (70 min nach dem Vorschlag) kein Schaden „Heizstab lief“; mit v7 −50; derselbe Heizstab ohne Abtauung zaehlt auch in v8',
+          E.SCORE_VER === 8 && shiftProps(Hd8).some(x => x.rule === 'vorausschau' && x.i === 30) && !dmgV(Hd8).some(x => x.arten.includes('heizstab')) && dmgV(Hd7).some(x => x.arten.includes('heizstab') && x.sv === 7) &&
+          dmgV(Hn8).some(x => x.arten.includes('heizstab') && x.sv === 8 && x.punkte <= -50), JSON.stringify({v8: dmgV(Hd8).map(x => x.arten), v7: dmgV(Hd7).map(x => [x.arten, x.sv]), ohneAbtau: dmgV(Hn8).map(x => [x.arten, x.sv, x.punkte])}));
 }
 
 // ================================================================== (y) wertung-lueften (22.10.2026): Bewertung v6, Gegenprobe der Raum-Prognosen mit Fremdursachen, Naturexperimente getrennt

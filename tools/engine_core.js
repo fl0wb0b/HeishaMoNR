@@ -9,7 +9,7 @@
 //   ENGINE.applyTick(A, ctx)            -> {A, send, toast, log}                         Ruecklesen, begrenzte Wiederholung, Rueckweg (alle 15 s)
 var ENGINE = (function () {
     var VER = 1;                 // Format der Entscheidungsdatensaetze
-    var SCORE_VER = 7;           // Bewertungsregeln (vorab festgelegt; jede Aenderung erhoeht die Version, alte Punkte bleiben getrennt)
+    var SCORE_VER = 8;           // Bewertungsregeln (vorab festgelegt; jede Aenderung erhoeht die Version, alte Punkte bleiben getrennt)
                                  // v2 (10.10.2026): "verpasst" waehrend einer EIGENEN Sperre/Wartezeit (Standardwerte, ohne Schaden) zaehlt neutral und
                                  // getrennt ("waehrend Sperre"). v1 bleibt nachrechenbar: cfg.sv = 1 (Replay alter Datensaetze).
                                  // v3 (11.10.2026): Verschiebungs-Arbitrierung. Sperren durch eine Gegenregel ("vorrang", "gegenrichtung") entschuldigen
@@ -29,6 +29,10 @@ var ENGINE = (function () {
                                  // (>= SCORE.heizgrenzeMin min); sonst neutral. Handeingriffe wie bisher. Naturexperimente (Aenderung ohne uebernommenen Vorschlag
                                  // dieser Regel, z. B. Quiet von Hand) werden gemessen und getrennt gezaehlt, aber nicht als Regel-Wirkung gepunktet.
                                  // Quiet-Freigabe v6: keine Vergleichslage binnen abtauSperreMin nach dem Abtauende (ausser Heizstab-Naehe). cfg.sv = 5 rechnet v5 nach.
+                                 // v7 (05.11.2026, Kimi-Pruefung): Schaeden nur ueber die Frist der Massnahme, Rueckweg keine neue Wirkung (siehe rk7). cfg.sv = 6.
+                                 // v8 (13.11.2026, Frost-Nachmessung V7): „Heizstab lief“ zaehlt nur fuer Minuten AUSSERHALB einer Abtauung. Der Heizstab der Leisha
+                                 // laeuft bei WP-AT < 0 °C in Abtauminute 3-5 bis zum Abtauende an (38 von 39 Heizstab-Minuten 02.-10.11. lagen in Abtauungen);
+                                 // dagegen hilft weder Quiet noch Comfort (06.11.: 4 x -50 fuer quiet_freigabe). Gilt fuer Faelle und fuer „verpasst“. cfg.sv = 7.
     var MIN = 60000;
 
     // ------------------------------------------------------------------ Hilfen (ohne Locale, damit jede Umgebung gleich rechnet)
@@ -1326,7 +1330,7 @@ var ENGINE = (function () {
             if (over.cop) { c.cop.pelKorrW = copKw(over); }                                                 // COP-Korrektur (ausserhalb 0..200 W: Standard)
             if (over.zaehler && over.zaehler.quelle === 'zaehler') { c.zaehler.quelle = 'zaehler'; }        // Strom vom Zaehler (Shelly) statt TOP16 + Korrektur (cop-ziel 17.10.2026, Standard heishamon)
             if (over.copZiel && typeof over.copZiel === 'object') { c.copZiel = over.copZiel; }              // Gütegrad/dT_verd/Frequenz/Abtau aus cop_eta.json (Container, nur lesen; czParam prueft die Werte)
-            if ([1, 2, 3, 4, 5, 6].indexOf(num(over.sv)) >= 0) { c.sv = num(over.sv); }                   // Bewertungsregeln v1 ... v6 nachrechnen (nur Replay/Tests)
+            if ([1, 2, 3, 4, 5, 6, 7].indexOf(num(over.sv)) >= 0) { c.sv = num(over.sv); }                // Bewertungsregeln v1 ... v7 nachrechnen (nur Replay/Tests)
         }
         return c;
     }
@@ -2630,7 +2634,7 @@ var ENGINE = (function () {
         }
         return null;
     }
-    function svOf(cfg) { return cfg && [1, 2, 3, 4, 5, 6].indexOf(cfg.sv) >= 0 ? cfg.sv : SCORE_VER; }
+    function svOf(cfg) { return cfg && [1, 2, 3, 4, 5, 6, 7].indexOf(cfg.sv) >= 0 ? cfg.sv : SCORE_VER; }
     function ohnePunkte(rule, sv) { return (sv || 1) >= 4 && !!RULE[rule] && RULE[rule].art === 'hinweis'; }   // v4: Hinweise werden gezaehlt, nicht gepunktet
     // Summen je Regel, Regelversion und Bewertungsversion (v1 behaelt den alten Schluessel "regel|vN", damit alte Punkte unveraendert getrennt bleiben)
     function tot(sc, rule, ver, sv) { var k = rule + '|v' + ver + (sv > 1 ? '|s' + sv : ''); return sc.tot[k] = sc.tot[k] || {rule: rule, ver: ver, sv: sv, since: 0, punkte: 0, faelle: 0, bewertet: 0, treffer: 0, fehlalarm: 0, neutral: 0, bs: 0, bsRef: 0, schaden: 0, verpasst: 0, verpasstSperre: 0, wirkN: 0, wirkP: 0, kalib: 0, trefferNeutral: 0, skillN: 0}; }
@@ -2753,7 +2757,7 @@ var ENGINE = (function () {
         var H = Math.min(Math.max.apply(null, C.h), cR && have(cR.maxDauerMin) ? cR.maxDauerMin : Infinity) * MIN;   // Bewertung v7 (Kimi-Pruefung 05.11.): Schaeden hoechstens ueber die Frist der Massnahme (Vorausschau: 6 h, nicht 24 h)
         if (now - C.t0 > H || C.tr.cut || !d.fresh) { return; }
         function hit(k) { if (C.dmg.indexOf(k) < 0) { C.dmg.push(k); } }
-        if (d.heaterOn) { hit('heizstab'); }
+        if (hsSchaden(d, C.sv || 1)) { hit('heizstab'); }
         if (R.art === 'befehl' && (C.dir === 'mehr_leistung' || C.dir === 'soll_runter') && C.tr.wasRun && !d.running && now - C.t0 <= 10 * MIN) { hit('stopp10'); }
         if (now - C.t0 <= 30 * MIN && d.running && have(d.vl) && have(d.soll)) {
             var delta = C.dir === 'soll_runter' ? 1 : 0;
@@ -2915,14 +2919,15 @@ var ENGINE = (function () {
         }
         return null;
     }
-    function missDamage(R, d, cfg, G) {                                             // harte Schaeden im Fenster (v2), je Regel nur die, die ein Vorschlag verhindern sollte
+    function hsSchaden(d, sv) { return !!d.heaterOn && !(sv >= 8 && d.defrost); }   // v8: Abtau-Heizstab ist kein Schaden einer Regel
+    function missDamage(R, d, cfg, G, sv) {                                             // harte Schaeden im Fenster (v2), je Regel nur die, die ein Vorschlag verhindern sollte
         var kinds = SCORE.verpasstSperre.schaden[R.id] || [];
         function hit(k) { if (kinds.indexOf(k) >= 0 && G.dmg.indexOf(k) < 0) { G.dmg.push(k); } }
         if (!d.fresh) { return; }
         if (d.running) { G.wasRun = true; } else if (G.wasRun && !d.abtPause && !d.ablOffen) { hit('takt'); }      // Stillstand in der Abtauung ist kein Takt (abtau-starts)
         if (d.running && have(d.vl) && have(d.soll) && d.vl - d.soll >= cfg.locks.stopK) { hit('ueberschwingen'); }
         d.rooms.forEach(function (x) { if (roomScore(x) && x.t < x.min - SCORE.verpasstSperre.komfortK) { hit('komfort'); } });
-        if (d.heaterOn) { hit('heizstab'); }
+        if (hsSchaden(d, sv || SCORE_VER)) { hit('heizstab'); }
     }
     function missedStep(S, sc, d, cfg, res, recs, sv) {
         var now = d.now;
@@ -2978,7 +2983,7 @@ var ENGINE = (function () {
                 G.last = now; G.ids = G.ids || []; G.ext = G.ext || []; G.dmg = G.dmg || [];
                 if (ob && ob.ids) { G.gesperrt = (G.gesperrt || 0) + dt; ob.ids.forEach(function (x) { if (G.ids.indexOf(x) < 0) { G.ids.push(x); } }); }
                 else { G.frei = (G.frei || 0) + dt; if (ob && ob.ext) { ob.ext.forEach(function (x) { if (G.ext.indexOf(x) < 0) { G.ext.push(x); } }); } }
-                missDamage(R, d, cfg, G);
+                missDamage(R, d, cfg, G, sv);
                 if (G.booked || G.prop || G.excused || now - G.since < need * MIN) { return; }
                 var sp = G.ids.map(function (x) { return OWN_TEXT[x]; }).join(', '), ex = G.ext.length ? '; über den Standardwert verlängert: ' + G.ext.map(function (x) { return OWN_TEXT[x]; }).join(', ') : '';
                 if (G.frei >= need * MIN) {
@@ -2996,7 +3001,7 @@ var ENGINE = (function () {
             } else {
                 // Fenster endet mit einem Verdichter-Stopp (Takt), nachdem die Dauer abgelaufen war: auch das hebt die Entschuldigung auf
                 if (sv > 1 && G.since && !G.booked && !G.prop && !G.excused && now - G.since >= need * MIN && G.gesperrt > 0) {
-                    G.dmg = G.dmg || []; missDamage(R, d, cfg, G);
+                    G.dmg = G.dmg || []; missDamage(R, d, cfg, G, sv);
                     if (G.dmg.length) { G.booked = true; bookMiss({sperre: G.ids.slice(), schaden: G.dmg.slice(), text: ' · während eigener Sperre (' + G.ids.map(function (x) { return OWN_TEXT[x]; }).join(', ') + '), aber Schaden: ' + G.dmg.map(function (k) { return MISS_DMG_TEXT[k]; }).join(', ') + ' → nicht entschuldigt'}); }
                 }
                 G.since = 0;

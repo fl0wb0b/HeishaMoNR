@@ -3,7 +3,7 @@
 // Usage: node tools/engine_replay.js <Datenordner> [Ausgabeordner] [--sv1|--sv2|--sv3|--sv4] [--ohne-eigene] [--ohne-sonne] [--bis=YYYY-MM-DDTHH:MM]   (schreibt decisions-*.jsonl, scores-*.jsonl, events.csv, report.json in den Ausgabeordner)
 //        --ohne-eigene: kein Raum mit eigener Nachheizung (Verhalten bis Raumeinfluss v3/Quiet-Freigabe v3); --bis: nur Minuten bis zu diesem Zeitpunkt (Ortszeit)
 //        --ohne-sonne: kein Raum mit Sonnenfenster (Verhalten bis Raumeinfluss v4); PV aus energy-YYYY-MM.csv (5 min), Bewoelkung aus optimizer-v2 (Wetter hoechstens 60 min alt)
-//        --sv1 ... --sv4: mit den Bewertungsregeln v1 ... v4 nachrechnen (alte Punkte reproduzieren); Standard ist die aktuelle Version (ENGINE.SCORE_VER)
+//        --sv1 ... --sv7: mit den Bewertungsregeln v1 ... v7 nachrechnen (alte Punkte reproduzieren); Standard ist die aktuelle Version (ENGINE.SCORE_VER)
 // Annahmen fuer Werte, die das Protokoll nicht enthaelt, stehen in ASSUME (und im Bericht).
 process.env.TZ = process.env.TZ_SIM || 'Europe/Berlin';
 const fs = require('fs');
@@ -168,7 +168,7 @@ function markdown(R) {                                                          
 module.exports.markdown = markdown;
 
 if (require.main === module) {
-    const svA = process.argv.map(a => /^--sv([1234])$/.exec(a)).filter(Boolean)[0], ropt = svA ? {cfg: {sv: Number(svA[1])}} : {};
+    const svA = process.argv.map(a => /^--sv([1-7])$/.exec(a)).filter(Boolean)[0], ropt = svA ? {cfg: {sv: Number(svA[1])}} : {};
     if (process.argv.indexOf('--ohne-eigene') > 0) { ropt.eigen = []; }
     if (process.argv.indexOf('--ohne-sonne') > 0) { ropt.sonne = []; }
     const bisA = process.argv.map(a => /^--bis=(\d{4})-(\d\d)-(\d\d)T(\d\d):(\d\d)$/.exec(a)).filter(Boolean)[0]; if (bisA) { ropt.bis = new Date(+bisA[1], +bisA[2] - 1, +bisA[3], +bisA[4], +bisA[5]).getTime(); }

@@ -508,7 +508,7 @@ Tabellen aus dem Regelwerk, erzeugt mit `node tools/engine_doc.js`. Die Sim prü
 
 *Übernahme-Grenzen:* `maxAlterMin` 2,5 · `hpMaxAgeMin` 5 · `abstandMin` 10 · `proTag` 6 · `doppelMs` 120000 · `rueckleseS` 90 · `wiederholungen` 2 · `rueckwegVersuche` 3 · `engMaxAlterMin` 5 · `engAbbruchMin` 30
 
-### Bewertungsregeln (Version 7)
+### Bewertungsregeln (Version 8)
 
 | Größe | Wert |
 |---|---|
@@ -561,6 +561,8 @@ Der Nutzer vergibt keine Punkte. Auch „Verwerfen“ ist keine Bewertung: der B
 - Die Summen stehen je Regel, Regelversion und Bewertungsversion im Zustand (`regel|v1` = v1 unverändert, `regel|v1|s2` = v2, `…|s3` = v3, `…|s4` = v4, `…|s5` = v5). Alte Punkte werden nicht neu gerechnet; die Kachel und das Diagramm zeigen nur die aktuelle Version (Freigabereife und Tage zählen ab dem Wechsel neu).
 - Fälle und Wirkungsmessungen, die vor dem Wechsel begannen, werden mit ihrer Version zu Ende bewertet.
 - Nachrechnen mit den alten Regeln: `cfg.sv = 1` … `4` bzw. `node tools/engine_replay.js <Daten> --sv1` (`--sv2`, `--sv3`, `--sv4`). Die Entscheidungen sind in beiden Versionen gleich, nur `sv` im Datensatz und die Bewertung unterscheiden sich (Test).
+
+**Änderung v7 → v8 (13.11.2026, Frost-Nachmessung V7):** Der Schaden „Heizstab lief“ (−50, Fälle und „verpasst“) zählt nur noch für Heizstab-Minuten außerhalb einer Abtauung. Die Leisha schaltet den Heizstab bei WP-Außentemperatur unter 0 °C in Abtauminute 3–5 bis zum Abtauende zu (02.–10.11.: 38 von 39 Heizstab-Minuten in Abtauungen); dagegen hilft weder eine Quiet-Freigabe noch Comfort. Replay November: Quiet-Freigabe −399 → −149 Punkte (5 Fälle am 06.11. ohne „Heizstab lief“), Raumeinfluss −148 → −98 (02.11.); der Fall vom 05.11. bleibt (Heizstab 05:14 eine Minute außerhalb der Abtauung). Treffer und Fehlalarme unverändert. `cfg.sv = 7` rechnet v7 nach.
 
 **Änderung v6 → v7 (05.11.2026, Kimi-Prüfung, Entscheidung Kevin „Vorausschau v5 mit 0,5 K Reserve“):** (1) Ein Rückweg der übernommenen Verschiebung, Quiet-Stufe oder Heizregelung zurück auf den Ausgangswert ist keine neue Wirkung und kein Naturexperiment mehr; bis v6 zählte er als Naturexperiment, so dass ein einziger Klick das Freigabe-Kriterium „≥ 2 Wirkungsfälle“ füllte. (2) „Verpasst“ der Vorausschau zählt ohne Modell-Gate, dafür nur mit der Reihe aus dem Wärmefahrplan (wie die Regel seit v5). Nachrechnen mit `cfg.sv = 6`.
 
