@@ -350,7 +350,9 @@ def baue_status(lauf=None, dienst=None):
         S["training"]["guete_je_band"] = tr.get("guete_je_band")
         S["training"]["abdeckung"] = tr.get("abdeckung")
         if (S["training"]["drift"] or {}).get("auffaellig"):
-            hinweise.append("Training: %d Parameter mit auffälliger Drift" % S["training"]["drift"]["auffaellig"])
+            dl = [x.get("text") for x in (S["training"]["drift"].get("liste") or []) if isinstance(x, dict) and x.get("text")]   # Rohwert statt „vorher → heute“
+            hinweise.append("Training: %d Parameter mit auffälliger Drift%s" % (S["training"]["drift"]["auffaellig"],
+                            (" (roh gelernt; u. a. " + "; ".join(dl[:3]) + ")") if dl else ""))
         if S["training"]["ampel"] == "gelb":
             hinweise.append("Training: Güte gelb (Grenze überschritten)")
         en = tr.get("entscheidung") or {}

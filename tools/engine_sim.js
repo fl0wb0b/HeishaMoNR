@@ -2692,6 +2692,14 @@ if (flowsFile) {
 
 module.exports = {check: check, inp: inp, rooms: rooms, runSeq: runSeq, plantSim: plantSim, T0: T0, applyPathProblems: applyPathProblems};
 if (require.main === module) {
-    console.log('\nERGEBNIS engine_sim: ' + oks + ' OK, ' + fails + ' FAIL');
+    // Replay-Bericht, Tabelle Basisraten (12.11.2026: 13 Zeilen 'undefined', weil die Schluessel Basis-Schluessel sind, keine Regel-IDs)
+{
+    const BN = require('./engine_replay.js').basisName, keys = [];
+    E.RULES.forEach(R => [R.basis, R.basisKurve, R.basisMinus, R.id].forEach(k => { if (k && keys.indexOf(k) < 0) { keys.push(k); } }));
+    const t = keys.map(BN);
+    check('Replay-Basisraten: jeder Basis-Schluessel hat einen Regelnamen, kein undefined, kein | in der Zelle (z. B. ' + BN('heizregelung|v1|eff') + ')',
+          t.every(x => !/undefined/.test(x) && x.indexOf('|') < 0) && BN('heizregelung|v1|eff') === 'Heizregelung (Comfort/Efficiency) (heizregelung · v1 · eff)' && /^Quiet-Freigabe/.test(BN('quiet_freigabe|v2')), t.join(' ; '));
+}
+console.log('\nERGEBNIS engine_sim: ' + oks + ' OK, ' + fails + ' FAIL');
     process.exit(fails ? 1 : 0);
 }

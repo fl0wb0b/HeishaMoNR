@@ -129,6 +129,8 @@ def main():
         d = L["drift"]
         check("Drift gegen den Champion zeigt roh gelernt (ua 0,15 → roh 1,0: auffällig) und übernommen (abgelehnt: keins)",
               d["gegen"] == "2026-11-01" and d["auffaellig"] == 1 and d["liste"][0]["roh"] == 1.0 and d["liste"][0]["uebernommen"] is None and d["auffaellig_uebernommen"] == 0, json.dumps(d))
+        check("Drift-Hinweis mit Rohwert statt „vorher → heute“ mit gleichen Werten (abgelehnt: heute = vorher)",
+              d["liste"][0]["heute"] == d["liste"][0]["vorher"] and "roh gelernt 1,0000 statt 0,1500" in d["liste"][0]["text"] and "nicht übernommen (aktiv bleibt 0,1500)" in d["liste"][0]["text"], d["liste"][0].get("text"))
         with open(os.path.join(tr, "wp_training.md"), encoding="utf-8") as f:
             md = f.read()
         check("wp_training.md: Entscheidung, Tabelle roh/Kandidat/bisher, Drift mit Spalten „roh gelernt“ und „übernommen“",
@@ -154,6 +156,8 @@ def main():
               and T["abdeckung"]["hinweis"].startswith("Zwilling hat unter 0 °C") and T["glaettung"]["anteil"] == 0.333333)
         check("hinweise: Ablehnung und „Zwilling hat unter 0 °C keine Daten“; Ampel nicht strenger (grün bei 20 W / 1,1 K / 8 min)",
               any("abgelehnt" in h for h in S["hinweise"]) and any(h.startswith("Zwilling hat unter 0 °C keine Daten") for h in S["hinweise"]) and T["ampel"] == "gruen", S["hinweise"])
+        check("hinweise: auffällige Drift nennt den roh gelernten Wert", any("auffälliger Drift (roh gelernt; u. a. " in h and "roh gelernt" in h.split("u. a. ")[1] for h in S["hinweise"]),
+              [h for h in S["hinweise"] if "Drift" in h])
         check("Ampel-Grenzen gleich in ot.py, wp_training_nacht.py und wp_training.js (Gate)", ot.GUETE_GRENZEN == N.AMPEL_GRENZEN and _gate_js() == [40, 1.5, 30], _gate_js())
         os.environ["TRAINING_GLAETTUNG"] = "0.5"
         os.environ["TRAINING_BINDUNG"] = "abc"

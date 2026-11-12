@@ -133,6 +133,12 @@ function replay(dataDir, opts) {
 
 module.exports = {replay: replay, buildInputs: buildInputs, readMulti: readMulti, ASSUME: ASSUME};
 
+// Basisraten: die Schlüssel sind Basis-Schlüssel (z. B. 'quiet_strecken|v5', 'heizregelung|v1|eff'), keine Regel-IDs. Bis 12.11.2026 suchte die Tabelle
+// sie unter den Regel-IDs und zeigte 'undefined'. Name über basis/basisKurve/basisMinus/id der Regel, Schlüssel ohne '|' (Tabellentrenner).
+function basisName(k) {
+    const E = ENGINE, r = E.RULES.find(x => [x.basis, x.basisKurve, x.basisMinus, x.id].indexOf(k) >= 0) || E.RULES.find(x => x.id === String(k).split('|')[0]);
+    return (r ? r.name : String(k).split('|')[0]) + ' (' + String(k).replace(/\|/g, ' · ') + ')';
+}
 function markdown(R) {                                                          // Datenteil des Replay-Berichts (docs/replay_*.md), aus dem Lauf erzeugt
     const E = ENGINE, L = [], names = {}; E.RULES.forEach(x => { names[x.id] = x.name; });
     const de = (v, d) => E.de(v, d);
@@ -156,7 +162,7 @@ function markdown(R) {                                                          
     L.push('', '#### Stand je Regel am Ende (Bewertungsregeln v' + (R.report[0] ? R.report[0].sv : E.SCORE_VER) + ')', '', '| Regel | Punkte | Fälle (bewertet) | Treffer (davon neutral, b ≥ p) | Fehlalarm | neutral | Brier-Skill | Schaden | Verpasst | während Sperre (0 Punkte) | Wirkung (davon Kalibrierung) | Freigabereife |', '|---|---|---|---|---|---|---|---|---|---|---|---|');
     R.report.forEach(r => L.push('| ' + r.name + ' | ' + de(r.punkte, 2) + ' | ' + r.faelle + ' (' + r.bewertet + ') | ' + r.treffer + ' (' + r.trefferNeutral + ') | ' + r.fehlalarm + ' | ' + r.neutral + ' | ' + (r.skill === null ? '–' : de(r.skill, 2)) + ' | ' + r.schaden + ' | ' + r.verpasst + ' | ' + (r.art === 'befehl' ? r.verpasstSperre : '–') + ' | ' + r.wirkung.n + ' (' + r.wirkung.kalib + '), ' + de(r.wirkung.punkte, 0) + ' | ' + (r.art === 'befehl' ? (r.reif ? 'reif' : 'nein: ' + r.kriterien.filter(k => !k.ok).map(k => k.k).join(', ')) : 'Hinweis') + ' |'));
     L.push('', '#### Basisraten „bleibt, wie es ist“ am Ende (n Vergleichslagen, k Problem bestand)', '', '| Regel | Horizont | n | k | b |', '|---|---|---|---|---|');
-    Object.keys(R.S.sc.base).forEach(id => Object.keys(R.S.sc.base[id]).forEach(h => { const b = R.S.sc.base[id][h]; L.push('| ' + names[id] + ' | ' + h + ' min | ' + b[0] + ' | ' + b[1] + ' | ' + (b[0] >= E.SCORE.baseMinN ? de((b[1] + 1) / (b[0] + 2), 2) : '0,50 (zu wenig)') + ' |'); }));
+    Object.keys(R.S.sc.base).forEach(id => Object.keys(R.S.sc.base[id]).forEach(h => { const b = R.S.sc.base[id][h]; L.push('| ' + basisName(id) + ' | ' + h + ' min | ' + b[0] + ' | ' + b[1] + ' | ' + (b[0] >= E.SCORE.baseMinN ? de((b[1] + 1) / (b[0] + 2), 2) : '0,50 (zu wenig)') + ' |'); }));
     const ub = E.uebSumme(R.S, R.inputs[R.inputs.length - 1].t), hl = E.hochlaufSumme(R.S);
     L.push('', '#### Kennzahlen (nur Anzeige)', '', '| Kennzahl | Wert |', '|---|---|');
     L.push('| Überheizt ab ' + E.UEB.atC + ' °C (letzte ' + E.UEB.tage + ' Tage): Laufenergie, während alle Räume über der Bandmitte lagen | ' + de(ub.el, 2) + ' kWh Strom, ' + de(ub.th, 1) + ' kWh Wärme, ' + ub.min + ' min von ' + ub.minAlle + ' Laufminuten ab ' + E.UEB.atC + ' °C (' + de(ub.elAlle, 2) + ' kWh Strom; ohne Raumwerte ' + ub.minOhne + ' min) |');
@@ -166,6 +172,7 @@ function markdown(R) {                                                          
     return L.join('\n');
 }
 module.exports.markdown = markdown;
+module.exports.basisName = basisName;
 
 if (require.main === module) {
     const svA = process.argv.map(a => /^--sv([1234])$/.exec(a)).filter(Boolean)[0], ropt = svA ? {cfg: {sv: Number(svA[1])}} : {};

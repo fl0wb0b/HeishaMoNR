@@ -192,6 +192,14 @@ def drift(alt, neu, herkunft, roh=None):
     return zeilen
 
 
+def drift_text(z, uebernommen):
+    """Kurztext je auffälligem Parameter mit dem roh gelernten Wert (Drift ist die Änderung roh gegen vorher). Bis 12.11.2026 lasen Berichte nur
+    vorher → heute; bei abgelehntem Satz ist heute = vorher, der Text zeigte dann zweimal denselben Wert (z. B. abtauLinie[1] −6,67 → −6,67)."""
+    name, wa, wn, d, rel, auff, gr, wr, relr = z
+    t = "%s: roh gelernt %s statt %s (%s %%)" % (name, zahl(wr, 4), zahl(wa, 4), "–" if relr is None else ("+" if relr > 0 else "") + zahl(100 * relr, 1))
+    return t + (", übernommen %s" % zahl(wn, 4) if uebernommen else ", nicht übernommen (aktiv bleibt %s)" % zahl(wa, 4))
+
+
 def auffaellig_uebernommen(zeilen):
     return sum(1 for z in zeilen if z[3] is not None and abs(z[3]) > DRIFT_ABS and (z[4] is None or abs(z[4]) > DRIFT_REL))
 
@@ -402,7 +410,8 @@ def main(argv=None):
                          "drift": {"gegen": alt_r[0] if alt_r else None, "werte": len(zeilen), "auffaellig": sum(1 for z in zeilen if z[5]),
                                    "auffaellig_uebernommen": auffaellig_uebernommen(zeilen) if uebernommen else 0,
                                    "liste": [{"name": z[0], "vorher": z[1], "heute": z[2] if uebernommen else z[1], "roh": z[7], "uebernommen": z[2] if uebernommen else None,
-                                              "rel": None if z[8] is None else round(z[8], 4), "rel_uebernommen": None if (z[4] is None or not uebernommen) else round(z[4], 4)} for z in zeilen if z[5]]},
+                                              "rel": None if z[8] is None else round(z[8], 4), "rel_uebernommen": None if (z[4] is None or not uebernommen) else round(z[4], 4),
+                                              "text": drift_text(z, uebernommen)} for z in zeilen if z[5]]},
                          "entscheidung": {"ergebnis": ent["ergebnis"], "grund": ent["grund"], "aktiv": aktiv_datei, "aktiv_tag": aktiv_tag, "kandidat_datei": ent["kandidat_datei"],
                                           "bisher_tag": ent["bisher_tag"], "kandidat": kurz_json(g_kand), "bisher": kurz_json(g_bisher) if g_bisher else None, "roh": kurz_json(g_roh),
                                           "kriterium": ent["kriterium"], "verletzt": [k["name"] for k in ent["kennzahlen"] or [] if k.get("verletzt")]},
