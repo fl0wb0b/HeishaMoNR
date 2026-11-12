@@ -73,6 +73,49 @@ console.log('--- Gate: Champion gegen Herausforderer (synthetische Sätze)');
     check('Grenzen des Gates = Ampel-Grenzen in ot.py (40 W, 1,5 K, 30 min)', T.GATE.kennzahlen.filter(k => k.ampel !== false).map(k => k.grenze).join(',') === '40,1.5,30');
 }
 
+console.log('--- Zwilling V5 (Frost-Nachmessung): Startwerte, Abtaulinie, ungeglättet ab 20 Abtauungen, Heizstab wie Anlage');
+{
+    const P = Z.standard();
+    check('Startwerte: Abtaulinie obere Grenze −6, abtauDauerMin 9, nachAbtauEffMin 39; Heizstab Ein −4 K / 30 min / Aus −1 K / 2,9 kW',
+          P.abtauLinie[3] === -6 && P.abtauDauerMin === 9 && P.nachAbtauEffMin === 39 && P.hsStartK === -4 && P.hsDelayMin === 30 && P.hsStopK === -1 && P.hsKW === 2.9, JSON.stringify([P.abtauLinie, P.abtauDauerMin, P.nachAbtauEffMin, P.hsStartK, P.hsDelayMin, P.hsStopK, P.hsKW]));
+    const PL = Object.assign({}, P, {abtauLinie: [0.9, -8.1, -22.5, -6]}), ok = (x, y) => Math.abs(x - y) < 1e-9;
+    check('Abtaulinie mit b −8,1 (Messung): WP-AT 3 °C → −6 (begrenzt, vorher −5), 0 °C → −8,1, −1 °C → −9,0 (gemessen −8 / −9)', ok(Z.abtauLinieAt(PL, 3), -6) && ok(Z.abtauLinieAt(PL, 0), -8.1) && ok(Z.abtauLinieAt(PL, -1), -9), [3, 0, -1].map(a => Z.abtauLinieAt(PL, a)).join(' / '));
+    const w = {abtauLinie: [0.9, -6.67, -22.5, -5]}; T.linieFest(w);
+    check('aktiver Satz mit oberer Grenze −5: nur b bleibt gelernt, Steigung/Grenzen aus den Vorgaben', JSON.stringify(w.abtauLinie) === '[0.9,-6.67,-22.5,-6]', JSON.stringify(w.abtauLinie));
+    const vor = {abtauLinie: [0.9, -6.67, -22.5, -6], nachAbtauEffMin: 26, abtauDauerMin: 8.33, abtauPelW: 951}, roh = {abtauLinie: [0.9, -8.1, -22.5, -6], nachAbtauEffMin: 38, abtauDauerMin: 9, abtauPelW: 864};
+    const geliefert = {abtauLinie: true, nachAbtauEffMin: true, abtauDauerMin: true};
+    const gl = T.glaetteSatz(vor, roh, 1 / 3), w20 = T.glaetteSatz(vor, roh, 1 / 3), w19 = T.glaetteSatz(vor, roh, 1 / 3);
+    const d20 = T.abtauDirekt(w20, roh, {fit: {abtau: {n: 29}}, geliefert: geliefert}), d19 = T.abtauDirekt(w19, roh, {fit: {abtau: {n: 19}}, geliefert: geliefert});
+    check('29 eigene Abtauungen: Abtauwerte ungeglättet (b −8,1, Halt 38 min, Dauer 9), nicht gelieferte (abtauPelW) bleiben geglättet; 19: 1/3-Glättung (b −7,15)',
+          d20 && w20.abtauLinie[1] === -8.1 && w20.nachAbtauEffMin === 38 && w20.abtauDauerMin === 9 && w20.abtauPelW === gl.abtauPelW && !d19 && Math.abs(w19.abtauLinie[1] - (-7.146667)) < 1e-3 && w19.nachAbtauEffMin === 30,
+          JSON.stringify({w20: w20, w19: w19}));
+}
+
+console.log('--- Gate: Freilauf-Abtauungen je Tag in Stück, erst ab 8 gemessenen (V6, Frost-Nachmessung 5a)');
+{
+    // fl: [[Zwilling, Messung], ...] je Testtag; Freilauf-Strom gleich (0 %), damit nur das Abtau-Kriterium zählt
+    const g = (fl, el) => ({teil: {pelRmseW: 20, wasserkreisRmseK: 1}, zyklenHausSimuliert: {pause: {medianAbsMin: 5, n: 5}},
+        freilauf: fl.map(([z, m], i) => ({tag: '2026-11-0' + (i + 1), abtauZwilling: z, abtauMessung: m})),
+        freilaufSumme: {kwhElZwilling: el === undefined ? 10 : el, kwhElMessung: 10, abtauZwilling: fl.reduce((s, x) => s + x[0], 0), abtauMessung: fl.reduce((s, x) => s + x[1], 0)}});
+    const ab = e => e.kennzahlen.find(k => k.id === 'freilaufAbtau');
+    const k12 = T.entscheide(g([[2, 0], [2, 2], [2, 1]]), g([[1, 0], [1, 2], [2, 1]]));
+    check('Kandidat 12.11. (je Tag 2/1/0 · 2/1/2 · 2/2/1, 3 gemessen): nicht bewertbar, übernommen (vorher: abgelehnt, „0,33 → 1,00“)',
+          k12.ergebnis === 'übernommen' && /nicht bewertbar \(n = 3 \/ 3, weniger als 8\)/.test(ab(k12).warum), ab(k12).warum);
+    const k09 = T.entscheide(g([[6, 7], [3, 3], [0, 0]]), g([[15, 7], [6, 3], [0, 0]]));
+    check('Fall 09.11. (10 gemessen, Kandidat 1 Stück daneben, bisher 11): übernommen wie bisher', k09.ergebnis === 'übernommen' && ab(k09).kandidat === 1 && ab(k09).bisher === 11, JSON.stringify(ab(k09)));
+    const um = T.entscheide(g([[15, 7], [6, 3], [0, 0]]), g([[6, 7], [3, 3], [0, 0]]));
+    check('umgekehrt (Kandidat 11 Stück daneben, bisher 1, 10 gemessen): abgelehnt, Grund in Stück mit Toleranz 2,5', um.ergebnis === 'abgelehnt' && /schlechter um 10 Stück \(1 → 11 Stück, Toleranz 2,5\)/.test(um.grund), um.grund);
+    const tol = T.entscheide(g([[5, 4], [5, 4], [3, 4]]), g([[4, 4], [4, 4], [4, 4]]));
+    check('12 gemessen: Kandidat 3 Stück je Tag daneben, bisher 0 → Toleranz max(2; 25 % = 3): übernommen; 4 Stück: abgelehnt',
+          tol.ergebnis === 'übernommen' && ab(tol).tol === 3 && T.entscheide(g([[6, 4], [5, 4], [3, 4]]), g([[4, 4], [4, 4], [4, 4]])).ergebnis === 'abgelehnt', JSON.stringify(ab(tol)));
+    const aus = T.entscheide(g([[6, 4], [2, 4], [4, 4]]), g([[4, 4], [4, 4], [4, 4]]));
+    check('kein Ausgleich zwischen Tagen: +2 und −2 ergeben 4 Stück Fehler (Summe wäre 0), 12 gemessen: abgelehnt', aus.ergebnis === 'abgelehnt' && ab(aus).kandidat === 4, JSON.stringify(ab(aus)));
+    const null0 = T.entscheide(g([[4, 4], [4, 4], [4, 4]], 12), g([[4, 4], [4, 4], [4, 4]], 10));
+    const fs = null0.kennzahlen.find(k => k.id === 'freilaufStrom');
+    check('Prozentanzeige bei bisher = 0: „bisher 0 → 0,20“ statt Division durch 1e-9', fs.verletzt && fs.warum === 'schlechter (bisher 0 → 0,20)' && !/33333/.test(null0.grund), fs.warum);
+    check('Gate-Kriterium im Ergebnis: Mindestzahl 8 Abtauungen, Toleranz/Grenze als Zahl aus der Messung', k09.kriterium.abtauMin === 8 && k09.kriterium.tol.freilaufAbtau === 2.5 && k09.kriterium.grenzen.freilaufAbtau === 3, JSON.stringify(k09.kriterium));
+}
+
 console.log('--- Außentemperatur-Bänder und Abdeckung (synthetische Daten)');
 {
     check('Bandgrenzen: −0,1 → < 0; 0 → 0…4; 3,9 → 0…4; 4 → 4…8; 12 → ≥ 12; ohne AT → keins', T.bandOf(-0.1) === 0 && T.bandOf(0) === 1 && T.bandOf(3.9) === 1 && T.bandOf(4) === 2 && T.bandOf(12) === 4 && T.bandOf(null) === -1);

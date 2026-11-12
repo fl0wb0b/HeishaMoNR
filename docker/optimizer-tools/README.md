@@ -54,6 +54,10 @@ sicherung/daten-<tag>.tar.gz    Sicherung der Protokolle (+ .sha256), 120 Tage; 
 sicherung/letzte.json           Inhalt, Größe und Prüfsumme der letzten Sicherung
 ```
 
+**Kennzahlen, Energie-Rechenweg 2 (frost-1, 13.11.2026):** `energie.waerme_kwh` kommt aus `leistung_th_berechnet_w` mit negativer Abtauwärme, `energie.strom_kwh` enthält den Heizstab-Kanal (`energie.heizstab_kwh`, > 100 W); daraus `energie.cop` und `effizienz.kwh_je_gradstunde`. Die bisherigen Werte stehen als `*_alt` daneben (in `tage.csv` hinten angehängt), `energie.rechenweg` = 2. Tage, die vor frost-1 gerechnet wurden, haben die alten Werte, bis `kennzahlen --alle` läuft (macht `nas-container/einspielen_ot_frost1.sh`).
+
+**Training, Gate „Freilauf Abtauungen“ (frost-1):** Fehler je Testtag in Stück, bewertet erst ab 8 gemessenen Abtauungen, Toleranz max(2; 25 %).
+
 Alle Dateien haben Modus 644, die Unterordner 2755: Node-RED (uid 1000) kann alles lesen, aber nur im obersten Ordner schreiben.
 
 ## status.json (Format 2)
@@ -281,7 +285,7 @@ docker/optimizer-tools/test.sh <Kopie von /data/optimizer> [<bonsai_beobachter.p
 Das Skript prüft:
 
 - Bau, Lauf `nacht` mit Zeit- und Speichermessung;
-- Parameter bit-identisch zum PC-Lauf und Kennzahlen gleich dem Beobachter;
+- Parameter bit-identisch zum PC-Lauf und Kennzahlen gleich dem Beobachter (seit frost-1 gegen die `*_alt`-Werte; mit Zählerquelle in `config.json` sind Strom, COP, kWh/Kh und Abtau-Strom erlaubte Unterschiede, weil der Beobachter TOP16 + 80 W rechnet);
 - Ergebnisordner wie auf der NAS (2775, `1000:1000`, Container mit Zusatzgruppe 1000); die Ergebnisse werden als uid 1000 gelesen (Sicht von Node-RED);
 - Sicherheit: Attrappen von `owm.json`/`vrm.json` sind trotz Gruppe 1000 unlesbar, das Dateisystem ist nur lesend, kein Netz, uid 10001;
 - Sicherung: Prüfsumme (`sha256sum -c` und in `status.json`), keine Geheimnisse im Archiv (auch nicht eine lesbare `owm-alt.json`), Wiederherstellung bit-identisch, Aufbewahrung (130 Tage alt gelöscht, Monatserster behalten);

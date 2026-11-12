@@ -112,10 +112,10 @@ const PARAM = {
     pipeSlowMin: [120, 'min', 'F/A', 'Zeitkonstante des langsamen Frequenzmittels = träges Expansionsventil: es öffnet höchstens 30 Halbschritte je 90 s und schließt nach einem Start mit kleiner Frequenz über ~2 h (Kältekreis eingeschwungen nach ~2 h 25 min: L7 4886674, 4549934, 4538558); Spanne 90–120 min, bis 15.10. 30 min (A)'],
     // Abtauen (keine eigenen Daten: Herkunft F/H/A)
     abtauAtMax: [10, '°C', 'F', 'Abtau-Auslöser bis WP-AT unter 10 °C: Pseudoabtauungen bis 9 °C (L9 nach FM-Selbstabschaltung 4011622; 7 °C 4230815; 6 °C 3456847), über 10 °C nie (4466101); bis 15.10. 5 °C (Handbuch J Force-Defrost-Grenze)'],
-    abtauLinie: [[0.9, -6, -22.5, -5], '°C', 'H/F', 'Auslöser Rohr < min(d; max(c; a·WP-AT + b)) = Handbuchlinie y = 0,9·AT − 11 (begrenzt −27,5…−6 °C, Handbuch J 15.2.2, 3585656, 3585691) + 5 K, weil die L bis zu 5–6 K über der Linie auslöst (4371449, 4472442, 4890839); obere Grenze real −5 °C (Abtauung schon bei Rohr −6 °C, 4137878). Anker: −9 °C → −14,1 °C (4600685 ✓), 0 °C → −6 °C (3971807 ✓); bis 15.10. −13,5 + 0,6·(AT + 9)'],
+    abtauLinie: [[0.9, -6, -22.5, -6], '°C', 'H/F', 'Obere Grenze −6 statt −5 seit 13.11.2026 (Frost-Nachmessung: bei WP-AT 2–3 °C löste die Anlage erst bei Rohr −6…−7 °C aus, n = 3; mit −5 taute der Zwilling über 2 °C 9–12-mal statt 1-mal ab). Auslöser Rohr < min(d; max(c; a·WP-AT + b)) = Handbuchlinie y = 0,9·AT − 11 (begrenzt −27,5…−6 °C, Handbuch J 15.2.2, 3585656, 3585691) + 5 K, weil die L bis zu 5–6 K über der Linie auslöst (4371449, 4472442, 4890839); obere Grenze real −5 °C (Abtauung schon bei Rohr −6 °C, 4137878). Anker: −9 °C → −14,1 °C (4600685 ✓), 0 °C → −6 °C (3971807 ✓); bis 15.10. −13,5 + 0,6·(AT + 9)'],
     abtauHaltMin: [3, 'min', 'H', 'Rohr 3 min am Stück unter der Linie (Handbuch J 15.2.2)'],
     abtauMinHeizMin: [35, 'min', 'H/F', 'Heizzeit seit der letzten Abtauung > 35 min (Handbuch J; L7 4613622)'],
-    abtauDauerMin: [8, 'min', 'F', 'L5: 8 min (4288323); J ~9 min (4598540), Handbuch max. 9,5 min'],
+    abtauDauerMin: [9, 'min', 'M/F', 'eigene Messung 28.10.–11.11.2026: 9 min (8–11, 29 Abtauungen, Startwert seit 13.11.); L5: 8 min (4288323); J ~9 min (4598540), Handbuch max. 9,5 min'],
     abtauWaermeKWh: [0.5, 'kWh', 'F/A', 'Wärmeentzug aus dem Heizwasser je Abtauung, Spanne 0,3–1,6 kWh: 1,6 kWh im Januar-Extrem, „sonst deutlich weniger“ (L7 3810731); 300 l × 2 K ≈ 0,7 kWh (4076731); WMZ ≤ 1 kWh für 3 Abtauungen (4084491); [J] Richtwert 0,4 kWh (4075412). 0,5 kWh = unteres Drittel (Heizkörper ohne Puffer). Der interne Wärmezähler bucht die Abtauwärme positiv (L5 4074654, 4752841): im Zwilling zählt Heat_Energy_Production beim Abtauen positiv, die Wärme des Wasserkreises (Heat_Power_Production_Extra) negativ'],
     abtauHz: [58, 'Hz', 'F', 'Abtauen bei ~58 Hz (L5 4092731, L7 4548650)'],
     // abtau-starts 20.10.2026: das 4-Wege-Ventil schaltet nur drucklos, der Verdichter geht vor und nach der Kreisumkehr aus (2 Starts je Abtauung: 4899279, 4899283,
@@ -124,7 +124,7 @@ const PARAM = {
     abtauStoppVorMin: [1, 'min', 'F', 'Verdichter vor der Kreisumkehr aus, bis Vor- und Rücklauf gleich sind (L7 3724609); „nur einen sehr kleinen Moment“ (2996819): im Minutentakt höchstens 1 min, 0 = nicht sichtbar; Signal sofort zu Beginn (3957304)'],
     abtauStoppNachMin: [3, 'min', 'F', 'Verdichter nach der Kreisumkehr aus; das Abtausignal endet ~3 min danach (4616566), Neustart im Heizbetrieb um das Signalende (4616446); Kreisumkehr Stopp → Stopp ~4–6 min (3724609, 4879520)'],
     abtauPelW: [1000, 'W', 'A', 'Stromaufnahme beim Abtauen (TOP16)'],
-    nachAbtauEffMin: [20, 'min', 'F', 'Efficiency hält nach dem Abtauen ~20 min niedrige Frequenz (L5 4582615, L7 4095732)'],
+    nachAbtauEffMin: [39, 'min', 'M/F', 'eigene Messung 28.10.–11.11.2026: Efficiency hält nach dem Abtauen 38–39 min 16–17 Hz (7 von 9 Abtauungen, festes Zeitglied der Anlage; Startwert seit 13.11.); Forum: Efficiency hält nach dem Abtauen ~20 min niedrige Frequenz (L5 4582615, L7 4095732)'],
     nachAbtauComfortHz: [50, 'Hz', 'F', 'nach dem Abtauen startet die L5 normalerweise mit ~50 Hz (4542523); hier 3 min, gedeckelt durch die Höchstfrequenz'],
     startHochAtC: [4, '°C', 'F', 'Comfort-Kaltstart: bei WP-AT ≤ +4 °C fährt die L im Comfort unabhängig vom Soll mit hoher Frequenz an (L7 4005690, 4005591, 3474343, 3456847)'],
     startHochHz: [67, 'Hz', 'F', 'Frequenz des Comfort-Kaltstarts: L7 67–68 Hz (gemessen bis 76 Hz, 620 U/min Lüfter, Heißgas ~80 °C, Rohr −20 °C, danach Abtauung; 4005690, 3474343); L5 unbekannt (48 Hz nach nächtlicher Abschaltung bei 2 °C, 4517558) – Auftrag Winterpaket: 67 Hz; nicht über den Quiet-Deckel (Quiet 1–3)'],
@@ -139,12 +139,12 @@ const PARAM = {
     // Heizstab (Einstellungen gemessen, Logik Handbuch J)
     hsFrei: [1, '0/1', 'M', 'heizstab_raum_frei = 1 im Protokoll; ob der Heizstab an der Anlage wirklich freigegeben ist, ist offen (L ab Werk aus, F 3957497)'],
     hsOnAT: [0, '°C', 'M', 'Heater_On_Outdoor_Temp 0 °C'],
-    hsStartK: [-3, 'K', 'M', 'Heater_Start_Delta −3 K'],
-    hsStopK: [-2, 'K', 'H/F', 'Aus bei Vorlauf ≥ Soll − 2 K: Werkseinstellung Heizstab Aus −2 K (Handbuch J Z. 7049–7075), L7-Besitzer −5 °C / 30 min / Ein −4 K / Aus −2 K (4580843); Heater_Stop_Delta (TOP98) seit 15.10. im Protokoll; bis 15.10. −1 K (A)'],
-    hsDelayMin: [15, 'min', 'M', 'Heater_Delay_Time 15 min nach Thermo-Ein'],
+    hsStartK: [-4, 'K', 'M', 'Heater_Start_Delta −4 K (Anlage, Protokoll 28.10.–12.11.2026; Ein in Abtauminute 3–5 bei Vorlauf ~4 K unter Soll; bis 12.11. −3 K)'],
+    hsStopK: [-1, 'K', 'M', 'Heater_Stop_Delta −1 K (Anlage, Protokoll 28.10.–12.11.2026; bis 12.11. −2 K nach Handbuch). Aus bei Vorlauf ≥ Soll − 2 K: Werkseinstellung Heizstab Aus −2 K (Handbuch J Z. 7049–7075), L7-Besitzer −5 °C / 30 min / Ein −4 K / Aus −2 K (4580843); Heater_Stop_Delta (TOP98) seit 15.10. im Protokoll; bis 15.10. −1 K (A)'],
+    hsDelayMin: [30, 'min', 'M', 'Heater_Delay_Time 30 min nach Thermo-Ein (Anlage, Protokoll 28.10.–12.11.2026; bis 12.11. 15 min)'],
     hsPumpeMin: [9, 'min', 'H', 'nach 9 min Pumpenlauf (Handbuch J 14.6.1)'],
     hsSperreMin: [20, 'min', 'H', '20 min seit dem letzten Aus (Handbuch J 14.6.1)'],
-    hsKW: [3, 'kW', 'A', 'Heizstab-Leistung (L-Innengerät 3 kW, nicht gemessen)'],
+    hsKW: [2.9, 'kW', 'M', 'Heizstab-Leistung gemessen: Zählerkanal Heizstab 2,80–2,93 kW (Median je Episode, 8 Episoden 02.–10.11.2026; Nennwert L-Innengerät 3 kW)'],
     hsBeimAbtauen: [0, '0/1', 'F', 'die L schaltet den Heizstab beim Abtauen nicht zu (L5 4879325, 4288323); Handbuch J: bei Wassereintritt < 27 °C schon'],
     heizgrenzeEinstellung: [12, '°C', 'M', 'Heating_Off_Outdoor_Temp (Einstellung, für die Maschine)']
 };

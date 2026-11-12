@@ -16,6 +16,14 @@ import sys
 import tempfile
 
 sys.dont_write_bytecode = True
+ALT_PAARE = ["energie.strom_kwh", "energie.strom_kwh_roh", "energie.waerme_kwh", "energie.cop", "energie.cop_roh", "effizienz.kwh_je_gradstunde"]
+NUR_CONTAINER = ["energie.rechenweg", "energie.heizstab_kwh", "energie.waerme_berechnet_min"]
+VERGLEICH_7T = ["effizienz.vergleich_tage", "effizienz.vergleich_mittel", "effizienz.abweichung_prozent"]
+# Zaehlerquelle (cop-ziel 17.10.2026, config.json "zaehler": {"quelle": "zaehler"}): der Container nimmt den Strom vom Shelly, der Beobachter rechnet
+# weiter TOP16 + 80 W und kennt die Zaehler-Schluessel nicht. Diese Unterschiede bestanden schon vor Rechenweg 2 (einwire-protokoll, 12.11. geprueft).
+ZAEHLER_ABH = ["energie.strom_kwh", "energie.cop", "effizienz.kwh_je_gradstunde", "abtau.strom_wh"]
+NUR_CONTAINER_ZAEHLER = ["energie.quelle", "energie.strom_kwh_zaehler", "energie.zaehler_min"]
+META = ["fakten.quelle"]                                   # Herkunftsvermerk des Beobachters, keine Kennzahl
 
 
 def main():
@@ -38,12 +46,30 @@ def main():
                 Fk = json.load(f)["fakten"]
             # JSON kennt keine Tupel/Datumswerte: beide Seiten über JSON normalisieren
             Fb = json.loads(json.dumps(Fb, default=str))
-            diff = []
+            # Energie-Rechenweg 2 (kennzahlen_tag.py, 13.11.2026): der Container rechnet Wärme mit negativer Abtauwärme und Strom mit Heizstab;
+            # der Beobachter rechnet weiter wie bisher. Verglichen wird sein Wert mit dem *_alt-Wert des Containers; nur im Container: Rechenweg-Schlüssel.
+            # Der 7-Tage-Vergleich nutzt die neue kWh/Kh und darf abweichen, wenn sich Strom durch den Heizstab unterscheidet.
+            if Fk.get("energie.rechenweg") == 2:
+                for k in ALT_PAARE:
+                    if k + "_alt" in Fk:
+                        Fk[k] = Fk.pop(k + "_alt")
+                for k in NUR_CONTAINER:
+                    Fk.pop(k, None)
+            zaehler = Fk.get("energie.quelle") == "zaehler"
+            for k in META:
+                Fb.pop(k, None)
+            for k in NUR_CONTAINER_ZAEHLER:                # nur im Container (Zaehler-Spalten), dem Beobachter unbekannt
+                if k not in Fb:
+                    Fk.pop(k, None)
+            erl = VERGLEICH_7T + (ZAEHLER_ABH if zaehler else [])
+            diff, erlaubt = [], []
             for k in sorted(set(Fb) | set(Fk)):
                 if Fb.get(k) != Fk.get(k):
-                    diff.append((k, Fb.get(k), Fk.get(k)))
-            gleich = len(set(Fb) | set(Fk)) - len(diff)
-            print("%s: %d Schlüssel gleich, %d verschieden" % (t, gleich, len(diff)))
+                    (erlaubt if k in erl else diff).append((k, Fb.get(k), Fk.get(k)))
+            gleich = len(set(Fb) | set(Fk)) - len(diff) - len(erlaubt)
+            print("%s: %d Schlüssel gleich, %d verschieden%s" % (t, gleich, len(diff), (", %d erlaubt (7-Tage-Vergleich nach Rechenweg 2%s)" % (len(erlaubt), "; Strom aus dem Zähler, Beobachter TOP16 + 80 W" if zaehler else "")) if erlaubt else ""))
+            for k, a, b in erlaubt:
+                print("   (erlaubt) %s: Beobachter %r, Container %r" % (k, a, b))
             for k, a, b in diff:
                 print("   %s: Beobachter %r, Container %r" % (k, a, b))
             schlecht += len(diff)
