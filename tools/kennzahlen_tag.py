@@ -40,6 +40,15 @@ KORR_TXT = "Strom intern +%d W korrigiert" % PEL_KORR_W
 # Stromzaehler (cop-ziel 17.10.2026): mit config.json "zaehler": {"quelle": "zaehler"} kommt der Strom jeder Minute aus der Spalte zaehler_wp_w (Shelly, ohne Heizstab),
 # Minuten ohne Zaehlerwert (leer = Zaehler fehlt oder aelter als 5 min) weiter TOP16 + PEL_KORR_W. Standard "heishamon": alles wie bisher.
 QUELLE = "heishamon"
+# Energie-Rechenweg 2 (Frost-Nachmessung 12.11.2026, Befund N1): Waerme aus leistung_th_berechnet_w (Durchfluss x (VL - RL)) MIT der negativen
+# Abtauwaerme (HeishaMon/TOP zaehlt die Abtauung positiv), Strom einschliesslich Zaehlerkanal Heizstab (zaehler_heizstab_w > 100 W). Damit sank der
+# Tages-COP an Frosttagen um 5-14 % (05.11. 4,29 -> 3,80; 06.11. 4,03 -> 3,46); an Tagen ohne Abtauen +-3 %. Die bisherigen Werte bleiben als *_alt.
+# Die Dateiversion (VERSION) bleibt 1, weil nur Werte und neue Schluessel dazukommen (der Bonsai-Beobachter prueft version == 1);
+# der Rechenweg steht in energie.rechenweg.
+ENERGIE_RECHENWEG = 2
+HEIZSTAB_MIN_W = 100                            # Zaehlerkanal Heizstab: darunter Ruhestrom/Rauschen, nicht gezaehlt (wie frost-1112/f1_abtauen.py)
+SPALTEN_ALT = ["energie.rechenweg", "energie.heizstab_kwh", "energie.strom_kwh_alt", "energie.waerme_kwh_alt", "energie.cop_alt",
+               "effizienz.kwh_je_gradstunde_alt"]
 CSV_SPALTEN_ZUSATZ = ["energie.waerme_kwh", "energie.cop", "laeufe.anzahl", "pausen.anzahl", "pausen.mittel_min", "abtau.anzahl", "abtau.minuten",
                       "abtau.pseudo_verdacht", "abtau.mild_sonne_anzahl", "daten.minutenzeilen", "daten.luecken_ueber_10min", "daten.groesste_luecke_min",
                       "maschine.datensaetze", "maschine.vorschlaege", "punkte.datensaetze", "befunde.warnung", "befunde.hinweis"]
@@ -150,6 +159,8 @@ def zusammenfassung(d, tag):
     minuten = {"lauf": 0.0, "pause": 0.0, "heizgrenze": 0.0, "?": 0.0}
     el = el_roh = th = 0.0
     el_z = z_min = 0.0
+    th_neu = hs_kwh = 0.0
+    th_ber_min = 0
     segs = []
     for i, r in enumerate(Q):
         w = min(10.0, ((Q[i + 1]["_t"] - r["_t"]).total_seconds() / 60) if i + 1 < len(Q) else 1.0)
@@ -164,12 +175,24 @@ def zusammenfassung(d, tag):
         if zw is not None:
             el_z += zw * w / 60000
             z_min += w
+        hs = zahl(r.get("zaehler_heizstab_w"))
+        if hs is not None and hs > HEIZSTAB_MIN_W:
+            hs_kwh += hs * w / 60000
         if z == "lauf":
             pt = zahl(r.get("leistung_th_heisha_w"))
             if pt is None:
                 pt = zahl(r.get("leistung_th_berechnet_w"))
             if pt is not None and pt > 0:
                 th += pt * w / 60000
+        if z == "lauf" or zahl(r.get("defrost")) == 1:   # Rechenweg 2: berechnete Waerme mit Vorzeichen; ohne Wert wie bisher (TOP, nur positiv)
+            pb = zahl(r.get("leistung_th_berechnet_w"))
+            if pb is not None:
+                th_neu += pb * w / 60000
+                th_ber_min += w
+            else:
+                pt = zahl(r.get("leistung_th_heisha_w"))
+                if pt is not None and pt > 0:
+                    th_neu += pt * w / 60000
         if segs and segs[-1][0] == z:
             segs[-1][2] = r["_t"]
             segs[-1][3].append(r)
@@ -189,11 +212,20 @@ def zusammenfassung(d, tag):
     pausen = [round((s[2] - s[1]).total_seconds() / 60) + 1 for i, s in enumerate(segs) if s[0] == "pause" and 0 < i < len(segs) - 1]
     F["pausen.anzahl"] = len(pausen)
     F["pausen.mittel_min"] = round(sum(pausen) / len(pausen)) if pausen else 0
-    F["energie.strom_kwh"] = round(el, 2)
-    F["energie.waerme_kwh"] = round(th, 2)
-    F["energie.cop"] = round(th / el, 2) if el > 0.05 else None
-    F["energie.strom_kwh_roh"] = round(el_roh, 2)
-    F["energie.cop_roh"] = round(th / el_roh, 2) if el_roh > 0.05 else None
+    el_neu, el_roh_neu = el + hs_kwh, el_roh + hs_kwh
+    F["energie.rechenweg"] = ENERGIE_RECHENWEG
+    F["energie.strom_kwh"] = round(el_neu, 2)
+    F["energie.waerme_kwh"] = round(th_neu, 2)
+    F["energie.cop"] = round(th_neu / el_neu, 2) if el_neu > 0.05 else None
+    F["energie.strom_kwh_roh"] = round(el_roh_neu, 2)
+    F["energie.cop_roh"] = round(th_neu / el_roh_neu, 2) if el_roh_neu > 0.05 else None
+    F["energie.heizstab_kwh"] = round(hs_kwh, 2)
+    F["energie.waerme_berechnet_min"] = round(th_ber_min)
+    F["energie.strom_kwh_alt"] = round(el, 2)            # Rechenweg 1 (bis 12.11.2026): ohne Heizstab, Waerme nur positiv aus TOP
+    F["energie.waerme_kwh_alt"] = round(th, 2)
+    F["energie.cop_alt"] = round(th / el, 2) if el > 0.05 else None
+    F["energie.strom_kwh_roh_alt"] = round(el_roh, 2)
+    F["energie.cop_roh_alt"] = round(th / el_roh, 2) if el_roh > 0.05 else None
     F["energie.korr_w"] = PEL_KORR_W
     if z_min > 0:                                    # nur mit Zaehler (sonst unveraendert wie der Beobachter)
         F["energie.strom_kwh_zaehler"] = round(el_z, 2)
@@ -341,6 +373,8 @@ def kennzahl_gradstunden(Q, V, F):
     K["effizienz.stunden"] = stunden
     K["effizienz.raum_mittel"] = round(sum(rm) / len(rm), 2) if rm else None
     K["effizienz.kwh_je_gradstunde"] = round(strom / gh, 4) if strom is not None and gh >= 1 else None
+    strom_alt = F.get("energie.strom_kwh_alt")
+    K["effizienz.kwh_je_gradstunde_alt"] = round(strom_alt / gh, 4) if strom_alt is not None and gh >= 1 else None
     K["effizienz.vollstaendig"] = 1 if stunden >= MIN_STUNDEN and F.get("daten.groesste_luecke_min", 0) <= MAX_LUECKE_MIN else 0
     # Komfort: alle aktiven, gueltigen Raeume >= Minimum (je 5-min-Zeile)
     verl, je_raum, tief = 0, {}, 0.0
@@ -801,7 +835,7 @@ def csv_wert(v):
 def schreibe_csv(ordner):
     """tage.csv aus allen <tag>.json neu aufbauen (idempotent, Spalten fest)."""
     spalten = ["tag"] + ZEILE_SCHLUESSEL + [k for k in CSV_SPALTEN_ZUSATZ if k not in ZEILE_SCHLUESSEL] + \
-        ["effizienz.vergleich_tage", "effizienz.vergleich_mittel", "effizienz.abweichung_prozent"]
+        ["effizienz.vergleich_tage", "effizienz.vergleich_mittel", "effizienz.abweichung_prozent"] + SPALTEN_ALT   # neue Spalten nur hinten anhaengen
     zeilen = [",".join(spalten)]
     for f in sorted(os.listdir(ordner)):
         if not re.match(r"^\d{4}-\d{2}-\d{2}\.json$", f):
