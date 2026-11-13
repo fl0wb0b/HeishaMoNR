@@ -673,7 +673,7 @@ function freilauf(D, tag, P) {
     if (idx.length < 600) { return null; }
     let S = Z.neu(P, initAus(D, idx[0], P));
     const e = {vl: [], pel: [], th: [], raeume: {}}; RAEUME.forEach(id => { e.raeume[id] = []; });
-    const sum = {elZ: 0, elM: 0, thZ: 0, thM: 0, startsZ: 0, startsM: 0, laufZ: 0, laufM: 0, abtauZ: 0, abtauM: 0, hsZ: 0, hsM: 0};
+    const sum = {elZ: 0, elM: 0, thZ: 0, thM: 0, startsZ: 0, startsM: 0, laufZ: 0, laufM: 0, abtauZ: 0, abtauM: 0, hsZ: 0, hsM: 0, ohneEl: 0, ohneTh: 0};
     let hzVor = null, modVor = null;
     idx.forEach((i, k) => {
         const m = D.M[i], res = Z.schritt(S, eingabe(m, true), P); S = res.S; const A = res.A;
@@ -683,15 +683,17 @@ function freilauf(D, tag, P) {
             if (m.th !== null) { e.th.push(A.th - m.th); }
             RAEUME.forEach(id => { if (m.rooms[id] !== null) { e.raeume[id].push(A.raeume[id] - m.rooms[id]); } });
         }
-        sum.elZ += (A.pelKorr + (A.pelHs || 0)) / 60000; if (A.hs) { sum.hsZ++; } if (m.hI) { sum.hsM++; } sum.elM += m.pel === null ? 0 : (m.pel + (m.lauf ? P.pelKorrW : 0)) / 60000;   // TOP16 der Anlage enthält den internen Heizstab (Abtauungen mit Heizstab: 3,6–3,8 kW)
-        sum.thZ += Math.max(0, A.pth) / 60000; sum.thM += m.lauf && m.flow > 1 && m.vl !== null && m.rl !== null ? Math.max(0, m.flow * Z.CP * (m.vl - m.rl)) / 60 : 0;
+        // Minuten ohne Messwert sind unbekannt (13.11.2026): weder die Messung als 0 noch der Zwilling allein gehen in die Summen (vorher zählte nur der Zwilling)
+        if (A.hs) { sum.hsZ++; } if (m.hI) { sum.hsM++; }
+        if (m.pel !== null) { sum.elZ += (A.pelKorr + (A.pelHs || 0)) / 60000; sum.elM += (m.pel + (m.lauf ? P.pelKorrW : 0)) / 60000; } else { sum.ohneEl++; }   // TOP16 der Anlage enthält den internen Heizstab (Abtauungen mit Heizstab: 3,6–3,8 kW)
+        if (!m.lauf || (m.flow !== null && m.vl !== null && m.rl !== null)) { sum.thZ += Math.max(0, A.pth) / 60000; sum.thM += m.lauf && m.flow > 1 ? Math.max(0, m.flow * Z.CP * (m.vl - m.rl)) / 60 : 0; } else { sum.ohneTh++; }
         // Starts wie gemessen zaehlen: Verdichter aus → an (mit den zwei Starts je Abtauung); bis 08.11. zaehlte der Zwilling nur Thermostat-Starts
         if (k > 0 && A.hz > 0 && !(hzVor > 0)) { sum.startsZ++; } if (k > 0 && m.lauf && !D.M[i - 1].lauf) { sum.startsM++; }
         if (k > 0 && A.modus === 'abtauen' && modVor !== 'abtauen') { sum.abtauZ++; } if (k > 0 && m.def && !D.M[i - 1].def) { sum.abtauM++; }
         hzVor = A.hz; modVor = A.modus;
         if (A.modus === 'lauf' || A.modus === 'abtauen') { sum.laufZ++; } if (m.lauf) { sum.laufM++; }
     });
-    const o = {tag: tag, minuten: idx.length, kwhElZwilling: rd(sum.elZ, 2), kwhElMessung: rd(sum.elM, 2), kwhThZwilling: rd(sum.thZ, 2), kwhThMessung: rd(sum.thM, 2), startsZwilling: sum.startsZ, startsMessung: sum.startsM, abtauZwilling: sum.abtauZ, abtauMessung: sum.abtauM, heizstabMinZwilling: sum.hsZ, heizstabMinMessung: sum.hsM,
+    const o = {tag: tag, minuten: idx.length, kwhElZwilling: rd(sum.elZ, 2), kwhElMessung: rd(sum.elM, 2), kwhThZwilling: rd(sum.thZ, 2), kwhThMessung: rd(sum.thM, 2), startsZwilling: sum.startsZ, startsMessung: sum.startsM, abtauZwilling: sum.abtauZ, abtauMessung: sum.abtauM, heizstabMinZwilling: sum.hsZ, heizstabMinMessung: sum.hsM, minutenOhneStrom: sum.ohneEl, minutenOhneWaerme: sum.ohneTh,
                laufMinZwilling: sum.laufZ, laufMinMessung: sum.laufM, rmseVlK: rd(rmse(e.vl), 2), rmsePelW: rd(rmse(e.pel), 1), rmseHausK: rd(rmse(e.th), 2), biasHausK: rd(mean(e.th), 2), raeume: {}};
     RAEUME.forEach(id => { o.raeume[id] = e.raeume[id].length ? {rmseK: rd(rmse(e.raeume[id]), 2), biasK: rd(mean(e.raeume[id]), 2)} : null; });
     return o;

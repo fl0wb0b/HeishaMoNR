@@ -204,6 +204,18 @@ if (datenDir) {
     check('Heizstab-Minuten: 5 von 395 Minuten mit TOP16 3,6 kW heben den Strom-RMSE von 0 auf über 300 W; die Auswahl für Fit und Güte lässt sie weg (RMSE 0)',
           R0.length === 395 && S.length === 390 && S.every(m => !m.hI) && rmse(R0) > 300 && rmse(S) < 1, 'mit ' + Math.round(rmse(R0)) + ' W, ohne ' + Math.round(rmse(S)) + ' W');
 }
+// ------------------------------------------------------------------ Freilauf: Minuten ohne Stromwert sind unbekannt, nicht 0 kWh (13.11.2026)
+{
+    const Zz = require('./wp_zwilling.js'), P0 = Zz.standard(), t0 = new Date(2026, 10, 12, 0, 0).getTime();
+    const tag = fehlt => { const M = []; for (let i = 0; i < 720; i++) { const f = fehlt && i >= 300 && i < 400;
+        M.push({t: t0 + i * 60000, tag: '2026-11-12', ok: true, at: 6, rh: 85, pv: 0, q: 3, hc: 1, soll: 32, vl: 32, rl: 29, flow: 13.4, pumpe: true, lauf: true, hz: 17, rm: i, def: 0, hI: 0, th: 21.5,
+                rooms: {ki_oben: null, ki_unten: 21.5, schlaf: 21.5, wohn: null}, pel: f ? null : 400, pth: 2100}); } return {M: M}; };
+    const fv = T.freilauf(tag(false), '2026-11-12', P0), fl = T.freilauf(tag(true), '2026-11-12', P0);
+    check('Freilauf: 100 von 720 Minuten ohne Stromwert zählen weder bei der Messung (als 0) noch beim Zwilling; beide Summen über dieselben 620 Minuten',
+          fv.minutenOhneStrom === 0 && fl.minutenOhneStrom === 100 && Math.abs(fl.kwhElMessung - 620 * 480 / 60000) < 0.011 && Math.abs(fv.kwhElMessung - 720 * 480 / 60000) < 0.011 &&
+          fl.kwhElZwilling < fv.kwhElZwilling - 0.5 && Math.abs(fl.kwhElZwilling / fl.kwhElMessung - fv.kwhElZwilling / fv.kwhElMessung) < 0.03,
+          'voll ' + fv.kwhElZwilling + ' / ' + fv.kwhElMessung + ' kWh, mit Lücke ' + fl.kwhElZwilling + ' / ' + fl.kwhElMessung + ' kWh (Zwilling / Messung)');
+}
 // ------------------------------------------------------------------ Abtauen und Quiet-3-Deckel aus eigenen Daten (08.11.2026)
 {
     const Zz = require('./wp_zwilling.js'), P0 = Zz.standard(), M = [], t0 = new Date(2026, 10, 1, 0, 0).getTime();

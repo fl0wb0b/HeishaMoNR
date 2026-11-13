@@ -45,10 +45,25 @@ QUELLE = "heishamon"
 # Tages-COP an Frosttagen um 5-14 % (05.11. 4,29 -> 3,80; 06.11. 4,03 -> 3,46); an Tagen ohne Abtauen +-3 %. Die bisherigen Werte bleiben als *_alt.
 # Die Dateiversion (VERSION) bleibt 1, weil nur Werte und neue Schluessel dazukommen (der Bonsai-Beobachter prueft version == 1);
 # der Rechenweg steht in energie.rechenweg.
-ENERGIE_RECHENWEG = 2
+# Energie-Rechenweg 3 (13.11.2026, fehlende Stromwerte): Eine Minute ohne Stromwert ist UNBEKANNT und zaehlt nicht als 0.
+# - COP nur aus Minuten, in denen Strom UND (im Lauf/Abtauen) Waerme bekannt sind (gepaart); vorher zaehlte die Waerme einer Minute ohne Strom mit.
+# - energie.strom_unbekannt_min / _lauf_min: Minuten ganz ohne Stromwert; die Tagessumme ist dann eine Untergrenze, effizienz.vollstaendig = 0 ab
+#   MAX_STROM_UNBEKANNT_MIN, Befund „Strom unbekannt“.
+# - energie.strom_ersatz_min / _kwh: Quelle Zaehler, aber die Minute hat keinen Zaehlerwert: dort TOP16 + PEL_KORR_W (kein Null-Wert, aber andere Quelle).
+# - energie.heizstab_unbekannt_min: Zaehler da, Heizstab-Kanal fehlt, Heizstab laut Anlage an: Heizstab-Strom dieser Minute unbekannt (nicht im COP).
+# - Heizstab-Kanal nur zu Minuten addiert, deren Strom vom Zaehler kommt (ohne Heizstab). TOP16 enthaelt den internen Heizstab schon
+#   (13.11. 03:00: TOP16 3992 W = Zaehler 988 W + Heizstab 2870 W): energie.strom_kwh_roh und cop_roh zaehlten ihn bis 13.11. doppelt.
+# - Abtau-Strom je Abtauung (strom_wh) nur, wenn jede Minute der Abtauung einen Stromwert hat.
+# - Abtauminuten mit stehendem Verdichter haben keine Waermespalte (Node-RED schreibt sie nur bei laufendem Verdichter). Dort Waerme aus
+#   Durchfluss x Spreizung (energie.waerme_nachgerechnet_min), z. B. die Minuten, in denen der Abtau-Heizstab das Wasser waermt. Bis 13.11. zaehlte
+#   dort der Strom (samt 2,9 kW Heizstab) ohne Waerme. Fehlt auch das: energie.waerme_unbekannt_min, Minute nicht im COP.
+ENERGIE_RECHENWEG = 3
 HEIZSTAB_MIN_W = 100                            # Zaehlerkanal Heizstab: darunter Ruhestrom/Rauschen, nicht gezaehlt (wie frost-1112/f1_abtauen.py)
+MAX_STROM_UNBEKANNT_MIN = 60                    # wie MAX_LUECKE_MIN: mit mehr unbekannten Stromminuten ist die Tageskennzahl nicht vollstaendig
 SPALTEN_ALT = ["energie.rechenweg", "energie.heizstab_kwh", "energie.strom_kwh_alt", "energie.waerme_kwh_alt", "energie.cop_alt",
-               "effizienz.kwh_je_gradstunde_alt"]
+               "effizienz.kwh_je_gradstunde_alt",
+               "energie.strom_unbekannt_min", "energie.strom_unbekannt_lauf_min", "energie.strom_ersatz_min", "energie.strom_ersatz_kwh",
+               "energie.heizstab_unbekannt_min", "energie.waerme_unbekannt_min", "energie.waerme_nachgerechnet_min"]   # Rechenweg 3: nur hinten angehaengt
 CSV_SPALTEN_ZUSATZ = ["energie.waerme_kwh", "energie.cop", "laeufe.anzahl", "pausen.anzahl", "pausen.mittel_min", "abtau.anzahl", "abtau.minuten",
                       "abtau.pseudo_verdacht", "abtau.mild_sonne_anzahl", "daten.minutenzeilen", "daten.luecken_ueber_10min", "daten.groesste_luecke_min",
                       "maschine.datensaetze", "maschine.vorschlaege", "punkte.datensaetze", "befunde.warnung", "befunde.hinweis"]
@@ -161,38 +176,85 @@ def zusammenfassung(d, tag):
     el_z = z_min = 0.0
     th_neu = hs_kwh = 0.0
     th_ber_min = 0
+    # Rechenweg 3: Heizstab nur zu Zaehler-Minuten, gepaarte Summen fuer den COP, Minuten ohne Wert als unbekannt gezaehlt
+    hs_zu = el_cop = th_cop = el_roh_cop = th_roh_cop = 0.0
+    unb = {"strom": 0.0, "strom_lauf": 0.0, "ersatz": 0.0, "heizstab": 0.0, "waerme": 0.0}
+    ersatz_kwh = nachgerechnet = 0.0
+    spannen = {"strom": [], "ersatz": []}             # [Beginn, Ende, Minuten] je zusammenhaengender Spanne (fuer den Befund)
+
+    def spanne(art, t, w):
+        L = spannen[art]
+        if L and (t - L[-1][1]).total_seconds() <= 180:
+            L[-1][1] = t
+            L[-1][2] += w
+        else:
+            L.append([t, t, w])
     segs = []
     for i, r in enumerate(Q):
         w = min(10.0, ((Q[i + 1]["_t"] - r["_t"]).total_seconds() / 60) if i + 1 < len(Q) else 1.0)
         z = zustand(r)
         minuten[z] += w
         p = pel(r)
+        pr = pel(r, False)
+        zw = zahl(r.get("zaehler_wp_w"))
+        hs = zahl(r.get("zaehler_heizstab_w"))
+        vom_zaehler = QUELLE == "zaehler" and zw is not None        # Strom der Minute ohne Heizstab: Heizstab-Kanal kommt dazu
+        waerme_min = z == "lauf" or zahl(r.get("defrost")) == 1
+        hs_w = hs if hs is not None and hs > HEIZSTAB_MIN_W else 0.0
+        hs_fehlt = vom_zaehler and hs is None and zahl(r.get("heizstab_intern")) == 1
         if p is not None:
             el += p * w / 60000
-            pr = pel(r, False)
-            el_roh += (pr if pr is not None else 0) * w / 60000
-        zw = zahl(r.get("zaehler_wp_w"))
+            if pr is not None:                           # Rohwert fehlt: unbekannt, nicht 0
+                el_roh += pr * w / 60000
+            if QUELLE == "zaehler" and zw is None:
+                unb["ersatz"] += w
+                ersatz_kwh += p * w / 60000
+                spanne("ersatz", r["_t"], w)
+        else:
+            unb["strom"] += w
+            unb["strom_lauf"] += w if waerme_min else 0
+            spanne("strom", r["_t"], w)
         if zw is not None:
             el_z += zw * w / 60000
             z_min += w
-        hs = zahl(r.get("zaehler_heizstab_w"))
-        if hs is not None and hs > HEIZSTAB_MIN_W:
-            hs_kwh += hs * w / 60000
+        if hs_w:
+            hs_kwh += hs_w * w / 60000
+            if vom_zaehler:
+                hs_zu += hs_w * w / 60000
+        if hs_fehlt:
+            unb["heizstab"] += w
         if z == "lauf":
             pt = zahl(r.get("leistung_th_heisha_w"))
             if pt is None:
                 pt = zahl(r.get("leistung_th_berechnet_w"))
             if pt is not None and pt > 0:
                 th += pt * w / 60000
-        if z == "lauf" or zahl(r.get("defrost")) == 1:   # Rechenweg 2: berechnete Waerme mit Vorzeichen; ohne Wert wie bisher (TOP, nur positiv)
+        q = None                                         # Waerme der Minute (Rechenweg 2/3), None = unbekannt
+        if waerme_min:                                   # berechnete Waerme mit Vorzeichen; ohne Wert wie bisher (TOP, nur positiv)
             pb = zahl(r.get("leistung_th_berechnet_w"))
             if pb is not None:
-                th_neu += pb * w / 60000
+                q = pb
                 th_ber_min += w
             else:
                 pt = zahl(r.get("leistung_th_heisha_w"))
-                if pt is not None and pt > 0:
-                    th_neu += pt * w / 60000
+                if pt is not None:
+                    q = max(0.0, pt)
+                else:                                    # Rechenweg 3: beide Spalten leer (Abtauminuten mit stehendem Verdichter): aus Durchfluss und Spreizung
+                    fl, vl_, rl_ = zahl(r.get("flow_l_min")), zahl(r.get("ist_vl")), zahl(r.get("ist_rl"))
+                    if fl is not None and fl > 1 and vl_ is not None and rl_ is not None:
+                        q = fl * 4186.0 / 60 * (vl_ - rl_)   # = leistung_th_berechnet_w (an 17 303 Zeilen geprueft: Median −2 W)
+                        nachgerechnet += w
+            if q is None:
+                unb["waerme"] += w
+            else:
+                th_neu += q * w / 60000
+        # COP gepaart: Strom bekannt (samt Heizstab) und, wo Waerme entsteht, Waerme bekannt
+        if p is not None and not hs_fehlt and (not waerme_min or q is not None):
+            el_cop += (p + (hs_w if vom_zaehler else 0.0)) * w / 60000
+            th_cop += (q or 0.0) * w / 60000 if waerme_min else 0.0
+        if pr is not None and (not waerme_min or q is not None):
+            el_roh_cop += pr * w / 60000
+            th_roh_cop += (q or 0.0) * w / 60000 if waerme_min else 0.0
         if segs and segs[-1][0] == z:
             segs[-1][2] = r["_t"]
             segs[-1][3].append(r)
@@ -212,14 +274,21 @@ def zusammenfassung(d, tag):
     pausen = [round((s[2] - s[1]).total_seconds() / 60) + 1 for i, s in enumerate(segs) if s[0] == "pause" and 0 < i < len(segs) - 1]
     F["pausen.anzahl"] = len(pausen)
     F["pausen.mittel_min"] = round(sum(pausen) / len(pausen)) if pausen else 0
-    el_neu, el_roh_neu = el + hs_kwh, el_roh + hs_kwh
+    el_neu, el_roh_neu = el + hs_zu, el_roh              # TOP16 (roh und als Ersatz) enthaelt den Heizstab schon
     F["energie.rechenweg"] = ENERGIE_RECHENWEG
-    F["energie.strom_kwh"] = round(el_neu, 2)
+    F["energie.strom_kwh"] = round(el_neu, 2)            # Summe der bekannten Minuten (unbekannte: energie.strom_unbekannt_min)
     F["energie.waerme_kwh"] = round(th_neu, 2)
-    F["energie.cop"] = round(th_neu / el_neu, 2) if el_neu > 0.05 else None
+    F["energie.cop"] = round(th_cop / el_cop, 2) if el_cop > 0.05 else None
     F["energie.strom_kwh_roh"] = round(el_roh_neu, 2)
-    F["energie.cop_roh"] = round(th_neu / el_roh_neu, 2) if el_roh_neu > 0.05 else None
+    F["energie.cop_roh"] = round(th_roh_cop / el_roh_cop, 2) if el_roh_cop > 0.05 else None
     F["energie.heizstab_kwh"] = round(hs_kwh, 2)
+    F["energie.strom_unbekannt_min"] = round(unb["strom"])
+    F["energie.strom_unbekannt_lauf_min"] = round(unb["strom_lauf"])
+    F["energie.strom_ersatz_min"] = round(unb["ersatz"])
+    F["energie.strom_ersatz_kwh"] = round(ersatz_kwh, 2)
+    F["energie.heizstab_unbekannt_min"] = round(unb["heizstab"])
+    F["energie.waerme_unbekannt_min"] = round(unb["waerme"])
+    F["energie.waerme_nachgerechnet_min"] = round(nachgerechnet)
     F["energie.waerme_berechnet_min"] = round(th_ber_min)
     F["energie.strom_kwh_alt"] = round(el, 2)            # Rechenweg 1 (bis 12.11.2026): ohne Heizstab, Waerme nur positiv aus TOP
     F["energie.waerme_kwh_alt"] = round(th, 2)
@@ -329,7 +398,9 @@ def zusammenfassung(d, tag):
             F["messaufgabe.%s_mittel_w" % name] = round(sum(pe) / len(pe)) if pe else None
     F["messaufgabe.offen"] = 1 if (len(mess[0]) < 10 or len(mess[1]) < 10) else 0
     return F, {"luecken": luecken, "laeufe": [(s[1].strftime("%H:%M"), round((s[2] - s[1]).total_seconds() / 60) + 1) for s in laeufe], "props": sorted(props), "scores": S,
-               "abtauungen": A_tag}
+               "abtauungen": A_tag,
+               "strom_unbekannt": [(a.strftime("%H:%M"), b.strftime("%H:%M"), round(m)) for a, b, m in spannen["strom"]],
+               "strom_ersatz": [(a.strftime("%H:%M"), b.strftime("%H:%M"), round(m)) for a, b, m in spannen["ersatz"]]}
 
 
 # ------------------------------------------------------------------ Kennzahl kWh Strom je Gradstunde bei gehaltenem Komfort
@@ -375,7 +446,8 @@ def kennzahl_gradstunden(Q, V, F):
     K["effizienz.kwh_je_gradstunde"] = round(strom / gh, 4) if strom is not None and gh >= 1 else None
     strom_alt = F.get("energie.strom_kwh_alt")
     K["effizienz.kwh_je_gradstunde_alt"] = round(strom_alt / gh, 4) if strom_alt is not None and gh >= 1 else None
-    K["effizienz.vollstaendig"] = 1 if stunden >= MIN_STUNDEN and F.get("daten.groesste_luecke_min", 0) <= MAX_LUECKE_MIN else 0
+    K["effizienz.vollstaendig"] = 1 if (stunden >= MIN_STUNDEN and F.get("daten.groesste_luecke_min", 0) <= MAX_LUECKE_MIN
+                                        and (F.get("energie.strom_unbekannt_min") or 0) <= MAX_STROM_UNBEKANNT_MIN) else 0   # Strom unbekannt wie eine Luecke
     # Komfort: alle aktiven, gueltigen Raeume >= Minimum (je 5-min-Zeile)
     verl, je_raum, tief = 0, {}, 0.0
     for r in V:
@@ -525,8 +597,9 @@ def abtauungen(d):
         pv = pv_bei(E, et, s)
         nied, sprung = frequenzsprung(Q, i)
         ro = zahl(ref.get("rohr_aussen"))
-        ws = [pel(r) for r in Q[i:j + 1]]
-        ws = [w for w in ws if w is not None]
+        ws_alle = [pel(r) for r in Q[i:j + 1]]
+        ws = [w for w in ws_alle if w is not None]
+        strom_ganz = len(ws) == len(ws_alle)             # Rechenweg 3: Abtau-Strom nur, wenn jede Minute einen Wert hat (sonst unbekannt statt zu klein)
         vl0 = zahl(ref.get("ist_vl"))
         vls = [zahl(r.get("ist_vl")) for r in Q[i:] if r["_t"] <= e + dt.timedelta(minutes=VL_NACHLAUF_MIN)]
         vls = [v for v in vls if v is not None]
@@ -535,7 +608,7 @@ def abtauungen(d):
              "niedriglauf_min": nied, "sprung_hz": sprung,
              "pseudo": 1 if nied is not None and nied >= PSEUDO_NIEDRIG_MIN and sprung is not None and sprung >= PSEUDO_SPRUNG_HZ else 0,
              "rohr_luft_k": r2(at - ro) if at is not None and ro is not None else None,
-             "mittel_w": round(sum(ws) / len(ws)) if ws else None, "strom_wh": round(sum(ws) / 60) if ws else None,
+             "mittel_w": round(sum(ws) / len(ws)) if ws else None, "strom_wh": round(sum(ws) / 60) if ws and strom_ganz else None, "strom_min_ohne_wert": len(ws_alle) - len(ws),
              "vl_einbruch_k": r2(vl0 - min(vls)) if vl0 is not None and vls else None,
              "abstand_min": round((s - vor_s).total_seconds() / 60) if vor_s else None,             # Beginn zu Beginn (wie min_seit_letzter_abtauung)
              "feuchte": None, "taupunkt": None, "wiederaufheiz_min": None}
@@ -594,6 +667,19 @@ def regel_befunde(F, extra):
     if F.get("daten.luecken_ueber_10min", 0) > 0:
         b("warnung", "Lücken im Minutenprotokoll", ["daten.luecken_ueber_10min", "daten.groesste_luecke_min"],
           "%d Lücken über 10 min, die größte %d min (%s)." % (F["daten.luecken_ueber_10min"], F["daten.groesste_luecke_min"], ", ".join("%s: %d min" % x for x in extra["luecken"][:5])))
+    if F.get("energie.strom_unbekannt_min"):
+        sp = ", ".join("%s–%s (%d min)" % x for x in (extra.get("strom_unbekannt") or [])[:5])
+        b("warnung" if F["energie.strom_unbekannt_min"] > MAX_STROM_UNBEKANNT_MIN else "hinweis", "Strom unbekannt", ["energie.strom_unbekannt_min", "energie.strom_unbekannt_lauf_min"],
+          "%d Minuten ohne Stromwert (davon %d im Lauf/Abtauen)%s: als unbekannt geführt, nicht als 0 kWh; die Tagessumme Strom ist eine Untergrenze, der COP rechnet ohne diese Minuten." % (
+              F["energie.strom_unbekannt_min"], F.get("energie.strom_unbekannt_lauf_min") or 0, ": " + sp if sp else ""))
+    if F.get("energie.strom_ersatz_min") and F.get("energie.zaehler_min"):     # nur an Tagen mit Zaehler (davor ist TOP16 die einzige Quelle)
+        sp = ", ".join("%s–%s (%d min)" % x for x in (extra.get("strom_ersatz") or [])[:5])
+        b("info", "Stromzähler ohne Wert", ["energie.strom_ersatz_min", "energie.strom_ersatz_kwh", "energie.zaehler_min"],
+          "%d Minuten ohne Zählerwert%s: dort Strom der Anlage (TOP16 + %d W), zusammen %s kWh." % (
+              F["energie.strom_ersatz_min"], ": " + sp if sp else "", PEL_KORR_W, fz(F.get("energie.strom_ersatz_kwh"), 2)))
+    if F.get("energie.heizstab_unbekannt_min"):
+        b("hinweis", "Heizstab-Strom unbekannt", ["energie.heizstab_unbekannt_min"],
+          "%d Minuten mit Heizstab laut Anlage, aber ohne Wert im Zählerkanal Heizstab: nicht im COP." % F["energie.heizstab_unbekannt_min"])
     if F.get("maschine.datensaetze", 0) and F["maschine.datensaetze"] < 0.9 * min(1440, F.get("daten.minutenzeilen", 1440)):
         b("warnung", "Entscheidungsmaschine lief nicht durchgehend", ["maschine.datensaetze", "daten.minutenzeilen"],
           "%d Entscheidungsdatensätze bei %d Minutenzeilen." % (F["maschine.datensaetze"], F["daten.minutenzeilen"]))
@@ -813,6 +899,8 @@ def rechne_tag(daten, tag, ordner):
         "laeufe": [{"beginn": a, "dauer_min": b} for a, b in extra.get("laeufe", [])],
         "luecken": [{"ab": a, "min": b} for a, b in extra.get("luecken", [])],
         "abtauungen": extra.get("abtauungen", []),
+        "strom_unbekannt": [{"von": a, "bis": b, "min": m} for a, b, m in extra.get("strom_unbekannt", [])],     # Rechenweg 3: Spannen ohne Stromwert
+        "strom_ersatz": [{"von": a, "bis": b, "min": m} for a, b, m in extra.get("strom_ersatz", [])],           # ... und ohne Zaehlerwert (TOP16 + Korrektur)
         "vorschlaege": extra.get("props", []),
         "punkte": extra.get("scores", []),
         "befunde": befunde,
