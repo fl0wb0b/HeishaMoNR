@@ -854,7 +854,7 @@ function markdown(R) {
     return L.join('\n') + '\n';
 }
 
-module.exports = {abtauDirekt, linieFest, ABTAU_DIREKT_N, fitAbtau, fitDeckelQ3, abtauungen, lade, trennung, fitAlles, guete, trainiere, markdown, lsq, lsqBox, lsqBind, koordinatensuche, gebunden, strafe, glaette, glaetteSatz, abdeckung, bandOf, bandStatus, jeBand, entscheide, abtauIntervall, initAus, eingabe, readMulti,
+module.exports = {freilauf, tageVon, abtauDirekt, linieFest, ABTAU_DIREKT_N, fitAbtau, fitDeckelQ3, abtauungen, lade, trennung, fitAlles, guete, trainiere, markdown, lsq, lsqBox, lsqBind, koordinatensuche, gebunden, strafe, glaette, glaetteSatz, abdeckung, bandOf, bandStatus, jeBand, entscheide, abtauIntervall, initAus, eingabe, readMulti,
                   RAEUME, HAUS_RAEUME, BAENDER, GATE, ABDECKUNG, GEFITTET, KEINE_DATEN};
 
 if (require.main === module) {

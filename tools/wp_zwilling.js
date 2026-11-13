@@ -134,7 +134,9 @@ const PARAM = {
     atExtAbC: [2, '°C', 'F', 'ab dieser AT liest der externe Fühler richtig (4716238)'],
     eisRate: [0.02, '1/(min·K)', 'A', 'Vereisung je min und K (Taupunkt − Rohr), wirkt als Rohrabsenkung 1 K je Einheit; kalibriert auf den Forum-Anker'],
     eisAnker: [[0, 90, 90], '°C, %, min', 'F/A', 'Kalibrieranker: bei 0 °C, 90 % Feuchte und Mindestlast Abtauung alle ~90 min (L5 gedämmt „worst case ~90 min“ 4879325 E; L9 0,8 °C 94 %: 35 min und 1:40 h 4132154)'],
-    eisSchmelzJeK: [0.02, '1/(min·K)', 'A', 'Abbau der Vereisung im Stillstand je K über 0 °C'],
+    eisAtTab: [[[0, 1], [3, 0.15], [99, 0]], '–', 'M', 'Anteil der Vereisung je WP-AT in Stufen (bis AT ≤ x °C gilt der Wert), eigene Messung 08.10.–13.11.2026 (37 Abtauungen, Feuchte 82–96 %): die Absenkung des Rohrs gegen das eisfreie Rohrmodell wächst bei ≤ 0 °C mit 0,7–0,9 K je 30 min, bei 1–3 °C mit 0,11–0,16 K (Anteil 0,15), ab 4 °C nicht (17 400 Laufminuten bei 4–7 °C ohne Abtauung, obwohl das Rohr dort zeitweise −1/−2 °C zeigt). Bis 13.11. überall Anteil 1: der Zwilling vereiste bei 3–8 °C weiter, sobald sein Rohr einmal unter 0 °C lag (09.11.: 2 Abtauungen, gemessen 0)'],
+    eisAtRohrMin: [-3, '°C', 'M/F', 'eisAtTab gilt nur im gemessenen Bereich: bei 4–9 °C lag das Rohr in 23 800 Laufminuten nie unter −3 °C (12 min bei −3/−4). Fällt es dort tiefer (Frequenzsprung, Pseudo-Abtauung: L5 4540566, 3456847), vereist der Zwilling wie bisher mit Anteil 1'],
+    eisSchmelzJeK: [0.02, '1/(min·K)', 'A', 'Abbau der Vereisung je K über 0 °C: im Stillstand und (seit 13.11.2026) im Lauf, wo eisAtTab 0 ist (ab 4 °C; gemessen: Rohr −1/−2 °C bei 4 °C war 5-mal binnen 30 min ohne Abtauung wieder eisfrei, 18.10., 01.11., 09.–11.11.)'],
     forceDefrostAuto: [0, '0/1', 'H', 'Force Defrost „Auto“ (alle 3 h unter 5 °C) – Werkseinstellung Manual (Handbuch J Z. 6965); bei der L nicht belegt'],
     // Heizstab (Einstellungen gemessen, Logik Handbuch J)
     hsFrei: [1, '0/1', 'M', 'heizstab_raum_frei = 1 im Protokoll; ob der Heizstab an der Anlage wirklich freigegeben ist, ist offen (L ab Werk aus, F 3957497)'],
@@ -163,6 +165,7 @@ function atWP(P, at) { const v = P.atExtVersatz || 0; return v ? at + v * Math.m
 function abtauDauer(P) { return Math.max(1, Math.round(P.abtauDauerMin)); }       // ganze Minuten: geglättete Lernwerte (z. B. 8,33) liessen den Abtau-Zaehler nie 0 werden (Schleife, 08.11.)
 function abtauUmkehrMin(P) { return Math.max(1, abtauDauer(P) - (P.abtauStoppVorMin || 0) - (P.abtauStoppNachMin || 0)); }
 function abtauHzAt(P, i) { return i < (P.abtauStoppVorMin || 0) || i >= abtauDauer(P) - (P.abtauStoppNachMin || 0) ? 0 : P.abtauHz; }   // i = Minute im Abtausignal (0 …)
+function eisFaktorAt(P, at) { return Array.isArray(P.eisAtTab) ? stufe(P.eisAtTab, at) : 1; }   // Anteil der Vereisung je WP-AT (ganze Grad); ohne Tabelle wie bis 13.11.
 function abtauLinieAt(P, at) { const L = P.abtauLinie; return Math.min(L[3], Math.max(L[2], L[0] * at + L[1])); }
 function capOf(P, q, at) {
     const mn = hzMinAt(P, at), mx = hzMaxAt(P, at);
@@ -288,7 +291,10 @@ function schritt(S0, E, P) {
     else { pipeZiel = at; }
     S.pipe = S.pipe === null ? pipeZiel : S.pipe + (pipeZiel - S.pipe) * Math.min(1, 1 / P.pipeTauMin);
     if (lauf && !abtauJetzt) {
-        if (S.pipe < 0 && S.pipe < td) { S.eis += P.eisRate * (td - S.pipe); }
+        let fe = eisFaktorAt(P, atI);                                               // Vereisung nur, wo die Anlage sie zeigt (≤ 0 °C voll, 1–3 °C schwach, ab 4 °C keine)
+        if (fe === 0 && S.pipe < P.eisAtRohrMin) { fe = 1; }                        // Rohr tiefer als je gemessen (Pseudo-Abtauung nach Frequenzsprung): Forum-Verhalten bleibt
+        if (fe > 0) { if (S.pipe < 0 && S.pipe < td) { S.eis += P.eisRate * fe * (td - S.pipe); } }
+        else if (at > 0 && S.eis > 0) { S.eis = Math.max(0, S.eis - P.eisSchmelzJeK * at); }   // wärmer: Reif taut im Lauf ab
         S.heizMin++;
         const linie = abtauLinieAt(P, aw);                                          // Winterpaket: min(−5; max(−22,5; 0,9·WP-AT − 6)), bis WP-AT unter 10 °C
         S.abZ = (aw < P.abtauAtMax && S.pipe < linie) ? S.abZ + 1 : 0;
@@ -386,4 +392,4 @@ function zuEngine(A, raumCfg, P, extra) {
         pipeOut: h.Outside_Pipe_Temp, rh: A.rh !== undefined && A.rh !== null ? Math.round(A.rh) : null}, extra);   // Winterpaket: Abtauwetter (Rohr aussen, OWM-Feuchte)
 }
 
-module.exports = {PARAM, standard, herkunft, mitWerten, neu, schritt, simuliere, regler, zuEngine, kurveSoll, hzMinAt, hzMaxAt, atWP, abtauLinieAt, abtauHzAt, abtauUmkehrMin, abtauDauer, capOf, pthOf, pelOf, fanOf, frostFaktor, taupunkt, flowEffOf, qrad, trAus, heizkreis, raumWert, hausSchritt, MIN, CP, DT};
+module.exports = {PARAM, standard, herkunft, mitWerten, neu, schritt, simuliere, regler, zuEngine, kurveSoll, hzMinAt, hzMaxAt, atWP, abtauLinieAt, abtauHzAt, abtauUmkehrMin, abtauDauer, eisFaktorAt, capOf, pthOf, pelOf, fanOf, frostFaktor, taupunkt, flowEffOf, qrad, trAus, heizkreis, raumWert, hausSchritt, MIN, CP, DT};
