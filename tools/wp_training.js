@@ -112,11 +112,25 @@ const GATE = {rel: 0.10, kennzahlen: [
     {id: 'freilaufStrom', ampel: false, name: 'Freilauf Strom-Abweichung (Anteil)', wert: g => g.freilaufSumme && g.freilauf && g.freilauf.length >= 2 && g.freilaufSumme.kwhElMessung > 0 ? Math.abs(g.freilaufSumme.kwhElZwilling / g.freilaufSumme.kwhElMessung - 1) : null, grenze: 0.15, tol: 0.03},   // 3 Prozentpunkte (Kevin 08.11.): Tagesrauschen bei 4 Testtagen; Grenze 15 % (alter Stand −17 %), sonst hebelt sie die Toleranz um 10 % aus
     // 13.11.2026 (Frost-Nachmessung 5a, V6): Abtauungen als Fehler je Tag in Stück (kein Ausgleich zwischen Tagen), erst ab GATE_ABTAU_MIN gemessenen Abtauungen
     // im Testfenster; Toleranz max(2 Stück; 25 % der gemessenen). Vorher Anteil |Z−M|/max(3, M) der Summe: bei 2–3 Abtauungen lehnte 1 Abtauung Unterschied ab.
-    {id: 'freilaufAbtau', ampel: false, einheit: 'Stück', name: 'Freilauf Abtauungen: Fehler je Tag (Stück)', wert: g => g.freilauf && g.freilauf.length >= 2 ? g.freilauf.reduce((s, d) => s + Math.abs(d.abtauZwilling - d.abtauMessung), 0) : null,
-     n: g => g.freilaufSumme ? g.freilaufSumme.abtauMessung : null, nMin: 8, rel: 0, tol: g => Math.max(2, 0.25 * ((g && g.freilaufSumme && g.freilaufSumme.abtauMessung) || 0)),
-     grenze: g => Math.max(3, 0.3 * ((g && g.freilaufSumme && g.freilaufSumme.abtauMessung) || 0))}]};
+    // 13.11.2026 (5a Punkt 3): Reichen die gemessenen Abtauungen im Testfenster nicht, gilt für dieses eine Kriterium das Fenster der letzten GATE_ABTAU_TAGE Tage
+    // (abtauLang, in trainiere() nur dann berechnet); reicht auch das nicht, bleibt es „nicht bewertbar“ (basis: abtauBasis).
+    {id: 'freilaufAbtau', ampel: false, einheit: 'Stück', name: 'Freilauf Abtauungen: Fehler je Tag (Stück)', basis: g => abtauBasis(g),
+     wert: g => { const b = abtauBasis(g); return b && b.tage.length >= 2 ? b.tage.reduce((s, d) => s + Math.abs(d.abtauZwilling - d.abtauMessung), 0) : null; },
+     n: g => { const b = abtauBasis(g); return b ? b.n : null; }, nMin: 8, rel: 0, tol: g => Math.max(2, 0.25 * ((abtauBasis(g) || {}).n || 0)),
+     grenze: g => Math.max(3, 0.3 * ((abtauBasis(g) || {}).n || 0))}]};
+const GATE_ABTAU_TAGE = 14;
+// Grundlage des Abtau-Kriteriums: Testfenster, wenn dort ≥ nMin Abtauungen gemessen sind; sonst die letzten GATE_ABTAU_TAGE Tage (g.abtauLang), wenn die reichen;
+// sonst das Fenster mit den meisten Fällen (bleibt „nicht bewertbar“). fenster: 'test' | 'lang'; nTest/nLang = gemessene Abtauungen je Fenster.
+function abtauBasis(g) {
+    if (!g) { return null; }
+    const nMin = GATE_ABTAU_MIN_WERT, kurz = g.freilauf || [], nT = g.freilaufSumme ? g.freilaufSumme.abtauMessung : null, L = g.abtauLang || null, nL = L ? L.abtauMessung : null;
+    if (!kurz.length && !L) { return null; }
+    const lang = L && !(typeof nT === 'number' && nT >= nMin);
+    return {fenster: lang ? 'lang' : 'test', tage: lang ? L.tage : kurz, n: lang ? nL : nT, nTest: nT, nLang: nL, von: lang ? L.von : null, bis: lang ? L.bis : null, tageLang: L ? L.tage.length : null, reicht: (lang ? nL : nT) >= nMin};
+}
+const GATE_ABTAU_MIN_WERT = 8;
 const GATE_N_MIN = 3;                                                           // Standard-Mindestfallzahl für Kennzahlen mit n (Pausen-Median); eigene Grenze je Kennzahl über nMin
-const GATE_ABTAU_MIN = GATE.kennzahlen.find(k => k.id === 'freilaufAbtau').nMin;
+const GATE_ABTAU_MIN = GATE.kennzahlen.find(k => k.id === 'freilaufAbtau').nMin;      // = GATE_ABTAU_MIN_WERT (abtauBasis)
 const LERN_KEYS = ['abtauDauerMin', 'abtauLinie', 'abtauPelW', 'abtauWaermeKWh', 'eisAnker', 'nachAbtauEffMin', 'hsBeimAbtauen', 'capQ3Tab'];
 const FIT_KEYS = {waerme: ['pthHz', 'pthHzAT', 'pthEnde'], strom: ['pel0', 'pelHz', 'pelRL', 'pelAT', 'pelHz2'], standby: ['pelPauseW', 'pelAusW'], pumpe: ['flowPause', 'flowComfort', 'flowEff', 'pumpe0', 'pumpeJeL'], luefter: ['fanQ', 'fanJeHz'],
                   rohr: ['pipe0', 'pipeQ'], startStopp: ['stopK', 'stopHaltMin', 'startK', 'startVerzugMin', 'startHystK'], regler: ['regSenkK', 'regAbHzMin', 'comfortWiederK', 'effT1', 'effK1', 'effL1', 'effT2', 'effK2', 'effKp', 'effKi'],
@@ -703,6 +717,12 @@ function guete(D, r, P) {
                 startsZwilling: sum('startsZwilling'), startsMessung: sum('startsMessung'), abtauZwilling: sum('abtauZwilling'), abtauMessung: sum('abtauMessung'), laufMinZwilling: sum('laufMinZwilling'), laufMinMessung: sum('laufMinMessung')} : null};
 }
 
+// Abtauungen im Freilauf je Tag über die letzten n Tage bis zum Testende (nur für das Abtau-Kriterium des Gates, wenn das Testfenster zu wenig Fälle hat)
+function abtauLang(D, bis, n, P) {
+    const tage = tageVon(D).filter(t => t <= bis).slice(-n), fl = tage.map(t => freilauf(D, t, P)).filter(Boolean).map(f => ({tag: f.tag, abtauZwilling: f.abtauZwilling, abtauMessung: f.abtauMessung}));
+    return fl.length ? {von: fl[0].tag, bis: fl[fl.length - 1].tag, tage: fl, abtauZwilling: fl.reduce((s, f) => s + f.abtauZwilling, 0), abtauMessung: fl.reduce((s, f) => s + f.abtauMessung, 0)} : null;
+}
+
 // ------------------------------------------------------------------ training-v2: Abdeckung, Gate
 // Abdeckung des ganzen Datenfensters je Außentemperatur-Band (Grundlage der Dünn-Daten-Phase und des Extrapolations-Hinweises)
 function abdeckung(D, o) {
@@ -735,9 +755,16 @@ function entscheide(gK, gC, opt) {
         const v = x => { try { const w = k.wert(x); return w === null || w === undefined || !isFinite(w) ? null : w; } catch (e) { return null; } };
         const fw = (f, x) => typeof f === 'function' ? v2(f, x) : f;                              // tol/grenze fest oder aus der Messung im Testfenster (beide Sätze gleich)
         const tol = fw(k.tol, gC), grenze = fw(k.grenze, gC), relK = k.rel === undefined ? rel : k.rel, nMin = k.nMin || GATE_N_MIN, eh = k.einheit ? ' ' + k.einheit : '';
-        const a = v(gK), b = v(gC), o = {id: k.id, name: k.name, kandidat: a, bisher: b, grenze: grenze, tol: tol, verletzt: false, warum: null};
-        if (a === null || b === null) { o.warum = 'nicht bewertbar (keine Werte)'; return o; }
-        if (k.n) { const na = v2(k.n, gK), nb = v2(k.n, gC); if ((typeof na === 'number' && na < nMin) || (typeof nb === 'number' && nb < nMin)) { o.warum = 'nicht bewertbar (n = ' + na + ' / ' + nb + ', weniger als ' + nMin + ')'; return o; } }
+        const a = v(gK), b = v(gC), o = {id: k.id, name: k.name, kandidat: a, bisher: b, grenze: grenze, tol: tol, verletzt: false, warum: null, bewertbar: true};
+        const bs = k.basis ? v2(k.basis, gC) : null;                                              // Abtau-Kriterium: welches Fenster (Messung, für beide Sätze gleich)
+        if (bs) { o.fenster = bs.fenster === 'lang' ? GATE_ABTAU_TAGE + ' Tage' : 'Test'; o.n = bs.n; o.nTest = bs.nTest; o.nLang = bs.nLang; if (bs.fenster === 'lang') { o.fensterVon = bs.von; o.fensterBis = bs.bis; o.fensterTage = bs.tageLang; } }
+        if (a === null || b === null) { o.bewertbar = false; o.warum = 'nicht bewertbar (keine Werte)'; return o; }
+        if (k.n) { const na = v2(k.n, gK), nb = v2(k.n, gC); if ((typeof na === 'number' && na < nMin) || (typeof nb === 'number' && nb < nMin)) {
+            o.bewertbar = false;
+            o.warum = bs && bs.fenster === 'lang' ? 'nicht bewertbar (Testfenster n = ' + bs.nTest + ', ' + GATE_ABTAU_TAGE + '-Tage-Fenster n = ' + bs.nLang + ', weniger als ' + nMin + ')'
+                : 'nicht bewertbar (n = ' + na + ' / ' + nb + ', weniger als ' + nMin + ')';
+            return o; } }
+        if (bs && bs.fenster === 'lang') { o.hinweis = 'bewertet im ' + GATE_ABTAU_TAGE + '-Tage-Fenster ' + bs.von + ' … ' + bs.bis + ' (' + bs.nLang + ' gemessene Abtauungen; Testfenster nur ' + bs.nTest + '); beide Sätze dort teils im eigenen Trainingszeitraum'; }
         if (a - b > Math.max(relK * b, tol) + 1e-9) {
             o.verletzt = true;
             o.warum = k.einheit ? 'schlechter um ' + de(a - b, 0) + eh + ' (' + de(b, 0) + ' → ' + de(a, 0) + eh + ', Toleranz ' + de(tol, 1) + ')'
@@ -746,9 +773,13 @@ function entscheide(gK, gC, opt) {
         else if (a > grenze && b <= grenze) { o.verletzt = true; o.warum = 'über der Ampelgrenze ' + de(grenze, 1) + eh + ' (' + de(a, 2) + ')'; }
         return o;
     });
-    const v = ks.filter(k => k.verletzt);
-    return {ergebnis: v.length ? 'abgelehnt' : 'übernommen', grund: v.length ? v.map(k => k.name + ': ' + k.warum).join('; ') : 'nicht schlechter als der bisherige Satz (Strom, Wasserkreis, Pause, Freilauf-Strom je höchstens +' + de(100 * rel, 0) + ' %, Freilauf-Abtauungen je Tag höchstens max(2; 25 %) Stück ab ' + GATE_ABTAU_MIN + ' gemessenen, unter der Ampelgrenze)',
-            kriterium: {rel: rel, tol: ks.reduce((o, k) => { o[k.id] = k.tol; return o; }, {}), grenzen: ks.reduce((o, k) => { o[k.id] = k.grenze; return o; }, {}), abtauMin: GATE_ABTAU_MIN}, kennzahlen: ks};
+    const v = ks.filter(k => k.verletzt), nb = ks.filter(k => !k.bewertbar), ab = ks.find(k => k.id === 'freilaufAbtau');
+    return {ergebnis: v.length ? 'abgelehnt' : 'übernommen', grund: v.length ? v.map(k => k.name + ': ' + k.warum).join('; ') : 'nicht schlechter als der bisherige Satz (Strom, Wasserkreis, Pause, Freilauf-Strom je höchstens +' + de(100 * rel, 0) + ' %, Freilauf-Abtauungen je Tag höchstens max(2; 25 %) Stück ab ' + GATE_ABTAU_MIN + ' gemessenen, unter der Ampelgrenze)' +
+                (ab && ab.hinweis ? '; Abtauungen ' + ab.hinweis : '') + (nb.length ? '; ' + nb.map(k => k.name + ': ' + k.warum).join('; ') : ''),
+            kriterium: {rel: rel, tol: ks.reduce((o, k) => { o[k.id] = k.tol; return o; }, {}), grenzen: ks.reduce((o, k) => { o[k.id] = k.grenze; return o; }, {}), abtauMin: GATE_ABTAU_MIN, abtauTage: GATE_ABTAU_TAGE},
+            nichtBewertbar: nb.map(k => ({id: k.id, name: k.name, warum: k.warum})),
+            abtauFenster: ab ? {fenster: ab.fenster || null, n: ab.n === undefined ? null : ab.n, nTest: ab.nTest === undefined ? null : ab.nTest, nLang: ab.nLang === undefined ? null : ab.nLang, von: ab.fensterVon || null, bis: ab.fensterBis || null, tage: ab.fensterTage || null, bewertbar: ab.bewertbar} : null,
+            kennzahlen: ks};
 }
 
 // ------------------------------------------------------------------ Hauptablauf
@@ -783,6 +814,9 @@ function trainiere(dir, opt) {
         [gTest, gRoh, gVor].forEach(g => bandStatus(g.jeBand, abd));
         roh = {werte: rohW, werteTraining: rohT, guete: {test: gRoh}};
         vorherNeu = {tag: opt.vorherTag || null, guete: {test: gVor}};
+        if (!(gTest.freilaufSumme && gTest.freilaufSumme.abtauMessung >= GATE_ABTAU_MIN)) {       // zu wenig Abtauungen im Testfenster: 14-Tage-Fenster für das Abtau-Kriterium
+            gTest.abtauLang = abtauLang(D, T.test[1], GATE_ABTAU_TAGE, PK); gVor.abtauLang = abtauLang(D, T.test[1], GATE_ABTAU_TAGE, vorT);
+        }
         ent = entscheide(gTest, gVor, opt.gate);
     }
     [gTrain, gTest].forEach(g => bandStatus(g.jeBand, abd));
@@ -854,7 +888,7 @@ function markdown(R) {
     return L.join('\n') + '\n';
 }
 
-module.exports = {freilauf, tageVon, abtauDirekt, linieFest, ABTAU_DIREKT_N, fitAbtau, fitDeckelQ3, abtauungen, lade, trennung, fitAlles, guete, trainiere, markdown, lsq, lsqBox, lsqBind, koordinatensuche, gebunden, strafe, glaette, glaetteSatz, abdeckung, bandOf, bandStatus, jeBand, entscheide, abtauIntervall, initAus, eingabe, readMulti,
+module.exports = {freilauf, tageVon, abtauLang, abtauBasis, GATE_ABTAU_TAGE, abtauDirekt, linieFest, ABTAU_DIREKT_N, fitAbtau, fitDeckelQ3, abtauungen, lade, trennung, fitAlles, guete, trainiere, markdown, lsq, lsqBox, lsqBind, koordinatensuche, gebunden, strafe, glaette, glaetteSatz, abdeckung, bandOf, bandStatus, jeBand, entscheide, abtauIntervall, initAus, eingabe, readMulti,
                   RAEUME, HAUS_RAEUME, BAENDER, GATE, ABDECKUNG, GEFITTET, KEINE_DATEN};
 
 if (require.main === module) {

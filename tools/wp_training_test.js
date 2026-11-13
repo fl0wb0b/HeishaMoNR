@@ -113,6 +113,24 @@ console.log('--- Gate: Freilauf-Abtauungen je Tag in Stück, erst ab 8 gemessene
     const null0 = T.entscheide(g([[4, 4], [4, 4], [4, 4]], 12), g([[4, 4], [4, 4], [4, 4]], 10));
     const fs = null0.kennzahlen.find(k => k.id === 'freilaufStrom');
     check('Prozentanzeige bei bisher = 0: „bisher 0 → 0,20“ statt Division durch 1e-9', fs.verletzt && fs.warum === 'schlechter (bisher 0 → 0,20)' && !/33333/.test(null0.grund), fs.warum);
+    // 14-Tage-Fenster (13.11.2026, Frostbericht 5a Punkt 3): lang = [[Zwilling, Messung], …] je Tag der letzten 14 Tage
+    const mitLang = (o, lang) => Object.assign(o, {abtauLang: {von: '2026-10-30', bis: '2026-11-12', tage: lang.map(([z, m], i) => ({tag: 'T' + i, abtauZwilling: z, abtauMessung: m})),
+        abtauZwilling: lang.reduce((s, x) => s + x[0], 0), abtauMessung: lang.reduce((s, x) => s + x[1], 0)}});
+    const M14 = [4, 0, 2, 0, 4, 0, 0, 6, 7, 3, 0, 0, 2, 1];                                       // 29 gemessene Abtauungen in 14 Tagen
+    const L = d => M14.map((m, i) => [Math.max(0, m + (d[i] || 0)), m]);
+    const l1 = T.entscheide(mitLang(g([[2, 0], [2, 2], [2, 1]]), L([1, 0, -1, 0, 1, 0, 0, -2, 1, 0, 0, 2, 0, 1])), mitLang(g([[1, 0], [1, 2], [2, 1]]), L([0, 1, 0, 0, -1, 0, 0, -3, 2, 0, 0, 1, -1, 1])));
+    check('3 Abtauungen im Testfenster, 29 in 14 Tagen: Abtau-Kriterium im 14-Tage-Fenster bewertet (Fehler 9 gegen 10 Stück), übernommen, Fenster und Fallzahlen im Ergebnis',
+          l1.ergebnis === 'übernommen' && ab(l1).bewertbar && ab(l1).fenster === '14 Tage' && ab(l1).kandidat === 9 && ab(l1).bisher === 10 && ab(l1).n === 29 && ab(l1).nTest === 3 && ab(l1).tol === 7.25 &&
+          l1.abtauFenster.fenster === '14 Tage' && l1.abtauFenster.nLang === 29 && l1.abtauFenster.von === '2026-10-30' && /bewertet im 14-Tage-Fenster/.test(l1.grund) && l1.nichtBewertbar.length === 0, JSON.stringify(ab(l1)));
+    const l2 = T.entscheide(mitLang(g([[2, 0], [2, 2], [2, 1]]), L([3, 2, -2, 1, 2, 1, 0, -3, 3, 0, 1, 2, 0, 1])), mitLang(g([[1, 0], [1, 2], [2, 1]]), L([0, 1, 0, 0, -1, 0, 0, -3, 2, 0, 0, 1, -1, 1])));
+    check('14-Tage-Fenster entscheidet auch gegen den Kandidaten: 21 gegen 10 Stück bei Toleranz max(2; 25 % von 29) = 7,25: abgelehnt', l2.ergebnis === 'abgelehnt' && ab(l2).verletzt && /schlechter um 11 Stück/.test(l2.grund), l2.grund);
+    const l3 = T.entscheide(mitLang(g([[2, 0], [2, 2], [2, 1]]), [[1, 0], [0, 0], [2, 2], [3, 1], [0, 0], [2, 0], [2, 2], [2, 1]]), mitLang(g([[1, 0], [1, 2], [2, 1]]), [[0, 0], [0, 0], [2, 2], [1, 1], [0, 0], [1, 0], [1, 2], [2, 1]]));
+    check('auch in 14 Tagen zu wenig (6 gemessen): „nicht bewertbar“ mit beiden Fallzahlen, entscheidet nichts, steht in nichtBewertbar und im Grund',
+          l3.ergebnis === 'übernommen' && !ab(l3).bewertbar && ab(l3).warum === 'nicht bewertbar (Testfenster n = 3, 14-Tage-Fenster n = 6, weniger als 8)' && l3.nichtBewertbar.some(x => x.id === 'freilaufAbtau') &&
+          l3.abtauFenster.bewertbar === false && /nicht bewertbar \(Testfenster n = 3, 14-Tage-Fenster n = 6/.test(l3.grund), ab(l3).warum);
+    const l4 = T.entscheide(mitLang(g([[6, 7], [3, 3], [0, 0]]), L([9, 9, 9])), mitLang(g([[15, 7], [6, 3], [0, 0]]), L([])));
+    check('genug Abtauungen im Testfenster (10): das 14-Tage-Fenster bleibt außen vor, auch wenn es vorliegt', l4.ergebnis === 'übernommen' && ab(l4).fenster === 'Test' && ab(l4).kandidat === 1 && ab(l4).bisher === 11 && ab(l4).n === 10);
+    check('ohne 14-Tage-Fenster und zu wenig Fälle: Meldung wie bisher, in nichtBewertbar geführt', k12.nichtBewertbar.length === 1 && k12.nichtBewertbar[0].id === 'freilaufAbtau' && k12.abtauFenster.bewertbar === false && k12.kriterium.abtauTage === 14);
     check('Gate-Kriterium im Ergebnis: Mindestzahl 8 Abtauungen, Toleranz/Grenze als Zahl aus der Messung', k09.kriterium.abtauMin === 8 && k09.kriterium.tol.freilaufAbtau === 2.5 && k09.kriterium.grenzen.freilaufAbtau === 3, JSON.stringify(k09.kriterium));
 }
 

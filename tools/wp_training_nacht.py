@@ -14,6 +14,9 @@ Ablauf (nur lesend gegenüber der Anlage, der NAS und MQTT):
       Übernommen nur, wenn Strom-RMSE, Wasserkreis-RMSE und Pause-Median nicht um mehr als 10 % (--gate-rel; mindestens 0,5 W / 0,02 K / 1 min)
       schlechter werden und keine Kennzahl über die Ampelgrenze steigt, die der bisherige Satz einhält.
       Übernommen → wp_params_<tag>.json und wp_params_aktiv.json; abgelehnt → kandidat_<tag>.json, aktiv bleibt der bisherige Satz.
+      Abtau-Kriterium (Freilauf, Fehler je Tag in Stück): bewertet ab 8 gemessenen Abtauungen im Testfenster; reichen sie dort nicht, gilt für dieses
+      eine Kriterium das Fenster der letzten 14 Tage; reicht auch das nicht, bleibt es „nicht bewertbar“ und steht so in letzter.json
+      (entscheidung.nicht_bewertbar, entscheidung.abtau_fenster) und damit in status.json.
 3. Parameterdrift gegen den bisher aktiven Satz (jüngste ältere wp_params_<datum>.json): je Parameter vorher, roh gelernt, übernommen,
    Markierung ab 10 % (bei Werten nahe 0: ab 0,05 absolut) für den roh gelernten Wert, dazu die Güte heute gegen damals.
 4. Ausgabe: <ausgabe>/wp_params_<tag>.json bzw. kandidat_<tag>.json und <ausgabe>/wp_training.md (je Lauf überschrieben; der Tag steht im Kopf).
@@ -276,7 +279,19 @@ def bericht(tag, R, alt, zeilen, training_md, quelle_txt, ent=None):
                 g = gate.get(k)
                 L.append("| %s | %s | %s | %s | %s |" % (k, fmt(ent["roh"].get(k)), fmt(ent["kandidat"].get(k)), fmt(ent["bisher"].get(k)),
                                                     "–" if not g else ("**verletzt:** " + g["warum"] if g.get("verletzt") else ("ok" if not g.get("warum") else g["warum"]))))
+            for g in ent.get("kennzahlen") or []:              # Kennzahlen des Gates ohne eigene Zeile oben (Freilauf-Strom, Freilauf-Abtauungen)
+                if g.get("name") in ent["kandidat"]:
+                    continue
+                L.append("| %s | – | %s | %s | %s |" % (g.get("name"), fmt(g.get("kandidat")), fmt(g.get("bisher")),
+                                                      "**verletzt:** " + str(g.get("warum")) if g.get("verletzt") else (g.get("warum") or g.get("hinweis") or "ok")))
             L.append("")
+            af = ent.get("abtau_fenster")
+            if af:
+                L.append("Abtau-Kriterium: Fenster %s, gemessene Abtauungen im Testfenster %s%s, bewertbar: %s (Mindestzahl %s)." % (
+                    af.get("fenster") or "–", zahl(af.get("nTest"), 0), "" if af.get("nLang") is None else ", im %s-Tage-Fenster %s bis %s: %s" % (
+                        (ent.get("kriterium") or {}).get("abtauTage", 14), af.get("von") or "–", af.get("bis") or "–", zahl(af.get("nLang"), 0)),
+                    "ja" if af.get("bewertbar") else "nein", (ent.get("kriterium") or {}).get("abtauMin", 8)))
+                L.append("")
         L.append("Aktiver Satz: `%s`." % ent["aktiv"])
         L.append("")
     L.append("## Güte des aktiven Satzes (Test, Parameter aus den Trainingstagen)")
@@ -397,7 +412,8 @@ def main(argv=None):
             aktiv_training = guete_kurz(alt_r[1]["guete"]["training"]) if "training" in alt_r[1].get("guete", {}) else None
         ent = {"ergebnis": E.get("ergebnis"), "grund": E.get("grund"), "aktiv": aktiv_datei, "aktiv_tag": aktiv_tag, "aktiv_guete": aktiv_guete,
                "kandidat_datei": os.path.basename(js if uebernommen else js_kand), "bisher_tag": alt_r[0] if alt_r else None,
-               "kriterium": E.get("kriterium"), "kennzahlen": E.get("kennzahlen"), "glaettung": (R.get("glaettung") or {}).get("anteil"),
+               "kriterium": E.get("kriterium"), "kennzahlen": E.get("kennzahlen"), "nicht_bewertbar": E.get("nichtBewertbar") or [], "abtau_fenster": E.get("abtauFenster"),
+               "glaettung": (R.get("glaettung") or {}).get("anteil"),
                "bindung": (R.get("glaettung") or {}).get("bindung"), "kandidat": g_kand, "bisher": g_bisher, "roh": g_roh}
         zeilen = drift(alt_r[1]["werte"], R["werte"], R["herkunft"], (R.get("roh") or {}).get("werte")) if alt_r else []
         with open(os.path.join(a.ausgabe, "wp_training.md"), "w", encoding="utf-8") as f:
@@ -414,7 +430,8 @@ def main(argv=None):
                                               "text": drift_text(z, uebernommen)} for z in zeilen if z[5]]},
                          "entscheidung": {"ergebnis": ent["ergebnis"], "grund": ent["grund"], "aktiv": aktiv_datei, "aktiv_tag": aktiv_tag, "kandidat_datei": ent["kandidat_datei"],
                                           "bisher_tag": ent["bisher_tag"], "kandidat": kurz_json(g_kand), "bisher": kurz_json(g_bisher) if g_bisher else None, "roh": kurz_json(g_roh),
-                                          "kriterium": ent["kriterium"], "verletzt": [k["name"] for k in ent["kennzahlen"] or [] if k.get("verletzt")]},
+                                          "kriterium": ent["kriterium"], "verletzt": [k["name"] for k in ent["kennzahlen"] or [] if k.get("verletzt")],
+                                          "nicht_bewertbar": ent["nicht_bewertbar"], "abtau_fenster": ent["abtau_fenster"]},   # 13.11.2026: was das Gate nicht entscheiden konnte, und das Fenster des Abtau-Kriteriums
                          "glaettung": {"anteil": ent["glaettung"], "bindung": ent["bindung"]},
                          "guete_je_band": band_kurz(aktiv_baender), "abdeckung": abdeckung_kurz(R.get("abdeckung"))})
             aufraeumen(a.ausgabe)
