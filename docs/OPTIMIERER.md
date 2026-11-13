@@ -1,6 +1,6 @@
 # Optimierer: Entscheidungsmaschine, Punktesystem, Ein-Klick-Übernahme, Bonsai-Beobachter
 
-Stand 17.10.2026, Branch `cop-ziel` (**COP: Ziel und Ist, Stromzähler**: Abschnitt 25; **Winterpaket**: Abtauwetter bis unter 10 °C, kein Comfort nach dem Abtauen/beim Kaltstart, Quiet stufenweise, +1 K in der Pause als Startbefehl, „Anlage hat Quiet beendet“, COP mit Abtau-Abzug, Zwilling-Parameter: Abschnitt 24; Änderungen gegenüber 12.10.: Abschnitt 13; Seite „Optimierer“ und Klickweg: Abschnitt 14; Seiten: Abschnitte 15–16; Quiet-Freigabe v2 und Deckel/Laufzeit v4: Abschnitt 17, zweiter Review-Durchgang: 17.9; **Review-Paket** (Wärmefahrplan als Vorschau, Heizgrenze-Hinweis stillgelegt, Vorausschau nur −1 K, Messaufgabe gestrichen, Quiet-Wächter nur Messung): Abschnitt 18; COP-Korrektur: Abschnitt 19; **Raumeinfluss v3, Forum 189605** (Mindestfrequenz, Startschwelle, Abtauen, H23, Dornröschenschlaf, Effizienz-Deckel ab 28 Hz): Abschnitt 20; **Regel „Heizregelung“** (Comfort/Efficiency mit Übernahme per Klick, Whitelist `SetHeatingControl` 0/1): Abschnitt 21; **Gebäudemodell v3 und eigene Nachheizung** (Entscheidungen 2 und 5, 15.10.): Abschnitt 22). **Alles ist Shadow.** Die Maschine rechnet jede Minute aus, was sie schalten *würde*, und schreibt das auf. Sie sendet nichts. Der einzige Sendeweg ist ein Klick des Betreibers auf „Übernehmen“. Dieser Weg wird gesperrt ausgeliefert.
+Stand 13.11.2026. Maßgeblicher Branch ist `main`; er ist seit 12.11.2026 der Live-Stand (Bewertung v8). Deploys der Optimierer-Knoten laufen aus `main` und nur mit `GEN_ARGS=--uebernahme-knoten-aktiv` (Abschnitt 8). Die Abschnitte 13 bis 29 sind die Chronik der einzelnen Pakete mit ihrem damaligen Branch (**COP: Ziel und Ist, Stromzähler**: Abschnitt 25; **Winterpaket**: Abtauwetter bis unter 10 °C, kein Comfort nach dem Abtauen/beim Kaltstart, Quiet stufenweise, +1 K in der Pause als Startbefehl, „Anlage hat Quiet beendet“, COP mit Abtau-Abzug, Zwilling-Parameter: Abschnitt 24; Änderungen gegenüber 12.10.: Abschnitt 13; Seite „Optimierer“ und Klickweg: Abschnitt 14; Seiten: Abschnitte 15–16; Quiet-Freigabe v2 und Deckel/Laufzeit v4: Abschnitt 17, zweiter Review-Durchgang: 17.9; **Review-Paket** (Wärmefahrplan als Vorschau, Heizgrenze-Hinweis stillgelegt, Vorausschau nur −1 K, Messaufgabe gestrichen, Quiet-Wächter nur Messung): Abschnitt 18; COP-Korrektur: Abschnitt 19; **Raumeinfluss v3, Forum 189605** (Mindestfrequenz, Startschwelle, Abtauen, H23, Dornröschenschlaf, Effizienz-Deckel ab 28 Hz): Abschnitt 20; **Regel „Heizregelung“** (Comfort/Efficiency mit Übernahme per Klick, Whitelist `SetHeatingControl` 0/1): Abschnitt 21; **Gebäudemodell v3 und eigene Nachheizung** (Entscheidungen 2 und 5, 15.10.): Abschnitt 22; Stand der Anlage, Branch und NAS-Container: Abschnitt 30). **Die Maschine selbst sendet nichts.** Sie rechnet jede Minute aus, was sie schalten *würde*, und schreibt das auf. Gesendet wird auf zwei Wegen: (1) durch einen Klick des Betreibers auf „Übernehmen“ samt dem angezeigten Rückweg; dieser Weg wird gesperrt ausgeliefert und ist auf der Anlage seit 02.11.2026 scharf (Abschnitt 8). (2) Seit 07.11.2026 sendet die Automatik „Heizregelung nach Außentemperatur“ (`hc_at`, Kern-Tab, `tools/heating_control_switch.py`) selbst: Comfort bzw. Efficiency und Quiet 3 (Abschnitt 8, „Zweiter Sendeweg“).
 
 ## 1. Kurzfassung
 
@@ -15,12 +15,13 @@ Stand 17.10.2026, Branch `cop-ziel` (**COP: Ziel und Ist, Stromzähler**: Abschn
   - Seit v5 (12.10., Entscheidung des Nutzers, Weg b) zählt ein Treffer neutral, wenn die Basisrate mindestens bei der Prognose liegt (b ≥ p); Fehlalarme bleiben voll im Abzug.
   - Seit v6 (22.10., wertung-lueften) ist „gelöst“ bei den Raum-Prognosen nur ein Fehlalarm, wenn keine Fremdursache vorlag (Lüften auf dem geglätteten Raumwert, Sonne bei +1 K, Heizgrenze-Aus bei −1 K); Änderungen von Hand sind Naturexperimente: gemessen, getrennt gezählt, keine Punkte für die Regel.
   - Seit v7 (05.11., Kimi-Prüfung, Kevin) ist ein Rückweg (auch von Hand zurück auf den Ausgangswert) weder Wirkung noch Naturexperiment, und „verpasst“ der Vorausschau zählt ohne Modell-Gate, nur mit der Reihe aus dem Wärmefahrplan.
+  - Seit v8 (12.11. live) zählt der Schaden „Heizstab lief“ nur noch für Heizstab-Minuten außerhalb einer Abtauung (Abschnitt 6, „Änderung v7 → v8“).
 - **Quiet-Regeln seit 13.10.** (Abschnitt 17, Nutzerregel „wir schalten so, wie es am effizientesten ist“):
   - **Quiet-Freigabe v2** schlägt nur bei echtem Bedarf vor (Raum unter Minimum oder auf dem Weg dorthin, Heizstab-Nähe, Boost von Hand). Sie erkennt den Deckel je Stufe und Außentemperatur, gibt nur so weit frei wie nötig und hat einen automatischen Rückweg.
   - **Deckel/Laufzeit v4** (vorher „Laufzeit strecken“) hat zwei Hebel: Quiet höher als Effizienz-Deckel, wenn der Verdichter ohne Bedarf mit ≥ 22 Hz läuft; Heizkurve +1 K nur bei belegtem Takt und wenn der geschätzte Nutzen die Kosten übersteigt.
   - Beide Quiet-Regeln teilen sich eine Arbitrierung (4b). Der Mindestabstand gilt über Quiet und Verschiebung gemeinsam (ein Notfall überbrückt ihn nach 10 min); je Größe läuft eine Übernahme, die dieselbe Regel in derselben Richtung fortsetzen darf (17.9).
 - **Heizregelung seit 14.10.** (Abschnitt 21): Ziel ist Efficiency. Comfort schlägt die Regel nur bei echtem Bedarf vor (wie Quiet-Freigabe v3), solange Efficiency träge ist (Anlaufphase bis Laufminute 45, nach dem Abtauen, Heizstab-Nähe) und der Quiet-Deckel den Hochlauf zulässt – sonst zuerst die Quiet-Freigabe. Zurück nach Efficiency, wenn der Bedarf 15 min gedeckt ist, und zwar in der Pause (im Lauf springt die Pumpe); Comfort von Hand wird frühestens nach 2 h ohne Bedarf in einer Pause zur Efficiency vorgeschlagen (nur wenn Comfort hochfahren kann, mit COP-Veto). Replay 07.–14.10.: 0 × Comfort, 2 × Efficiency (13.10. 13:51 und 15:21, Comfort von Hand; der Nutzer stellte 15:29 selbst Efficiency).
-- **Ein-Klick-Übernahme** `opt_apply`: Es gibt die Knöpfe „Übernehmen“, „Verwerfen“, „Zurücksetzen“ und „Übernahme sperren“. Ausgeliefert wird sie doppelt gesperrt:
+- **Ein-Klick-Übernahme** `opt_apply`: Es gibt die Knöpfe „Übernehmen“, „Verwerfen“, „Zurücksetzen“ und „Übernahme sperren“. Auf der Anlage ist sie seit 02.11.2026 scharf (Abschnitt 8). Ausgeliefert wird sie doppelt gesperrt:
   1. Der `mqtt out` ist deaktiviert.
   2. Der Hauptschalter in `apply.json` fehlt, das heißt „aus“.
 
@@ -713,7 +714,30 @@ Die Messaufgabe Comfort/Efficiency (Minuten mit Quiet 0, ab Laufminute 15, Vorla
 
 **Nutzerregel:** Bis 12.10. galt „keine Comfort/Efficiency-Wechsel wegen Räumen“. Seit 13.10. gilt „wir schalten so, wie es am effizientesten ist“. Seit 14.10. gibt es die Regel „Heizregelung“ (Abschnitt 21); der Heizregelungs-Hinweis (Abschnitt 4, 18.5) bleibt als Anzeige.
 
-## 8. Ein-Klick-Übernahme (ausgeliefert, gesperrt)
+## 8. Ein-Klick-Übernahme (gesperrt ausgeliefert, auf der Anlage seit 02.11.2026 scharf)
+
+### Stand auf der Anlage (13.11.2026)
+
+- **Übernahme per Klick ist scharf.** Erstmals freigeschaltet am 13.10.2026, in der heutigen Form seit 02.11.2026: Hauptschalter in `/data/optimizer/apply.json` an, freigegebene Regeln `quiet_freigabe`, `quiet_strecken`, `raum_offset`, `heizregelung`; der Sendeknoten `opt_apply_mqtt` ist aktiv erzeugt.
+- **Jeder Deploy der Optimierer-Knoten braucht `GEN_ARGS=--uebernahme-knoten-aktiv`.** Ohne den Schalter erzeugt der Generator den Sendeknoten deaktiviert, und `opt_apply` lehnt jeden Klick ab (Sicherheitsnetz 1). Das Deploy-Skript zeigt den Wechsel als „live: AKTIV -> neu: deaktiviert“.
+- Die Beschreibung „gesperrt“ in diesem Abschnitt gilt für die **Auslieferung** (Generator ohne Schalter, keine `apply.json`). Die Sicherheitsnetze 2 bis 11 gelten unverändert auch im scharfen Betrieb.
+- **Bewertung v8** läuft seit 12.11.2026 (Abschnitt 6). Die Punkte stehen wie bei jedem Versionssprung getrennt unter `s8`.
+
+### Zweiter Sendeweg: Automatik `hc_at` (seit 07.11.2026, sendet selbst)
+
+Die Automatik „Heizregelung nach Außentemperatur“ gehört nicht zur Maschine und nicht zum Optimierer-Tab. Sie liegt im Kern (Knoten `hc_at`, erzeugt von `tools/heating_control_switch.py`) und hat einen eigenen Schalter „Automatisch nach Außentemperatur“ im Dashboard.
+
+| | |
+|---|---|
+| Lage „kalt“ | Außentemperatur ≤ 2 °C → einmal **Comfort** |
+| Lage „warm“ | Außentemperatur ≥ 4 °C → einmal **Efficiency und Quiet 3**; bei 3 °C nichts (Hysterese) |
+| Wann | nur beim Wechsel der Lage, erst wenn sie 30 min am Stück ansteht (jeder gültige Wert der 30 min liegt in der Lage; 3 °C startet die Zeit neu), frühestens 2 h nach dem letzten Wechsel |
+| Weg | Heizregelung über den Befehl des Handschalters (mit dessen Schutzregeln und Protokoll), Quiet 3 über die gemeinsame Befehlskette |
+| Quiet 3 entfällt | wenn Quiet schon 3 ist, die MQTT-Sperre aktiv ist, das Tagesbudget der Befehle aufgebraucht ist oder der Optimierer Quiet per Klick übernommen hat |
+| Danach | wird nichts erzwungen: Handschalter und Klick-Übernahmen bleiben stehen |
+
+Messung dazu (Frost-Nachmessung 28.10.–12.11.2026): drei Wechsel seit 07.11. mit mindestens 11,7 h Abstand, kein Flattern. Bei „kalt“ bleibt Quiet 3 stehen; bei ≤ 0 °C hing Comfort/Quiet 3 am Deckel von 24–25 Hz mit dem Vorlauf 1,5 bis 1,8 K unter Soll. Am 13.11.2026 03:34–03:38 lief dabei erstmals der Heizstab außerhalb einer Abtauung (−2 °C, 25 Hz, Vorlauf 3,5 K unter Soll). Ob die Automatik bei Kälte zusätzlich Quiet 0 senden soll, ist eine offene Entscheidung des Nutzers.
+
 
 ### Weg (a) oder (b)? Entscheidung: (a), deaktiviert ausgeliefert
 
@@ -739,7 +763,7 @@ Option (b) ist dokumentiert, aber nicht gebaut. Sie hätte die Ratenbegrenzung d
    - `/data/optimizer/apply.json` fehlt, damit gilt der Hauptschalter `OPT_apply_enabled` = aus. Nur `"enabled": true` (Boolesch) schaltet ein.
    - Die Karte zeigt „Übernahme gesperrt“.
    - Seit 13.10. weiß `opt_apply`, dass der Sendeknoten deaktiviert erzeugt wurde (Generator-Schalter `KNOTEN = false`): ein Klick wird auch mit Hauptschalter AN abgelehnt, die Karte zeigt „Übernahme gesperrt: Sendeknoten deaktiviert“. Vorher hätte ein Klick „gesendet“ gemeldet und wäre am deaktivierten Knoten verpufft (Rücklese-Timeout).
-2. **Nur der Klick sendet.** Es gibt keinen automatischen Sendeweg. Die Sim prüft 36 h mit Hauptschalter AN und allen Regeln freigegeben: 0 Befehle ohne Klick.
+2. **Im Optimierer sendet nur der Klick.** Die Maschine und `opt_apply` haben keinen automatischen Sendeweg. Die Sim prüft 36 h mit Hauptschalter AN und allen Regeln freigegeben: 0 Befehle ohne Klick. (Die Automatik `hc_at` im Kern ist ein eigener Weg, siehe oben.)
    - Einzige Ausnahme ist der **Rückweg einer geklickten Übernahme**. Er ist Teil des angezeigten Vorschlags („Gültig bis … automatisch zurück auf …“) und wird nur in Richtung des vorherigen Werts gesendet.
 3. **Prüfkette je Klick.** Vom Browser kommen nur ID und Prüfsumme. Der Server prüft:
    - Doppelklick
@@ -870,6 +894,17 @@ Angepasste Sicherheitsprüfungen in `optimizer_sim.js` sind gezielt: Es ist **ge
 Jeder andere `mqtt out` sowie jeder Link- und HTTP-in-Knoten im Tab bleibt verboten. `engine_sim.js` prüft an verfälschten Kopien, dass diese Strukturprüfung anschlägt. Die Funktionsliste „kennt commands/“ ist um genau `opt_engine` (nur Vorschlagstexte) und `opt_apply` erweitert.
 
 ## 12. Bekannte Grenzen und Annahmen
+
+**Stand 13.11.2026.** Die Absätze unten stammen überwiegend vom 10. bis 13.10. und bleiben zur Nachvollziehbarkeit stehen. Überholt bzw. neu ist:
+
+- **Kälte, Abtauen, Heizstab: Es gibt jetzt Daten bis −2 °C** (Frost-Nachmessung 28.10.–12.11.2026 und die Nacht 12./13.11.; 37 Abtauungen seit 20.10.). Gemessen: Abtauung 9 min (8–11), Auslöser Rohr außen ≈ 0,9 · AT − 8,1 °C, Abstand rund 115 Laufminuten bei 0/−1 °C, Efficiency hält danach 38–39 min die Mindestfrequenz; Quiet 3 deckelt bis 3 °C auf 25 Hz. Der Heizstab lief bis 12.11. nur als Abtau-Heizstab bei WP-AT −1 °C (2,8–2,9 kW, 4–6 min je Abtauung), am 13.11. erstmals 5 min außerhalb einer Abtauung. **Unter −2 °C und bei trockenem Frost (Feuchte unter 82 %) gibt es weiter keine Daten:** Höchstfrequenz, Mindestfrequenz ab −4 °C und der Wärmerückgang dort bleiben Forum-Werte.
+- **Bewertung „Schaden: Heizstab lief“**: seit v8 ohne den Abtau-Heizstab (Abschnitt 6).
+- **Vereisung im Zwilling** (`tools/wp_zwilling.js`, `eisAtTab`): gemessen bei ≤ 0 °C voll, bei 1–3 °C etwa 0,15, ab 4 °C keine. Die Feuchte wirkt stärker als im Modell; an Tagen, an denen der WP-Fühler 1–2 °C zeigt und der Wetterdienst unter 0 °C, taut die Anlage ab und der Zwilling nicht (07.11.2026).
+- **Frost-Faktoren im Zwilling**: Der Abschlag der Verdichterleistung unter 1 °C (`pelFrostAnteil`, Forum) passt nicht zur eigenen Messung (Modell bei −1/−2 °C rund 40 W zu niedrig), der Wärmeabfall (`pthFrostJeK`) ist eher stärker als angenommen. Beide werden noch nicht gelernt.
+- **Trainings-Gate**: Das Abtau-Kriterium bewertet ab 8 gemessenen Abtauungen, sonst im 14-Tage-Fenster, sonst „nicht bewertbar“ (steht im Status). Im 14-Tage-Fenster liegen beide Sätze teils im eigenen Trainingszeitraum.
+- **Fehlende Stromwerte**: In den Kennzahlen (Rechenweg 3) sind Minuten ohne Stromwert unbekannt und stehen als `energie.strom_unbekannt_min`. In zwei Optimierer-Knoten zählt ein fehlender TOP16-Wert weiter als 0 (`opt_quiet`: Abtau-Abrechnung in `defrost-*.csv`; `opt_plan`: Stundenwerte in `plan-actuals`). In den Protokollen seit 07.10. kam das nicht vor.
+- **Zeitangaben der Chronik**: Die Abschnitte 13 bis 29 nennen den Branch und den Teststand ihres Pakets. Maßgeblich ist heute `main` (Abschnitt 30).
+
 
 **Rücklauf-Schwelle der Quiet-Freigabe.** 1,5 K ist eine **Annahme**. Gemessen sind vier Punkte:
 - ≤ 0,25 K: keine Reaktion.
@@ -1794,3 +1829,22 @@ Zwei Node-RED-Module aus der rpo-suite rechnen „wie Lambda“ mit. Sie sind nu
 **Auswertung nach 2–3 Wochen:** `in.lambda.at` gegen die Vorausschau v5 (`in.vs`) und gegen die gemessenen Raumverläufe; `in.lambda.shift` gegen den Kurvenform-Befund je Außenband.
 
 **Tests:** `engine_sim` l1.1–l1.5 (kein Schalten, Datensatz und Nachspielen, Hinweis ±, Kacheln, Ablauf nach 60 min) und „Huelle Lambda (1)–(4)“ plus Strukturprüfung mit der Flow-Datei. Die Rechnung beider Module ist im Test nachgebildet; die Nachbildung wurde gegen den Modul-Code gerechnet (8,0 °C / −3,0 K / 0,89 K nach 2 Tagen gleich). Der Testaufbau hält seit diesem Paket den Knoten-Kontext bis zum Neustart.
+
+## 30. Stand der Anlage, Branch und NAS-Container (13.11.2026)
+
+**Branch.** `main` ist der maßgebliche Branch und seit 12.11.2026 der Live-Stand: Zusammenführung von `einwire-protokoll` mit den Korrekturen des Kimi-Audits und der lokalen Konfiguration, dazu Bewertung v8 und das Frost-Paket der Werkzeuge. Ältere Branches (`einwire-protokoll`, `cop-ziel` und die Paket-Branches der Abschnitte 13 bis 29) sind Geschichte; ein Deploy von dort würde den Live-Stand zurückdrehen.
+
+**Installationswerte** (Adressen, Geräte- und Raumnamen aus MQTT-Topics) stehen nicht im Repo, sondern in der unversionierten `lokal.json` (`lokal.example.json` nennt die Schlüssel). `tools/privat_test.py` prüft das auf jedem Commit.
+
+**Deploy der Optimierer-Knoten.** Generator `tools/optimizer_phase1.py` auf einer Kopie der Live-Flows, danach `optimizer_sim.js` und `engine_sim.js`; geändert werden nur `opt_*`-Knoten. Auf der Anlage immer mit `GEN_ARGS=--uebernahme-knoten-aktiv` (Abschnitt 8). Änderungen am Kern (alles außerhalb der `opt_*`-Knoten) laufen über eigene Patch-Werkzeuge mit Simulation und brauchen das Go des Nutzers.
+
+**Zwei Container auf der NAS** rechnen neben Node-RED. Der PC hat seit 12.11.2026 keine zeitgesteuerten Aufgaben mehr.
+
+| Container | Zeitplan | Aufgabe | Code |
+|---|---|---|---|
+| `optimizer-tools` | täglich 06:40 | Training des Anlagen-Zwillings mit Gate, `cop_eta`, Replay des Vortags, Tageskennzahlen, Anlagen-Gesundheit, Sicherung der Protokolle; Ergebnis in `status.json` (Karte „Auswertung NAS“, Abschnitt 23.3) | `docker/optimizer-tools/`, `tools/` |
+| `berichte` | Tageslauf 06:55, Wochenlauf sonntags 07:40 | Tagesbericht und Review aus den Fakten des Vortags, Störungsliste, Forum-Abruf und -Auswertung, Wochenstand; schreibt mit einem Sprachmodell, das nichts regelt | außerhalb dieses Repos; liest die Dokumentation von `main` |
+
+`optimizer-tools` läuft ohne Netz (`network_mode: none`), liest die Protokolle nur lesend und schreibt nur in seinen Ergebnisordner. Einzelheiten und die Felder von `status.json`: `docker/optimizer-tools/README.md`.
+
+**Tests.** `sh tools/alle_tests.sh [flows.json] [Datenordner]` lässt alle Tests laufen und sagt, welche eine Flow-Datei brauchen. Die Prüfungen der längst eingespielten Kern-Patches sind als erledigte Einmal-Tests gekennzeichnet (Rückgabewert 3, `tools/einmal_test.py`).
