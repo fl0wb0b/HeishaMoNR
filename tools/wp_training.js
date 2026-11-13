@@ -256,7 +256,10 @@ function trennung(D, opt) {
 const inTage = (m, r) => m.tag >= r[0] && m.tag <= r[1];
 
 // ------------------------------------------------------------------ Teil-Fits (je Funktion: Daten → Werte + Fit-Kennzahl)
-function stabil(D, r) { return D.M.filter(m => m.ok && inTage(m, r) && m.lauf && m.rm !== null && m.rm >= 5 && !m.def && m.pth > 0 && m.flow > 5 && m.pel > 0 && m.at !== null && m.rl !== null); }
+// Ohne Heizstab-Minuten (13.11.2026): TOP16 und die Wärme enthalten dort den internen Heizstab (3,6 kW statt 0,6 kW). Bis 13.11. gingen sie in den Fit der
+// Verdichterleistung und in den Strom-RMSE ein: 5 Heizstab-Minuten am 13.11. 03:34–03:38 hoben den Test-RMSE von 25 auf 106 W (Band < 0 °C: 43 → 328 W).
+function stabilRoh(D, r) { return D.M.filter(m => m.ok && inTage(m, r) && m.lauf && m.rm !== null && m.rm >= 5 && !m.def && m.pth > 0 && m.flow > 5 && m.pel > 0 && m.at !== null && m.rl !== null); }
+function stabil(D, r) { return stabilRoh(D, r).filter(m => !m.hI); }
 function vlRelVor(D, m) { const i = (m.t - D.M[0].t) / MIN, v = D.M[Math.max(0, i - 1)]; return v.vl !== null && m.soll !== null ? v.vl - m.soll : 0; }
 function fitPth(D, r, B) {
     const S = stabil(D, r), X = S.map(m => [m.hz, m.hz * (m.at - 5), m.hz * Math.max(0, vlRelVor(D, m) - 1)]), y = S.map(m => m.pth);
@@ -306,7 +309,7 @@ function fitFan(D, r, P) {
 }
 function fitPipe(D, r, P, B) {
     let S = stabil(D, r).filter(m => m.pipe !== null && m.fan > 0), quelle = 'Trainingstage';
-    if (S.length < 300) { S = D.M.filter(m => m.ok && m.lauf && m.rm >= 5 && !m.def && m.pth > 0 && m.pel > 0 && m.pipe !== null && m.fan > 0); quelle = 'alle Tage (Spalte rohr_aussen erst ab 14.10.; keine Testtrennung)'; }
+    if (S.length < 300) { S = D.M.filter(m => m.ok && m.lauf && m.rm >= 5 && !m.def && !m.hI && m.pth > 0 && m.pel > 0 && m.pipe !== null && m.fan > 0); quelle = 'alle Tage (Spalte rohr_aussen erst ab 14.10.; keine Testtrennung)'; }
     if (S.length < 100) { return {_fit: {n: S.length, quelle: 'zu wenig Daten, Vorgabe'}}; }
     const X = S.map(m => [1, Math.max(0, m.pth - m.pel) / 1000 * 300 / m.fan]), y = S.map(m => m.at - m.pipe);
     const f = B ? lsqBind(X, y, [B.vor.pipe0, B.vor.pipeQ], skalen(B, ['pipe0', 'pipeQ']), B.lambda) : lsq(X, y);
@@ -631,14 +634,14 @@ function teilGuete(D, r, P) {
     const S = stabil(D, r);
     const ePth = S.map(m => Z.pthOf(P, m.hz, m.at, vlRelVor(D, m)) - m.pth), ePel = S.map(m => Z.pelOf(P, m.hz, m.at, m.rl) - m.pel);
     const kWhPth = [S.reduce((s, m) => s + Z.pthOf(P, m.hz, m.at, vlRelVor(D, m)), 0) / 60000, S.reduce((s, m) => s + m.pth, 0) / 60000];
-    const pp = D.M.filter(m => m.ok && inTage(m, r) && m.pipe !== null && m.lauf && m.rm >= 5 && !m.def && m.pth > 0 && m.pel > 0 && m.fan > 0);
+    const pp = D.M.filter(m => m.ok && inTage(m, r) && m.pipe !== null && m.lauf && m.rm >= 5 && !m.def && !m.hI && m.pth > 0 && m.pel > 0 && m.fan > 0);
     const ePipe = pp.map(m => (m.at - (P.pipe0 + P.pipeQ * Math.max(0, m.pth - m.pel) / 1000 * 300 / m.fan)) - m.pipe);
     const samm = {regler: [], wasserkreis: [], haus: []};
     const reg = reglerFehler(D, r, P, samm.regler), hyd = hydraulikFehler(D, r, P, 360, samm.wasserkreis), haus = hausFehler(D, r, P, 1440, undefined, samm.haus);
     samm.strom = S.map((m, i) => ({at: m.at, e: ePel[i]})); samm.waerme = S.map((m, i) => ({at: m.at, e: ePth[i]}));
     const raeume = {}; RAEUME.forEach(id => { const f = raumFehler(D, r, P, id, P.raeume[id]); raeume[id] = {n: f.n, rmseK: rd(f.rmse, 3), biasK: rd(f.bias, 3)}; });
     const st = stoppFehler(D, r, P.stopK, P.stopHaltMin), sa = startFehler(D, r, P.startK, P.startVerzugMin, P.startHystK);
-    return {pthRmseW: rd(rmse(ePth), 1), pthBiasW: rd(mean(ePth), 1), pthKWhModellMessung: kWhPth.map(x => rd(x, 2)), pelRmseW: rd(rmse(ePel), 1), pelBiasW: rd(mean(ePel), 1), nStabil: S.length,
+    return {pthRmseW: rd(rmse(ePth), 1), pthBiasW: rd(mean(ePth), 1), pthKWhModellMessung: kWhPth.map(x => rd(x, 2)), pelRmseW: rd(rmse(ePel), 1), pelBiasW: rd(mean(ePel), 1), nStabil: S.length, nHeizstabOhne: stabilRoh(D, r).length - S.length,
             pipeRmseK: pp.length ? rd(rmse(ePipe), 2) : null, nPipe: pp.length, reglerRmseHz: rd(reg.rmse, 3), wasserkreisRmseK: rd(hyd.rmse, 3), hausRmseK: rd(haus.rmse, 3), raeume: raeume,
             stoppRegelMaeMin: rd(mean(st.map(Math.abs)), 2), stoppN: st.length, startRegelMaeMin: rd(mean(sa.map(Math.abs)), 2), startN: sa.length, _samm: samm};
 }
@@ -841,6 +844,7 @@ function markdown(R) {
     const row = (n, a, b) => L.push('| ' + n + ' | ' + a + ' | ' + b + ' |');
     row('Wärme Pth (stabile Laufminuten), RMSE / Bias', de(tr.teil.pthRmseW, 0) + ' / ' + de(tr.teil.pthBiasW, 0) + ' W', de(te.teil.pthRmseW, 0) + ' / ' + de(te.teil.pthBiasW, 0) + ' W');
     row('Strom TOP16, RMSE / Bias', de(tr.teil.pelRmseW, 1) + ' / ' + de(tr.teil.pelBiasW, 1) + ' W', de(te.teil.pelRmseW, 1) + ' / ' + de(te.teil.pelBiasW, 1) + ' W');
+    row('Heizstab-Minuten (nicht in Fit und RMSE: TOP16 enthält dort den Heizstab)', String(tr.teil.nHeizstabOhne === undefined ? '–' : tr.teil.nHeizstabOhne), String(te.teil.nHeizstabOhne === undefined ? '–' : te.teil.nHeizstabOhne));
     row('Verdichter-Regler (gemessener Vorlauf), RMSE', de(tr.teil.reglerRmseHz, 2) + ' Hz', de(te.teil.reglerRmseHz, 2) + ' Hz');
     row('Wasserkreis Vor-/Rücklauf (Neustart je 360 min), RMSE', de(tr.teil.wasserkreisRmseK, 2) + ' K', de(te.teil.wasserkreisRmseK, 2) + ' K');
     row('Rohr außen, RMSE', tr.teil.pipeRmseK === null ? '–' : de(tr.teil.pipeRmseK, 2) + ' K', te.teil.pipeRmseK === null ? '–' : de(te.teil.pipeRmseK, 2) + ' K');
@@ -888,7 +892,7 @@ function markdown(R) {
     return L.join('\n') + '\n';
 }
 
-module.exports = {freilauf, tageVon, abtauLang, abtauBasis, GATE_ABTAU_TAGE, abtauDirekt, linieFest, ABTAU_DIREKT_N, fitAbtau, fitDeckelQ3, abtauungen, lade, trennung, fitAlles, guete, trainiere, markdown, lsq, lsqBox, lsqBind, koordinatensuche, gebunden, strafe, glaette, glaetteSatz, abdeckung, bandOf, bandStatus, jeBand, entscheide, abtauIntervall, initAus, eingabe, readMulti,
+module.exports = {freilauf, tageVon, stabil, stabilRoh, abtauLang, abtauBasis, GATE_ABTAU_TAGE, abtauDirekt, linieFest, ABTAU_DIREKT_N, fitAbtau, fitDeckelQ3, abtauungen, lade, trennung, fitAlles, guete, trainiere, markdown, lsq, lsqBox, lsqBind, koordinatensuche, gebunden, strafe, glaette, glaetteSatz, abdeckung, bandOf, bandStatus, jeBand, entscheide, abtauIntervall, initAus, eingabe, readMulti,
                   RAEUME, HAUS_RAEUME, BAENDER, GATE, ABDECKUNG, GEFITTET, KEINE_DATEN};
 
 if (require.main === module) {

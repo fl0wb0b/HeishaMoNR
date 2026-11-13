@@ -192,6 +192,18 @@ if (datenDir) {
     check('echte Daten: verdorbener Herausforderer (pelHz × 1,3) gegen guten Champion → abgelehnt (Strom)', a.ergebnis === 'abgelehnt' && a.kennzahlen[0].verletzt, a.grund);
     check('echte Daten: guter Herausforderer gegen verdorbenen Champion → übernommen', b.ergebnis === 'übernommen', b.kennzahlen.map(k => k.id + ' ' + k.kandidat + '/' + k.bisher).join(', '));
 }
+// ------------------------------------------------------------------ Heizstab-Minuten gehören nicht in Verdichter-Fit und Strom-RMSE (13.11.2026)
+{
+    const Zz = require('./wp_zwilling.js'), P0 = Zz.standard(), M = [], t0 = new Date(2026, 10, 13, 0, 0).getTime();
+    for (let i = 0; i < 400; i++) {                                                   // Dauerlauf 24 Hz bei −1 °C; 5 Minuten mit internem Heizstab: TOP16 3,6 kW statt Verdichterleistung
+        const hs = i >= 200 && i < 205, pel = Math.round(Zz.pelOf(P0, 24, -1, 29));
+        M.push({t: t0 + i * 60000, tag: '2026-11-13', ok: true, at: -1, rl: 29, vl: 31, hz: 24, lauf: true, def: false, rm: i, flow: 13, pth: hs ? 5200 : 2300, pel: hs ? pel + 3050 : pel, hI: hs ? 1 : 0});
+    }
+    const D = {M: M}, r = ['2026-11-13', '2026-11-13'], S = T.stabil(D, r), R0 = T.stabilRoh(D, r);
+    const rmse = a => Math.sqrt(a.reduce((s, m) => s + Math.pow(Zz.pelOf(P0, m.hz, m.at, m.rl) - m.pel, 2), 0) / a.length);
+    check('Heizstab-Minuten: 5 von 395 Minuten mit TOP16 3,6 kW heben den Strom-RMSE von 0 auf über 300 W; die Auswahl für Fit und Güte lässt sie weg (RMSE 0)',
+          R0.length === 395 && S.length === 390 && S.every(m => !m.hI) && rmse(R0) > 300 && rmse(S) < 1, 'mit ' + Math.round(rmse(R0)) + ' W, ohne ' + Math.round(rmse(S)) + ' W');
+}
 // ------------------------------------------------------------------ Abtauen und Quiet-3-Deckel aus eigenen Daten (08.11.2026)
 {
     const Zz = require('./wp_zwilling.js'), P0 = Zz.standard(), M = [], t0 = new Date(2026, 10, 1, 0, 0).getTime();
