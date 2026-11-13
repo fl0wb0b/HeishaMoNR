@@ -131,8 +131,16 @@ check("Skript v1.6 Zeitplan (node): leer nur Zeile 1 (1 + 10 Karten), Name in Ze
       r.stdout.strip() == "[11,1,1,21,51,51,3,101,true,true,11]", r.stdout + r.stderr[-300:])
 check("Zeitplan: 10 Zeilen je 10 Karten, alle verschieden, Gruppe 2b0c8e162d47abbb", len(P.ZEITPLAN_ZEILEN) == 10 and all(len(z) == 10 for z in P.ZEITPLAN_ZEILEN) and len({i for z in P.ZEITPLAN_ZEILEN for i in z}) == 100 and P.ZEITPLAN == "2b0c8e162d47abbb", "")
 if len(sys.argv) > 1:   # gegen den Live-Export: v1.5 -> v1.6 nur ui_optik_kopf, zurueck byte-gleich
+    # ERLEDIGTER EINMAL-TEIL: Design-System v1.6 ist seit 20.10.2026 eingespielt. Der Teil braucht einen Export im v2-Format ({"flows": [...], "rev": ...})
+    # mit ui_optik_kopf noch auf v1.5; sonst Meldung und Rueckgabewert 3 (tools/einmal_test.py). Der Teil ohne Datei (oben) bleibt ein normaler Test.
+    import einmal_test
     with tempfile.TemporaryDirectory() as t:
         raw = open(sys.argv[1], encoding="utf-8").read(); L = json.loads(raw)
+        _kopf = {n.get("id"): n for n in (L.get("flows") if isinstance(L, dict) else L)}.get(P.KOPF_ID) or {}
+        if fail == 0 and (not isinstance(L, dict) or _kopf.get("format") != P.V15):
+            print("Teil ohne Datei: %d OK, %d FAIL" % (ok, fail))
+            einmal_test.erledigt("ui_system_patch_test (Teil Live-Export)", "tools/ui_system_patch.py v1.5 -> v1.6", "20.10.2026",
+                                 "kein Export im v2-Format" if not isinstance(L, dict) else "ui_optik_kopf steht nicht mehr auf v1.5")
         a, b, c = (os.path.join(t, x) for x in ("a.json", "b.json", "c.json")); open(a, "w", encoding="utf-8").write(raw)
         r1 = subprocess.run([sys.executable, os.path.join(HERE, "ui_system_patch.py"), a, "--out", b], capture_output=True, text=True)
         r2 = subprocess.run([sys.executable, os.path.join(HERE, "ui_system_patch.py"), b, "--out", c, "--zurueck-v15"], capture_output=True, text=True)

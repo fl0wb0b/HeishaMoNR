@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Pruefungen fuer tools/tabs_zusammen_patch.py auf einem Live-Export (nur lesen, schreibt nur in ein temporaeres Verzeichnis).
+"""ERLEDIGTER EINMAL-TEST: tools/tabs_zusammen_patch.py ist seit 13.10.2026 auf der Anlage eingespielt. Dieser Test braucht einen Flow-Export VOR dem Patch;
+auf dem heutigen Live-Stand endet er mit Meldung und Rueckgabewert 3 (tools/einmal_test.py), nicht mit einem Fehler.
+
+Pruefungen fuer tools/tabs_zusammen_patch.py auf einem Live-Export (nur lesen, schreibt nur in ein temporaeres Verzeichnis).
 
 Usage: python3 tools/tabs_zusammen_test.py <flows_live.json>      (Export NACH ui_kompakt Teil A+B, VOR dem Zusammenlegen)
   1. Layout-Modell trifft die Live-Vermessung 13.10. 15:22 (11 Kernseiten, 1920 px)
@@ -38,11 +41,15 @@ def check(name, cond, info=""):
         fail += 1
 
 
-src = sys.argv[1]
+import einmal_test
+src = einmal_test.flows_argument("tabs_zusammen_test", "Export NACH ui_kompakt Teil A+B, VOR dem Zusammenlegen")
 live, fmt = P.laden(src)
-if P.plan(live)[1]:
-    print("Hinweis: %s ist schon (teilweise) zusammengelegt - die Pruefungen brauchen einen Export VOR dem Patch." % src)
-    sys.exit(2)
+try:
+    _schon = P.plan(live)[1]
+except Exception as e:                                # Abbruch des Patches: Ausgangswerte stimmen nicht mehr
+    einmal_test.erledigt("tabs_zusammen_test", "tools/tabs_zusammen_patch.py", "13.10.2026", e)
+if _schon:
+    einmal_test.erledigt("tabs_zusammen_test", "tools/tabs_zusammen_patch.py", "13.10.2026", "%s ist schon (teilweise) zusammengelegt" % src)
 A = {n["id"]: n for n in live}
 
 # 1 Modell gegen Live-Vermessung

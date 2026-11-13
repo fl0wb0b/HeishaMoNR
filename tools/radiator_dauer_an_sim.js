@@ -1,11 +1,21 @@
 // Offline-Simulation (Fake-Uhr): Radiator bleibt an (Zwangs-AUS erst nach 6 h statt 20 min). Vergleicht die Live-Funktion mit der gepatchten; nichts wird gesendet.
 // Aufruf:  node tools/radiator_dauer_an_sim.js live_flows.json
 const vm = require('vm'), fs = require('fs'), os = require('os'), path = require('path'), cp = require('child_process');
+// ERLEDIGTER EINMAL-TEST: tools/radiator_dauer_an_patch.py ist seit 10.10.2026 auf der Anlage eingespielt. Die Simulation braucht einen Flow-Export VOR
+// dem Patch; auf dem heutigen Live-Stand endet sie mit Meldung und Rückgabewert 3 (wie tools/einmal_test.py), nicht mit einem Fehler.
+if (!process.argv[2]) { console.log('Aufruf: node tools/radiator_dauer_an_sim.js <flows.json> – ERLEDIGTER EINMAL-TEST: braucht einen Flow-Export VOR dem Patch.'); process.exit(2); }
 const ALL = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const RAD = 'a0f2936bcfe99ce0', py = path.join(__dirname, 'radiator_dauer_an_patch.py');
 const tmp = path.join(os.tmpdir(), 'rad_da_' + process.pid + '.json');
 fs.writeFileSync(tmp, JSON.stringify(ALL));
 const chk0 = cp.spawnSync('python3', [py, tmp, '--check']).status;
+if (chk0 !== 1) {                                              // 0 = Patch schon drin, 2 = Anker fehlen (späterer Stand): kein Stand vor dem Patch
+  fs.unlinkSync(tmp);
+  console.log('EINMAL-TEST erledigt: radiator_dauer_an_sim prueft tools/radiator_dauer_an_patch.py (eingespielt 10.10.2026) und braucht einen Flow-Export VOR diesem Patch.');
+  console.log('Auf dieser Datei nicht anwendbar: ' + (chk0 === 0 ? 'Dauer-AN ist schon drin' : 'die Anker des Patches fehlen'));
+  console.log('\nERGEBNIS radiator_dauer_an_sim: nicht anwendbar (erledigter Einmal-Test), Rueckgabewert 3');
+  process.exit(3);
+}
 const ORIG = ALL.find(n => n.id === RAD).func;
 cp.execFileSync('python3', [py, tmp]);
 const PATCHED = JSON.parse(fs.readFileSync(tmp, 'utf8'));

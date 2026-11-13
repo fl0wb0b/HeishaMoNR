@@ -111,9 +111,9 @@ check('Datenfunktion ohne alles: n 0, leere Listen, Naechte trotzdem, kein Fehle
 const flowsFile = process.argv[2];
 if (flowsFile) {
     const flows = JSON.parse(fs.readFileSync(flowsFile, 'utf8')), NB = id => flows.find(n => n.id === id), core = fs.readFileSync(path.join(__dirname, 'wx_core.js'), 'utf8');
-    check('Flow: wx_core.js unveraendert in opt_hist und opt_engine eingebettet, opt_hist nur lesend (kein writeFileSync), Karte opt_t_ch_at in Gruppe "Wetter · 24 h zurück, 36 h voraus" (17 breit), ui_chart VER 7 in allen Diagrammkarten',
-          NB('opt_hist').func.includes(core) && NB('opt_engine').func.includes(core) && !/writeFileSync|node\.send/.test(NB('opt_hist').func) && NB('opt_g_ch_at').name === 'Wetter · 24 h zurück, 36 h voraus' && NB('opt_g_ch_at').width === 17 &&
-          ['opt_t_ch_wp', 'opt_t_ch_rooms', 'opt_t_ch_at', 'opt_t_plan'].every(id => NB(id).format.includes('var VER = 7;')), '');
+    check('Flow: wx_core.js unveraendert in opt_hist und opt_engine eingebettet, opt_hist nur lesend (kein writeFileSync), Karte opt_t_ch_at in Gruppe "Wetter · 24 h zurück, 36 h voraus" (16 breit seit e8d5cde), ui_chart VER 8 in allen Diagrammkarten',
+          NB('opt_hist').func.includes(core) && NB('opt_engine').func.includes(core) && !/writeFileSync|node\.send/.test(NB('opt_hist').func) && NB('opt_g_ch_at').name === 'Wetter · 24 h zurück, 36 h voraus' && NB('opt_g_ch_at').width === 16 &&
+          ['opt_t_ch_wp', 'opt_t_ch_rooms', 'opt_t_ch_at', 'opt_t_plan'].every(id => NB(id).format.includes('var VER = 8;')), '');
     check('Flow: opt_owm_parse merkt Sonnenauf-/-untergang (W.sun) nur aus der Antwort, keine neuen HTTP-Abfragen (Anzahl http request-Knoten im Tab gleich), keine neuen Geheimnisse', /W\.sun = \[p\.sys\.sunrise \* 1000, p\.sys\.sunset \* 1000\]/.test(NB('opt_owm_parse').func) && !/owm\.json|vrm\.json/.test(NB('opt_hist').func), '');
     // opt_engine einmal mit Minimal-Werten ausfuehren: rechnet weiter wie bisher und legt OPT_cz_verlauf ab
     const g = {OPT_cfg: {engine: {}, rooms: []}, TOP14_Outside_Temp: 2, Z1_Heat_Curve_Outside_Low_Temp: -13, Z1_Heat_Curve_Outside_High_Temp: 11, Z1_Heat_Curve_Target_Low_Temp: 29, Z1_Heat_Curve_Target_High_Temp: 37,

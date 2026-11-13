@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Pruefungen fuer tools/ui_optik_patch.py auf einem Live-Export (nur lesen, schreibt nur in ein temporaeres Verzeichnis).
+"""ERLEDIGTER EINMAL-TEST: tools/ui_optik_patch.py ist seit 14.10.2026 auf der Anlage eingespielt. Dieser Test braucht einen Flow-Export VOR dem Patch;
+auf dem heutigen Live-Stand endet er mit Meldung und Rueckgabewert 3 (tools/einmal_test.py), nicht mit einem Fehler.
+
+Pruefungen fuer tools/ui_optik_patch.py auf einem Live-Export (nur lesen, schreibt nur in ein temporaeres Verzeichnis).
 
 Usage: python3 tools/ui_optik_test.py <flows_live.json>
   1. Probelauf: 2 Werte + Kopf-Knoten, Whitelist, keine opt_*-Knoten, Verdrahtung gleich
@@ -38,9 +41,16 @@ def run(*args):
     return r.returncode, r.stdout + r.stderr
 
 
-live = sys.argv[1]
-T = tempfile.mkdtemp(prefix="uioptik-")
+import einmal_test
+live = einmal_test.flows_argument("ui_optik_test")
 flows, fmt = P.laden(live)
+try:
+    _schon = P.plan(flows)[2]
+except P.Abbruch as e:                                # z. B. „Knoten ui_optik_kopf existiert schon mit anderem Inhalt“
+    einmal_test.erledigt("ui_optik_test", "tools/ui_optik_patch.py", "14.10.2026", e)
+if _schon:
+    einmal_test.erledigt("ui_optik_test", "tools/ui_optik_patch.py", "14.10.2026", "%s ist schon (teilweise) gepatcht (%d Werte tragen schon den neuen Stand)" % (live, _schon))
+T = tempfile.mkdtemp(prefix="uioptik-")
 src = os.path.join(T, "live.json")
 P.schreiben(src, flows, fmt)
 raw0 = open(src, encoding="utf-8").read()

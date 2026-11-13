@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Check fuer tools/uebersicht_doppelwerte.py auf einer Kopie der Live-Flows.
+"""ERLEDIGTER EINMAL-TEST: tools/uebersicht_doppelwerte.py ist seit 07.11.2026 auf der Anlage eingespielt. Dieser Test braucht einen Flow-Export VOR dem Patch;
+auf dem heutigen Live-Stand endet er mit Meldung und Rueckgabewert 3 (tools/einmal_test.py), nicht mit einem Fehler.
+
+Check fuer tools/uebersicht_doppelwerte.py auf einer Kopie der Live-Flows.
 
 Usage: python3 tools/uebersicht_doppelwerte_test.py <live-liste.json>
 """
@@ -11,7 +14,15 @@ import sys
 sys.path.insert(0, os.path.dirname(__file__))
 import uebersicht_doppelwerte as u
 
-flows = json.load(open(sys.argv[1], encoding="utf-8"))
+import einmal_test
+
+flows = json.load(open(einmal_test.flows_argument("uebersicht_doppelwerte_test"), encoding="utf-8"))
+if isinstance(flows, dict):                          # Export im v2-Format {"flows": [...], "rev": ...}
+    flows = flows.get("flows", flows)
+_vor = {n["id"]: n for n in flows}
+if all(_vor.get(i, {}).get("group") == u.HIDDEN for i in u.HIDE) and str(_vor.get(u.GROUP, {}).get("width")) == "6":
+    einmal_test.erledigt("uebersicht_doppelwerte_test", "tools/uebersicht_doppelwerte.py", "07.11.2026",
+                         "die doppelten Werte sind schon ausgeblendet und die Gruppe ist schon einspaltig")
 flows = flows["flows"] if isinstance(flows, dict) else flows
 before = copy.deepcopy(flows)
 
@@ -34,3 +45,4 @@ for i, n in by.items():
 
 assert u.apply(flows) is False          # zweiter Lauf: unveraendert
 print("OK")
+print("\nERGEBNIS uebersicht_doppelwerte_test: bestanden")
