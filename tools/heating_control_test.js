@@ -134,7 +134,7 @@ let cx;
 const atReset = (over) => { reset(Object.assign({TOP14_Outside_Temp: 5, TOP18_Quiet_Mode_Level: 0, HEATING_CONTROL: 0}, over || {})); cx = {}; };
 const at = (topic, payload) => fAt({topic: topic || 'tick', payload}, ctx(g), ctx(fl), ctx(cx), {}, FakeDate);
 const run = (min, t, best) => { const o = []; for (let i = 0; i < min; i++) { g.TOP14_Outside_Temp = t; NOW += 60000; const r0 = at() || []; o.push(r0);
-    if (best !== false) { if (r0[0]) { g.HEATING_CONTROL = Number(r0[0].payload); } if (r0[1]) { g.TOP18_Quiet_Mode_Level = 3; } } } return o; };   // best: HeishaMon meldet den neuen Stand
+    if (best !== false) { if (r0[0]) { g.HEATING_CONTROL = Number(r0[0].payload); } if (r0[1]) { g.TOP18_Quiet_Mode_Level = Number(r0[1].payload); } } } return o; };   // best: HeishaMon meldet den neuen Stand
 const out = (o, k) => o.map(r => r[k]).filter(Boolean);
 const QTOPIC = 'panasonic_heat_pump/commands/SetQuietMode';
 atReset(); let o = run(120, 1);
@@ -144,8 +144,8 @@ ck('Einschalten: gemerkt (global HC_AT, Speicher file), Protokoll "eingeschaltet
 o = run(30, 1);
 ck('1 °C in 30 Takten (29 min seit der ersten Messung): noch nichts', out(o, 0).length === 0, '');
 o = run(1, 1);
-ck('1 °C seit 30 min: genau eine Anforderung Comfort an "Heizregelung Befehl" (Wert "0", Quelle Aussentemperatur), kein Quiet, Protokollzeile',
-   out(o, 0).length === 1 && out(o, 0)[0].payload === '0' && out(o, 0)[0].source === 'Außentemperatur' && out(o, 1).length === 0 && /1 °C seit 30 min: Comfort/.test(out(o, 2)[0].payload), JSON.stringify(o));
+ck('1 °C seit 30 min: genau eine Anforderung Comfort an "Heizregelung Befehl" (Wert "0", Quelle Aussentemperatur); Quiet steht schon auf 0 → kein Quiet-Befehl, Protokoll sagt es',
+   out(o, 0).length === 1 && out(o, 0)[0].payload === '0' && out(o, 0)[0].source === 'Außentemperatur' && out(o, 1).length === 0 && /1 °C seit 30 min: Comfort/.test(out(o, 2)[0].payload) && /Quiet steht schon auf 0/.test(out(o, 2)[0].payload), JSON.stringify(o));
 o = run(180, 1);
 ck('Bleibt es kalt: keine weitere Anforderung (nur beim Wechsel)', out(o, 0).length === 0 && out(o, 1).length === 0, '');
 o = run(300, 3);
@@ -158,7 +158,7 @@ ck('4 °C seit 30 min: Efficiency ("1") an den Schalter und Quiet 3 auf dem geme
 o = run(20, 2).concat(run(5, 4), run(30, 2));
 ck('Kein Schalten bei Wechsel hin und her: 20 min 2 °C, 5 min 4 °C, 30 Takte 2 °C -> nichts (die 30 min beginnen bei jedem Lagewechsel neu)', out(o, 0).length === 0 && out(o, 1).length === 0, '');
 o = run(1, 2); const txw = cx.txt || '';   // aktuelle Textzeile (gesendet wird sie nur bei Aenderung)
-ck('... nach 30 min am Stueck bei 2 °C, aber erst 56 min nach dem letzten Wechsel: noch nichts, Text "stellt frühestens … (2 h Abstand)" (2 h Mindestabstand, Kevin 07.11.)', out(o, 0).length === 0 && /stellt frühestens \d\d:\d\d auf Comfort \(2 h Abstand\)$/.test(txw), txw);
+ck('... nach 30 min am Stueck bei 2 °C, aber erst 56 min nach dem letzten Wechsel: noch nichts, Text "stellt frühestens … (2 h Abstand)" (2 h Mindestabstand, Kevin 07.11.)', out(o, 0).length === 0 && /stellt frühestens \d\d:\d\d auf Comfort \+ Quiet 0 \(2 h Abstand\)$/.test(txw), txw);
 o = run(63, 2);
 ck('... 119 min nach dem letzten Wechsel: noch nichts', out(o, 0).length === 0, '');
 o = run(1, 2);
@@ -184,7 +184,7 @@ ck('Nach Neustart oder Einspielen: erster Takt stellt den Schalter auf den gemer
 ck('Kette Automatik -> Schalter: Comfort wird von Efficiency aus gesendet (SetHeatingControl "0", Quelle Aussentemperatur), Protokoll vom Schalter mit derselben Zeile',
    (() => { atReset({HEATING_CONTROL: 1}); at('schalter', true); const oo = run(31, 1, false), rr = fCmd(out(oo, 0)[0], ctx(g), ctx(fl), {}, FakeDate); return sent(rr) && sent(rr).payload === '0' && sent(rr).source === 'Außentemperatur' && rr[3] && rr[3].topic === 'Heizregelung nach Außentemperatur' && /Comfort gesendet/.test(rr[3].payload); })(), '');
 atReset(); at('schalter', true); o = run(10, 1); const tx = (out(o, 4).pop() || {}).payload || '';
-ck('Textzeile zeigt Lage und wann geschaltet wird (nur bei Aenderung gesendet)', /^an · kalt \(≤ 2 °C\) seit \d\d:\d\d · stellt um \d\d:\d\d auf Comfort$/.test(tx) && out(o, 4).length < 10, tx);
+ck('Textzeile zeigt Lage und wann geschaltet wird (nur bei Aenderung gesendet)', /^an · kalt \(≤ 2 °C\) seit \d\d:\d\d · stellt um \d\d:\d\d auf Comfort \+ Quiet 0$/.test(tx) && out(o, 4).length < 10, tx);
 atReset({HEATING_CONTROL: 1}); at('schalter', true); o = run(31, 1, false);
 ck('Schalter lehnt ab / Stand kommt nicht: erste Anforderung', out(o, 0).length === 1, '');
 o = run(9, 1, false);
@@ -192,9 +192,9 @@ ck('... in den naechsten 9 min keine weitere', out(o, 0).length === 0, '');
 o = run(1, 1, false);
 ck('... nach 10 min Versuch 2 (Protokoll "Versuch 2")', out(o, 0).length === 1 && /Versuch 2/.test(out(o, 2)[0].payload), JSON.stringify(out(o, 2)));
 o = run(10, 1, false).concat(run(10, 1, false), run(60, 1, false));
-ck('... Versuch 3, danach Schluss mit Protokoll "nach 3 Versuchen", keine 4. Anforderung, Text "nicht bestätigt" statt "gestellt" (Kimi 07.11.)', out(o, 0).length === 1 && out(o, 2).some(m => /nach 3 Versuchen/.test(m.payload)) && out(o, 4).some(m => /· Comfort nicht bestätigt \(3 Versuche\)$/.test(m.payload)) && !out(o, 4).some(m => /gestellt/.test(m.payload)), JSON.stringify(out(o, 4)));
+ck('... Versuch 3, danach Schluss mit Protokoll "nach 3 Versuchen", keine 4. Anforderung, Text "nicht bestätigt" statt "gestellt" (Kimi 07.11.)', out(o, 0).length === 1 && out(o, 2).some(m => /nach 3 Versuchen/.test(m.payload)) && out(o, 4).some(m => /· Comfort \+ Quiet 0 nicht bestätigt \(3 Versuche\)$/.test(m.payload)) && !out(o, 4).some(m => /gestellt/.test(m.payload)), JSON.stringify(out(o, 4)));
 atReset({HEATING_CONTROL: 1}); at('schalter', true); o = run(31, 1, false); g.HEATING_CONTROL = 0; o = run(1, 1, false); const tx2 = (out(o, 4).pop() || {}).payload || '';
-ck('Meldet HeishaMon den Modus (z. B. nach Handschaltung), ist die Lage erledigt: keine weitere Anforderung, Text "auf Comfort gestellt"', out(o, 0).length === 0 && /· auf Comfort gestellt \d\d:\d\d$/.test(tx2) && run(30, 1, false).every(r => !r[0]), tx2);
+ck('Meldet HeishaMon den Modus (z. B. nach Handschaltung), ist die Lage erledigt: keine weitere Anforderung, Text "auf Comfort gestellt"', out(o, 0).length === 0 && /· auf Comfort \+ Quiet 0 gestellt \d\d:\d\d$/.test(tx2) && run(30, 1, false).every(r => !r[0]), tx2);
 atReset(); at('schalter', true); o = run(60, null);
 ck('Fuehlerwert null (nicht 0 °C): nichts', out(o, 0).length === 0, '');
 atReset(); at('schalter', true); o = run(20, 1); g.TOP26_Defrosting_State = 1; o = o.concat(run(15, 5)); g.TOP26_Defrosting_State = 0;
@@ -208,7 +208,28 @@ ck('3 °C waehrend einer laufenden Anforderung bricht sie nicht ab: Versuch 2 na
 atReset(); at('schalter', true); o = run(31, 6); const tw = cx.txt || '';
 ck('Text warm angefordert nennt das Ziel: "Efficiency + Quiet 3 angefordert hh:mm"', /^an · warm \(≥ 4 °C\) seit \d\d:\d\d · Efficiency \+ Quiet 3 angefordert \d\d:\d\d$/.test(tw), tw);
 atReset({TOP14_Outside_Temp: 3}); at('schalter', true); run(5, 3);
-ck('Text ohne Lage (nur 3 °C): sagt, worauf gewartet wird', cx.txt === 'an · wartet auf ≤ 2 °C (Comfort) oder ≥ 4 °C (Efficiency + Quiet 3)', cx.txt);
+ck('Text ohne Lage (nur 3 °C): sagt, worauf gewartet wird', cx.txt === 'an · wartet auf ≤ 2 °C (Comfort + Quiet 0) oder ≥ 4 °C (Efficiency + Quiet 3)', cx.txt);
+// ---------- V1 (14.11.2026, Kevin: "qm 3 war noch aktiv obwohl comfort an ist"): bei kalt zusaetzlich Quiet 0
+atReset({TOP18_Quiet_Mode_Level: 3, HEATING_CONTROL: 1}); at('schalter', true); o = run(31, 2);
+ck('V1: 2 °C seit 30 min bei Efficiency + Quiet 3: Comfort ("0") an den Schalter und Quiet 0 auf dem gemeinsamen Weg (SetQuietMode "0", Quelle Aussentemperatur), Protokoll nennt beides',
+   out(o, 0).length === 1 && out(o, 0)[0].payload === '0' && out(o, 1).length === 1 && out(o, 1)[0].topic === QTOPIC && out(o, 1)[0].payload === '0' && out(o, 1)[0].source === 'Außentemperatur'
+   && /Comfort angefordert; Quiet 0 gesendet/.test(out(o, 2)[0].payload), JSON.stringify(out(o, 2)));
+o = run(600, -2);
+ck('V1: 10 h bei −2 °C danach: keine weitere Anforderung, kein weiterer Quiet-Befehl (nur beim Wechsel; Hand und Klick bleiben frei)', out(o, 0).length === 0 && out(o, 1).length === 0, '');
+o = run(31, 5);
+ck('V1: Rückweg warm (5 °C seit 30 min): Efficiency und Quiet 3 wie bisher', out(o, 0).length === 1 && out(o, 0)[0].payload === '1' && out(o, 1).length === 1 && out(o, 1)[0].payload === '3', JSON.stringify(out(o, 2)));
+atReset({TOP18_Quiet_Mode_Level: 3, HEATING_CONTROL: 1, MQTT: {block_active: 1, block_mode: 1, messages_today: 0, message_limit: 500}}); at('schalter', true); o = run(31, 1);
+ck('V1: MQTT gesperrt: kein Quiet-0-Befehl, Protokoll nennt die Sperre', out(o, 1).length === 0 && /Quiet 0 nicht gesendet: alle MQTT-Befehle sind gesperrt/.test(out(o, 2)[0].payload), JSON.stringify(out(o, 2)));
+atReset({TOP18_Quiet_Mode_Level: 3, HEATING_CONTROL: 1, MQTT: {block_active: 0, block_mode: 3, messages_today: 500, message_limit: 500}}); at('schalter', true); o = run(31, 1);
+ck('V1: Tagesbudget aufgebraucht: kein Quiet-0-Befehl, Protokoll nennt das Budget', out(o, 1).length === 0 && /Quiet 0 nicht gesendet: Tagesbudget/.test(out(o, 2)[0].payload), JSON.stringify(out(o, 2)));
+atReset({TOP18_Quiet_Mode_Level: 3, HEATING_CONTROL: 1}); at('schalter', true); g.OPT_apply = {ts: NOW, ak: {quiet: {name: 'SetQuietMode', value: 3, von: 0, bestaetigt: true}}, pending: null};
+o = []; for (let i = 0; i < 31; i++) { g.TOP14_Outside_Temp = 1; NOW += 60000; g.OPT_apply.ts = NOW; const r0 = at() || []; o.push(r0); if (r0[0]) { g.HEATING_CONTROL = Number(r0[0].payload); } }
+delete g.OPT_apply;
+ck('V1: Klick-Übernahme der Quiet-Stufe läuft: Comfort ja, Quiet 0 bleibt weg (Optimierer hat Vorrang)', out(o, 0).length === 1 && out(o, 1).length === 0 && /Quiet 0 nicht gesendet: der Optimierer hat Quiet übernommen/.test(out(o, 2)[0].payload), JSON.stringify(out(o, 2)));
+atReset({TOP18_Quiet_Mode_Level: 3, HEATING_CONTROL: 1}); at('schalter', true); o = run(31, 1, false);
+ck('V1: HeishaMon meldet Comfort nicht: Versuch 1 sendet Quiet 0', out(o, 1).length === 1 && out(o, 1)[0].payload === '0', JSON.stringify(out(o, 1)));
+g.TOP18_Quiet_Mode_Level = 0; o = run(10, 1, false);
+ck('V1: ... Versuch 2 nach 10 min: Quiet steht inzwischen auf 0, kein zweiter Quiet-Befehl', out(o, 0).length === 1 && out(o, 1).length === 0 && /Versuch 2: Comfort angefordert; Quiet steht schon auf 0/.test(out(o, 2)[0].payload), JSON.stringify(out(o, 2)));
 ck('Verdrahtung Automatik: Takt jede Minute, Ausgaenge Schalter-Befehl / gemeinsamer Weg (Quiet) / Protokoll / Schalter / Textzeile; Schalter und Text in der Gruppe HEIZREGELUNG; kein eigener mqtt out',
    by.hc_at_tick.type === 'inject' && String(by.hc_at_tick.repeat) === '60' && by.hc_at_tick.wires.join() === 'hc_at' && by.hc_at.outputs === 5
    && JSON.stringify(by.hc_at.wires) === JSON.stringify([['hc_cmd'], ['hc_out'], ['hc_log'], ['hc_at_sw'], ['hc_at_txt']]) && /neu/.test(by.hc_at.initialize)
@@ -216,7 +237,7 @@ ck('Verdrahtung Automatik: Takt jede Minute, Ausgaenge Schalter-Befehl / gemeins
    && by.hc_at_txt.group === 'hc_grp' && !flows.some(n => ['hc_at', 'hc_at_sw', 'hc_at_txt', 'hc_at_tick'].includes(n.id) && n.type === 'mqtt out'), '');
 // ---------- Vorrang der Klick-Uebernahmen des Optimierers (Kimi-Pruefung 08.11.2026: zwei Schreiber ohne gegenseitige Kenntnis)
 { const runU = (min, t, U) => { const oo = []; for (let i = 0; i < min; i++) { g.TOP14_Outside_Temp = t; NOW += 60000; if (U) { g.OPT_apply = Object.assign({}, U, {ts: NOW}); } const r0 = at() || []; oo.push(r0);
-        if (r0[0]) { g.HEATING_CONTROL = Number(r0[0].payload); } if (r0[1]) { g.TOP18_Quiet_Mode_Level = 3; } } return oo; };
+        if (r0[0]) { g.HEATING_CONTROL = Number(r0[0].payload); } if (r0[1]) { g.TOP18_Quiet_Mode_Level = Number(r0[1].payload); } } return oo; };
   const HC = {name: 'SetHeatingControl', value: 0, von: 1, bestaetigt: true};
   atReset(); at('schalter', true); let u = runU(60, 6, {ak: {hc: HC}, pending: null}); const tW = cx.txt || '';
   ck('Übernahme Heizregelung (Comfort) läuft, 60 min warm: Automatik stellt nichts (kein Befehl, kein Quiet), genau ein Protokolleintrag, Textzeile "wartet"',

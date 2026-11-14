@@ -8,7 +8,7 @@
   last change is less than 5 minutes ago. Warns (does not forbid) for Efficiency in unfavourable conditions.
 * The selection always shows the state reported by HeishaMon (main/Heating_Control); a command is confirmed or reported as unconfirmed after 90 s.
 * Shows the optimizer's recommendation (display only, global OPT_hc_reco) in the group and raises one notice when a new warning appears.
-* Automatic by outdoor temperature (07.11.2026): a switch in the group; <= 2 °C once Comfort, >= 4 °C once Efficiency + Quiet 3, only on a change of the
+* Automatic by outdoor temperature (07.11.2026): a switch in the group; <= 2 °C once Comfort + Quiet 0 (since 14.11.2026, V1), >= 4 °C once Efficiency + Quiet 3, only on a change of the
   condition and after it held for 30 min; nothing is enforced afterwards (log entry per trigger).
 * Schedule (07.11.2026): the page "Zeitplan" gets the actions "Heizregelung - Comfort/Efficiency". "Function schedule" (WP Scheduler) sends the
   request through a new 10th output to the same command function, so every rule above applies; the result goes to the log ("Input LOGS").
@@ -152,9 +152,12 @@ return out;
 """
 
 
-AT_JS = r"""// Heizregelung nach Aussentemperatur (07.11.2026, Kevin): faellt die Aussentemperatur (Fuehler der WP, ganze Grad) auf 2 °C oder tiefer, einmal Comfort;
-// steigt sie auf 4 °C oder hoeher, einmal Efficiency und Quiet 3 (eigene Daten 09.10.-07.11.: ueber 3 °C Quiet 3 am besten, unter 3 °C aendert Quiet bei Comfort
-// die Frequenz nicht). Bei 3 °C nichts (Hysterese). Geschaltet wird nur beim Wechsel der Lage und erst, wenn sie 30 min am Stueck ansteht; danach wird nichts
+AT_JS = r"""// Heizregelung nach Aussentemperatur (07.11.2026, Kevin): faellt die Aussentemperatur (Fuehler der WP, ganze Grad) auf 2 °C oder tiefer, einmal Comfort
+// und (seit 14.11.2026, V1 der Frost-Nachmessung) Quiet 0;
+// steigt sie auf 4 °C oder hoeher, einmal Efficiency und Quiet 3 (eigene Daten 09.10.-07.11.: ueber 3 °C Quiet 3 am besten). V1 (Kevin 14.11.: "qm 3 war noch
+// aktiv obwohl comfort an ist"): bis 13.11. blieb beim Wechsel auf Comfort die Quiet 3 der warmen Lage stehen; 13.11. 17:20 bis 14.11. 09:04 lief der Verdichter
+// bei -2 °C am Deckel von Quiet 3 (24-25 Hz), Vorlauf 3-4 K unter Soll, Heizstab ausserhalb des Abtauens 31 min; mit Quiet 0 sofort 49 Hz. Die fruehere Annahme
+// "unter 3 °C aendert Quiet bei Comfort die Frequenz nicht" galt nur bis 0 °C (Daten 09.10.-07.11.). Bei 3 °C nichts (Hysterese). Geschaltet wird nur beim Wechsel der Lage und erst, wenn sie 30 min am Stueck ansteht; danach wird nichts
 // erzwungen (Handschalter und Klick-Uebernahmen des Optimierers bleiben). Heizregelung ueber "Heizregelung Befehl" (alle Schutzregeln, Protokoll), Quiet 3 ueber den
 // gemeinsamen Befehlsweg. Erledigt ist eine Lage erst, wenn HeishaMon den Modus meldet; lehnt "Heizregelung Befehl" ab (Abstand, laufender Befehl, Sperre),
 // fordert die Automatik nach 10 min erneut an, hoechstens 3 Versuche (Kimi 07.11.). Waehrend des Abtauens zaehlt der Fuehlerwert nicht (kurze Spruenge).
@@ -173,10 +176,10 @@ function ueb(g, name) {                                                         
     return (a && !a.rueckFehl && !a.unbestaetigt ? a : null) || (p && (p.g === g || p.name === name) ? p : null);
 }
 function lage(z) { return z === 'kalt' ? 'kalt (≤ 2 °C)' : 'warm (≥ 4 °C)'; }
-function ziel(z) { return z === 'kalt' ? 'Comfort' : 'Efficiency + Quiet 3'; }
+function ziel(z) { return z === 'kalt' ? 'Comfort + Quiet 0' : 'Efficiency + Quiet 3'; }
 function txt() {                                                                     // Textzeile: Lage, seit wann, und was wann passiert (Kevin 07.11.: "schaltet ab" war missverstaendlich)
     if (!A.on) { return 'aus'; }
-    if (!A.cand) { return 'an · wartet auf ≤ 2 °C (Comfort) oder ≥ 4 °C (Efficiency + Quiet 3)'; }
+    if (!A.cand) { return 'an · wartet auf ≤ 2 °C (Comfort + Quiet 0) oder ≥ 4 °C (Efficiency + Quiet 3)'; }
     var v = A.versuch && A.versuch.lage === A.cand ? A.versuch : null, s = 'an · ' + lage(A.cand) + ' seit ' + hm(A.seit) + ' · ';
     if (A.erledigt === A.cand) { return s + (A.abbruch ? ziel(A.cand) + ' nicht bestätigt (' + VERSUCHE + ' Versuche)' : 'auf ' + ziel(A.cand) + ' gestellt ' + hm(A.erledigtTs)); }
     if (A.wartet && ueb('hc', 'SetHeatingControl')) { return s + ziel(A.cand) + ' wartet: der Optimierer hat die Heizregelung übernommen'; }
@@ -184,17 +187,15 @@ function txt() {                                                                
     var a = A.seit + HALTEN * MIN, b = A.letzteTs ? A.letzteTs + ABSTAND * MIN : 0;   // fruehestens: 30 min am Stueck und 2 h Abstand
     return s + (b > a ? 'stellt frühestens ' + hm(b) + ' auf ' + ziel(A.cand) + ' (2 h Abstand)' : 'stellt um ' + hm(a) + ' auf ' + ziel(A.cand));
 }
-function anfordern(kalt, at) {                                                       // Heizregelung an den Schalter-Befehl, bei warm dazu Quiet 3; liefert die Protokollzeile
+function anfordern(kalt, at) {                                                       // Heizregelung an den Schalter-Befehl, dazu Quiet 0 (kalt, V1 14.11.) bzw. Quiet 3 (warm); liefert die Protokollzeile
     out[0] = {payload: kalt ? '0' : '1', source: 'Außentemperatur', topic: WER};
-    var zeile = (kalt ? 'Comfort' : 'Efficiency') + ' angefordert';
-    if (!kalt) {
-        var q = Number(global.get('TOP18_Quiet_Mode_Level')), MQ = global.get('MQTT', 'file') || {};
-        if (ueb('quiet', 'SetQuietMode')) { zeile += '; Quiet 3 nicht gesendet: der Optimierer hat Quiet übernommen'; }
-        else if (q === 3) { zeile += '; Quiet steht schon auf 3, nichts gesendet'; }
-        else if (MQ.block_active === 1) { zeile += '; Quiet 3 nicht gesendet: alle MQTT-Befehle sind gesperrt'; }
-        else if (MQ.message_limit !== undefined && MQ.messages_today >= MQ.message_limit) { zeile += '; Quiet 3 nicht gesendet: Tagesbudget für MQTT-Befehle aufgebraucht'; }
-        else { out[1] = {topic: 'panasonic_heat_pump/commands/SetQuietMode', payload: '3', source: 'Außentemperatur'}; zeile += '; Quiet 3 gesendet'; }
-    }
+    var zeile = (kalt ? 'Comfort' : 'Efficiency') + ' angefordert', qz = kalt ? 0 : 3;
+    var q = Number(global.get('TOP18_Quiet_Mode_Level')), MQ = global.get('MQTT', 'file') || {};
+    if (ueb('quiet', 'SetQuietMode')) { zeile += '; Quiet ' + qz + ' nicht gesendet: der Optimierer hat Quiet übernommen'; }
+    else if (q === qz) { zeile += '; Quiet steht schon auf ' + qz + ', nichts gesendet'; }
+    else if (MQ.block_active === 1) { zeile += '; Quiet ' + qz + ' nicht gesendet: alle MQTT-Befehle sind gesperrt'; }
+    else if (MQ.message_limit !== undefined && MQ.messages_today >= MQ.message_limit) { zeile += '; Quiet ' + qz + ' nicht gesendet: Tagesbudget für MQTT-Befehle aufgebraucht'; }
+    else { out[1] = {topic: 'panasonic_heat_pump/commands/SetQuietMode', payload: String(qz), source: 'Außentemperatur'}; zeile += '; Quiet ' + qz + ' gesendet'; }
     return zeile;
 }
 var out = [null, null, null, null, null];
@@ -252,7 +253,7 @@ def nodes():
          "initialize": "context.set('neu', true);  // erster Takt stellt den Schalter auf den gemerkten Stand\n", "finalize": "", "libs": [],
          "x": 430, "y": y0 + 240, "wires": [["hc_cmd"], ["hc_out"], ["hc_log"], ["hc_at_sw"], ["hc_at_txt"]]},
         {"id": "hc_at_sw", "type": "ui_switch", "z": TAB, "name": "", "label": "Automatisch nach Außentemperatur",
-         "tooltip": "≤ 2 °C: Comfort · ≥ 4 °C: Efficiency + Quiet 3 · schaltet nur beim Wechsel, wenn die Lage 30 min ansteht", "group": GROUP, "order": 4,
+         "tooltip": "≤ 2 °C: Comfort + Quiet 0 · ≥ 4 °C: Efficiency + Quiet 3 · schaltet nur beim Wechsel, wenn die Lage 30 min ansteht", "group": GROUP, "order": 4,
          "width": 0, "height": 0, "passthru": False, "decouple": "false", "topic": "schalter", "topicType": "str", "style": "", "onvalue": "true", "onvalueType": "bool",
          "onicon": "", "oncolor": "", "offvalue": "false", "offvalueType": "bool", "officon": "", "offcolor": "", "animate": False, "className": "",
          "x": 190, "y": y0 + 260, "wires": [["hc_at"]]},
