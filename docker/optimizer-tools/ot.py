@@ -358,6 +358,12 @@ def baue_status(lauf=None, dienst=None):
         en = tr.get("entscheidung") or {}
         if en.get("ergebnis") == "abgelehnt":
             hinweise.append("Training: neuer Parametersatz abgelehnt, aktiv bleibt %s (%s)" % (en.get("aktiv"), en.get("grund")))
+        for nb in en.get("nicht_bewertbar") or []:                   # 13.11.2026: Gate-Kriterien ohne Entscheidung (zu wenige Fälle) sichtbar machen
+            if isinstance(nb, dict) and nb.get("name"):
+                hinweise.append("Training: Gate-Kriterium „%s“ %s" % (nb["name"], nb.get("warum") or "nicht bewertbar"))
+        af = en.get("abtau_fenster") or {}
+        if af.get("bewertbar") and af.get("fenster") and af.get("fenster") != "Test":
+            hinweise.append("Training: Abtau-Kriterium im %s-Fenster bewertet (%s gemessene Abtauungen, Testfenster nur %s)" % (af.get("fenster"), af.get("nLang"), af.get("nTest")))
         ab = tr.get("abdeckung") or {}
         if ab.get("hinweis"):
             hinweise.append(ab["hinweis"])

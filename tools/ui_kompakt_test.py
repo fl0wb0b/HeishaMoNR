@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Pruefungen fuer tools/ui_kompakt_patch.py auf einem Live-Export (nur lesen, schreibt nur in ein temporaeres Verzeichnis).
+"""ERLEDIGTER EINMAL-TEST: tools/ui_kompakt_patch.py ist seit 13.10.2026 auf der Anlage eingespielt. Dieser Test braucht einen Flow-Export VOR dem Patch;
+auf dem heutigen Live-Stand endet er mit Meldung und Rueckgabewert 3 (tools/einmal_test.py), nicht mit einem Fehler.
+
+Pruefungen fuer tools/ui_kompakt_patch.py auf einem Live-Export (nur lesen, schreibt nur in ein temporaeres Verzeichnis).
 
 Usage: python3 tools/ui_kompakt_test.py <flows_live.json>
   1. Modell trifft die Live-Vermessung 13.10. (Seitenhoehe bei 1920 px) fuer alle 11 Kernseiten
@@ -36,14 +39,18 @@ def check(name, cond, info=""):
         fail += 1
 
 
-src = sys.argv[1]
+import einmal_test
+src = einmal_test.flows_argument("ui_kompakt_test")
 live, kompakt = P.laden(src)
 M0 = P.Modell(live)
 seiten = [t for t in M0.tabs if not t.get("hidden") and not t["id"].startswith("opt_")]
 
-if P.plan(live, "einklappen", False)[1]:
-    print("Hinweis: %s ist schon (teilweise) gepatcht - die Pruefungen brauchen einen Export VOR dem Patch (nach Teil A des Generators ist in Ordnung)." % src)
-    sys.exit(2)
+try:
+    _schon = P.plan(live, "einklappen", False)[1]
+except P.Abbruch as e:                                # Ausgangswerte stimmen nicht mehr (spaetere Patches): kein Stand vor dem Patch
+    einmal_test.erledigt("ui_kompakt_test", "tools/ui_kompakt_patch.py", "13.10.2026", e)
+if _schon:
+    einmal_test.erledigt("ui_kompakt_test", "tools/ui_kompakt_patch.py", "13.10.2026", "%s ist schon (teilweise) gepatcht (nach Teil A des Generators waere in Ordnung)" % src)
 
 # 1 Modell gegen Live-Vermessung
 h0 = {t["name"]: M0.seite(t, P.VERSTECKT.get(t["name"], ()), 1920)[0] for t in seiten}

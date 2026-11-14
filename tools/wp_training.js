@@ -112,11 +112,25 @@ const GATE = {rel: 0.10, kennzahlen: [
     {id: 'freilaufStrom', ampel: false, name: 'Freilauf Strom-Abweichung (Anteil)', wert: g => g.freilaufSumme && g.freilauf && g.freilauf.length >= 2 && g.freilaufSumme.kwhElMessung > 0 ? Math.abs(g.freilaufSumme.kwhElZwilling / g.freilaufSumme.kwhElMessung - 1) : null, grenze: 0.15, tol: 0.03},   // 3 Prozentpunkte (Kevin 08.11.): Tagesrauschen bei 4 Testtagen; Grenze 15 % (alter Stand −17 %), sonst hebelt sie die Toleranz um 10 % aus
     // 13.11.2026 (Frost-Nachmessung 5a, V6): Abtauungen als Fehler je Tag in Stück (kein Ausgleich zwischen Tagen), erst ab GATE_ABTAU_MIN gemessenen Abtauungen
     // im Testfenster; Toleranz max(2 Stück; 25 % der gemessenen). Vorher Anteil |Z−M|/max(3, M) der Summe: bei 2–3 Abtauungen lehnte 1 Abtauung Unterschied ab.
-    {id: 'freilaufAbtau', ampel: false, einheit: 'Stück', name: 'Freilauf Abtauungen: Fehler je Tag (Stück)', wert: g => g.freilauf && g.freilauf.length >= 2 ? g.freilauf.reduce((s, d) => s + Math.abs(d.abtauZwilling - d.abtauMessung), 0) : null,
-     n: g => g.freilaufSumme ? g.freilaufSumme.abtauMessung : null, nMin: 8, rel: 0, tol: g => Math.max(2, 0.25 * ((g && g.freilaufSumme && g.freilaufSumme.abtauMessung) || 0)),
-     grenze: g => Math.max(3, 0.3 * ((g && g.freilaufSumme && g.freilaufSumme.abtauMessung) || 0))}]};
+    // 13.11.2026 (5a Punkt 3): Reichen die gemessenen Abtauungen im Testfenster nicht, gilt für dieses eine Kriterium das Fenster der letzten GATE_ABTAU_TAGE Tage
+    // (abtauLang, in trainiere() nur dann berechnet); reicht auch das nicht, bleibt es „nicht bewertbar“ (basis: abtauBasis).
+    {id: 'freilaufAbtau', ampel: false, einheit: 'Stück', name: 'Freilauf Abtauungen: Fehler je Tag (Stück)', basis: g => abtauBasis(g),
+     wert: g => { const b = abtauBasis(g); return b && b.tage.length >= 2 ? b.tage.reduce((s, d) => s + Math.abs(d.abtauZwilling - d.abtauMessung), 0) : null; },
+     n: g => { const b = abtauBasis(g); return b ? b.n : null; }, nMin: 8, rel: 0, tol: g => Math.max(2, 0.25 * ((abtauBasis(g) || {}).n || 0)),
+     grenze: g => Math.max(3, 0.3 * ((abtauBasis(g) || {}).n || 0))}]};
+const GATE_ABTAU_TAGE = 14;
+// Grundlage des Abtau-Kriteriums: Testfenster, wenn dort ≥ nMin Abtauungen gemessen sind; sonst die letzten GATE_ABTAU_TAGE Tage (g.abtauLang), wenn die reichen;
+// sonst das Fenster mit den meisten Fällen (bleibt „nicht bewertbar“). fenster: 'test' | 'lang'; nTest/nLang = gemessene Abtauungen je Fenster.
+function abtauBasis(g) {
+    if (!g) { return null; }
+    const nMin = GATE_ABTAU_MIN_WERT, kurz = g.freilauf || [], nT = g.freilaufSumme ? g.freilaufSumme.abtauMessung : null, L = g.abtauLang || null, nL = L ? L.abtauMessung : null;
+    if (!kurz.length && !L) { return null; }
+    const lang = L && !(typeof nT === 'number' && nT >= nMin);
+    return {fenster: lang ? 'lang' : 'test', tage: lang ? L.tage : kurz, n: lang ? nL : nT, nTest: nT, nLang: nL, von: lang ? L.von : null, bis: lang ? L.bis : null, tageLang: L ? L.tage.length : null, reicht: (lang ? nL : nT) >= nMin};
+}
+const GATE_ABTAU_MIN_WERT = 8;
 const GATE_N_MIN = 3;                                                           // Standard-Mindestfallzahl für Kennzahlen mit n (Pausen-Median); eigene Grenze je Kennzahl über nMin
-const GATE_ABTAU_MIN = GATE.kennzahlen.find(k => k.id === 'freilaufAbtau').nMin;
+const GATE_ABTAU_MIN = GATE.kennzahlen.find(k => k.id === 'freilaufAbtau').nMin;      // = GATE_ABTAU_MIN_WERT (abtauBasis)
 const LERN_KEYS = ['abtauDauerMin', 'abtauLinie', 'abtauPelW', 'abtauWaermeKWh', 'eisAnker', 'nachAbtauEffMin', 'hsBeimAbtauen', 'capQ3Tab'];
 const FIT_KEYS = {waerme: ['pthHz', 'pthHzAT', 'pthEnde'], strom: ['pel0', 'pelHz', 'pelRL', 'pelAT', 'pelHz2'], standby: ['pelPauseW', 'pelAusW'], pumpe: ['flowPause', 'flowComfort', 'flowEff', 'pumpe0', 'pumpeJeL'], luefter: ['fanQ', 'fanJeHz'],
                   rohr: ['pipe0', 'pipeQ'], startStopp: ['stopK', 'stopHaltMin', 'startK', 'startVerzugMin', 'startHystK'], regler: ['regSenkK', 'regAbHzMin', 'comfortWiederK', 'effT1', 'effK1', 'effL1', 'effT2', 'effK2', 'effKp', 'effKi'],
@@ -242,7 +256,10 @@ function trennung(D, opt) {
 const inTage = (m, r) => m.tag >= r[0] && m.tag <= r[1];
 
 // ------------------------------------------------------------------ Teil-Fits (je Funktion: Daten → Werte + Fit-Kennzahl)
-function stabil(D, r) { return D.M.filter(m => m.ok && inTage(m, r) && m.lauf && m.rm !== null && m.rm >= 5 && !m.def && m.pth > 0 && m.flow > 5 && m.pel > 0 && m.at !== null && m.rl !== null); }
+// Ohne Heizstab-Minuten (13.11.2026): TOP16 und die Wärme enthalten dort den internen Heizstab (3,6 kW statt 0,6 kW). Bis 13.11. gingen sie in den Fit der
+// Verdichterleistung und in den Strom-RMSE ein: 5 Heizstab-Minuten am 13.11. 03:34–03:38 hoben den Test-RMSE von 25 auf 106 W (Band < 0 °C: 43 → 328 W).
+function stabilRoh(D, r) { return D.M.filter(m => m.ok && inTage(m, r) && m.lauf && m.rm !== null && m.rm >= 5 && !m.def && m.pth > 0 && m.flow > 5 && m.pel > 0 && m.at !== null && m.rl !== null); }
+function stabil(D, r) { return stabilRoh(D, r).filter(m => !m.hI); }
 function vlRelVor(D, m) { const i = (m.t - D.M[0].t) / MIN, v = D.M[Math.max(0, i - 1)]; return v.vl !== null && m.soll !== null ? v.vl - m.soll : 0; }
 function fitPth(D, r, B) {
     const S = stabil(D, r), X = S.map(m => [m.hz, m.hz * (m.at - 5), m.hz * Math.max(0, vlRelVor(D, m) - 1)]), y = S.map(m => m.pth);
@@ -292,7 +309,7 @@ function fitFan(D, r, P) {
 }
 function fitPipe(D, r, P, B) {
     let S = stabil(D, r).filter(m => m.pipe !== null && m.fan > 0), quelle = 'Trainingstage';
-    if (S.length < 300) { S = D.M.filter(m => m.ok && m.lauf && m.rm >= 5 && !m.def && m.pth > 0 && m.pel > 0 && m.pipe !== null && m.fan > 0); quelle = 'alle Tage (Spalte rohr_aussen erst ab 14.10.; keine Testtrennung)'; }
+    if (S.length < 300) { S = D.M.filter(m => m.ok && m.lauf && m.rm >= 5 && !m.def && !m.hI && m.pth > 0 && m.pel > 0 && m.pipe !== null && m.fan > 0); quelle = 'alle Tage (Spalte rohr_aussen erst ab 14.10.; keine Testtrennung)'; }
     if (S.length < 100) { return {_fit: {n: S.length, quelle: 'zu wenig Daten, Vorgabe'}}; }
     const X = S.map(m => [1, Math.max(0, m.pth - m.pel) / 1000 * 300 / m.fan]), y = S.map(m => m.at - m.pipe);
     const f = B ? lsqBind(X, y, [B.vor.pipe0, B.vor.pipeQ], skalen(B, ['pipe0', 'pipeQ']), B.lambda) : lsq(X, y);
@@ -617,14 +634,14 @@ function teilGuete(D, r, P) {
     const S = stabil(D, r);
     const ePth = S.map(m => Z.pthOf(P, m.hz, m.at, vlRelVor(D, m)) - m.pth), ePel = S.map(m => Z.pelOf(P, m.hz, m.at, m.rl) - m.pel);
     const kWhPth = [S.reduce((s, m) => s + Z.pthOf(P, m.hz, m.at, vlRelVor(D, m)), 0) / 60000, S.reduce((s, m) => s + m.pth, 0) / 60000];
-    const pp = D.M.filter(m => m.ok && inTage(m, r) && m.pipe !== null && m.lauf && m.rm >= 5 && !m.def && m.pth > 0 && m.pel > 0 && m.fan > 0);
+    const pp = D.M.filter(m => m.ok && inTage(m, r) && m.pipe !== null && m.lauf && m.rm >= 5 && !m.def && !m.hI && m.pth > 0 && m.pel > 0 && m.fan > 0);
     const ePipe = pp.map(m => (m.at - (P.pipe0 + P.pipeQ * Math.max(0, m.pth - m.pel) / 1000 * 300 / m.fan)) - m.pipe);
     const samm = {regler: [], wasserkreis: [], haus: []};
     const reg = reglerFehler(D, r, P, samm.regler), hyd = hydraulikFehler(D, r, P, 360, samm.wasserkreis), haus = hausFehler(D, r, P, 1440, undefined, samm.haus);
     samm.strom = S.map((m, i) => ({at: m.at, e: ePel[i]})); samm.waerme = S.map((m, i) => ({at: m.at, e: ePth[i]}));
     const raeume = {}; RAEUME.forEach(id => { const f = raumFehler(D, r, P, id, P.raeume[id]); raeume[id] = {n: f.n, rmseK: rd(f.rmse, 3), biasK: rd(f.bias, 3)}; });
     const st = stoppFehler(D, r, P.stopK, P.stopHaltMin), sa = startFehler(D, r, P.startK, P.startVerzugMin, P.startHystK);
-    return {pthRmseW: rd(rmse(ePth), 1), pthBiasW: rd(mean(ePth), 1), pthKWhModellMessung: kWhPth.map(x => rd(x, 2)), pelRmseW: rd(rmse(ePel), 1), pelBiasW: rd(mean(ePel), 1), nStabil: S.length,
+    return {pthRmseW: rd(rmse(ePth), 1), pthBiasW: rd(mean(ePth), 1), pthKWhModellMessung: kWhPth.map(x => rd(x, 2)), pelRmseW: rd(rmse(ePel), 1), pelBiasW: rd(mean(ePel), 1), nStabil: S.length, nHeizstabOhne: stabilRoh(D, r).length - S.length,
             pipeRmseK: pp.length ? rd(rmse(ePipe), 2) : null, nPipe: pp.length, reglerRmseHz: rd(reg.rmse, 3), wasserkreisRmseK: rd(hyd.rmse, 3), hausRmseK: rd(haus.rmse, 3), raeume: raeume,
             stoppRegelMaeMin: rd(mean(st.map(Math.abs)), 2), stoppN: st.length, startRegelMaeMin: rd(mean(sa.map(Math.abs)), 2), startN: sa.length, _samm: samm};
 }
@@ -656,7 +673,7 @@ function freilauf(D, tag, P) {
     if (idx.length < 600) { return null; }
     let S = Z.neu(P, initAus(D, idx[0], P));
     const e = {vl: [], pel: [], th: [], raeume: {}}; RAEUME.forEach(id => { e.raeume[id] = []; });
-    const sum = {elZ: 0, elM: 0, thZ: 0, thM: 0, startsZ: 0, startsM: 0, laufZ: 0, laufM: 0, abtauZ: 0, abtauM: 0, hsZ: 0, hsM: 0};
+    const sum = {elZ: 0, elM: 0, thZ: 0, thM: 0, startsZ: 0, startsM: 0, laufZ: 0, laufM: 0, abtauZ: 0, abtauM: 0, hsZ: 0, hsM: 0, ohneEl: 0, ohneTh: 0};
     let hzVor = null, modVor = null;
     idx.forEach((i, k) => {
         const m = D.M[i], res = Z.schritt(S, eingabe(m, true), P); S = res.S; const A = res.A;
@@ -666,15 +683,17 @@ function freilauf(D, tag, P) {
             if (m.th !== null) { e.th.push(A.th - m.th); }
             RAEUME.forEach(id => { if (m.rooms[id] !== null) { e.raeume[id].push(A.raeume[id] - m.rooms[id]); } });
         }
-        sum.elZ += (A.pelKorr + (A.pelHs || 0)) / 60000; if (A.hs) { sum.hsZ++; } if (m.hI) { sum.hsM++; } sum.elM += m.pel === null ? 0 : (m.pel + (m.lauf ? P.pelKorrW : 0)) / 60000;   // TOP16 der Anlage enthält den internen Heizstab (Abtauungen mit Heizstab: 3,6–3,8 kW)
-        sum.thZ += Math.max(0, A.pth) / 60000; sum.thM += m.lauf && m.flow > 1 && m.vl !== null && m.rl !== null ? Math.max(0, m.flow * Z.CP * (m.vl - m.rl)) / 60 : 0;
+        // Minuten ohne Messwert sind unbekannt (13.11.2026): weder die Messung als 0 noch der Zwilling allein gehen in die Summen (vorher zählte nur der Zwilling)
+        if (A.hs) { sum.hsZ++; } if (m.hI) { sum.hsM++; }
+        if (m.pel !== null) { sum.elZ += (A.pelKorr + (A.pelHs || 0)) / 60000; sum.elM += (m.pel + (m.lauf ? P.pelKorrW : 0)) / 60000; } else { sum.ohneEl++; }   // TOP16 der Anlage enthält den internen Heizstab (Abtauungen mit Heizstab: 3,6–3,8 kW)
+        if (!m.lauf || (m.flow !== null && m.vl !== null && m.rl !== null)) { sum.thZ += Math.max(0, A.pth) / 60000; sum.thM += m.lauf && m.flow > 1 ? Math.max(0, m.flow * Z.CP * (m.vl - m.rl)) / 60 : 0; } else { sum.ohneTh++; }
         // Starts wie gemessen zaehlen: Verdichter aus → an (mit den zwei Starts je Abtauung); bis 08.11. zaehlte der Zwilling nur Thermostat-Starts
         if (k > 0 && A.hz > 0 && !(hzVor > 0)) { sum.startsZ++; } if (k > 0 && m.lauf && !D.M[i - 1].lauf) { sum.startsM++; }
         if (k > 0 && A.modus === 'abtauen' && modVor !== 'abtauen') { sum.abtauZ++; } if (k > 0 && m.def && !D.M[i - 1].def) { sum.abtauM++; }
         hzVor = A.hz; modVor = A.modus;
         if (A.modus === 'lauf' || A.modus === 'abtauen') { sum.laufZ++; } if (m.lauf) { sum.laufM++; }
     });
-    const o = {tag: tag, minuten: idx.length, kwhElZwilling: rd(sum.elZ, 2), kwhElMessung: rd(sum.elM, 2), kwhThZwilling: rd(sum.thZ, 2), kwhThMessung: rd(sum.thM, 2), startsZwilling: sum.startsZ, startsMessung: sum.startsM, abtauZwilling: sum.abtauZ, abtauMessung: sum.abtauM, heizstabMinZwilling: sum.hsZ, heizstabMinMessung: sum.hsM,
+    const o = {tag: tag, minuten: idx.length, kwhElZwilling: rd(sum.elZ, 2), kwhElMessung: rd(sum.elM, 2), kwhThZwilling: rd(sum.thZ, 2), kwhThMessung: rd(sum.thM, 2), startsZwilling: sum.startsZ, startsMessung: sum.startsM, abtauZwilling: sum.abtauZ, abtauMessung: sum.abtauM, heizstabMinZwilling: sum.hsZ, heizstabMinMessung: sum.hsM, minutenOhneStrom: sum.ohneEl, minutenOhneWaerme: sum.ohneTh,
                laufMinZwilling: sum.laufZ, laufMinMessung: sum.laufM, rmseVlK: rd(rmse(e.vl), 2), rmsePelW: rd(rmse(e.pel), 1), rmseHausK: rd(rmse(e.th), 2), biasHausK: rd(mean(e.th), 2), raeume: {}};
     RAEUME.forEach(id => { o.raeume[id] = e.raeume[id].length ? {rmseK: rd(rmse(e.raeume[id]), 2), biasK: rd(mean(e.raeume[id]), 2)} : null; });
     return o;
@@ -701,6 +720,12 @@ function guete(D, r, P) {
     return {tage: tage, teil: teil, jeBand: baender, zyklenHausGemessen: {pause: zA.pause, lauf: zA.lauf}, zyklenHausSimuliert: {pause: zH.pause, lauf: zH.lauf}, zyklenDetail: zH.detail,
             freilauf: fl, freilaufSumme: fl.length ? {kwhElZwilling: rd(sum('kwhElZwilling'), 2), kwhElMessung: rd(sum('kwhElMessung'), 2), kwhThZwilling: rd(sum('kwhThZwilling'), 2), kwhThMessung: rd(sum('kwhThMessung'), 2),
                 startsZwilling: sum('startsZwilling'), startsMessung: sum('startsMessung'), abtauZwilling: sum('abtauZwilling'), abtauMessung: sum('abtauMessung'), laufMinZwilling: sum('laufMinZwilling'), laufMinMessung: sum('laufMinMessung')} : null};
+}
+
+// Abtauungen im Freilauf je Tag über die letzten n Tage bis zum Testende (nur für das Abtau-Kriterium des Gates, wenn das Testfenster zu wenig Fälle hat)
+function abtauLang(D, bis, n, P) {
+    const tage = tageVon(D).filter(t => t <= bis).slice(-n), fl = tage.map(t => freilauf(D, t, P)).filter(Boolean).map(f => ({tag: f.tag, abtauZwilling: f.abtauZwilling, abtauMessung: f.abtauMessung}));
+    return fl.length ? {von: fl[0].tag, bis: fl[fl.length - 1].tag, tage: fl, abtauZwilling: fl.reduce((s, f) => s + f.abtauZwilling, 0), abtauMessung: fl.reduce((s, f) => s + f.abtauMessung, 0)} : null;
 }
 
 // ------------------------------------------------------------------ training-v2: Abdeckung, Gate
@@ -735,9 +760,16 @@ function entscheide(gK, gC, opt) {
         const v = x => { try { const w = k.wert(x); return w === null || w === undefined || !isFinite(w) ? null : w; } catch (e) { return null; } };
         const fw = (f, x) => typeof f === 'function' ? v2(f, x) : f;                              // tol/grenze fest oder aus der Messung im Testfenster (beide Sätze gleich)
         const tol = fw(k.tol, gC), grenze = fw(k.grenze, gC), relK = k.rel === undefined ? rel : k.rel, nMin = k.nMin || GATE_N_MIN, eh = k.einheit ? ' ' + k.einheit : '';
-        const a = v(gK), b = v(gC), o = {id: k.id, name: k.name, kandidat: a, bisher: b, grenze: grenze, tol: tol, verletzt: false, warum: null};
-        if (a === null || b === null) { o.warum = 'nicht bewertbar (keine Werte)'; return o; }
-        if (k.n) { const na = v2(k.n, gK), nb = v2(k.n, gC); if ((typeof na === 'number' && na < nMin) || (typeof nb === 'number' && nb < nMin)) { o.warum = 'nicht bewertbar (n = ' + na + ' / ' + nb + ', weniger als ' + nMin + ')'; return o; } }
+        const a = v(gK), b = v(gC), o = {id: k.id, name: k.name, kandidat: a, bisher: b, grenze: grenze, tol: tol, verletzt: false, warum: null, bewertbar: true};
+        const bs = k.basis ? v2(k.basis, gC) : null;                                              // Abtau-Kriterium: welches Fenster (Messung, für beide Sätze gleich)
+        if (bs) { o.fenster = bs.fenster === 'lang' ? GATE_ABTAU_TAGE + ' Tage' : 'Test'; o.n = bs.n; o.nTest = bs.nTest; o.nLang = bs.nLang; if (bs.fenster === 'lang') { o.fensterVon = bs.von; o.fensterBis = bs.bis; o.fensterTage = bs.tageLang; } }
+        if (a === null || b === null) { o.bewertbar = false; o.warum = 'nicht bewertbar (keine Werte)'; return o; }
+        if (k.n) { const na = v2(k.n, gK), nb = v2(k.n, gC); if ((typeof na === 'number' && na < nMin) || (typeof nb === 'number' && nb < nMin)) {
+            o.bewertbar = false;
+            o.warum = bs && bs.fenster === 'lang' ? 'nicht bewertbar (Testfenster n = ' + bs.nTest + ', ' + GATE_ABTAU_TAGE + '-Tage-Fenster n = ' + bs.nLang + ', weniger als ' + nMin + ')'
+                : 'nicht bewertbar (n = ' + na + ' / ' + nb + ', weniger als ' + nMin + ')';
+            return o; } }
+        if (bs && bs.fenster === 'lang') { o.hinweis = 'bewertet im ' + GATE_ABTAU_TAGE + '-Tage-Fenster ' + bs.von + ' … ' + bs.bis + ' (' + bs.nLang + ' gemessene Abtauungen; Testfenster nur ' + bs.nTest + '); beide Sätze dort teils im eigenen Trainingszeitraum'; }
         if (a - b > Math.max(relK * b, tol) + 1e-9) {
             o.verletzt = true;
             o.warum = k.einheit ? 'schlechter um ' + de(a - b, 0) + eh + ' (' + de(b, 0) + ' → ' + de(a, 0) + eh + ', Toleranz ' + de(tol, 1) + ')'
@@ -746,9 +778,13 @@ function entscheide(gK, gC, opt) {
         else if (a > grenze && b <= grenze) { o.verletzt = true; o.warum = 'über der Ampelgrenze ' + de(grenze, 1) + eh + ' (' + de(a, 2) + ')'; }
         return o;
     });
-    const v = ks.filter(k => k.verletzt);
-    return {ergebnis: v.length ? 'abgelehnt' : 'übernommen', grund: v.length ? v.map(k => k.name + ': ' + k.warum).join('; ') : 'nicht schlechter als der bisherige Satz (Strom, Wasserkreis, Pause, Freilauf-Strom je höchstens +' + de(100 * rel, 0) + ' %, Freilauf-Abtauungen je Tag höchstens max(2; 25 %) Stück ab ' + GATE_ABTAU_MIN + ' gemessenen, unter der Ampelgrenze)',
-            kriterium: {rel: rel, tol: ks.reduce((o, k) => { o[k.id] = k.tol; return o; }, {}), grenzen: ks.reduce((o, k) => { o[k.id] = k.grenze; return o; }, {}), abtauMin: GATE_ABTAU_MIN}, kennzahlen: ks};
+    const v = ks.filter(k => k.verletzt), nb = ks.filter(k => !k.bewertbar), ab = ks.find(k => k.id === 'freilaufAbtau');
+    return {ergebnis: v.length ? 'abgelehnt' : 'übernommen', grund: v.length ? v.map(k => k.name + ': ' + k.warum).join('; ') : 'nicht schlechter als der bisherige Satz (Strom, Wasserkreis, Pause, Freilauf-Strom je höchstens +' + de(100 * rel, 0) + ' %, Freilauf-Abtauungen je Tag höchstens max(2; 25 %) Stück ab ' + GATE_ABTAU_MIN + ' gemessenen, unter der Ampelgrenze)' +
+                (ab && ab.hinweis ? '; Abtauungen ' + ab.hinweis : '') + (nb.length ? '; ' + nb.map(k => k.name + ': ' + k.warum).join('; ') : ''),
+            kriterium: {rel: rel, tol: ks.reduce((o, k) => { o[k.id] = k.tol; return o; }, {}), grenzen: ks.reduce((o, k) => { o[k.id] = k.grenze; return o; }, {}), abtauMin: GATE_ABTAU_MIN, abtauTage: GATE_ABTAU_TAGE},
+            nichtBewertbar: nb.map(k => ({id: k.id, name: k.name, warum: k.warum})),
+            abtauFenster: ab ? {fenster: ab.fenster || null, n: ab.n === undefined ? null : ab.n, nTest: ab.nTest === undefined ? null : ab.nTest, nLang: ab.nLang === undefined ? null : ab.nLang, von: ab.fensterVon || null, bis: ab.fensterBis || null, tage: ab.fensterTage || null, bewertbar: ab.bewertbar} : null,
+            kennzahlen: ks};
 }
 
 // ------------------------------------------------------------------ Hauptablauf
@@ -783,6 +819,9 @@ function trainiere(dir, opt) {
         [gTest, gRoh, gVor].forEach(g => bandStatus(g.jeBand, abd));
         roh = {werte: rohW, werteTraining: rohT, guete: {test: gRoh}};
         vorherNeu = {tag: opt.vorherTag || null, guete: {test: gVor}};
+        if (!(gTest.freilaufSumme && gTest.freilaufSumme.abtauMessung >= GATE_ABTAU_MIN)) {       // zu wenig Abtauungen im Testfenster: 14-Tage-Fenster für das Abtau-Kriterium
+            gTest.abtauLang = abtauLang(D, T.test[1], GATE_ABTAU_TAGE, PK); gVor.abtauLang = abtauLang(D, T.test[1], GATE_ABTAU_TAGE, vorT);
+        }
         ent = entscheide(gTest, gVor, opt.gate);
     }
     [gTrain, gTest].forEach(g => bandStatus(g.jeBand, abd));
@@ -807,6 +846,7 @@ function markdown(R) {
     const row = (n, a, b) => L.push('| ' + n + ' | ' + a + ' | ' + b + ' |');
     row('Wärme Pth (stabile Laufminuten), RMSE / Bias', de(tr.teil.pthRmseW, 0) + ' / ' + de(tr.teil.pthBiasW, 0) + ' W', de(te.teil.pthRmseW, 0) + ' / ' + de(te.teil.pthBiasW, 0) + ' W');
     row('Strom TOP16, RMSE / Bias', de(tr.teil.pelRmseW, 1) + ' / ' + de(tr.teil.pelBiasW, 1) + ' W', de(te.teil.pelRmseW, 1) + ' / ' + de(te.teil.pelBiasW, 1) + ' W');
+    row('Heizstab-Minuten (nicht in Fit und RMSE: TOP16 enthält dort den Heizstab)', String(tr.teil.nHeizstabOhne === undefined ? '–' : tr.teil.nHeizstabOhne), String(te.teil.nHeizstabOhne === undefined ? '–' : te.teil.nHeizstabOhne));
     row('Verdichter-Regler (gemessener Vorlauf), RMSE', de(tr.teil.reglerRmseHz, 2) + ' Hz', de(te.teil.reglerRmseHz, 2) + ' Hz');
     row('Wasserkreis Vor-/Rücklauf (Neustart je 360 min), RMSE', de(tr.teil.wasserkreisRmseK, 2) + ' K', de(te.teil.wasserkreisRmseK, 2) + ' K');
     row('Rohr außen, RMSE', tr.teil.pipeRmseK === null ? '–' : de(tr.teil.pipeRmseK, 2) + ' K', te.teil.pipeRmseK === null ? '–' : de(te.teil.pipeRmseK, 2) + ' K');
@@ -854,7 +894,7 @@ function markdown(R) {
     return L.join('\n') + '\n';
 }
 
-module.exports = {abtauDirekt, linieFest, ABTAU_DIREKT_N, fitAbtau, fitDeckelQ3, abtauungen, lade, trennung, fitAlles, guete, trainiere, markdown, lsq, lsqBox, lsqBind, koordinatensuche, gebunden, strafe, glaette, glaetteSatz, abdeckung, bandOf, bandStatus, jeBand, entscheide, abtauIntervall, initAus, eingabe, readMulti,
+module.exports = {freilauf, tageVon, stabil, stabilRoh, abtauLang, abtauBasis, GATE_ABTAU_TAGE, abtauDirekt, linieFest, ABTAU_DIREKT_N, fitAbtau, fitDeckelQ3, abtauungen, lade, trennung, fitAlles, guete, trainiere, markdown, lsq, lsqBox, lsqBind, koordinatensuche, gebunden, strafe, glaette, glaetteSatz, abdeckung, bandOf, bandStatus, jeBand, entscheide, abtauIntervall, initAus, eingabe, readMulti,
                   RAEUME, HAUS_RAEUME, BAENDER, GATE, ABDECKUNG, GEFITTET, KEINE_DATEN};
 
 if (require.main === module) {

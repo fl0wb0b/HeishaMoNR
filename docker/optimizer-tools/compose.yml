@@ -7,7 +7,7 @@ name: optimizer-tools
 
 services:
   optimizer-tools:
-    image: optimizer-tools:${OT_TAG:-frost-1}   # frost-1 (13.11.2026: Abtau-Gate, Zwilling Frost, Kennzahlen mit Abtauwärme/Heizstab; vorher zwilling-lernt 08.11.); zurück: OT_TAG=zwilling-lernt docker compose up -d
+    image: optimizer-tools:${OT_TAG:-frost-2}   # frost-2 (14.11.2026: Vereisung je AT, Gate im 14-Tage-Fenster, Strom-RMSE ohne Heizstab, Kennzahlen Rechenweg 3, Bewertung v8 im Replay; vorher frost-1 13.11.); zurück: OT_TAG=frost-1 docker compose up -d
     pull_policy: never              # nie von Docker Hub holen; fehlt das Image, bricht compose mit „No such image“ ab
     container_name: optimizer-tools
     labels:

@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Pruefungen fuer tools/ui_kern_b_patch.py auf einem Live-Export (nur lesen, schreibt nur in ein temporaeres Verzeichnis).
+"""ERLEDIGTER EINMAL-TEST: tools/ui_kern_b_patch.py ist seit 20.10.2026 auf der Anlage eingespielt. Dieser Test braucht einen Flow-Export VOR dem Patch;
+auf dem heutigen Live-Stand endet er mit Meldung und Rueckgabewert 3 (tools/einmal_test.py), nicht mit einem Fehler.
+
+Pruefungen fuer tools/ui_kern_b_patch.py auf einem Live-Export (nur lesen, schreibt nur in ein temporaeres Verzeichnis).
 
 Usage: python3 tools/ui_kern_b_test.py <flows_live.json>
   1. je Punkt und alle zusammen: Probelauf, Whitelist (nur erklaerte Felder/Knoten, keine opt_*, Verdrahtung nur wo erklaert),
@@ -53,10 +56,17 @@ def fn_lauf(func, globals_, msg=None, flow=None, want_globals=False):
         return "FEHLER " + r.stderr[-300:]
 
 
-live = sys.argv[1]
-T = tempfile.mkdtemp(prefix="uikernb-")
+import einmal_test
+live = einmal_test.flows_argument("ui_kern_b_test")
 data, fmt = P.laden(live)
 flows = P.knoten(data)
+try:
+    _schon = P.plan(flows, P.REIHENFOLGE)[2]
+except P.Abbruch as e:
+    einmal_test.erledigt("ui_kern_b_test", "tools/ui_kern_b_patch.py", "20.10.2026", e)
+if _schon:
+    einmal_test.erledigt("ui_kern_b_test", "tools/ui_kern_b_patch.py", "20.10.2026", "%s traegt bei %d der erklaerten Werte schon den neuen Stand" % (live, _schon))
+T = tempfile.mkdtemp(prefix="uikernb-")
 src = os.path.join(T, "live.json")
 P.schreiben(src, data, fmt)
 raw0 = open(src, encoding="utf-8").read()

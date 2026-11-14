@@ -68,6 +68,14 @@ R = {"version": 1, "verfahren": 2, "modell": "stub", "daten": {"ordner": "x", "v
      "abdeckung": {"tage": 2, "duenn": True, "grund": "2 Tage Daten (< 21)", "baenderAusreichend": 3, "atMin": 1, "atMax": 14, "extrapoliertUnterC": 0,
                    "hinweis": "Zwilling hat unter 0 °C keine Daten (tiefste gemessene AT 1 °C): dort extrapoliert", "kriterien": {"laufMinBand": 300, "tage": 21, "baender": 3},
                    "baender": [{"band": "unter0", "name": "< 0 °C", "minuten": 0, "laufMinuten": 0, "tage": 0, "status": "keine Daten, Zwilling extrapoliert"}]}}
+if vor and os.environ.get("STUB_ABTAU"):     # Abtau-Kriterium: "lang" = im 14-Tage-Fenster bewertet, "nb" = auch dort zu wenig Fälle
+    nb = os.environ["STUB_ABTAU"] == "nb"
+    k = {"id": "freilaufAbtau", "name": "Freilauf Abtauungen: Fehler je Tag (Stück)", "kandidat": 9, "bisher": 10, "verletzt": False, "bewertbar": not nb, "fenster": "14 Tage",
+         "warum": "nicht bewertbar (Testfenster n = 3, 14-Tage-Fenster n = 6, weniger als 8)" if nb else None, "hinweis": None if nb else "bewertet im 14-Tage-Fenster"}
+    R["entscheidung"]["kennzahlen"].append(k)
+    R["entscheidung"]["kriterium"].update({"abtauMin": 8, "abtauTage": 14})
+    R["entscheidung"]["nichtBewertbar"] = [{"id": k["id"], "name": k["name"], "warum": k["warum"]}] if nb else []
+    R["entscheidung"]["abtauFenster"] = {"fenster": "14 Tage", "n": 6 if nb else 29, "nTest": 3, "nLang": 6 if nb else 29, "von": "2026-10-30", "bis": "2026-11-12", "tage": 14, "bewertbar": not nb}
 with open(arg("--json"), "w") as f:
     json.dump(R, f)
 with open(arg("--md"), "w") as f:
@@ -97,7 +105,7 @@ def main():
         os.environ["STUB_LOG"] = os.path.join(tmp, "stub.log")
 
         def nacht(tag, ergebnis, **env):
-            for k in ("STUB_ERGEBNIS", "STUB_STROM_KANDIDAT", "STUB_STROM_BISHER", "STUB_WERT"):
+            for k in ("STUB_ERGEBNIS", "STUB_STROM_KANDIDAT", "STUB_STROM_BISHER", "STUB_WERT", "STUB_ABTAU"):
                 os.environ.pop(k, None)
             os.environ.update(env)
             open(os.environ["STUB_LOG"], "w").close()
@@ -159,6 +167,26 @@ def main():
         check("hinweise: auffällige Drift nennt den roh gelernten Wert", any("auffälliger Drift (roh gelernt; u. a. " in h and "roh gelernt" in h.split("u. a. ")[1] for h in S["hinweise"]),
               [h for h in S["hinweise"] if "Drift" in h])
         check("Ampel-Grenzen gleich in ot.py, wp_training_nacht.py und wp_training.js (Gate)", ot.GUETE_GRENZEN == N.AMPEL_GRENZEN and _gate_js() == [40, 1.5, 30], _gate_js())
+        print("--- Abtau-Kriterium: 14-Tage-Fenster und „nicht bewertbar“ in letzter.json und status.json")
+        rc, args, L = nacht("2026-11-20", erg, STUB_ABTAU="nb")
+        en = L["entscheidung"]
+        check("zu wenig Abtauungen auch in 14 Tagen: letzter.json führt das Kriterium unter nicht_bewertbar, abtau_fenster mit beiden Fallzahlen, Entscheidung übernommen",
+              rc == 0 and en["ergebnis"] == "übernommen" and en["nicht_bewertbar"][0]["name"].startswith("Freilauf Abtauungen") and "14-Tage-Fenster n = 6" in en["nicht_bewertbar"][0]["warum"]
+              and en["abtau_fenster"] == {"fenster": "14 Tage", "n": 6, "nTest": 3, "nLang": 6, "von": "2026-10-30", "bis": "2026-11-12", "tage": 14, "bewertbar": False}, en.get("abtau_fenster"))
+        S = ot.baue_status()
+        check("status.json: nicht_bewertbar im Training und als Hinweis „Gate-Kriterium … nicht bewertbar“",
+              S["training"]["entscheidung"]["nicht_bewertbar"] == en["nicht_bewertbar"] and any("Gate-Kriterium „Freilauf Abtauungen" in h and "nicht bewertbar (Testfenster n = 3" in h for h in S["hinweise"]), S["hinweise"])
+        with open(os.path.join(tr, "wp_training.md"), encoding="utf-8") as f:
+            md = f.read()
+        check("wp_training.md: Zeile des Abtau-Kriteriums mit „nicht bewertbar“ und Satz zum Fenster", "| Freilauf Abtauungen: Fehler je Tag (Stück) | – | 9,00 | 10,00 | nicht bewertbar (Testfenster n = 3" in md
+              and "Abtau-Kriterium: Fenster 14 Tage, gemessene Abtauungen im Testfenster 3, im 14-Tage-Fenster 2026-10-30 bis 2026-11-12: 6, bewertbar: nein (Mindestzahl 8)." in md,
+              [z for z in md.split("\n") if "Abtau" in z])
+        rc, args, L = nacht("2026-11-21", erg, STUB_ABTAU="lang")
+        S = ot.baue_status()
+        check("im 14-Tage-Fenster bewertet: nicht_bewertbar leer, abtau_fenster bewertbar mit 29 Fällen, Hinweis nennt das Fenster",
+              rc == 0 and L["entscheidung"]["nicht_bewertbar"] == [] and L["entscheidung"]["abtau_fenster"]["bewertbar"] is True and L["entscheidung"]["abtau_fenster"]["nLang"] == 29
+              and any("Abtau-Kriterium im 14 Tage-Fenster bewertet (29 gemessene Abtauungen, Testfenster nur 3)" in h for h in S["hinweise"])
+              and not any("Gate-Kriterium" in h for h in S["hinweise"]), [h for h in S["hinweise"] if "Abtau" in h])
         os.environ["TRAINING_GLAETTUNG"] = "0.5"
         os.environ["TRAINING_BINDUNG"] = "abc"
         ot2 = lade_modul("ot2", os.path.join(REPO, "docker", "optimizer-tools", "ot.py"))

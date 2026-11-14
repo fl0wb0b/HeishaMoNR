@@ -113,6 +113,24 @@ console.log('--- Gate: Freilauf-Abtauungen je Tag in Stück, erst ab 8 gemessene
     const null0 = T.entscheide(g([[4, 4], [4, 4], [4, 4]], 12), g([[4, 4], [4, 4], [4, 4]], 10));
     const fs = null0.kennzahlen.find(k => k.id === 'freilaufStrom');
     check('Prozentanzeige bei bisher = 0: „bisher 0 → 0,20“ statt Division durch 1e-9', fs.verletzt && fs.warum === 'schlechter (bisher 0 → 0,20)' && !/33333/.test(null0.grund), fs.warum);
+    // 14-Tage-Fenster (13.11.2026, Frostbericht 5a Punkt 3): lang = [[Zwilling, Messung], …] je Tag der letzten 14 Tage
+    const mitLang = (o, lang) => Object.assign(o, {abtauLang: {von: '2026-10-30', bis: '2026-11-12', tage: lang.map(([z, m], i) => ({tag: 'T' + i, abtauZwilling: z, abtauMessung: m})),
+        abtauZwilling: lang.reduce((s, x) => s + x[0], 0), abtauMessung: lang.reduce((s, x) => s + x[1], 0)}});
+    const M14 = [4, 0, 2, 0, 4, 0, 0, 6, 7, 3, 0, 0, 2, 1];                                       // 29 gemessene Abtauungen in 14 Tagen
+    const L = d => M14.map((m, i) => [Math.max(0, m + (d[i] || 0)), m]);
+    const l1 = T.entscheide(mitLang(g([[2, 0], [2, 2], [2, 1]]), L([1, 0, -1, 0, 1, 0, 0, -2, 1, 0, 0, 2, 0, 1])), mitLang(g([[1, 0], [1, 2], [2, 1]]), L([0, 1, 0, 0, -1, 0, 0, -3, 2, 0, 0, 1, -1, 1])));
+    check('3 Abtauungen im Testfenster, 29 in 14 Tagen: Abtau-Kriterium im 14-Tage-Fenster bewertet (Fehler 9 gegen 10 Stück), übernommen, Fenster und Fallzahlen im Ergebnis',
+          l1.ergebnis === 'übernommen' && ab(l1).bewertbar && ab(l1).fenster === '14 Tage' && ab(l1).kandidat === 9 && ab(l1).bisher === 10 && ab(l1).n === 29 && ab(l1).nTest === 3 && ab(l1).tol === 7.25 &&
+          l1.abtauFenster.fenster === '14 Tage' && l1.abtauFenster.nLang === 29 && l1.abtauFenster.von === '2026-10-30' && /bewertet im 14-Tage-Fenster/.test(l1.grund) && l1.nichtBewertbar.length === 0, JSON.stringify(ab(l1)));
+    const l2 = T.entscheide(mitLang(g([[2, 0], [2, 2], [2, 1]]), L([3, 2, -2, 1, 2, 1, 0, -3, 3, 0, 1, 2, 0, 1])), mitLang(g([[1, 0], [1, 2], [2, 1]]), L([0, 1, 0, 0, -1, 0, 0, -3, 2, 0, 0, 1, -1, 1])));
+    check('14-Tage-Fenster entscheidet auch gegen den Kandidaten: 21 gegen 10 Stück bei Toleranz max(2; 25 % von 29) = 7,25: abgelehnt', l2.ergebnis === 'abgelehnt' && ab(l2).verletzt && /schlechter um 11 Stück/.test(l2.grund), l2.grund);
+    const l3 = T.entscheide(mitLang(g([[2, 0], [2, 2], [2, 1]]), [[1, 0], [0, 0], [2, 2], [3, 1], [0, 0], [2, 0], [2, 2], [2, 1]]), mitLang(g([[1, 0], [1, 2], [2, 1]]), [[0, 0], [0, 0], [2, 2], [1, 1], [0, 0], [1, 0], [1, 2], [2, 1]]));
+    check('auch in 14 Tagen zu wenig (6 gemessen): „nicht bewertbar“ mit beiden Fallzahlen, entscheidet nichts, steht in nichtBewertbar und im Grund',
+          l3.ergebnis === 'übernommen' && !ab(l3).bewertbar && ab(l3).warum === 'nicht bewertbar (Testfenster n = 3, 14-Tage-Fenster n = 6, weniger als 8)' && l3.nichtBewertbar.some(x => x.id === 'freilaufAbtau') &&
+          l3.abtauFenster.bewertbar === false && /nicht bewertbar \(Testfenster n = 3, 14-Tage-Fenster n = 6/.test(l3.grund), ab(l3).warum);
+    const l4 = T.entscheide(mitLang(g([[6, 7], [3, 3], [0, 0]]), L([9, 9, 9])), mitLang(g([[15, 7], [6, 3], [0, 0]]), L([])));
+    check('genug Abtauungen im Testfenster (10): das 14-Tage-Fenster bleibt außen vor, auch wenn es vorliegt', l4.ergebnis === 'übernommen' && ab(l4).fenster === 'Test' && ab(l4).kandidat === 1 && ab(l4).bisher === 11 && ab(l4).n === 10);
+    check('ohne 14-Tage-Fenster und zu wenig Fälle: Meldung wie bisher, in nichtBewertbar geführt', k12.nichtBewertbar.length === 1 && k12.nichtBewertbar[0].id === 'freilaufAbtau' && k12.abtauFenster.bewertbar === false && k12.kriterium.abtauTage === 14);
     check('Gate-Kriterium im Ergebnis: Mindestzahl 8 Abtauungen, Toleranz/Grenze als Zahl aus der Messung', k09.kriterium.abtauMin === 8 && k09.kriterium.tol.freilaufAbtau === 2.5 && k09.kriterium.grenzen.freilaufAbtau === 3, JSON.stringify(k09.kriterium));
 }
 
@@ -173,6 +191,30 @@ if (datenDir) {
     const a = T.entscheide(gS, gG), b = T.entscheide(gG, gS);
     check('echte Daten: verdorbener Herausforderer (pelHz × 1,3) gegen guten Champion → abgelehnt (Strom)', a.ergebnis === 'abgelehnt' && a.kennzahlen[0].verletzt, a.grund);
     check('echte Daten: guter Herausforderer gegen verdorbenen Champion → übernommen', b.ergebnis === 'übernommen', b.kennzahlen.map(k => k.id + ' ' + k.kandidat + '/' + k.bisher).join(', '));
+}
+// ------------------------------------------------------------------ Heizstab-Minuten gehören nicht in Verdichter-Fit und Strom-RMSE (13.11.2026)
+{
+    const Zz = require('./wp_zwilling.js'), P0 = Zz.standard(), M = [], t0 = new Date(2026, 10, 13, 0, 0).getTime();
+    for (let i = 0; i < 400; i++) {                                                   // Dauerlauf 24 Hz bei −1 °C; 5 Minuten mit internem Heizstab: TOP16 3,6 kW statt Verdichterleistung
+        const hs = i >= 200 && i < 205, pel = Math.round(Zz.pelOf(P0, 24, -1, 29));
+        M.push({t: t0 + i * 60000, tag: '2026-11-13', ok: true, at: -1, rl: 29, vl: 31, hz: 24, lauf: true, def: false, rm: i, flow: 13, pth: hs ? 5200 : 2300, pel: hs ? pel + 3050 : pel, hI: hs ? 1 : 0});
+    }
+    const D = {M: M}, r = ['2026-11-13', '2026-11-13'], S = T.stabil(D, r), R0 = T.stabilRoh(D, r);
+    const rmse = a => Math.sqrt(a.reduce((s, m) => s + Math.pow(Zz.pelOf(P0, m.hz, m.at, m.rl) - m.pel, 2), 0) / a.length);
+    check('Heizstab-Minuten: 5 von 395 Minuten mit TOP16 3,6 kW heben den Strom-RMSE von 0 auf über 300 W; die Auswahl für Fit und Güte lässt sie weg (RMSE 0)',
+          R0.length === 395 && S.length === 390 && S.every(m => !m.hI) && rmse(R0) > 300 && rmse(S) < 1, 'mit ' + Math.round(rmse(R0)) + ' W, ohne ' + Math.round(rmse(S)) + ' W');
+}
+// ------------------------------------------------------------------ Freilauf: Minuten ohne Stromwert sind unbekannt, nicht 0 kWh (13.11.2026)
+{
+    const Zz = require('./wp_zwilling.js'), P0 = Zz.standard(), t0 = new Date(2026, 10, 12, 0, 0).getTime();
+    const tag = fehlt => { const M = []; for (let i = 0; i < 720; i++) { const f = fehlt && i >= 300 && i < 400;
+        M.push({t: t0 + i * 60000, tag: '2026-11-12', ok: true, at: 6, rh: 85, pv: 0, q: 3, hc: 1, soll: 32, vl: 32, rl: 29, flow: 13.4, pumpe: true, lauf: true, hz: 17, rm: i, def: 0, hI: 0, th: 21.5,
+                rooms: {ki_oben: null, ki_unten: 21.5, schlaf: 21.5, wohn: null}, pel: f ? null : 400, pth: 2100}); } return {M: M}; };
+    const fv = T.freilauf(tag(false), '2026-11-12', P0), fl = T.freilauf(tag(true), '2026-11-12', P0);
+    check('Freilauf: 100 von 720 Minuten ohne Stromwert zählen weder bei der Messung (als 0) noch beim Zwilling; beide Summen über dieselben 620 Minuten',
+          fv.minutenOhneStrom === 0 && fl.minutenOhneStrom === 100 && Math.abs(fl.kwhElMessung - 620 * 480 / 60000) < 0.011 && Math.abs(fv.kwhElMessung - 720 * 480 / 60000) < 0.011 &&
+          fl.kwhElZwilling < fv.kwhElZwilling - 0.5 && Math.abs(fl.kwhElZwilling / fl.kwhElMessung - fv.kwhElZwilling / fv.kwhElMessung) < 0.03,
+          'voll ' + fv.kwhElZwilling + ' / ' + fv.kwhElMessung + ' kWh, mit Lücke ' + fl.kwhElZwilling + ' / ' + fl.kwhElMessung + ' kWh (Zwilling / Messung)');
 }
 // ------------------------------------------------------------------ Abtauen und Quiet-3-Deckel aus eigenen Daten (08.11.2026)
 {

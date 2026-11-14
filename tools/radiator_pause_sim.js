@@ -6,13 +6,23 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const cp = require('child_process');
+// ERLEDIGTER EINMAL-TEST: tools/radiator_pause_patch.py ist seit 09.10.2026 auf der Anlage eingespielt. Die Simulation braucht einen Flow-Export VOR
+// dem Patch; auf dem heutigen Live-Stand endet sie mit Meldung und Rückgabewert 3 (wie tools/einmal_test.py), nicht mit einem Fehler.
 const flowsFile = process.argv[2];
+if (!flowsFile) { console.log('Aufruf: node tools/radiator_pause_sim.js <flows.json> – ERLEDIGTER EINMAL-TEST: braucht einen Flow-Export VOR dem Patch.'); process.exit(2); }
 const ALL = JSON.parse(fs.readFileSync(flowsFile, 'utf8'));
 const RAD = 'a0f2936bcfe99ce0', HEIZ = '35b16310f17ddb8b', GROUP = '0942bdaa20b48a26';
 const tmp = path.join(os.tmpdir(), 'rad_patch_' + process.pid + '.json');
 fs.writeFileSync(tmp, JSON.stringify(ALL));
 const py = path.join(__dirname, 'radiator_pause_patch.py');
 const chk0 = cp.spawnSync('python3', [py, tmp, '--check']).status;
+if (chk0 !== 1) {                                              // 0 = Patch schon drin, 2 = Anker fehlen (späterer Stand): kein Stand vor dem Patch
+  fs.unlinkSync(tmp);
+  console.log('EINMAL-TEST erledigt: radiator_pause_sim prueft tools/radiator_pause_patch.py (eingespielt 09.10.2026) und braucht einen Flow-Export VOR diesem Patch.');
+  console.log('Auf dieser Datei nicht anwendbar: ' + (chk0 === 0 ? 'der Pausen-Modus ist schon drin' : 'die Anker des Patches fehlen'));
+  console.log('\nERGEBNIS radiator_pause_sim: nicht anwendbar (erledigter Einmal-Test), Rueckgabewert 3');
+  process.exit(3);
+}
 const ORIG = JSON.parse(fs.readFileSync(tmp, 'utf8')).find(n => n.id === RAD).func;
 cp.execFileSync('python3', [py, tmp]);
 const PATCHED_FLOWS = JSON.parse(fs.readFileSync(tmp, 'utf8'));

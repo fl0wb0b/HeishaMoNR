@@ -174,7 +174,8 @@ console.log('\n--- Karten (eng_ui VER ' + U.v + ', engine_view.copBuild)');
           C.kpi.map(k => k.k + ' ' + k.v + ' ' + (k.chip || '')).join(' · '));
     check('Karte COP: nur Posten > 0 (plus Rest), Stillstand nur im Tageswert', C.zeilen.every(z => z.name === 'Rest (unerklärt)' || z.zellen.some(c => c.v !== '–')) && C.zeilen.filter(z => z.name === 'Stillstandsstrom').every(z => z.zellen[0].v === '–'), C.zeilen.map(z => z.name).join(', '));
     check('Chip: ≤ 5 % ok, ≤ 15 % Warnung, darüber Fehler, besser als Ziel ok', V.chipDiff(4).c === 'ok' && V.chipDiff(12).c === 'warn' && V.chipDiff(16).c === 'bad' && V.chipDiff(-3).c === 'ok' && V.chipDiff(-3).t === '+3,0 %', '');
-    const Hz = U.html('zaehler', {status: [{t: 'online', c: 'ok'}], kpi: [], form: {topic: 'abc', broker: 'nas', profil: 'auto', klemme_wp: 0, klemme_heizstab: null, klemme_sonstiges: 2, invertieren: [false, true, false], quelle: 'heishamon'}});
+    // ui-daten 18.10.2026: das Formular steht als eigene Karte „Stromzähler einrichten“ (Art zlform) auf der Einstellungen-Seite; die Karte „zaehler“ zeigt nur Status und Kacheln
+    const Hz = U.html('zlform', {status: [{t: 'online', c: 'ok'}], kpi: [], form: {topic: 'abc', broker: 'nas', profil: 'auto', klemme_wp: 0, klemme_heizstab: null, klemme_sonstiges: 2, invertieren: [false, true, false], quelle: 'heishamon'}});
     check('Karte Stromzähler: Form mit MQTT-Name, Broker, Profil, drei Klemmen (Heizstab „–“), Invertieren je Klemme, Quelle; Knopf Speichern', /data-f="topic" value="abc"/.test(Hz) && /value="nas" selected/.test(Hz) && /data-f="klemme_heizstab"><option value="" selected>–/.test(Hz) && /data-f="inv1" checked/.test(Hz) && /data-a="zaehler_speichern"/.test(Hz) && /value="heishamon" selected/.test(Hz), '');
 }
 
@@ -186,9 +187,10 @@ if (flowsFile) {
     let NOW = T0, fstore = {}; const warn = [];
     class FD extends Date { constructor(...a) { if (a.length === 0) { super(NOW); } else { super(...a); } } static now() { return NOW; } }
     const run = msg => vm.runInNewContext('(function(msg,global,flow,node,fs,Date){' + fn.func + '\n})', {Buffer: Buffer, JSON: JSON, Math: Math, Object: Object, Array: Array, String: String, Number: Number, isFinite: isFinite, RegExp: RegExp})(msg, {get: k => gs[k], set: (k, v) => { gs[k] = v; }}, {get: k => fstore[k], set: (k, v) => { fstore[k] = v; }}, {warn: w => warn.push(w)}, fsM, FD);
-    const wired = JSON.stringify(fn.wires) === '[["opt_mqtt_zl_v"],["opt_mqtt_zl_n"],["opt_t_zaehler"],["opt_ui_toast"],["opt_f_qev"]]' && N.opt_mqtt_zl_v.inputs === 1 && N.opt_mqtt_zl_v.broker === 'opt_broker_venus' && N.opt_mqtt_zl_n.broker === 'opt_broker_nas' && N.opt_mqtt_zl_v.topic === '' &&
-                  !flows.some(n => n.z === 'opt_tab' && n.type === 'mqtt out' && n.id !== 'opt_apply_mqtt') && N.opt_g_zaehler.tab === 'opt_ui_tab_data' && N.opt_g_zaehler.width === 17 && N.opt_t_zaehler.group === 'opt_g_zaehler' && JSON.stringify(N.opt_t_zaehler.wires) === '[["opt_zaehler"]]' && N.opt_i_zl.repeat === '60' && N.opt_i_zl_init.topic === 'init';
-    check('Knoten: zwei dynamische mqtt in (Venus, NAS) -> opt_zaehler (5 Ausgänge: Abos Venus/NAS, Karte, Meldung, Ereignis), Karte auf Daten & Güte 17 breit, kein neuer Sendeknoten', wired, JSON.stringify(fn.wires));
+    const wired = JSON.stringify(fn.wires) === '[["opt_mqtt_zl_v"],["opt_mqtt_zl_n"],["opt_t_zaehler","opt_t_zl_set"],["opt_ui_toast"],["opt_f_qev"]]' && N.opt_mqtt_zl_v.inputs === 1 && N.opt_mqtt_zl_v.broker === 'opt_broker_venus' && N.opt_mqtt_zl_n.broker === 'opt_broker_nas' && N.opt_mqtt_zl_v.topic === '' &&
+                  !flows.some(n => n.z === 'opt_tab' && n.type === 'mqtt out' && n.id !== 'opt_apply_mqtt') && N.opt_g_zaehler.tab === 'opt_ui_tab_data' && N.opt_g_zaehler.width === 16 && N.opt_t_zaehler.group === 'opt_g_zaehler' && JSON.stringify(N.opt_t_zaehler.wires) === '[["opt_zaehler"]]' &&
+                  N.opt_t_zl_set.group === 'opt_g_zl_set' && JSON.stringify(N.opt_t_zl_set.wires) === '[["opt_zaehler"]]' && N.opt_i_zl.repeat === '60' && N.opt_i_zl_init.topic === 'init';
+    check('Knoten: zwei dynamische mqtt in (Venus, NAS) -> opt_zaehler (5 Ausgänge: Abos Venus/NAS, Karte + Formular-Karte, Meldung, Ereignis), Karte auf Daten & Güte 16 breit (UI-Überarbeitung e8d5cde), Formular auf Einstellungen, kein neuer Sendeknoten', wired, JSON.stringify(fn.wires));
     let o = run({topic: 'init'});
     check('Start ohne MQTT-Namen: nur „alles abbestellen“ an beide Broker, Karte „nicht eingerichtet“', JSON.stringify(o[0]) === '[{"action":"unsubscribe","topic":true}]' && JSON.stringify(o[1]) === '[{"action":"unsubscribe","topic":true}]' && o[2].payload.status[0].t === 'nicht eingerichtet', JSON.stringify(o[0]));
     fls['/data/optimizer/config.json'] = JSON.stringify({rooms: [{id: 'wohn', min: 22}], engine: {rules: {heizregelung: {heizstabVorrang: 1}}}});
@@ -213,7 +215,7 @@ if (flowsFile) {
     check('keine Warnungen der Hülle', !warn.length, warn.join(' | '));
     // COP_KW_JS in den anderen Knoten: pelQ = pelK im Standard
     const qf = N.opt_quiet.func;
-    check('opt_quiet/opt_eval/opt_plan: Zählerspalten hinten, Anzeige mit pelQ (Zähler nur bei Quelle zaehler und frisch), Rohspalten unverändert', /'druck_bar', 'zaehler_wp_w', 'zaehler_heizstab_w'\]/.test(qf) && /function pelQ\(p, lauf\) \{ return ZQ\.aktiv \? ZQ\.w : pelK\(p, lauf\); \}/.test(qf) && /c\(pelKNow\), c\(copNowK\), COP_KW/.test(qf) && /'cop_korr_w', 'zaehler_wp_w', 'zaehler_heizstab_w'\]/.test(N.opt_eval.func) && /ACT_Z = \['ist_strom_zaehler_kwh', 'ist_zaehler_min'\]/.test(N.opt_plan.func), '');
+    check('opt_quiet/opt_eval/opt_plan: Zählerspalten hinten (in opt_quiet seit 09.11. vor ow_vl/ow_rl), Anzeige mit pelQ (Zähler nur bei Quelle zaehler und frisch), Rohspalten unverändert', /'druck_bar', 'zaehler_wp_w', 'zaehler_heizstab_w',\s*'ow_vl', 'ow_rl'\]/.test(qf) && /function pelQ\(p, lauf\) \{ return ZQ\.aktiv \? ZQ\.w : pelK\(p, lauf\); \}/.test(qf) && /c\(pelKNow\), c\(copNowK\), COP_KW/.test(qf) && /'cop_korr_w', 'zaehler_wp_w', 'zaehler_heizstab_w'\]/.test(N.opt_eval.func) && /ACT_Z = \['ist_strom_zaehler_kwh', 'ist_zaehler_min'\]/.test(N.opt_plan.func), '');
     check('opt_engine: Zähler (zw, zAge, zh) aus OPT_zaehler, cfg mit zaehler und copZiel (OPT_cop_eta); opt_nas legt OPT_cop_eta ab', /inp\.zw = num\(ZLx\.wp_w\)/.test(N.opt_engine.func) && /zaehler: CF\.zaehler \|\| \{\}, copZiel: G\('OPT_cop_eta'\)/.test(N.opt_engine.func) && /global\.set\('OPT_cop_eta', CE\)/.test(N.opt_nas.func), '');
 }
 

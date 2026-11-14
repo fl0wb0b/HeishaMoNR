@@ -17,7 +17,10 @@ import tempfile
 
 sys.dont_write_bytecode = True
 ALT_PAARE = ["energie.strom_kwh", "energie.strom_kwh_roh", "energie.waerme_kwh", "energie.cop", "energie.cop_roh", "effizienz.kwh_je_gradstunde"]
-NUR_CONTAINER = ["energie.rechenweg", "energie.heizstab_kwh", "energie.waerme_berechnet_min"]
+NUR_CONTAINER = ["energie.rechenweg", "energie.heizstab_kwh", "energie.waerme_berechnet_min",
+                 # Rechenweg 3 (13.11.2026): Minuten ohne Stromwert als unbekannt
+                 "energie.strom_unbekannt_min", "energie.strom_unbekannt_lauf_min", "energie.strom_ersatz_min", "energie.strom_ersatz_kwh",
+                 "energie.heizstab_unbekannt_min", "energie.waerme_unbekannt_min", "energie.waerme_nachgerechnet_min"]
 VERGLEICH_7T = ["effizienz.vergleich_tage", "effizienz.vergleich_mittel", "effizienz.abweichung_prozent"]
 # Zaehlerquelle (cop-ziel 17.10.2026, config.json "zaehler": {"quelle": "zaehler"}): der Container nimmt den Strom vom Shelly, der Beobachter rechnet
 # weiter TOP16 + 80 W und kennt die Zaehler-Schluessel nicht. Diese Unterschiede bestanden schon vor Rechenweg 2 (einwire-protokoll, 12.11. geprueft).
@@ -49,7 +52,7 @@ def main():
             # Energie-Rechenweg 2 (kennzahlen_tag.py, 13.11.2026): der Container rechnet Wärme mit negativer Abtauwärme und Strom mit Heizstab;
             # der Beobachter rechnet weiter wie bisher. Verglichen wird sein Wert mit dem *_alt-Wert des Containers; nur im Container: Rechenweg-Schlüssel.
             # Der 7-Tage-Vergleich nutzt die neue kWh/Kh und darf abweichen, wenn sich Strom durch den Heizstab unterscheidet.
-            if Fk.get("energie.rechenweg") == 2:
+            if Fk.get("energie.rechenweg") in (2, 3):
                 for k in ALT_PAARE:
                     if k + "_alt" in Fk:
                         Fk[k] = Fk.pop(k + "_alt")
