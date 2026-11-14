@@ -153,7 +153,7 @@ ssh "$NAS" 'docker exec node_red-node-red-1 cat /data/optimizer-tools/status.jso
 ```
 
 Update: dieselben Schritte (Bauen, `docker load`, ggf. `scp`), dann `docker compose up -d` (erstellt den Container mit dem neuen Image neu).
-Das Image-Tag steht in `compose.yml` als `optimizer-tools:${OT_TAG:-training-v2}`; zurück auf ein älteres Image: `OT_TAG=1 docker compose up -d` (das alte Image bleibt dafür geladen).
+Das Image-Tag steht in `compose.yml` als `optimizer-tools:${OT_TAG:-frost-2}`; zurück auf ein älteres Image: `OT_TAG=frost-1 docker compose up -d` (das alte Image bleibt dafür geladen). Einspielen von frost-2 vom PC aus: `nas-container/einspielen_ot_frost2.sh` im Projektordner (außerhalb dieses Repos).
 
 **Watchtower** läuft auf der NAS für alle Container (03:00, mit Aufräumen). `compose.yml` setzt das Label `com.centurylinklabs.watchtower.enable: "false"`, damit Watchtower den Container nicht anfasst: Ein Abgleich mit Docker Hub ergäbe für das lokale Image `optimizer-tools:training-v2` (bzw. `:1`) nur Fehler oder ein fremdes Image.
 Kontrolle: `docker inspect -f '{{index .Config.Labels "com.centurylinklabs.watchtower.enable"}}' optimizer-tools` → `false`.
