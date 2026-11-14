@@ -10,7 +10,8 @@
 #
 # Gruppe A   ohne Eingabe:       Zwilling, Training, Nacht-Hülle, Kennzahlen, Gesundheit, cop_eta, evcc, Fahrplan, Wetter, lokale Konfiguration,
 #                                NAS-Deploy, Privat-Prüfung, ui_system_patch, Maschine (engine_sim), cop_ziel_sim, optimizer-tools (ot_test)
-# Gruppe B1  braucht flows.json: kern_chain_sim, cop_idle_test, heating_control_test (lesen die Kern-Knoten direkt aus dem Export)
+# Gruppe B1  braucht flows.json: kern_chain_sim, cop_idle_test, heating_control_test, starts_today_sim (lesen die Kern-Knoten direkt aus dem Export;
+#                                starts_today_sim endet mit 3, sobald der Patch eingespielt ist)
 # Gruppe B2  braucht flows.json: optimizer_sim, engine_sim, wx_core_test, cop_ziel_sim. Sie prüfen die Optimierer-Knoten des Generators; das Skript
 #                                lässt dafür tools/optimizer_phase1.py auf einer Kopie der Datei laufen (GEN_ARGS, Standard --uebernahme-knoten-aktiv
 #                                wie beim Deploy; braucht lokal.json). Ein roher Live-Export reicht für optimizer_sim nicht (ohne Zugangsdaten-Platzhalter).
@@ -88,8 +89,9 @@ if [ -n "$LIVE" ]; then
   lauf "kern_chain_sim (Flows)"       node kern_chain_sim.js "$LIVE"
   lauf "cop_idle_test (Flows)"        node cop_idle_test.js "$LIVE"
   lauf "heating_control_test (Flows)" node heating_control_test.js "$LIVE"
+  lauf "starts_today_sim (Flows)"     node starts_today_sim.js "$LIVE" $DATEN
 else
-  for t in kern_chain_sim cop_idle_test heating_control_test; do ohne "$t (Flows)" "übersprungen: $GEN_GRUND"; done
+  for t in kern_chain_sim cop_idle_test heating_control_test starts_today_sim; do ohne "$t (Flows)" "übersprungen: $GEN_GRUND"; done
 fi
 
 echo "== B2 braucht eine Flow-Datei: Optimierer-Knoten aus frischer Generator-Ausgabe auf der Kopie${GEN:+ (optimizer_phase1.py $GEN_ARGS)}"
